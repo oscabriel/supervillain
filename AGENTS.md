@@ -48,3 +48,20 @@ the definition — never decide silently.
   never code.
 - OpenTUI source clone (API truth, never guess):
   `~/Developer/clones/github.com/anomalyco/opentui` @ `a0b9064`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (oscabriel/supervillain) via the `gh` CLI; external
+PRs are not a request surface. See `.agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage labels, default strings, exist on the repo. See
+`.agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context, at non-default paths: glossary at `.agents/CONTEXT.md`, ADRs in
+`.agents/adr/`. See `.agents/domain.md`.
