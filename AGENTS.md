@@ -4,21 +4,26 @@ supervillain is a terminal-first virtual tabletop: players `ssh` into a live gam
 the GM hosts the table from their own machine. Draw Steel is the first game module on a
 system-agnostic core. This repo is the product monorepo.
 
-## The spec
+## `.agents/` — the agent docs
 
-`wayfinder/assets/product-definition.md` is the product definition — the binding spec
-for the scaffold, milestone 1, and the v0 slice. Detailed assets (seam spec, monorepo
-shape, licensing, iroh viability) are linked from it. Do not re-derive or reopen its
-decisions. If work surfaces a product decision the definition doesn't cover, that is a
-definition bug: surface it and patch the definition — never decide silently.
+All planning and reference docs live under `.agents/`:
 
-`wayfinder/` (map, tickets, assets) is the read-only record of the definition phase.
-Assets may gain corrections; tickets and the map are historical.
+- **`.agents/CONTEXT.md`** — the glossary (ubiquitous language). Use its terms exactly —
+  several are load-bearing distinctions (entry point vs door, host vs gateway, envelope
+  vs payload). Resolve new terms here, not in scattered docs.
+- **`.agents/wayfinder/`** — the read-only record of the product-definition phase:
+  - **`assets/product-definition.md`** — the binding spec for the scaffold, milestone 1,
+    and the v0 slice. Read it first; the detailed assets (seam spec, monorepo shape,
+    licensing, iroh viability, prototype lessons) are linked from it.
+  - `map.md` and `tickets/` — the decision history. Historical; don't edit. Assets may
+    gain corrections.
+- **`.agents/adr/`** — architectural decision records for decisions made *after* the
+  definition phase (create lazily; the wayfinder tickets are the ADRs of the definition
+  phase).
 
-## Vocabulary
-
-`CONTEXT.md` at the repo root is the glossary. Use its terms exactly — several are
-load-bearing distinctions (entry point vs door, host vs gateway, envelope vs payload).
+Do not re-derive or reopen the definition's decisions. If work surfaces a product
+decision the definition doesn't cover, that is a definition bug: surface it and patch
+the definition — never decide silently.
 
 ## Stack & conventions (from the definition — pointers, not the spec)
 
@@ -30,7 +35,7 @@ load-bearing distinctions (entry point vs door, host vs gateway, envelope vs pay
 - **dependency-cruiser lattice in CI from day one** — the seam boundaries are
   mechanically enforced (host never imports OpenTUI; render side never imports
   `decide`; `content` imports `model` only; full ruleset in
-  `wayfinder/assets/monorepo-stack.md`).
+  `.agents/wayfinder/assets/monorepo-stack.md`).
 - **The runner is the runtime claim:** Bun-bound code → `bun test`; the Node-compat
   set → vitest under Node. `transport-iroh` + `room-host` run the same specs under
   both lanes — that dual lane is milestone 1's CI gate.
