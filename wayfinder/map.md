@@ -70,6 +70,12 @@ new repo is specifiable with no product decisions left open.
   cross-platform CI matrix; fallbacks: Node room host → Rust sidecar; production needs
   dedicated relays (n0's public relays are dev-only). Detail:
   [iroh-viability](assets/iroh-viability.md).
+- [Game module seam](tickets/006-game-module-seam.md) — a game module is code: one
+  package, four entry points (model/authority/view/content) behind a small core
+  interface; namespaced core.*/ds.* events in one shared log, game state opaque,
+  replay never reads files (logs portable); host never imports OpenTUI, gateway never
+  imports decide; fake game module = second adapter from v0; the dependency lattice is
+  015's acceptance test. Detail: [game-module-seam](assets/game-module-seam.md).
 - [Scope tiers](tickets/014-scope-tiers.md) — v0 = GM-first real Draw Steel table over
   SSH (both doors: ssh-via-gateway mandatory + direct CLI join; neutral core + thin DS
   module; persistent campaign folder; iroh CI gate = first build milestone). v1 =
