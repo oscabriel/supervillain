@@ -2,6 +2,10 @@
 
 label: `wayfinder:map`
 
+**MAP COMPLETE (2026-07-13).** All 16 tickets closed. The destination artifact:
+[product-definition](assets/product-definition.md). Next effort: scaffold the real
+repo per its Milestone 1 section.
+
 ## Destination
 
 A product definition for supervillain — surfaces, scope tiers (v0/v1/vN), architecture
@@ -82,9 +86,23 @@ new repo is specifiable with no product decisions left open.
   launch: play-support DS depth, CLI nouns + publish, web launch, key linking — still
   GM-hosted only. v2 = character builder; v3 = paid tier (gateway-hosted rooms +
   browser terminal + payments debut together); v4+ = second game; maps/AI stay vN.
+- [Monorepo shape & stack](tickets/015-monorepo-stack.md) — better-t-stack verdict:
+  no invocation; hand-rolled Bun workspace, first commit = core + fake game module +
+  dependency-cruiser lattice check. apps gateway/cli + packages incl. table (shared
+  client for all doors) and room-host (package, three consumers); TS7, oxlint/oxfmt,
+  runner-is-the-runtime-claim test split; compiled CLI binary (4 triples, never
+  "install a runtime"); event log canonical, gateway bun:sqlite no-ORM. Detail:
+  [monorepo-stack](assets/monorepo-stack.md).
+- [Assemble product definition](tickets/016-assemble-product-definition.md) — the
+  destination artifact assembled and head-reviewed:
+  [product-definition](assets/product-definition.md). Scaffolding is now mechanical;
+  milestone 1 is specified with no product decisions left open. Map done.
 
 ## Not yet specified
 
+- **v1 web framework pick** — deferred by [015](tickets/015-monorepo-stack.md) with
+  its constraints recorded (SSR, OG images, push-ingest snapshot DB, capability-URL
+  routes, passkey-ready empty auth slot); decided when apps/web arrives.
 - **Expansion playbook** — what adding a second game (Mothership, Mörk Borg) actually
   demands: content pipeline, per-game licensing terms. Placed v4+ by
   [Scope tiers](tickets/014-scope-tiers.md) — after Draw Steel is deep; full spec is a
