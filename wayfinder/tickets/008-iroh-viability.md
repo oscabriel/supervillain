@@ -1,7 +1,7 @@
 ---
-status: open
+status: closed
 type: research
-assignee:
+assignee: pi:iroh
 blocked-by: []
 ---
 
@@ -27,3 +27,15 @@ and what is the concrete integration path? Specifically:
 Output: markdown asset with a verdict and recommended integration shape. Web research
 plus, if cheap, a spike-level smoke test of the bindings under Bun (allowed under this
 repo's prototyping convention).
+
+## Resolution
+
+Keep iroh and begin with `@number0/iroh@1.0.0` in-process under Bun, behind a narrow
+transport seam: the local Bun smoke test installed/imported the native binding and
+successfully bound and closed an endpoint. Gate that choice on cross-platform,
+two-peer direct/forced-relay lifecycle tests; fall back first to a Node room-host
+process, then to a Rust sidecar. Production requires dedicated relays because n0's
+public relays are explicitly rate-limited, no-SLA development infrastructure.
+
+Full evidence, alternatives, fallback ladder, and remaining verification:
+[../assets/iroh-viability.md](../assets/iroh-viability.md).

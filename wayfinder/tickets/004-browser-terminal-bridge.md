@@ -1,7 +1,7 @@
 ---
-status: open
+status: closed
 type: research
-assignee:
+assignee: pi:bridge
 blocked-by: []
 ---
 
@@ -24,3 +24,14 @@ Notes from later decisions: identity posture is **passkey against the web backen
 perk of the paid "host your game on our servers" tier
 ([Business shape](011-business-shape.md)), so the bridge primarily serves
 gateway-hosted rooms and may assume the gateway is in the loop.
+
+## Resolution
+
+Recommend xterm.js over a binary WebSocket to a gateway-side sibling session adapter,
+not SSH tunneled through WebSocket and not a browser VTT implementation.
+OpenTUI core accepts custom streams, while `@opentui/ssh` demonstrates the renderer,
+resize, backpressure, admission, and teardown lifecycle but is coupled to ssh2.
+The web backend mints a short-lived, one-use, room-scoped grant from the passkey session;
+the gateway redeems it into the canonical principal and shared room/session factory.
+OpenTUI ships no browser renderer in the pinned revision; `packages/web` is its docs site.
+Findings, protocol demands, identity flow, alternatives, and risks: [browser terminal bridge](../assets/browser-terminal-bridge.md).

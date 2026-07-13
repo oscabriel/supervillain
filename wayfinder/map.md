@@ -48,19 +48,49 @@ new repo is specifiable with no product decisions left open.
 - [Web surface launch scope](tickets/013-web-launch-scope.md) — launch web = marketing
   + docs + artifact pages; publish = snapshot push; capability URLs get custom OG
   images; one backend service beside the gateway; no user auth at launch.
+- [Preserve prototype lessons](tickets/005-preserve-prototype-lessons.md) — lessons
+  distilled to [prototype-lessons](assets/prototype-lessons.md): proven state seams,
+  OpenTUI gotchas, SSH/PTY verification method, still-true iroh analysis vs superseded
+  old-plan scope. No code carried.
+- [Draw Steel license research](tickets/003-draw-steel-license.md) — Creator License
+  permits free *or paid* works using text/names/mechanics/stats from its enumerated
+  documents; exact independence notice required in-product + on marketing; no MCDM
+  logos/art/unlisted content without written permission; SaaS/data-resale not expressly
+  addressed → counsel before monetization. Detail:
+  [draw-steel-license](assets/draw-steel-license.md).
+- [Browser terminal bridge](tickets/004-browser-terminal-bridge.md) — xterm.js over a
+  binary WebSocket to a gateway-side transport adapter feeding the same renderer/room
+  factory as SSH; web backend mints short-lived single-use room-scoped grants from the
+  passkey session; product owns a transport-neutral session seam (OpenTUI's SSH bridge
+  is ssh2-coupled; no browser renderer exists). Detail:
+  [browser-terminal-bridge](assets/browser-terminal-bridge.md).
+- [iroh transport viability](tickets/008-iroh-viability.md) — keep iroh; JS bindings
+  hit 1.0 (2026-06-15, in step with core) and passed a Bun smoke test (bind/close
+  endpoint); ship Bun-in-process behind a narrow transport seam, gated on a two-peer
+  cross-platform CI matrix; fallbacks: Node room host → Rust sidecar; production needs
+  dedicated relays (n0's public relays are dev-only). Detail:
+  [iroh-viability](assets/iroh-viability.md).
+- [Scope tiers](tickets/014-scope-tiers.md) — v0 = GM-first real Draw Steel table over
+  SSH (both doors: ssh-via-gateway mandatory + direct CLI join; neutral core + thin DS
+  module; persistent campaign folder; iroh CI gate = first build milestone). v1 =
+  launch: play-support DS depth, CLI nouns + publish, web launch, key linking — still
+  GM-hosted only. v2 = character builder; v3 = paid tier (gateway-hosted rooms +
+  browser terminal + payments debut together); v4+ = second game; maps/AI stay vN.
 
 ## Not yet specified
 
 - **Expansion playbook** — what adding a second game (Mothership, Mörk Borg) actually
-  demands: content pipeline, per-game licensing terms, when it enters the roadmap.
-  vN-tier: [Scope tiers](tickets/014-scope-tiers.md) gists it; full spec is a later
-  effort.
+  demands: content pipeline, per-game licensing terms. Placed v4+ by
+  [Scope tiers](tickets/014-scope-tiers.md) — after Draw Steel is deep; full spec is a
+  later effort.
 - **Battle maps** — deferred out of the launch noun set; when maps enter the roadmap,
   the FrameBuffer story, map artifacts, and their sharing model come with them.
-- **AI features** — an explicit MAYBE on the paid hosted tier; what they'd even be
-  (GM assistance? recap generation from event logs?) is undiscovered.
-- **Paid-tier mechanics** — pricing, checkout venue, passkey onboarding flow;
-  post-launch by decision, specified when payments enter the roadmap.
+- **AI features** — an explicit MAYBE on the paid hosted tier (v3 at the earliest);
+  what they'd even be (GM assistance? recap generation from event logs?) is
+  undiscovered.
+- **Paid-tier mechanics** — pricing, checkout venue, passkey onboarding flow; placed
+  v3 by [Scope tiers](tickets/014-scope-tiers.md) (debuts with gateway-hosted rooms +
+  browser terminal); specified when payments enter the roadmap.
 
 ## Out of scope
 

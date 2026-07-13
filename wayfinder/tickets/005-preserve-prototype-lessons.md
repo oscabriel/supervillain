@@ -1,7 +1,7 @@
 ---
-status: open
+status: closed
 type: task
-assignee:
+assignee: pi:lessons
 blocked-by: []
 ---
 
@@ -20,3 +20,10 @@ sweep the old plan doc (`~/Documents/sync-vault/projects/dev/supervillain/
 opentui-ssh-vtt-plan.md`) for still-true architectural facts worth carrying (e.g. the
 v1 iroh "connections only, single-writer host" analysis) vs decisions this map will
 remake.
+
+## Resolution
+
+Preserved the prototype's proven state seams, OpenTUI API gotchas, real-SSH/PTY
+verification method, still-sound iroh analysis, explicit old-plan supersessions, and
+delegation lessons in [prototype lessons](../assets/prototype-lessons.md). No prototype
+code or inherited milestone decisions were carried forward.
