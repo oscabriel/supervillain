@@ -16,3 +16,5 @@ jobs:
       - run: bun run build
       - run: bun run lint
       - run: bun run format:check
+      - run: bun run depcruise
+      - run: bun run test:conformance
