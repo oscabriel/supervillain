@@ -1,0 +1,40 @@
+name: iroh compiled-binary smoke
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hello-iroh:
+    name: hello-iroh (${{ matrix.triple }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - triple: linux-x64
+            runner: ubuntu-latest
+            entry: linux-x64.ts
+          - triple: linux-arm64
+            runner: ubuntu-24.04-arm
+            entry: linux-arm64.ts
+          - triple: macos-x64
+            runner: macos-15-intel
+            entry: macos-x64.ts
+          - triple: macos-arm64
+            runner: macos-latest
+            entry: macos-arm64.ts
+    defaults:
+      run:
+        working-directory: smoke/hello-iroh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install --frozen-lockfile
+      - run: bun build --compile ./${{ matrix.entry }} --outfile ./hello-iroh
+      - run: ./hello-iroh
