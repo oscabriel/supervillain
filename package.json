@@ -14,7 +14,9 @@
     "format": "oxfmt . --write",
     "format:check": "oxfmt . --check",
     "depcruise": "packages/config/node_modules/.bin/depcruise --config packages/config/dependency-cruiser.cjs apps packages --output-type err-long",
-    "test:conformance": "bun test packages/core/test"
+    "test:conformance": "bun test packages/core/test",
+    "test:room-host": "bun run --cwd packages/room-host test:bun && bun run --cwd packages/room-host test:node",
+    "test:transport-iroh": "bun run --cwd packages/transport-iroh test:bun && bun run --cwd packages/transport-iroh test:node"
   },
   "devDependencies": {
     "oxfmt": "0.58.0",
