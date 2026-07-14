@@ -15,6 +15,10 @@
 		"fix": "ultracite fix",
 		"depcruise": "packages/config/node_modules/.bin/depcruise --config packages/config/dependency-cruiser.cjs apps packages --output-type err-long",
 		"test:conformance": "bun test packages/core/test",
+		"test:identity": "bun test packages/identity/test",
+		"test:session": "bun test packages/session/test",
+		"test:table": "bun test packages/table/test",
+		"test:cli": "bun test apps/cli/test",
 		"test:room-host": "bun run --cwd packages/room-host test:bun && bun run --cwd packages/room-host test:node",
 		"test:transport-iroh": "bun run --cwd packages/transport-iroh test:bun && bun run --cwd packages/transport-iroh test:node"
 	},

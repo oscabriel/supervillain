@@ -1,5 +1,29 @@
 export type NamespacedType = `${string}.${string}`;
 
+export const CORE_ROOM_CREATED = "core.room-created";
+export const CORE_CHAT_POSTED = "core.chat-posted";
+export const CORE_DICE_ROLLED = "core.dice-rolled";
+
+export interface RoomCreatedPayload {
+	readonly gameId: string;
+}
+
+export interface ChatPostedPayload {
+	readonly text: string;
+}
+
+export interface DiceRolledPayload {
+	readonly notation: string;
+	readonly rolls: readonly number[];
+	readonly modifier: number;
+	readonly total: number;
+}
+
+/** Commands the core decides itself — never routed to a game authority. */
+export type CoreCommand =
+	| { readonly type: "core.chat"; readonly text: string }
+	| { readonly type: "core.roll"; readonly notation: string };
+
 export interface Envelope<
 	TType extends NamespacedType = NamespacedType,
 	TPayload = unknown,
