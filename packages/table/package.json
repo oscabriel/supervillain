@@ -12,5 +12,13 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		}
+	},
+	"dependencies": {
+		"@opentui/core": "0.4.3",
+		"@supervillain/core": "workspace:*",
+		"@supervillain/session": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0"
 	}
 }

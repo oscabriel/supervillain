@@ -1,13 +1,21 @@
 import { mkdir, open, readFile } from "node:fs/promises";
 import path from "node:path";
 
+import {
+	CORE_CHAT_POSTED,
+	CORE_DICE_ROLLED,
+	CORE_ROOM_CREATED,
+} from "@supervillain/core";
 import type {
 	AuthorityEntry,
+	ChatPostedPayload,
+	DiceRolledPayload,
 	Envelope,
 	HostRegistry,
 	NamespacedType,
 	Rejection,
 	RoomCommand,
+	RoomCreatedPayload,
 	RoomSubmission,
 	TableView,
 } from "@supervillain/core";
@@ -15,11 +23,8 @@ import type {
 import { Latch } from "./latch.js";
 
 const LOG_FILE = "events.jsonl";
-const ROOM_CREATED = "core.room-created";
-
-interface RoomCreatedPayload {
-	readonly gameId: string;
-}
+const DICE_NOTATION =
+	/^(?<count>\d*)d(?<sides>\d+)(?:(?<sign>[+-])(?<modifier>\d+))?$/iu;
 
 export interface RoomHostOptions {
 	readonly campaignFolder: string;
@@ -28,6 +33,7 @@ export interface RoomHostOptions {
 	readonly gameId?: string;
 	readonly actor?: string;
 	readonly clock?: () => string;
+	readonly random?: () => number;
 }
 
 export interface RoomSnapshot {
@@ -86,6 +92,7 @@ export class RoomHost {
 	readonly #registry: HostRegistry;
 	readonly #table: TableView;
 	readonly #clock: () => string;
+	readonly #random: () => number;
 	readonly #envelopes: Envelope[] = [];
 	readonly #subscribers = new Set<Subscriber>();
 	#authority: AuthorityEntry<unknown, unknown, unknown> | undefined;
@@ -98,6 +105,7 @@ export class RoomHost {
 		this.#registry = options.registry;
 		this.#table = options.table;
 		this.#clock = options.clock ?? (() => new Date().toISOString());
+		this.#random = options.random ?? Math.random;
 	}
 
 	static async open(options: RoomHostOptions): Promise<RoomHost> {
@@ -120,7 +128,7 @@ export class RoomHost {
 					payload: { gameId: options.gameId } satisfies RoomCreatedPayload,
 					seq: 1,
 					timestamp: host.#clock(),
-					type: ROOM_CREATED,
+					type: CORE_ROOM_CREATED,
 				},
 			]);
 		} else if (
@@ -222,6 +230,18 @@ export class RoomHost {
 		if (this.#authority === undefined || this.#gameId === undefined) {
 			throw new Error("Room has no game authority.");
 		}
+		if (
+			typeof command === "object" &&
+			command !== null &&
+			"type" in command &&
+			typeof command.type === "string" &&
+			command.type.startsWith("core.")
+		) {
+			return this.#submitCore(
+				actor,
+				command as Record<string, unknown> & { type: string }
+			);
+		}
 		const decide = this.#authority.authority.decide as (
 			state: unknown,
 			command: unknown,
@@ -250,6 +270,80 @@ export class RoomHost {
 		return { accepted: true, envelopes };
 	}
 
+	// oxlint-disable-next-line eslint/complexity -- validation branches directly mirror the pinned command grammar.
+	async #submitCore(
+		actor: string,
+		command: Record<string, unknown> & { readonly type: string }
+	): Promise<RoomSubmission> {
+		if (!this.#table.seats.some((seat) => seat.actor === actor)) {
+			return {
+				message: "You do not hold a seat at this table.",
+				rejected: true,
+			};
+		}
+		let type: typeof CORE_CHAT_POSTED | typeof CORE_DICE_ROLLED;
+		let payload: ChatPostedPayload | DiceRolledPayload;
+		if (command.type === "core.chat") {
+			const text = typeof command.text === "string" ? command.text.trim() : "";
+			if (text.length === 0) {
+				return { message: "Chat message is empty.", rejected: true };
+			}
+			if (text.length > 1000) {
+				return { message: "Chat message is too long.", rejected: true };
+			}
+			type = CORE_CHAT_POSTED;
+			payload = { text };
+		} else if (command.type === "core.roll") {
+			const input =
+				typeof command.notation === "string" ? command.notation : "";
+			const compact = input.replaceAll(/\s/gu, "").toLowerCase();
+			const match = DICE_NOTATION.exec(compact);
+			const count =
+				match?.groups?.count === "" ? 1 : Number(match?.groups?.count);
+			const sides = Number(match?.groups?.sides);
+			const modifierMagnitude =
+				match?.groups?.modifier === undefined
+					? 0
+					: Number(match.groups.modifier);
+			if (
+				!match ||
+				count < 1 ||
+				count > 20 ||
+				sides < 2 ||
+				sides > 1000 ||
+				modifierMagnitude > 1000
+			) {
+				return {
+					message: `Cannot roll '${input}'. Use NdS or NdS+M, e.g. 2d6+1.`,
+					rejected: true,
+				};
+			}
+			const modifier =
+				match.groups?.sign === "-" ? -modifierMagnitude : modifierMagnitude;
+			const rolls = Array.from(
+				{ length: count },
+				() => Math.floor(this.#random() * sides) + 1
+			);
+			const total = rolls.reduce((sum, roll) => sum + roll, modifier);
+			type = CORE_DICE_ROLLED;
+			payload = { modifier, notation: compact, rolls, total };
+		} else {
+			return {
+				message: `Unknown core command '${command.type}'.`,
+				rejected: true,
+			};
+		}
+		const envelope: Envelope = {
+			actor,
+			payload,
+			seq: this.#envelopes.length + 1,
+			timestamp: this.#clock(),
+			type,
+		};
+		await this.#append([envelope]);
+		return { accepted: true, envelopes: [envelope] };
+	}
+
 	async #append(envelopes: readonly Envelope[]): Promise<void> {
 		if (envelopes.length === 0) {
 			return;
@@ -273,7 +367,7 @@ export class RoomHost {
 	}
 
 	#fold(envelope: Envelope): void {
-		if (envelope.type === ROOM_CREATED) {
+		if (envelope.type === CORE_ROOM_CREATED) {
 			if (this.#gameId !== undefined) {
 				throw new Error("Log creates the room more than once.");
 			}
