@@ -16,6 +16,10 @@ export class IrohConnection implements TransportConnection {
 		this.#onClose = onClose;
 	}
 
+	get remoteId(): string {
+		return Buffer.from(this.#connection.remoteId().toBytes()).toString("hex");
+	}
+
 	get route(): TransportRoute {
 		const selected = this.#connection.paths().find((path) => path.isSelected);
 		if (selected?.isRelay === true) {

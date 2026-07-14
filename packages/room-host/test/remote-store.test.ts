@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { Envelope, HostRegistry, TableView } from "@supervillain/core";
+import type { Envelope, HostRegistry } from "@supervillain/core";
 import { openIrohEndpoint } from "@supervillain/transport-iroh";
 import type {
 	IrohEndpointOptions,
@@ -26,14 +26,6 @@ interface RemoteFixture {
 	readonly server: ServerHandle;
 	readonly servingEndpoint: TransportEndpoint;
 }
-
-const table: TableView = {
-	gmSeatId: "gm",
-	seats: [
-		{ actor: "actor-gm", id: "gm" },
-		{ actor: "actor-guest", id: "guest" },
-	],
-};
 
 const registry: HostRegistry = {
 	get(gameId) {
@@ -82,7 +74,6 @@ const openFixture = async (
 		clock: clockAt(),
 		gameId: "fake",
 		registry,
-		table,
 	});
 	const servingEndpoint = await openIrohEndpoint(options);
 	let dialer: TransportEndpoint;
@@ -132,8 +123,8 @@ const captureRejection = async (
 };
 
 const visit = {
-	actor: "actor-guest",
-	command: { seatId: "guest", type: "fake.visit" },
+	actor: "actor-gm",
+	command: { seatId: "gm", type: "fake.visit" },
 } as const;
 
 describe("remote RoomStore over iroh", () => {
@@ -141,10 +132,17 @@ describe("remote RoomStore over iroh", () => {
 		await withCampaign(async (campaignFolder) => {
 			const fixture = await openFixture(campaignFolder, { routing: "direct" });
 			try {
-				const submission = await fixture.remote.submit(visit);
+				await fixture.remote.submit({
+					actor: "actor-guest",
+					command: { type: "core.claim-seat" },
+				});
+				const submission = await fixture.remote.submit({
+					actor: "actor-guest",
+					command: { seatId: "player-1", type: "fake.visit" },
+				});
 				expect(submission).toMatchObject({
 					accepted: true,
-					envelopes: [{ seq: 2 }, { seq: 3 }],
+					envelopes: [{ seq: 4 }, { seq: 5 }],
 				});
 
 				const iterator = fixture.remote.stream(1)[Symbol.asyncIterator]();
@@ -153,11 +151,15 @@ describe("remote RoomStore over iroh", () => {
 						await nextEnvelope(iterator),
 						await nextEnvelope(iterator),
 						await nextEnvelope(iterator),
+						await nextEnvelope(iterator),
+						await nextEnvelope(iterator),
 					];
 					expect(envelopes.map(({ seq, type }) => ({ seq, type }))).toEqual([
 						{ seq: 1, type: "core.room-created" },
-						{ seq: 2, type: "fake.seat-observed" },
-						{ seq: 3, type: "fake.visit-counted" },
+						{ seq: 2, type: "core.seat-claimed" },
+						{ seq: 3, type: "core.seat-claimed" },
+						{ seq: 4, type: "fake.seat-observed" },
+						{ seq: 5, type: "fake.visit-counted" },
 					]);
 				} finally {
 					await iterator.return?.();
@@ -208,16 +210,18 @@ describe("remote RoomStore over iroh", () => {
 					const missed = [
 						await nextEnvelope(reconnected),
 						await nextEnvelope(reconnected),
+						await nextEnvelope(reconnected),
 					];
 					expect(missed.map(({ seq, type }) => ({ seq, type }))).toEqual([
-						{ seq: 2, type: "fake.seat-observed" },
-						{ seq: 3, type: "fake.visit-counted" },
+						{ seq: 2, type: "core.seat-claimed" },
+						{ seq: 3, type: "fake.seat-observed" },
+						{ seq: 4, type: "fake.visit-counted" },
 					]);
 
 					const liveEnvelope = nextEnvelope(reconnected);
 					await fixture.remote.submit(visit);
 					expect(await liveEnvelope).toMatchObject({
-						seq: 4,
+						seq: 5,
 						type: "fake.seat-observed",
 					});
 				} finally {
@@ -235,6 +239,7 @@ describe("remote RoomStore over iroh", () => {
 			const iterator = fixture.remote.stream(1)[Symbol.asyncIterator]();
 			try {
 				expect(await nextEnvelope(iterator)).toMatchObject({ seq: 1 });
+				expect(await nextEnvelope(iterator)).toMatchObject({ seq: 2 });
 				const pendingEnvelope = captureRejection(iterator.next());
 				await delay(25);
 

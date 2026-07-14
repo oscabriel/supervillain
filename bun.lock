@@ -22,8 +22,10 @@
         "@supervillain/fake": "workspace:*",
         "@supervillain/identity": "workspace:*",
         "@supervillain/room-host": "workspace:*",
+        "@supervillain/room-wire": "workspace:*",
         "@supervillain/session": "workspace:*",
         "@supervillain/table": "workspace:*",
+        "@supervillain/transport-iroh": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^24.0.0",
@@ -71,6 +73,18 @@
       },
       "devDependencies": {
         "@supervillain/transport-iroh": "workspace:*",
+        "@types/node": "^24.0.0",
+        "vitest": "^3.2.4",
+      },
+    },
+    "packages/room-wire": {
+      "name": "@supervillain/room-wire",
+      "version": "0.0.0",
+      "dependencies": {
+        "@supervillain/core": "workspace:*",
+        "@supervillain/transport-iroh": "workspace:*",
+      },
+      "devDependencies": {
         "@types/node": "^24.0.0",
         "vitest": "^3.2.4",
       },
@@ -372,6 +386,8 @@
     "@supervillain/identity": ["@supervillain/identity@workspace:packages/identity"],
 
     "@supervillain/room-host": ["@supervillain/room-host@workspace:packages/room-host"],
+
+    "@supervillain/room-wire": ["@supervillain/room-wire@workspace:packages/room-wire"],
 
     "@supervillain/session": ["@supervillain/session@workspace:packages/session"],
 

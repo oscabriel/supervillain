@@ -47,9 +47,12 @@ jobs:
           node-version: 24
       - run: bun install --frozen-lockfile
       - run: bun run build
+      - name: Run live direct-door CLI test
+        if: runner.os == 'Linux'
+        run: bun run test:cli-live
       - name: Run dual-lane suites with one network retry
         run: |
-          bun run test:room-host && bun run test:transport-iroh || {
+          bun run test:room-host && bun run test:transport-iroh && bun run test:room-wire || {
             echo "::warning::dual-lane suites failed once; retrying"
-            bun run test:room-host && bun run test:transport-iroh
+            bun run test:room-host && bun run test:transport-iroh && bun run test:room-wire
           }

@@ -1,4 +1,4 @@
-import type { RoomStore, TableView, ViewEntry } from "@supervillain/core";
+import type { RoomStore, ViewEntry } from "@supervillain/core";
 import type { Session } from "@supervillain/session";
 
 import { runChrome } from "./chrome.js";
@@ -7,7 +7,6 @@ export interface TableOptions {
 	readonly session: Session;
 	readonly store: RoomStore;
 	readonly entry: ViewEntry<unknown, unknown, unknown>;
-	readonly table: TableView;
 	readonly roomLabel: string;
 	readonly gameId: string;
 }

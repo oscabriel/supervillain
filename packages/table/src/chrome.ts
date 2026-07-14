@@ -1,3 +1,4 @@
+/* oxlint-disable promise/prefer-await-to-then -- panel dispatch is synchronously fire-and-forget and the pinned contract requires a rejection catch. */
 import {
 	BoxRenderable,
 	createCliRenderer,
@@ -8,7 +9,12 @@ import {
 	TextRenderable,
 } from "@opentui/core";
 import type { TextChunk } from "@opentui/core";
-import type { FeedLine, RoomSubmission, ViewEntry } from "@supervillain/core";
+import type {
+	FeedLine,
+	RoomSubmission,
+	TableView,
+	ViewEntry,
+} from "@supervillain/core";
 
 import { createTableFold } from "./fold.js";
 import type { TableOptions } from "./index.js";
@@ -23,6 +29,11 @@ const styledLine = (line: FeedLine): StyledText =>
 			text: run.text,
 		}))
 	);
+
+export const formatSeatList = (table: TableView, actor: string): string =>
+	table.seats
+		.map((seat) => `${seat.actor === actor ? "●" : "○"} ${seat.id}`)
+		.join("\n");
 
 const feedContent = (lines: readonly FeedLine[]): StyledText => {
 	const chunks: TextChunk[] = [];
@@ -52,7 +63,6 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	});
 	const fold = createTableFold(
 		options.entry as ViewEntry<unknown, unknown, unknown>,
-		options.table,
 		options.gameId
 	);
 	const lines: FeedLine[] = [];
@@ -105,23 +115,26 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	root.add(input);
 	renderer.root.add(root);
 
+	const showConnectionLost = (): void => {
+		status.fg = resolveThemeToken("danger");
+		status.content = "Connection lost. The command was not delivered.";
+	};
 	const renderSidebar = (): void => {
-		const seats = options.table.seats
-			.map(
-				(seat) =>
-					`${seat.actor === options.session.actor ? "●" : "○"} ${seat.id}`
-			)
-			.join("\n");
+		const table = fold.table();
+		const seats = formatSeatList(table, options.session.actor);
 		const panelLines = options.entry.view.panels
 			.map((panel) =>
 				panel.render({
-					dispatch: (command: unknown) =>
-						void options.store.submit({
-							actor: options.session.actor,
-							command,
-						}),
+					dispatch: (command: unknown) => {
+						void options.store
+							.submit({
+								actor: options.session.actor,
+								command,
+							})
+							.catch(showConnectionLost);
+					},
 					state: fold.state(),
-					table: options.table,
+					table,
 				})
 			)
 			.map((line) => line.runs.map((run) => run.text).join(""));
@@ -165,11 +178,15 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			parsed.kind === "chat"
 				? { text: parsed.text, type: "core.chat" }
 				: { notation: parsed.notation, type: "core.roll" };
-		const result = await options.store.submit({
-			actor: options.session.actor,
-			command,
-		});
-		showSubmission(result);
+		try {
+			const result = await options.store.submit({
+				actor: options.session.actor,
+				command,
+			});
+			showSubmission(result);
+		} catch {
+			showConnectionLost();
+		}
 	};
 	input.on(InputRenderableEvents.ENTER, (value: unknown) => {
 		void submitInput(value);

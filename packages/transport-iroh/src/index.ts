@@ -21,6 +21,7 @@ export type {
 } from "./seam.js";
 
 const ALPN = [...new TextEncoder().encode("supervillain/transport/1")];
+const HEX_KEY = /^[0-9a-f]{64}$/u;
 
 class IrohEndpoint implements TransportEndpoint {
 	readonly #endpoint: NativeEndpoint;
@@ -97,6 +98,12 @@ export const openIrohEndpoint = async (
 		builder.applyN0();
 	} else {
 		builder.applyMinimal();
+	}
+	if (options.secretKeyHex !== undefined) {
+		if (!HEX_KEY.test(options.secretKeyHex)) {
+			throw new Error("secretKeyHex must be 64 lowercase hex chars.");
+		}
+		builder.secretKey([...Buffer.from(options.secretKeyHex, "hex")]);
 	}
 	builder.alpns([ALPN]);
 	builder.relayMode(

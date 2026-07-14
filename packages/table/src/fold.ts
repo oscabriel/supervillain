@@ -2,11 +2,13 @@ import {
 	CORE_CHAT_POSTED,
 	CORE_DICE_ROLLED,
 	CORE_ROOM_CREATED,
+	CORE_SEAT_CLAIMED,
 } from "@supervillain/core";
 import type {
 	ChatPostedPayload,
 	DiceRolledPayload,
 	Envelope,
+	SeatClaimedPayload,
 	FeedLine,
 	TableView,
 	ViewEntry,
@@ -16,14 +18,16 @@ export interface TableFold<S> {
 	readonly apply: (envelope: Envelope) => FeedLine | null;
 	readonly state: () => Readonly<S>;
 	readonly actorLabel: (actor: string) => string;
+	readonly table: () => TableView;
 }
 
 export const createTableFold = <S, C, E>(
 	entry: ViewEntry<S, C, E>,
-	table: TableView,
 	gameId: string
 ): TableFold<S> => {
 	let game = entry.model.init();
+	const seats: { actor: string; id: string }[] = [];
+	const table: TableView = { gmSeatId: "gm", seats };
 	const actorLabel = (actor: string): string =>
 		table.seats.find((seat) => seat.actor === actor)?.id ?? actor.slice(0, 8);
 	return {
@@ -35,6 +39,18 @@ export const createTableFold = <S, C, E>(
 					runs: [
 						{
 							text: `room created · ${String(payload.gameId)}`,
+							token: "muted",
+						},
+					],
+				};
+			}
+			if (envelope.type === CORE_SEAT_CLAIMED) {
+				const payload = envelope.payload as SeatClaimedPayload;
+				seats.push({ actor: envelope.actor, id: payload.seatId });
+				return {
+					runs: [
+						{
+							text: `${payload.seatId} joined the table`,
 							token: "muted",
 						},
 					],
@@ -77,5 +93,6 @@ export const createTableFold = <S, C, E>(
 			return entry.view.renderEvent(event, game);
 		},
 		state: () => game,
+		table: () => table,
 	};
 };

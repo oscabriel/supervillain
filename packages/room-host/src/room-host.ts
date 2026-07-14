@@ -5,6 +5,7 @@ import {
 	CORE_CHAT_POSTED,
 	CORE_DICE_ROLLED,
 	CORE_ROOM_CREATED,
+	CORE_SEAT_CLAIMED,
 } from "@supervillain/core";
 import type {
 	AuthorityEntry,
@@ -17,6 +18,7 @@ import type {
 	RoomCommand,
 	RoomCreatedPayload,
 	RoomSubmission,
+	SeatClaimedPayload,
 	TableView,
 } from "@supervillain/core";
 
@@ -29,7 +31,6 @@ const DICE_NOTATION =
 export interface RoomHostOptions {
 	readonly campaignFolder: string;
 	readonly registry: HostRegistry;
-	readonly table: TableView;
 	readonly gameId?: string;
 	readonly actor?: string;
 	readonly clock?: () => string;
@@ -90,7 +91,7 @@ const isNodeError = (
 export class RoomHost {
 	readonly #logPath: string;
 	readonly #registry: HostRegistry;
-	readonly #table: TableView;
+	readonly #table: TableView = { gmSeatId: "gm", seats: [] };
 	readonly #clock: () => string;
 	readonly #random: () => number;
 	readonly #envelopes: Envelope[] = [];
@@ -103,7 +104,6 @@ export class RoomHost {
 	private constructor(options: RoomHostOptions) {
 		this.#logPath = path.join(options.campaignFolder, LOG_FILE);
 		this.#registry = options.registry;
-		this.#table = options.table;
 		this.#clock = options.clock ?? (() => new Date().toISOString());
 		this.#random = options.random ?? Math.random;
 	}
@@ -129,6 +129,13 @@ export class RoomHost {
 					seq: 1,
 					timestamp: host.#clock(),
 					type: CORE_ROOM_CREATED,
+				},
+				{
+					actor: options.actor,
+					payload: { seatId: "gm" } satisfies SeatClaimedPayload,
+					seq: 2,
+					timestamp: host.#clock(),
+					type: CORE_SEAT_CLAIMED,
 				},
 			]);
 		} else if (
@@ -275,6 +282,25 @@ export class RoomHost {
 		actor: string,
 		command: Record<string, unknown> & { readonly type: string }
 	): Promise<RoomSubmission> {
+		if (command.type === "core.claim-seat") {
+			if (this.#table.seats.some((seat) => seat.actor === actor)) {
+				return { accepted: true, envelopes: [] };
+			}
+			const playerCount = this.#table.seats.filter(
+				(seat) => seat.id !== "gm"
+			).length;
+			const envelope: Envelope = {
+				actor,
+				payload: {
+					seatId: `player-${playerCount + 1}`,
+				} satisfies SeatClaimedPayload,
+				seq: this.#envelopes.length + 1,
+				timestamp: this.#clock(),
+				type: CORE_SEAT_CLAIMED,
+			};
+			await this.#append([envelope]);
+			return { accepted: true, envelopes: [envelope] };
+		}
 		if (!this.#table.seats.some((seat) => seat.actor === actor)) {
 			return {
 				message: "You do not hold a seat at this table.",
@@ -376,6 +402,25 @@ export class RoomHost {
 				throw new TypeError("Room creation event has no game id.");
 			}
 			this.#bind(payload.gameId);
+			return;
+		}
+		if (envelope.type === CORE_SEAT_CLAIMED) {
+			const payload = envelope.payload as Partial<SeatClaimedPayload>;
+			if (typeof payload.seatId !== "string") {
+				throw new TypeError("Seat claim event has no seat id.");
+			}
+			if (this.#table.seats.some((seat) => seat.id === payload.seatId)) {
+				throw new Error(`Log claims seat '${payload.seatId}' more than once.`);
+			}
+			if (this.#table.seats.some((seat) => seat.actor === envelope.actor)) {
+				throw new Error(
+					`Log gives actor '${envelope.actor}' more than one seat.`
+				);
+			}
+			(this.#table.seats as { actor: string; id: string }[]).push({
+				actor: envelope.actor,
+				id: payload.seatId,
+			});
 			return;
 		}
 		if (envelope.type.startsWith("core.")) {

@@ -1,4 +1,6 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- dual-lane suite; the harness picks bun:test or vitest at runtime. */
+import { generateKeyPairSync } from "node:crypto";
+
 import { openIrohEndpoint } from "../src/index.js";
 import type {
 	IrohEndpointOptions,
@@ -9,6 +11,22 @@ import { describe, expect, test } from "./harness.js";
 
 const text = new TextEncoder();
 const decode = new TextDecoder();
+
+const generateIdentity = (): {
+	readonly publicKeyHex: string;
+	readonly secretKeyHex: string;
+} => {
+	const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+	const publicJwk = publicKey.export({ format: "jwk" });
+	const privateJwk = privateKey.export({ format: "jwk" });
+	if (typeof publicJwk.x !== "string" || typeof privateJwk.d !== "string") {
+		throw new TypeError("Generated ed25519 key did not expose raw material.");
+	}
+	return {
+		publicKeyHex: Buffer.from(publicJwk.x, "base64url").toString("hex"),
+		secretKeyHex: Buffer.from(privateJwk.d, "base64url").toString("hex"),
+	};
+};
 
 const openPair = async (
 	options: IrohEndpointOptions
@@ -46,6 +64,33 @@ const closeAll = async (
 };
 
 describe("iroh transport", () => {
+	test("seeds endpoint identities and authenticates both peers", async () => {
+		const seededIdentity = generateIdentity();
+		const dialerIdentity = generateIdentity();
+		const seeded = await openIrohEndpoint({
+			routing: "direct",
+			secretKeyHex: seededIdentity.secretKeyHex,
+		});
+		const dialer = await openIrohEndpoint({
+			routing: "direct",
+			secretKeyHex: dialerIdentity.secretKeyHex,
+		});
+		try {
+			const [outbound, inbound] = await connectPair(dialer, seeded);
+			expect(outbound.remoteId).toBe(seededIdentity.publicKeyHex);
+			expect(inbound.remoteId).toBe(dialerIdentity.publicKeyHex);
+			await closeAll(outbound, inbound);
+		} finally {
+			await closeAll(dialer, seeded);
+		}
+	}, 30_000);
+
+	test("rejects malformed seeded endpoint identities", async () => {
+		await expect(
+			openIrohEndpoint({ secretKeyHex: "A".repeat(64) })
+		).rejects.toThrow("secretKeyHex must be 64 lowercase hex chars.");
+	});
+
 	test("connects two peers directly and exchanges framed messages", async () => {
 		const [first, second] = await openPair({ routing: "direct" });
 		try {

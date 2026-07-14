@@ -116,6 +116,7 @@ Exactly as ticket [014](../tickets/014-scope-tiers.md) resolved them:
 - **Two player doors, one client:** `ssh supervillain.app` is mandatory (zero-install is the pitch; the gateway is a stateless doorway — name registry + iroh proxy), and direct `supervillain join` over iroh also ships. Both are the same RoomStore-client seam.
 - **Gameplay floor:** neutral core (chat, dice, shared log, presence) + a thin Draw Steel module — power rolls with edges/banes, a DS-shaped initiative tracker, read-only stat blocks loaded from files. Proves the 006 seam with one real module. Draw Steel independence notice in-product from day one.
 - **Persistent:** rooms append JSONL to the campaign folder and resume after GM restart. No artifacts, publish, web, or key linking in v0; identity is key-as-account automatically.
+- **Seats are log-derived** _(correction 2026-07-14, surfaced by issue #8 — the definition said the core owns seats but never specified claiming)_: room creation claims the GM seat (`gm`) for the creating key; a joining key claims a seat on arrival (`core.seat-claimed`, seats named `player-N` in claim order); a key holds at most one seat per room, so reconnecting with the same key returns to the same seat, and claiming is idempotent. Seat events replay like everything else — a joiner's fold derives the same seating the host holds. Guest identity is the SSH door's concern (#9); the direct door always has a key. Before the gateway registry exists, the direct door's room-ref is the iroh ticket `create` prints — names arrive with #9.
 
 **v1 depth:** DS at **play-support depth only** — full sheet rendering, condition tracking, resource tracking (heroic resources, recoveries, surges), victory tallies. Character files are still authored outside the app. **No builder** (biggest scope trap, and the licensing-heaviest surface — held to v2).
 
@@ -139,6 +140,8 @@ packages/
                      # slots, focus routing, rejection feedback), token→ANSI resolution
   room-host/         # single-writer host: decide loop, JSONL persistence,
                      # in-process RoomStore adapter
+  room-wire/         # RoomStore wire protocol over the transport seam: codec,
+                     # serve half, iroh client adapter (correction — ADR-0002)
   transport-iroh/    # iroh endpoint behind the narrow transport seam
   session/           # transport-neutral session contract
   identity/          # ed25519 key-as-account primitives (SSH key ↔ NodeId)
