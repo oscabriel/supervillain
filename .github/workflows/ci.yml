@@ -3,6 +3,11 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
@@ -17,3 +22,30 @@ jobs:
       - run: bun run check
       - run: bun run depcruise
       - run: bun run test:conformance
+
+  # The full matrix uses costly macOS minutes and the public iroh relay network,
+  # so it runs only for main pushes and intentional manual dispatches.
+  dual-lane:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Run dual-lane suites with one network retry
+        run: |
+          bun run test:room-host && bun run test:transport-iroh || {
+            echo "::warning::dual-lane suites failed once; retrying"
+            bun run test:room-host && bun run test:transport-iroh
+          }
