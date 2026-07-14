@@ -1,0 +1,16 @@
+{
+  "name": "@supervillain/fake",
+  "version": "0.0.0",
+  "private": true,
+  "description": "fake game module conformance fixture",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}
