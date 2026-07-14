@@ -12,5 +12,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
+  },
+  "scripts": {
+    "test:bun": "bun test test",
+    "test:node": "vitest run"
+  },
+  "dependencies": {
+    "@number0/iroh": "1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "vitest": "^3.0.0"
   }
 }
