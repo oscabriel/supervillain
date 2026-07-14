@@ -1,3 +1,4 @@
+/* oxlint-disable unicorn/prefer-module -- bun build --compile needs a static bare require of the per-triple .node addon (ticket #11) */
 const iroh = require("@number0/iroh-linux-x64-gnu/iroh.linux-x64-gnu.node");
 
 const endpoint = await iroh.Endpoint.bind();

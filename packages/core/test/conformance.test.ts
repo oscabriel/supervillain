@@ -1,62 +1,81 @@
+/* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; the runner is the runtime claim. */
 import { describe, expect, test } from "bun:test";
-import type { Envelope, TableView } from "../src/index.js";
+
 import { decide } from "../../games/fake/src/authority.js";
-import { apply, init, type FakeEvent, type FakeState } from "../../games/fake/src/model.js";
+import { apply, init } from "../../games/fake/src/model.js";
+import type { FakeEvent, FakeState } from "../../games/fake/src/model.js";
+import type { Envelope, TableView } from "../src/index.js";
 
 const table: TableView = {
-  gmSeatId: "gm",
-  seats: [
-    { id: "gm", actor: "actor-gm" },
-    { id: "guest", actor: "actor-guest" },
-  ],
+	gmSeatId: "gm",
+	seats: [
+		{ actor: "actor-gm", id: "gm" },
+		{ actor: "actor-guest", id: "guest" },
+	],
 };
 
 describe("game module seam", () => {
-  test("interleaves core and module envelopes in one log with opaque game state", () => {
-    const log: Envelope[] = [
-      {
-        actor: "actor-gm",
-        seq: 1,
-        timestamp: "2026-01-01T00:00:00.000Z",
-        type: "core.room-created",
-        payload: { gameId: "fake" },
-      },
-      {
-        actor: "actor-gm",
-        seq: 2,
-        timestamp: "2026-01-01T00:00:01.000Z",
-        type: "fake.seat-observed",
-        payload: { seatId: "gm" },
-      },
-    ];
-    const roomState: { game: unknown } = { game: init() };
+	test("interleaves core and module envelopes in one log with opaque game state", () => {
+		const log: Envelope[] = [
+			{
+				actor: "actor-gm",
+				payload: { gameId: "fake" },
+				seq: 1,
+				timestamp: "2026-01-01T00:00:00.000Z",
+				type: "core.room-created",
+			},
+			{
+				actor: "actor-gm",
+				payload: { seatId: "gm" },
+				seq: 2,
+				timestamp: "2026-01-01T00:00:01.000Z",
+				type: "fake.seat-observed",
+			},
+		];
+		const roomState: { game: unknown } = { game: init() };
 
-    expect(log.map(({ type }) => type)).toEqual(["core.room-created", "fake.seat-observed"]);
-    expect(JSON.parse(JSON.stringify(roomState))).toEqual(roomState);
-  });
+		expect(log.map(({ type }) => type)).toEqual([
+			"core.room-created",
+			"fake.seat-observed",
+		]);
+		// oxlint-disable-next-line unicorn/prefer-structured-clone -- the JSON round-trip IS the conformance assertion: game state must survive JSON serialization
+		expect(JSON.parse(JSON.stringify(roomState))).toEqual(roomState);
+	});
 
-  test("init is deterministic and decide rejects, reads TableView, and emits multiple events", () => {
-    expect(init()).toEqual(init());
-    expect(decide(init(), { type: "fake.reject", reason: "not now" }, table)).toEqual({
-      rejected: true,
-      message: "not now",
-    });
-    expect(decide(init(), { type: "fake.visit", seatId: "missing" }, table)).toMatchObject({
-      rejected: true,
-    });
-    expect(decide(init(), { type: "fake.visit", seatId: "guest" }, table)).toEqual([
-      { type: "fake.seat-observed", seatId: "guest" },
-      { type: "fake.visit-counted", visits: 1 },
-    ]);
-  });
+	test("init is deterministic and decide rejects, reads TableView, and emits multiple events", () => {
+		expect(init()).toEqual(init());
+		expect(
+			decide(init(), { reason: "not now", type: "fake.reject" }, table)
+		).toEqual({
+			message: "not now",
+			rejected: true,
+		});
+		expect(
+			decide(init(), { seatId: "missing", type: "fake.visit" }, table)
+		).toMatchObject({
+			rejected: true,
+		});
+		expect(
+			decide(init(), { seatId: "guest", type: "fake.visit" }, table)
+		).toEqual([
+			{ seatId: "guest", type: "fake.seat-observed" },
+			{ type: "fake.visit-counted", visits: 1 },
+		]);
+	});
 
-  test("replay is byte-identical", () => {
-    const events: FakeEvent[] = [
-      { type: "fake.seat-observed", seatId: "guest" },
-      { type: "fake.visit-counted", visits: 1 },
-    ];
-    const replay = (): FakeState => events.reduce(apply, init());
+	test("replay is byte-identical", () => {
+		const events: FakeEvent[] = [
+			{ seatId: "guest", type: "fake.seat-observed" },
+			{ type: "fake.visit-counted", visits: 1 },
+		];
+		const replay = (): FakeState => {
+			let state = init();
+			for (const event of events) {
+				state = apply(state, event);
+			}
+			return state;
+		};
 
-    expect(JSON.stringify(replay())).toBe(JSON.stringify(replay()));
-  });
+		expect(JSON.stringify(replay())).toBe(JSON.stringify(replay()));
+	});
 });

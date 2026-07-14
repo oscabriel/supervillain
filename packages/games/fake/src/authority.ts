@@ -1,29 +1,33 @@
 import type { GameAuthority, Rejection, TableView } from "@supervillain/core";
 
-import { apply, init, type FakeCommand, type FakeEvent, type FakeState } from "./model.js";
+import { apply, init } from "./model.js";
+import type { FakeCommand, FakeEvent, FakeState } from "./model.js";
 
-export function decide(
-  state: Readonly<FakeState>,
-  command: FakeCommand,
-  table: TableView,
-): FakeEvent[] | Rejection {
-  if (command.type === "fake.reject") {
-    return { rejected: true, message: command.reason };
-  }
+export const decide = (
+	state: Readonly<FakeState>,
+	command: FakeCommand,
+	table: TableView
+): FakeEvent[] | Rejection => {
+	if (command.type === "fake.reject") {
+		return { message: command.reason, rejected: true };
+	}
 
-  const seat = table.seats.find(({ id }) => id === command.seatId);
-  if (seat === undefined) {
-    return { rejected: true, message: `No seat '${command.seatId}' exists at this table.` };
-  }
+	const seat = table.seats.find(({ id }) => id === command.seatId);
+	if (seat === undefined) {
+		return {
+			message: `No seat '${command.seatId}' exists at this table.`,
+			rejected: true,
+		};
+	}
 
-  return [
-    { type: "fake.seat-observed", seatId: seat.id },
-    { type: "fake.visit-counted", visits: state.visits + 1 },
-  ];
-}
+	return [
+		{ seatId: seat.id, type: "fake.seat-observed" },
+		{ type: "fake.visit-counted", visits: state.visits + 1 },
+	];
+};
 
 export const authority: GameAuthority<FakeState, FakeCommand, FakeEvent> = {
-  init,
-  decide,
-  apply,
+	apply,
+	decide,
+	init,
 };
