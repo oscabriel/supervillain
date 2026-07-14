@@ -35,11 +35,17 @@ module.exports = {
 		},
 		{
 			from: {
-				path: "^packages/(core|room-host|transport-iroh|session|identity)/|^packages/games/[^/]+/src/(model|authority|content)\\.ts$",
+				path: "^packages/(core|room-host|room-wire|transport-iroh|session|identity)/|^packages/games/[^/]+/src/(model|authority|content)\\.ts$",
 			},
 			name: "node-compat-is-platform-free",
 			severity: "error",
 			to: { path: "^(bun:|@opentui/)" },
+		},
+		{
+			from: { path: "^packages/room-wire/" },
+			name: "room-wire-never-imports-room-host",
+			severity: "error",
+			to: { path: "^packages/room-host/" },
 		},
 		{
 			from: { pathNot: "^apps/gateway/" },

@@ -6,6 +6,7 @@
 		{ "path": "packages/table" },
 		{ "path": "packages/room-host" },
 		{ "path": "packages/transport-iroh" },
+		{ "path": "packages/room-wire" },
 		{ "path": "packages/session" },
 		{ "path": "packages/identity" },
 		{ "path": "packages/games/draw-steel" },

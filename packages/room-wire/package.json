@@ -1,0 +1,28 @@
+{
+	"name": "@supervillain/room-wire",
+	"version": "0.0.0",
+	"private": true,
+	"description": "RoomStore wire protocol",
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"test:bun": "bun test test",
+		"test:node": "vitest run"
+	},
+	"dependencies": {
+		"@supervillain/core": "workspace:*",
+		"@supervillain/transport-iroh": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"vitest": "^3.2.4"
+	}
+}

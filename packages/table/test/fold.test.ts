@@ -1,7 +1,7 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-lane suite. */
 import { describe, expect, test } from "bun:test";
 
-import type { Envelope, TableView, ViewEntry } from "@supervillain/core";
+import type { Envelope, ViewEntry } from "@supervillain/core";
 
 import { createTableFold } from "../src/fold.js";
 
@@ -24,30 +24,46 @@ const entry: ViewEntry<State, unknown, Event> = {
 		}),
 	},
 };
-const table: TableView = {
-	gmSeatId: "gm",
-	seats: [{ actor: "actor-key-long", id: "gm" }],
-};
 const envelope = (
 	type: `${string}.${string}`,
 	payload: unknown,
-	actor = "actor-key-long"
-): Envelope => ({ actor, payload, seq: 1, timestamp: "now", type });
+	actor = "actor-key-long",
+	seq = 1
+): Envelope => ({ actor, payload, seq, timestamp: "now", type });
 
 describe("createTableFold", () => {
-	test("renders core room, chat and dice envelopes with seat labels", () => {
-		const fold = createTableFold(entry, table, "game");
+	test("derives seats, renders their feed line, and uses live actor labels", () => {
+		const fold = createTableFold(entry, "game");
+		expect(fold.table()).toEqual({ gmSeatId: "gm", seats: [] });
+		expect(
+			fold.apply(
+				envelope("core.seat-claimed", { seatId: "gm" }, "actor-key-long", 2)
+			)
+		).toEqual({
+			runs: [{ text: "gm joined the table", token: "muted" }],
+		});
+		expect(fold.table()).toEqual({
+			gmSeatId: "gm",
+			seats: [{ actor: "actor-key-long", id: "gm" }],
+		});
+		expect(fold.actorLabel("actor-key-long")).toBe("gm");
+		expect(
+			fold.apply(
+				envelope("core.chat-posted", { text: "hello" }, "actor-key-long", 3)
+			)
+		).toEqual({
+			runs: [
+				{ text: "gm: ", token: "accent" },
+				{ text: "hello", token: "primary" },
+			],
+		});
+	});
+
+	test("renders core room and dice envelopes", () => {
+		const fold = createTableFold(entry, "game");
 		expect(
 			fold.apply(envelope("core.room-created", { gameId: "game" }))
 		).toEqual({ runs: [{ text: "room created · game", token: "muted" }] });
-		expect(fold.apply(envelope("core.chat-posted", { text: "hello" }))).toEqual(
-			{
-				runs: [
-					{ text: "gm: ", token: "accent" },
-					{ text: "hello", token: "primary" },
-				],
-			}
-		);
 		expect(
 			fold.apply(
 				envelope("core.dice-rolled", {
@@ -59,7 +75,7 @@ describe("createTableFold", () => {
 			)
 		).toEqual({
 			runs: [
-				{ text: "gm", token: "accent" },
+				{ text: "actor-ke", token: "accent" },
 				{ text: " rolled 2d6+1 → 2, 5 = ", token: "primary" },
 				{ text: "8", token: "success" },
 			],
@@ -68,7 +84,7 @@ describe("createTableFold", () => {
 	});
 
 	test("applies game envelopes before rendering and shortens unknown actors", () => {
-		const fold = createTableFold(entry, table, "game");
+		const fold = createTableFold(entry, "game");
 		expect(
 			fold.apply(envelope("game.counted", { count: 3 }, "1234567890"))
 		).toEqual({ runs: [{ text: "game.counted:3", token: "primary" }] });

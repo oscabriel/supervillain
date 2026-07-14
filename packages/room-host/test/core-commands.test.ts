@@ -3,17 +3,13 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { HostRegistry, TableView } from "@supervillain/core";
+import type { HostRegistry } from "@supervillain/core";
 
 import { decide } from "../../games/fake/src/authority.js";
 import { apply, init } from "../../games/fake/src/model.js";
 import { RoomHost } from "../src/index.js";
 import { describe, expect, test } from "./harness.js";
 
-const table: TableView = {
-	gmSeatId: "gm",
-	seats: [{ actor: "gm-key", id: "gm" }],
-};
 const registry: HostRegistry = {
 	get: (id) =>
 		id === "fake"
@@ -34,7 +30,6 @@ const withHost = async (
 			gameId: "fake",
 			random,
 			registry,
-			table,
 		});
 		await run(host, folder);
 	} finally {
@@ -43,6 +38,52 @@ const withHost = async (
 };
 
 describe("RoomHost core commands", () => {
+	test("claims sequential seats and makes repeated claims idempotent", async () =>
+		withHost(async (host, folder) => {
+			const first = await host.submit({
+				actor: "player-one",
+				command: { type: "core.claim-seat" },
+			});
+			expect(first).toMatchObject({
+				accepted: true,
+				envelopes: [
+					{
+						actor: "player-one",
+						payload: { seatId: "player-1" },
+						seq: 3,
+						type: "core.seat-claimed",
+					},
+				],
+			});
+			expect(
+				await host.submit({
+					actor: "player-two",
+					command: { type: "core.claim-seat" },
+				})
+			).toMatchObject({
+				accepted: true,
+				envelopes: [{ payload: { seatId: "player-2" }, seq: 4 }],
+			});
+			expect(
+				await host.submit({
+					actor: "player-one",
+					command: { type: "core.claim-seat" },
+				})
+			).toEqual({ accepted: true, envelopes: [] });
+			expect(host.snapshot().table).toEqual({
+				gmSeatId: "gm",
+				seats: [
+					{ actor: "gm-key", id: "gm" },
+					{ actor: "player-one", id: "player-1" },
+					{ actor: "player-two", id: "player-2" },
+				],
+			});
+			const lines = (await readFile(path.join(folder, "events.jsonl"), "utf-8"))
+				.trim()
+				.split("\n");
+			expect(lines).toHaveLength(4);
+		}));
+
 	test("posts trimmed chat and validates messages and seats", async () =>
 		withHost(async (host) => {
 			expect(
@@ -158,19 +199,19 @@ describe("RoomHost core commands", () => {
 				campaignFolder: folder,
 				random: () => 0,
 				registry,
-				table,
 			});
 			const result = await reopened.submit({
 				actor: "gm-key",
 				command: { notation: "d6", type: "core.roll" },
 			});
-			expect(result).toMatchObject({ accepted: true, envelopes: [{ seq: 5 }] });
+			expect(result).toMatchObject({ accepted: true, envelopes: [{ seq: 6 }] });
 			const lines = (await readFile(path.join(folder, "events.jsonl"), "utf-8"))
 				.trim()
 				.split("\n")
 				.map(JSON.parse);
 			expect(lines.map((line) => line.type)).toEqual([
 				"core.room-created",
+				"core.seat-claimed",
 				"core.chat-posted",
 				"fake.seat-observed",
 				"fake.visit-counted",

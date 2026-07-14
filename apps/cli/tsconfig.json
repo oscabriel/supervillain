@@ -11,6 +11,8 @@
 		{ "path": "../../packages/games/fake" },
 		{ "path": "../../packages/identity" },
 		{ "path": "../../packages/room-host" },
+		{ "path": "../../packages/room-wire" },
+		{ "path": "../../packages/transport-iroh" },
 		{ "path": "../../packages/session" },
 		{ "path": "../../packages/table" }
 	]

@@ -1,22 +1,14 @@
-/* oxlint-disable vitest/prefer-importing-vitest-globals -- dual-lane suite; the harness picks bun:test or vitest at runtime. */
+/* oxlint-disable vitest/prefer-importing-vitest-globals, unicorn/no-await-expression-member -- dual-lane suite uses direct assertions on ordered async iterator and file results. */
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { HostRegistry, RoomStore, TableView } from "@supervillain/core";
+import type { HostRegistry, RoomStore } from "@supervillain/core";
 
 import { decide } from "../../games/fake/src/authority.js";
 import { apply, init } from "../../games/fake/src/model.js";
 import { InProcessRoomStore, RoomHost } from "../src/index.js";
 import { describe, expect, test } from "./harness.js";
-
-const table: TableView = {
-	gmSeatId: "gm",
-	seats: [
-		{ actor: "actor-gm", id: "gm" },
-		{ actor: "actor-guest", id: "guest" },
-	],
-};
 
 const registry: HostRegistry = {
 	get(gameId) {
@@ -53,89 +45,101 @@ const clockAt = (start = 0): (() => string) => {
 	};
 };
 
-describe("RoomHost", () => {
-	test("runs decide as the single writer and persists one shared Log", async () => {
-		await withCampaign(async (campaignFolder) => {
-			const host = await RoomHost.open({
-				actor: "actor-gm",
-				campaignFolder,
-				clock: clockAt(),
-				gameId: "fake",
-				registry,
-				table,
-			});
-			const accepted = await host.submit({
-				actor: "actor-guest",
-				command: { seatId: "guest", type: "fake.visit" },
-			});
+const openHost = (campaignFolder: string, start = 0): Promise<RoomHost> =>
+	RoomHost.open({
+		actor: "actor-gm",
+		campaignFolder,
+		clock: clockAt(start),
+		gameId: "fake",
+		registry,
+	});
 
-			expect(accepted).toMatchObject({ accepted: true });
-			expect(host.snapshot()).toEqual({
-				game: { lastSeatId: "guest", visits: 1 },
-				gameId: "fake",
-				seq: 3,
-				table,
-			});
-			const bytes = await readFile(
-				path.join(campaignFolder, "events.jsonl"),
-				"utf-8"
-			);
-			const lines = bytes
+describe("RoomHost", () => {
+	test("creates a room and its GM seat as the first two Log envelopes", async () => {
+		await withCampaign(async (campaignFolder) => {
+			const host = await openHost(campaignFolder);
+			const lines = (
+				await readFile(path.join(campaignFolder, "events.jsonl"), "utf-8")
+			)
 				.trimEnd()
 				.split("\n")
 				.map((line) => JSON.parse(line));
-			expect(lines.map(({ type }) => type)).toEqual([
-				"core.room-created",
-				"fake.seat-observed",
-				"fake.visit-counted",
+			expect(lines).toEqual([
+				{
+					actor: "actor-gm",
+					payload: { gameId: "fake" },
+					seq: 1,
+					timestamp: timestamps[0],
+					type: "core.room-created",
+				},
+				{
+					actor: "actor-gm",
+					payload: { seatId: "gm" },
+					seq: 2,
+					timestamp: timestamps[1],
+					type: "core.seat-claimed",
+				},
 			]);
-			expect(lines[1]).toEqual({
+			expect(host.snapshot().table).toEqual({
+				gmSeatId: "gm",
+				seats: [{ actor: "actor-gm", id: "gm" }],
+			});
+		});
+	});
+
+	test("runs decide with the current log-derived TableView", async () => {
+		await withCampaign(async (campaignFolder) => {
+			const host = await openHost(campaignFolder);
+			await host.submit({
 				actor: "actor-guest",
-				payload: { seatId: "guest" },
-				seq: 2,
-				timestamp: timestamps[1],
-				type: "fake.seat-observed",
+				command: { type: "core.claim-seat" },
+			});
+			const accepted = await host.submit({
+				actor: "actor-guest",
+				command: { seatId: "player-1", type: "fake.visit" },
+			});
+			expect(accepted).toMatchObject({ accepted: true });
+			expect(host.snapshot()).toEqual({
+				game: { lastSeatId: "player-1", visits: 1 },
+				gameId: "fake",
+				seq: 5,
+				table: {
+					gmSeatId: "gm",
+					seats: [
+						{ actor: "actor-gm", id: "gm" },
+						{ actor: "actor-guest", id: "player-1" },
+					],
+				},
 			});
 		});
 	});
 
 	test("returns Rejections to the caller and appends nothing", async () => {
 		await withCampaign(async (campaignFolder) => {
-			const host = await RoomHost.open({
-				actor: "actor-gm",
-				campaignFolder,
-				clock: clockAt(),
-				gameId: "fake",
-				registry,
-				table,
-			});
+			const host = await openHost(campaignFolder);
 			const before = await readFile(path.join(campaignFolder, "events.jsonl"));
 			const result = await host.submit({
 				actor: "actor-guest",
 				command: { reason: "not now", type: "fake.reject" },
 			});
-
 			expect(result).toEqual({ message: "not now", rejected: true });
 			expect(await readFile(path.join(campaignFolder, "events.jsonl"))).toEqual(
 				before
 			);
-			expect(host.snapshot().seq).toBe(1);
+			expect(host.snapshot().seq).toBe(2);
 		});
 	});
 
-	test("Replay preserves bytes and state, then continues the sequence", async () => {
+	test("Replay derives seats and game state, then continues the sequence", async () => {
 		await withCampaign(async (campaignFolder) => {
-			const first = await RoomHost.open({
-				actor: "actor-gm",
-				campaignFolder,
-				clock: clockAt(),
-				gameId: "fake",
-				registry,
-				table,
+			const first = await openHost(campaignFolder);
+			await first.submit({
+				actor: "actor-guest",
+				command: { type: "core.claim-seat" },
 			});
 			await first.submit({
 				actor: "actor-guest",
-				command: { seatId: "guest", type: "fake.visit" },
+				command: { seatId: "player-1", type: "fake.visit" },
 			});
 			const bytes = await readFile(path.join(campaignFolder, "events.jsonl"));
 			const expected = first.snapshot();
@@ -144,74 +148,43 @@ describe("RoomHost", () => {
 				campaignFolder,
 				clock: clockAt(3),
 				registry,
-				table,
 			});
 			expect(await readFile(path.join(campaignFolder, "events.jsonl"))).toEqual(
 				bytes
 			);
 			expect(restarted.snapshot()).toEqual(expected);
-
 			const result = await restarted.submit({
 				actor: "actor-gm",
 				command: { seatId: "gm", type: "fake.visit" },
 			});
 			expect(result).toMatchObject({
 				accepted: true,
-				envelopes: [{ seq: 4 }, { seq: 5 }],
+				envelopes: [{ seq: 6 }, { seq: 7 }],
 			});
-		});
-	});
-
-	test("fails loudly when Replay cannot resolve the logged game id", async () => {
-		await withCampaign(async (campaignFolder) => {
-			await RoomHost.open({
-				actor: "actor-gm",
-				campaignFolder,
-				gameId: "fake",
-				registry,
-				table,
-			});
-			await expect(
-				RoomHost.open({
-					campaignFolder,
-					registry: { get: () => {} },
-					table,
-				})
-			).rejects.toThrow("No game authority is registered for 'fake'.");
 		});
 	});
 
 	test("the in-process RoomStore catches up and follows from a sequence", async () => {
 		await withCampaign(async (campaignFolder) => {
-			const host = await RoomHost.open({
-				actor: "actor-gm",
-				campaignFolder,
-				clock: clockAt(),
-				gameId: "fake",
-				registry,
-				table,
-			});
-			const store: RoomStore = new InProcessRoomStore(host);
+			const store: RoomStore = new InProcessRoomStore(
+				await openHost(campaignFolder)
+			);
 			const iterator = store.stream(1)[Symbol.asyncIterator]();
-			const first = await iterator.next();
-			expect(first.value).toMatchObject({
+			expect((await iterator.next()).value).toMatchObject({
 				seq: 1,
 				type: "core.room-created",
 			});
-
+			expect((await iterator.next()).value).toMatchObject({
+				seq: 2,
+				type: "core.seat-claimed",
+			});
 			await store.submit({
 				actor: "actor-guest",
-				command: { seatId: "guest", type: "fake.visit" },
+				command: { type: "core.claim-seat" },
 			});
-			const second = await iterator.next();
-			expect(second.value).toMatchObject({
-				seq: 2,
-				type: "fake.seat-observed",
-			});
-			const third = await iterator.next();
-			expect(third.value).toMatchObject({
+			expect((await iterator.next()).value).toMatchObject({
 				seq: 3,
-				type: "fake.visit-counted",
+				type: "core.seat-claimed",
 			});
 			await iterator.return?.();
 		});

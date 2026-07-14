@@ -21,8 +21,10 @@
 		"@supervillain/fake": "workspace:*",
 		"@supervillain/identity": "workspace:*",
 		"@supervillain/room-host": "workspace:*",
+		"@supervillain/room-wire": "workspace:*",
 		"@supervillain/session": "workspace:*",
-		"@supervillain/table": "workspace:*"
+		"@supervillain/table": "workspace:*",
+		"@supervillain/transport-iroh": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^24.0.0"
