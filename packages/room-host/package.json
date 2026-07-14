@@ -13,7 +13,15 @@
       "import": "./dist/index.js"
     }
   },
+  "scripts": {
+    "test:bun": "bun test test",
+    "test:node": "vitest run"
+  },
   "dependencies": {
     "@supervillain/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "vitest": "^3.2.4"
   }
 }

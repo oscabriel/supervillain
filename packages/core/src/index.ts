@@ -34,6 +34,20 @@ export interface Rejection {
   readonly message: string;
 }
 
+export interface RoomCommand<C = unknown> {
+  readonly actor: string;
+  readonly command: C;
+}
+
+export type RoomSubmission =
+  | { readonly accepted: true; readonly envelopes: readonly Envelope[] }
+  | Rejection;
+
+export interface RoomStore<C = unknown> {
+  submit(command: RoomCommand<C>): Promise<RoomSubmission>;
+  stream(fromSeq: number): AsyncIterable<Envelope>;
+}
+
 export interface GameAuthority<S, C, E> {
   init(): S;
   decide(state: Readonly<S>, command: C, table: TableView): E[] | Rejection;
