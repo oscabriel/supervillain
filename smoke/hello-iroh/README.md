@@ -28,18 +28,17 @@ embeds and loads it successfully from `$bunfs`.
 
 The workflow builds on native runners, rather than cross-compiling native addons:
 
-| Triple      | Runner             | Entry point      | Published 1.0.0 artifact |
-| ----------- | ------------------ | ---------------- | ------------------------ |
-| linux-x64   | `ubuntu-latest`    | `linux-x64.ts`   | yes                      |
-| linux-arm64 | `ubuntu-24.04-arm` | `linux-arm64.ts` | yes                      |
-| macos-x64   | `macos-15-intel`   | `macos-x64.ts`   | **no**                   |
-| macos-arm64 | `macos-latest`     | `macos-arm64.ts` | yes                      |
+| Triple      | Runner             | Entry point      |
+| ----------- | ------------------ | ---------------- |
+| linux-x64   | `ubuntu-latest`    | `linux-x64.ts`   |
+| linux-arm64 | `ubuntu-24.04-arm` | `linux-arm64.ts` |
+| macos-arm64 | `macos-latest`     | `macos-arm64.ts` |
 
-The macOS x64 job is intentionally present and currently fails at build time:
-`@number0/iroh@1.0.0` neither lists nor publishes a matching 1.0.0 optional native
-package. npm only has an old `@number0/iroh-darwin-x64@0.22.1-test1`, which is not a
-valid substitute for the pinned 1.0.0 API. This is an upstream release-coverage
-blocker, not a runner-label workaround.
+macos-x64 is not in the matrix: `@number0/iroh@1.0.0` neither lists nor publishes a
+darwin-x64 native package (npm only has an old `@number0/iroh-darwin-x64@0.22.1-test1`,
+not a valid substitute for the pinned 1.0.0 API), and the triple was dropped from the
+v0 GM platform set — see `.agents/adr/0001-drop-macos-x64-from-v0-gm-platforms.md`. Do
+not substitute an older platform package for a missing same-version artifact.
 
 ## Adoption by `packages/transport-iroh`
 

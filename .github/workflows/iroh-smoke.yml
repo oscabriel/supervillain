@@ -21,9 +21,6 @@ jobs:
           - triple: linux-arm64
             runner: ubuntu-24.04-arm
             entry: linux-arm64.ts
-          - triple: macos-x64
-            runner: macos-15-intel
-            entry: macos-x64.ts
           - triple: macos-arm64
             runner: macos-latest
             entry: macos-arm64.ts

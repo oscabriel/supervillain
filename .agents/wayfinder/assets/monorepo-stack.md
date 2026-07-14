@@ -150,10 +150,14 @@ consistent with payload-derived replay.
   a dev/CI hedge and the gateway's option (our infra; also where v3 gateway-hosted
   rooms land), not a GM-shippable artifact. If Bun+iroh fails on GM machines, the
   shipping fallback is the archive shape, then the Rust sidecar rung.
-- **Platforms: v0 GM platforms are Linux + macOS, x64 + arm64 (four triples);
-  Windows GMs via WSL2.** Rationale is verification surface and audience priority,
-  *not* capability — OpenTUI ships win32-x64/win32-arm64 packages, so native Windows
-  is upstream-capable today. Named churn with a revisit trigger: a real Windows GM
+- **Platforms: v0 GM platforms are linux-x64, linux-arm64, macos-arm64 (three
+  triples); Windows GMs via WSL2.** macos-x64 was dropped from the original four-triple
+  set when the hello-iroh smoke surfaced that upstream publishes no darwin-x64 iroh
+  artifact ([ADR-0001](../../adr/0001-drop-macos-x64-from-v0-gm-platforms.md));
+  revisit trigger: a real Intel-Mac GM cohort plus a same-version artifact. For
+  Windows the rationale is verification surface and audience priority, *not*
+  capability — OpenTUI ships win32-x64/win32-arm64 packages, so native Windows is
+  upstream-capable today. Named churn with a revisit trigger: a real Windows GM
   cohort. Players are unaffected (any ssh client, any OS).
 - **Release mechanics:** build each triple on its native CI runner (the runners the
   iroh matrix already requires) rather than cross-compiling with embedded native

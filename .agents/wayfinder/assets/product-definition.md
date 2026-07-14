@@ -282,7 +282,10 @@ contract, never typed to ssh2. **No `apps/web` until v1.**
 **The CLI artifact:** a **compiled Bun binary** (`bun build --compile`) — "host your
 table from one file you downloaded." It statically imports the game packages, so DS's
 packaged content rides inside the binary and a GM's binary version pins their content
-version. Platforms: **Linux + macOS, x64 + arm64 (four triples)**; Windows GMs via WSL2
+version. Platforms: **linux-x64, linux-arm64, macos-arm64 (three triples)** — macos-x64
+was dropped from the original four-triple set when the hello-iroh smoke surfaced that
+upstream publishes no darwin-x64 iroh artifact
+([ADR-0001](../../adr/0001-drop-macos-x64-from-v0-gm-platforms.md)); Windows GMs via WSL2
 (named churn, revisit trigger: a real Windows GM cohort). Built per-triple on native CI
 runners; curl installer + checksums + macOS codesign from day one; GitHub releases at v0
 (brew/npm deferred). **Distribution invariant:** one file → one archive (binary + sidecar
@@ -310,7 +313,8 @@ Steel will. The lattice check is 015's acceptance test — it must hold host / g
 **The gate (milestone 1's exit criterion):** the **iroh CI matrix** —
 `transport-iroh` and `room-host` running the same spec files under **both Bun and Node**
 lanes, proving **two-peer direct connection, forced-relay, reconnect, and clean
-shutdown**, **cross-platform** (Linux + macOS, x64 + arm64). This dual-runner lane *is*
+shutdown**, **cross-platform** (linux-x64, linux-arm64, macos-arm64 — ADR-0001). This
+dual-runner lane *is*
 the 008 matrix and *is* milestone 1's gate per ticket 014. If Bun fails, the ladder is:
 Node room-host → Rust iroh sidecar — schedule risk, not existence risk.
 
@@ -370,6 +374,7 @@ Deferred by decision, not oversight — recorded so nothing looks forgotten.
 | Turborepo / task caching | tooling | when the graph actually hurts |
 | `export`/sync verbs | CLI | vN polish |
 | Windows-native CLI (drop WSL2) | CLI triples | trigger: real Windows GM cohort |
+| macos-x64 (Intel Mac) CLI | CLI triples | trigger: real Intel-Mac GM cohort + a darwin-x64 iroh artifact ([ADR-0001](../../adr/0001-drop-macos-x64-from-v0-gm-platforms.md)) |
 | brew tap / npm shim | CLI distribution | post-v0 |
 | Drizzle-or-similar ORM | web backend | attached to v1 web |
 
