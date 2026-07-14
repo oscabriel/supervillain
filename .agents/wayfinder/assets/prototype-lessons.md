@@ -10,7 +10,7 @@ Lessons retained from the scrapped SSH-table prototype. These are evidence and a
 - Lazy room loading must be single-flight. Concurrent first access previously produced split-brain in-memory stores; review found and fixed the race.
 - Adopt a guest identity into a key identity by appending a linking event rather than rewriting prior events. Historical attribution remains immutable while progress becomes reachable through the durable identity.
 
-*Sources: `/tmp/supervillain-handoff.md` (verified implementation and review findings); `opentui-ssh-vtt-plan.md` (event-log/reducer model and future RoomStore backend analysis).*
+_Sources: `/tmp/supervillain-handoff.md` (verified implementation and review findings); `opentui-ssh-vtt-plan.md` (event-log/reducer model and future RoomStore backend analysis)._
 
 ## OpenTUI gotchas
 
@@ -21,7 +21,7 @@ Lessons retained from the scrapped SSH-table prototype. These are evidence and a
 - Remote capability detection is conservative; design for exact ANSI-16 even if a local SSH renderer happens to emit truecolor.
 - A box title cannot independently color only part of its title.
 
-*Sources: `/tmp/supervillain-handoff.md`; `opentui-ssh-vtt-plan.md` (remote capability constraint).*
+_Sources: `/tmp/supervillain-handoff.md`; `opentui-ssh-vtt-plan.md` (remote capability constraint)._
 
 ## Verification technique that works
 
@@ -32,7 +32,7 @@ Lessons retained from the scrapped SSH-table prototype. These are evidence and a
 - Use a pyte-based PTY harness for screen assertions. Naively stripping ANSI sequences scrambles terminal cell updates.
 - Treat the JSONL log as the authoritative result: assert durable events first and rendered screen state second.
 
-*Source: `/tmp/supervillain-handoff.md` (end-to-end verification procedure).*
+_Source: `/tmp/supervillain-handoff.md` (end-to-end verification procedure)._
 
 ## Old-plan facts still true vs superseded
 
@@ -54,10 +54,10 @@ Lessons retained from the scrapped SSH-table prototype. These are evidence and a
 - The old guest-upgrade question is resolved: guest-to-key adoption is required, and cross-device key linking is launch-tier.
 - The old plan did not define the current business or web boundaries: core/self-hosting is free; paid hosting and browser access are later; launch has no payments or web accounts, and artifact sharing uses capability URLs.
 
-*Sources: `opentui-ssh-vtt-plan.md` (iroh and old scope analysis); `wayfinder/map.md` (current decisions and explicit deltas).*
+_Sources: `opentui-ssh-vtt-plan.md` (iroh and old scope analysis); `wayfinder/map.md` (current decisions and explicit deltas)._
 
 ## Process lessons
 
 Delegated implementation worked when workers owned strictly disjoint files, shared contracts were copied verbatim into briefs, and the head retained barrel/index edits, integration, review, and verification. This prevented conflicts without outsourcing architectural coherence.
 
-*Source: `/tmp/supervillain-handoff.md` (M1–M3 delegation retrospective).*
+_Source: `/tmp/supervillain-handoff.md` (M1–M3 delegation retrospective)._

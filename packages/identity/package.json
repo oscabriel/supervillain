@@ -1,16 +1,16 @@
 {
-  "name": "@supervillain/identity",
-  "version": "0.0.0",
-  "private": true,
-  "description": "key-as-account primitives",
-  "files": [
-    "dist"
-  ],
-  "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  }
+	"name": "@supervillain/identity",
+	"version": "0.0.0",
+	"private": true,
+	"description": "key-as-account primitives",
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	}
 }

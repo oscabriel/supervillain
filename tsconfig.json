@@ -1,16 +1,19 @@
 {
-  "files": [],
-  "references": [
-    { "path": "packages/config" },
-    { "path": "packages/core" },
-    { "path": "packages/table" },
-    { "path": "packages/room-host" },
-    { "path": "packages/transport-iroh" },
-    { "path": "packages/session" },
-    { "path": "packages/identity" },
-    { "path": "packages/games/draw-steel" },
-    { "path": "packages/games/fake" },
-    { "path": "apps/gateway" },
-    { "path": "apps/cli" }
-  ]
+	"files": [],
+	"references": [
+		{ "path": "packages/config" },
+		{ "path": "packages/core" },
+		{ "path": "packages/table" },
+		{ "path": "packages/room-host" },
+		{ "path": "packages/transport-iroh" },
+		{ "path": "packages/session" },
+		{ "path": "packages/identity" },
+		{ "path": "packages/games/draw-steel" },
+		{ "path": "packages/games/fake" },
+		{ "path": "apps/gateway" },
+		{ "path": "apps/cli" }
+	],
+	"compilerOptions": {
+		"strictNullChecks": true
+	}
 }

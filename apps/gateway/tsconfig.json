@@ -1,8 +1,9 @@
 {
-  "extends": "../../packages/config/tsconfig.base.json",
-  "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist"
-  },
-  "include": ["src/**/*.ts"]
+	"extends": "../../packages/config/tsconfig.base.json",
+	"compilerOptions": {
+		"rootDir": "src",
+		"outDir": "dist",
+		"strictNullChecks": true
+	},
+	"include": ["src/**/*.ts"]
 }

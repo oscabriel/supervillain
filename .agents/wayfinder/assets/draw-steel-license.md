@@ -4,7 +4,7 @@ Research checked 2026-07-11. This is a planning summary, not legal advice.
 
 ## Primary source and scope
 
-The controlling official page located is MCDM's [DRAW STEEL Creator License](https://www.mcdmproductions.com/draw-steel-creator-license) (canonical short link: <https://mcdm.gg/DS-license>), marked “Last Edit: June 9, 2026.” It says the license applies only to the named documents: *DRAW STEEL Backer Packet #1*, *Draw Steel Backer Packet #2*, *Draw Steel: Heroes*, *Draw Steel: Monsters*, *The Beastheart for Draw Steel*, and *The Summoner*.
+The controlling official page located is MCDM's [DRAW STEEL Creator License](https://www.mcdmproductions.com/draw-steel-creator-license) (canonical short link: <https://mcdm.gg/DS-license>), marked “Last Edit: June 9, 2026.” It says the license applies only to the named documents: _DRAW STEEL Backer Packet #1_, _Draw Steel Backer Packet #2_, _Draw Steel: Heroes_, _Draw Steel: Monsters_, _The Beastheart for Draw Steel_, and _The Summoner_.
 
 The page's FAQ makes that boundary explicit:
 
@@ -68,7 +68,7 @@ Contact MCDM at the address linked on the license page when the intended product
 
 - MCDM's logo or the main DRAW STEEL logo;
 - MCDM book artwork;
-- Draw Steel material from Patreon, *Arcadia*, or any other document not in the license's enumerated list;
+- Draw Steel material from Patreon, _Arcadia_, or any other document not in the license's enumerated list;
 - fonts, border treatments, backgrounds, or other visual trade dress for which the FAQ says there is currently no license coverage; or
 - an official, endorsed, sponsored, or otherwise specially licensed relationship.
 

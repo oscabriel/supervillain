@@ -1,22 +1,22 @@
 {
-  "name": "@supervillain/config",
-  "version": "0.0.0",
-  "private": true,
-  "description": "shared strict TypeScript configuration",
-  "files": [
-    "dist",
-    "tsconfig.base.json"
-  ],
-  "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./tsconfig.base.json": "./tsconfig.base.json"
-  },
-  "devDependencies": {
-    "dependency-cruiser": "18.1.0",
-    "typescript": "6.0.3"
-  }
+	"name": "@supervillain/config",
+	"version": "0.0.0",
+	"private": true,
+	"description": "shared strict TypeScript configuration",
+	"files": [
+		"dist",
+		"tsconfig.base.json"
+	],
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./tsconfig.base.json": "./tsconfig.base.json"
+	},
+	"devDependencies": {
+		"dependency-cruiser": "18.1.0",
+		"typescript": "6.0.3"
+	}
 }

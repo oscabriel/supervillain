@@ -1,8 +1,8 @@
 {
-  "name": "hello-iroh-smoke",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@number0/iroh": "1.0.0"
-  }
+	"name": "hello-iroh-smoke",
+	"private": true,
+	"type": "module",
+	"dependencies": {
+		"@number0/iroh": "1.0.0"
+	}
 }
