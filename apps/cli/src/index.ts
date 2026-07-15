@@ -27,16 +27,25 @@ import { apply as fakeApply, init as fakeInit } from "@supervillain/fake/model";
 import { view as fakeView } from "@supervillain/fake/view";
 import { loadOrCreateIdentity } from "@supervillain/identity";
 import { InProcessRoomStore, RoomHost } from "@supervillain/room-host";
-import { connectRoomStore, serveRoomStore } from "@supervillain/room-wire";
+import {
+	connectRoomStore,
+	isValidRoomName,
+	registerRoom,
+	serveRoomStore,
+} from "@supervillain/room-wire";
+import type { RegistrationReceipt } from "@supervillain/room-wire";
 import { attachLocalTty } from "@supervillain/session";
 import { runTable } from "@supervillain/table";
 import { openIrohEndpoint } from "@supervillain/transport-iroh";
 import type { TransportAddress } from "@supervillain/transport-iroh";
 
 const USAGE = `Usage:
-  supervillain create <campaign-folder> [--game <id>]
+  supervillain create <campaign-folder> [--game <id>] [--name <room> [--gateway <addr>]]
   supervillain join <room-ref>
-  supervillain publish`;
+  supervillain publish
+
+  --name registers the room at a gateway so players can ssh in; the gateway
+  address comes from --gateway or SUPERVILLAIN_GATEWAY.`;
 
 const hostRegistry: HostRegistry = {
 	get: (gameId) => {
@@ -136,7 +145,9 @@ const create = async (args: readonly string[]): Promise<number> => {
 			args: [...args],
 			options: {
 				game: { type: "string" },
+				gateway: { type: "string" },
 				help: { short: "h", type: "boolean" },
+				name: { type: "string" },
 			},
 		});
 	} catch (error) {
@@ -179,15 +190,57 @@ const create = async (args: readonly string[]): Promise<number> => {
 	const endpoint = await openIrohEndpoint({
 		secretKeyHex: identity.secretKeyHex,
 	});
+	const roomName = parsed.values.name;
+	let receipt: RegistrationReceipt | undefined;
+	if (typeof roomName === "string") {
+		if (!isValidRoomName(roomName)) {
+			console.error(
+				"Room names are 1-32 lowercase letters, digits, and hyphens."
+			);
+			await endpoint.close();
+			return 1;
+		}
+		const gatewayAddress =
+			typeof parsed.values.gateway === "string"
+				? parsed.values.gateway
+				: process.env.SUPERVILLAIN_GATEWAY;
+		if (gatewayAddress === undefined) {
+			console.error(
+				"--name needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY."
+			);
+			await endpoint.close();
+			return 1;
+		}
+		try {
+			receipt = await registerRoom(
+				endpoint,
+				gatewayAddress as TransportAddress,
+				{ address: endpoint.address, name: roomName }
+			);
+		} catch (error) {
+			console.error(
+				error instanceof Error
+					? error.message
+					: "Could not register the room at the gateway."
+			);
+			await endpoint.close();
+			return 1;
+		}
+	}
 	const server = serveRoomStore(endpoint, store, {
 		info: { gameId, label: roomLabel },
+		trustedStampers: receipt === undefined ? undefined : [receipt.gatewayId],
 	});
 	await writeFile(
 		path.join(campaignFolder, "door.txt"),
 		`${endpoint.address}\n`
 	);
+	const sshDoor =
+		receipt === undefined || typeof roomName !== "string"
+			? ""
+			: `  ssh ${receipt.sshPort === 22 ? "" : `-p ${receipt.sshPort} `}${roomName}@${receipt.sshHost}\n`;
 	process.stdout.write(
-		`your table is live. summon your players:\n\n  supervillain join ${endpoint.address}\n\n`
+		`your table is live. summon your players:\n\n  supervillain join ${endpoint.address}\n${sshDoor}\n`
 	);
 	await runIntake(campaignFolder, gameId, actor, store);
 	const session = attachLocalTty({ actor });

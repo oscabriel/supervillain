@@ -3,7 +3,17 @@
 	"compilerOptions": {
 		"rootDir": "src",
 		"outDir": "dist",
-		"strictNullChecks": true
+		"strictNullChecks": true,
+		"types": ["node"]
 	},
-	"include": ["src/**/*.ts"]
+	"include": ["src/**/*.ts"],
+	"references": [
+		{ "path": "../../packages/core" },
+		{ "path": "../../packages/games/fake" },
+		{ "path": "../../packages/identity" },
+		{ "path": "../../packages/room-wire" },
+		{ "path": "../../packages/transport-iroh" },
+		{ "path": "../../packages/session" },
+		{ "path": "../../packages/table" }
+	]
 }

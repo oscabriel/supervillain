@@ -26,6 +26,8 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Capability URL**: An unguessable share link that _is_ the permission for a published web artifact; revocable by the owner. The web access model at launch — no web accounts. _Avoid_: share token, public link, permalink
 
+**Trusted stamper**: A connection identity a room host allows to submit commands on behalf of other actors — in v0, exactly the gateway the GM registered with. Everyone else remains bound to connection-equals-actor (ADR-0002/0004). _Avoid_: proxy auth, impersonation, service account
+
 ## Events & authority
 
 **Envelope**: The core-defined wrapper on every event: actor, seq, timestamp, namespaced type, payload. The core's forever-promise; payload schema versioning is the module's problem. _Avoid_: event header, wrapper, message format
