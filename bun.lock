@@ -37,6 +37,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@supervillain/core": "workspace:*",
+        "@supervillain/draw-steel": "workspace:*",
         "@supervillain/fake": "workspace:*",
         "@supervillain/identity": "workspace:*",
         "@supervillain/room-wire": "workspace:*",

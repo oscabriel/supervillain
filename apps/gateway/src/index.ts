@@ -4,8 +4,13 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import type { GatewayRegistry } from "@supervillain/core";
-import { apply, init } from "@supervillain/fake/model";
-import { view } from "@supervillain/fake/view";
+import {
+	apply as drawSteelApply,
+	init as drawSteelInit,
+} from "@supervillain/draw-steel/model";
+import { view as drawSteelView } from "@supervillain/draw-steel/view";
+import { apply as fakeApply, init as fakeInit } from "@supervillain/fake/model";
+import { view as fakeView } from "@supervillain/fake/view";
 import {
 	actorFromSshEd25519Blob,
 	loadOrCreateIdentity,
@@ -35,8 +40,20 @@ const AUTH_METHODS: AuthenticationType[] = [
 ];
 
 const gatewayRegistry: GatewayRegistry = {
-	get: (gameId) =>
-		gameId === "fake" ? ({ model: { apply, init }, view } as never) : undefined,
+	get: (gameId) => {
+		if (gameId === "fake") {
+			return {
+				model: { apply: fakeApply, init: fakeInit },
+				view: fakeView,
+			} as never;
+		}
+		return gameId === "draw-steel"
+			? ({
+					model: { apply: drawSteelApply, init: drawSteelInit },
+					view: drawSteelView,
+				} as never)
+			: undefined;
+	},
 };
 
 export interface GatewayOptions {
