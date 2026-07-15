@@ -12,6 +12,8 @@ import type {
 	TransportEndpoint,
 } from "./seam.js";
 
+export { provideIrohNative } from "./native.js";
+export type { IrohNative } from "./native.js";
 export type {
 	IrohEndpointOptions,
 	TransportAddress,

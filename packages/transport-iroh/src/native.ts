@@ -2,18 +2,25 @@ import { createRequire } from "node:module";
 
 import type * as Iroh from "@number0/iroh";
 
-const workspaceRequire = createRequire(import.meta.url);
-const require = createRequire(
-	workspaceRequire.resolve("@number0/iroh/package.json")
-);
+export type IrohNative = typeof Iroh;
 
-type IrohNative = typeof Iroh;
+let providedNative: IrohNative | undefined;
 
-/**
- * Loads the native addon directly instead of using napi-rs's runtime platform loader.
- * Ticket #11 will finalize per-triple static entry selection for `bun build --compile`.
- */
+export const provideIrohNative = (native: IrohNative): void => {
+	providedNative = native;
+};
+
+/** Loads the provided addon or the native addon for the current platform. */
 export const loadIrohNative = (): IrohNative => {
+	if (providedNative !== undefined) {
+		return providedNative;
+	}
+
+	const workspaceRequire = createRequire(import.meta.url);
+	const require = createRequire(
+		workspaceRequire.resolve("@number0/iroh/package.json")
+	);
+
 	if (process.platform === "linux" && process.arch === "x64") {
 		return require("@number0/iroh-linux-x64-gnu/iroh.linux-x64-gnu.node") as IrohNative;
 	}

@@ -47,14 +47,15 @@ const spawnPty = (
 	transcript: string
 ): Bun.Subprocess => {
 	const cli = path.resolve(import.meta.dir, "../dist/index.js");
-	const command = `stty cols 100 rows 30; env XDG_CONFIG_HOME=${quote(config)} bun ${quote(cli)} ${args}`;
-	const process = Bun.spawn(["script", "-qec", command, transcript], {
+	const cliCommand = process.env.SUPERVILLAIN_CLI ?? `bun ${quote(cli)}`;
+	const command = `stty cols 100 rows 30; env XDG_CONFIG_HOME=${quote(config)} ${cliCommand} ${args}`;
+	const childProcess = Bun.spawn(["script", "-qec", command, transcript], {
 		stderr: "ignore",
 		stdin: "pipe",
 		stdout: "ignore",
 	});
-	processes.push(process);
-	return process;
+	processes.push(childProcess);
+	return childProcess;
 };
 
 const readEvents = async (file: string): Promise<unknown[] | undefined> => {
