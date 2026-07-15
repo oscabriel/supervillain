@@ -28,6 +28,7 @@ jobs:
       - run: bun run test:table
       - run: bun run test:cli
       - run: bun run test:gateway
+      - run: bun run test:install
 
   # The full matrix uses costly macOS minutes and the public iroh relay network,
   # so it runs only for main pushes and intentional manual dispatches.
