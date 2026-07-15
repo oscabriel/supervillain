@@ -4,9 +4,11 @@ import { describe, expect, test } from "bun:test";
 import { decide } from "../../games/fake/src/authority.js";
 import { apply, init } from "../../games/fake/src/model.js";
 import type { FakeEvent, FakeState } from "../../games/fake/src/model.js";
+import { view } from "../../games/fake/src/view.js";
 import type { Envelope, TableView } from "../src/index.js";
 
 const table: TableView = {
+	actor: "actor-guest",
 	gmSeatId: "gm",
 	seats: [
 		{ actor: "actor-gm", id: "gm" },
@@ -61,6 +63,23 @@ describe("game module seam", () => {
 			{ seatId: "guest", type: "fake.seat-observed" },
 			{ type: "fake.visit-counted", visits: 1 },
 		]);
+	});
+
+	test("panels render arrays and dispatch through their input", () => {
+		const [panel] = view.panels;
+		expect(panel).toBeDefined();
+		if (panel === undefined) {
+			return;
+		}
+		const dispatched: unknown[] = [];
+		const input = {
+			dispatch: (command: unknown) => dispatched.push(command),
+			state: init(),
+			table,
+		};
+		expect(panel.render(input)).toBeArray();
+		expect(panel.onKey?.({ name: "v", text: "v" }, input)).toBe(true);
+		expect(dispatched).toEqual([{ seatId: "guest", type: "fake.visit" }]);
 	});
 
 	test("replay is byte-identical", () => {

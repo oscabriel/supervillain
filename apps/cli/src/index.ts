@@ -1,13 +1,30 @@
 #!/usr/bin/env bun
-import { writeFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
-import type { GatewayRegistry, HostRegistry } from "@supervillain/core";
-import { decide } from "@supervillain/fake/authority";
-import { apply, init } from "@supervillain/fake/model";
-import { view } from "@supervillain/fake/view";
+import type {
+	GameContent,
+	GatewayRegistry,
+	HostRegistry,
+	RoomStore,
+} from "@supervillain/core";
+import { decide as drawSteelDecide } from "@supervillain/draw-steel/authority";
+import {
+	content as drawSteelContent,
+	intake as drawSteelIntake,
+} from "@supervillain/draw-steel/content";
+import {
+	apply as drawSteelApply,
+	init as drawSteelInit,
+} from "@supervillain/draw-steel/model";
+import { view as drawSteelView } from "@supervillain/draw-steel/view";
+import { decide as fakeDecide } from "@supervillain/fake/authority";
+import { content as fakeContent } from "@supervillain/fake/content";
+import { apply as fakeApply, init as fakeInit } from "@supervillain/fake/model";
+import { view as fakeView } from "@supervillain/fake/view";
 import { loadOrCreateIdentity } from "@supervillain/identity";
 import { InProcessRoomStore, RoomHost } from "@supervillain/room-host";
 import { connectRoomStore, serveRoomStore } from "@supervillain/room-wire";
@@ -22,14 +39,93 @@ const USAGE = `Usage:
   supervillain publish`;
 
 const hostRegistry: HostRegistry = {
-	get: (gameId) =>
-		gameId === "fake"
-			? ({ authority: { decide }, model: { apply, init } } as never)
-			: undefined,
+	get: (gameId) => {
+		if (gameId === "fake") {
+			return {
+				authority: { decide: fakeDecide },
+				model: { apply: fakeApply, init: fakeInit },
+			} as never;
+		}
+		return gameId === "draw-steel"
+			? ({
+					authority: { decide: drawSteelDecide },
+					model: { apply: drawSteelApply, init: drawSteelInit },
+				} as never)
+			: undefined;
+	},
 };
 const gatewayRegistry: GatewayRegistry = {
-	get: (gameId) =>
-		gameId === "fake" ? ({ model: { apply, init }, view } as never) : undefined,
+	get: (gameId) => {
+		if (gameId === "fake") {
+			return {
+				model: { apply: fakeApply, init: fakeInit },
+				view: fakeView,
+			} as never;
+		}
+		return gameId === "draw-steel"
+			? ({
+					model: { apply: drawSteelApply, init: drawSteelInit },
+					view: drawSteelView,
+				} as never)
+			: undefined;
+	},
+};
+
+interface Intake {
+	readonly directory: string;
+	readonly command: (fileName: string, text: string) => unknown;
+}
+
+interface RegisteredContent extends GameContent {
+	readonly intake?: Intake;
+}
+
+const contentRegistry = new Map<string, RegisteredContent>([
+	["fake", fakeContent],
+	["draw-steel", { ...drawSteelContent, intake: drawSteelIntake }],
+]);
+
+const isNodeError = (
+	error: unknown
+): error is Error & { readonly code: string } =>
+	error instanceof Error && "code" in error && typeof error.code === "string";
+
+const runIntake = async (
+	campaignFolder: string,
+	gameId: string,
+	actor: string,
+	store: RoomStore
+): Promise<void> => {
+	const intake = contentRegistry.get(gameId)?.intake;
+	if (intake === undefined) {
+		return;
+	}
+	const directory = path.join(campaignFolder, intake.directory);
+	let entries: Dirent<string>[];
+	try {
+		entries = await readdir(directory, { withFileTypes: true });
+	} catch (error) {
+		if (isNodeError(error) && error.code === "ENOENT") {
+			return;
+		}
+		throw error;
+	}
+	const fileNames = entries
+		.filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+		.map((entry) => entry.name)
+		.toSorted();
+	for (const fileName of fileNames) {
+		// oxlint-disable-next-line eslint/no-await-in-loop -- deterministic intake must submit sorted files in order.
+		const text = await readFile(path.join(directory, fileName), "utf-8");
+		// oxlint-disable-next-line eslint/no-await-in-loop -- each file's event must be durably ordered before the next.
+		const result = await store.submit({
+			actor,
+			command: intake.command(fileName, text),
+		});
+		if ("rejected" in result) {
+			console.error(`${fileName}: ${result.message}`);
+		}
+	}
 };
 
 const create = async (args: readonly string[]): Promise<number> => {
@@ -59,9 +155,8 @@ const create = async (args: readonly string[]): Promise<number> => {
 		console.error("create requires one campaign folder.");
 		return 1;
 	}
-	// Issue #10 flips the default to draw-steel.
 	const gameId =
-		typeof parsed.values.game === "string" ? parsed.values.game : "fake";
+		typeof parsed.values.game === "string" ? parsed.values.game : "draw-steel";
 	const entry = gatewayRegistry.get(gameId);
 	if (hostRegistry.get(gameId) === undefined || entry === undefined) {
 		console.error(`Unknown game '${gameId}'.`);
@@ -94,6 +189,7 @@ const create = async (args: readonly string[]): Promise<number> => {
 	process.stdout.write(
 		`your table is live. summon your players:\n\n  supervillain join ${endpoint.address}\n\n`
 	);
+	await runIntake(campaignFolder, gameId, actor, store);
 	const session = attachLocalTty({ actor });
 	await runTable({ entry, gameId, roomLabel, session, store });
 	await server.close();

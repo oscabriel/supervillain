@@ -33,8 +33,12 @@ const envelope = (
 
 describe("createTableFold", () => {
 	test("derives seats, renders their feed line, and uses live actor labels", () => {
-		const fold = createTableFold(entry, "game");
-		expect(fold.table()).toEqual({ gmSeatId: "gm", seats: [] });
+		const fold = createTableFold(entry, "game", "viewer-key");
+		expect(fold.table()).toEqual({
+			actor: "viewer-key",
+			gmSeatId: "gm",
+			seats: [],
+		});
 		expect(
 			fold.apply(
 				envelope("core.seat-claimed", { seatId: "gm" }, "actor-key-long", 2)
@@ -43,6 +47,7 @@ describe("createTableFold", () => {
 			runs: [{ text: "gm joined the table", token: "muted" }],
 		});
 		expect(fold.table()).toEqual({
+			actor: "viewer-key",
 			gmSeatId: "gm",
 			seats: [{ actor: "actor-key-long", id: "gm" }],
 		});
@@ -60,7 +65,7 @@ describe("createTableFold", () => {
 	});
 
 	test("renders core room and dice envelopes", () => {
-		const fold = createTableFold(entry, "game");
+		const fold = createTableFold(entry, "game", "viewer-key");
 		expect(
 			fold.apply(envelope("core.room-created", { gameId: "game" }))
 		).toEqual({ runs: [{ text: "room created · game", token: "muted" }] });
@@ -84,7 +89,7 @@ describe("createTableFold", () => {
 	});
 
 	test("applies game envelopes before rendering and shortens unknown actors", () => {
-		const fold = createTableFold(entry, "game");
+		const fold = createTableFold(entry, "game", "viewer-key");
 		expect(
 			fold.apply(envelope("game.counted", { count: 3 }, "1234567890"))
 		).toEqual({ runs: [{ text: "game.counted:3", token: "primary" }] });

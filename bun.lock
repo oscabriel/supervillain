@@ -19,6 +19,7 @@
       },
       "dependencies": {
         "@supervillain/core": "workspace:*",
+        "@supervillain/draw-steel": "workspace:*",
         "@supervillain/fake": "workspace:*",
         "@supervillain/identity": "workspace:*",
         "@supervillain/room-host": "workspace:*",
@@ -50,6 +51,9 @@
     "packages/games/draw-steel": {
       "name": "@supervillain/draw-steel",
       "version": "0.0.0",
+      "dependencies": {
+        "@supervillain/core": "workspace:*",
+      },
     },
     "packages/games/fake": {
       "name": "@supervillain/fake",

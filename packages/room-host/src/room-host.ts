@@ -91,7 +91,7 @@ const isNodeError = (
 export class RoomHost {
 	readonly #logPath: string;
 	readonly #registry: HostRegistry;
-	readonly #table: TableView = { gmSeatId: "gm", seats: [] };
+	readonly #table: TableView = { actor: "", gmSeatId: "gm", seats: [] };
 	readonly #clock: () => string;
 	readonly #random: () => number;
 	readonly #envelopes: Envelope[] = [];
@@ -254,7 +254,10 @@ export class RoomHost {
 			command: unknown,
 			table: TableView
 		) => unknown[] | Rejection;
-		const decided = decide(this.#game, command, this.#table);
+		const decided = decide(this.#game, command, {
+			...this.#table,
+			actor,
+		});
 		if (isRejection(decided)) {
 			return decided;
 		}
@@ -262,8 +265,8 @@ export class RoomHost {
 		const envelopes: Envelope[] = [];
 		for (const event of decided) {
 			const { type, payload } = splitEvent(event);
-			if (!type.startsWith(`${this.#gameId}.`)) {
-				throw new Error(`Game '${this.#gameId}' emitted event '${type}'.`);
+			if (type.startsWith("core.")) {
+				throw new Error(`Game '${this.#gameId}' emitted core event '${type}'.`);
 			}
 			envelopes.push({
 				actor,
@@ -428,11 +431,6 @@ export class RoomHost {
 		}
 		if (this.#authority === undefined || this.#gameId === undefined) {
 			throw new Error("Game event appears before room creation.");
-		}
-		if (!envelope.type.startsWith(`${this.#gameId}.`)) {
-			throw new Error(
-				`Log contains event '${envelope.type}' for room game '${this.#gameId}'.`
-			);
 		}
 		const apply = this.#authority.model.apply as (
 			state: unknown,

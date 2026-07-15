@@ -8,9 +8,12 @@ import {
 	StyledText,
 	TextRenderable,
 } from "@opentui/core";
-import type { TextChunk } from "@opentui/core";
+import type { KeyEvent, TextChunk } from "@opentui/core";
 import type {
 	FeedLine,
+	GamePanel,
+	GamePanelInput,
+	PanelKey,
 	RoomSubmission,
 	TableView,
 	ViewEntry,
@@ -34,6 +37,35 @@ export const formatSeatList = (table: TableView, actor: string): string =>
 	table.seats
 		.map((seat) => `${seat.actor === actor ? "●" : "○"} ${seat.id}`)
 		.join("\n");
+
+const CONTROL_CHARACTER = /\p{C}/u;
+
+export const adaptPanelKey = (
+	key: Pick<KeyEvent, "ctrl" | "meta" | "name" | "sequence">
+): PanelKey => {
+	const characters = [...key.sequence];
+	const printable =
+		!key.ctrl &&
+		!key.meta &&
+		characters.length === 1 &&
+		!CONTROL_CHARACTER.test(key.sequence);
+	return printable
+		? { name: key.name.toLowerCase(), text: key.sequence }
+		: { name: key.name.toLowerCase() };
+};
+
+export const nextPanelFocus = (current: number, count: number): number =>
+	count === 0 || current >= count - 1 ? -1 : current + 1;
+
+export const forwardPanelKey = <S, C>(
+	key: PanelKey,
+	panel: GamePanel<S, C>,
+	input: GamePanelInput<S, C>
+): boolean => panel.onKey?.(key, input) ?? false;
+
+export const initialFeedLines = (
+	notices: readonly FeedLine[] | undefined
+): FeedLine[] => [...(notices ?? [])];
 
 const feedContent = (lines: readonly FeedLine[]): StyledText => {
 	const chunks: TextChunk[] = [];
@@ -63,9 +95,10 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	});
 	const fold = createTableFold(
 		options.entry as ViewEntry<unknown, unknown, unknown>,
-		options.gameId
+		options.gameId,
+		options.session.actor
 	);
-	const lines: FeedLine[] = [];
+	const lines = initialFeedLines(options.entry.view.notices);
 	const root = new BoxRenderable(renderer, {
 		flexDirection: "column",
 		height: "100%",
@@ -115,42 +148,59 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	root.add(input);
 	renderer.root.add(root);
 
-	const showConnectionLost = (): void => {
-		status.fg = resolveThemeToken("danger");
-		status.content = "Connection lost. The command was not delivered.";
+	let focusedPanelIndex = -1;
+	let idleStatusContent = "";
+	let idleStatusToken: "danger" | "muted" = "muted";
+	const interactivePanels = options.entry.view.panels.filter(
+		(panel) => panel.onKey !== undefined
+	);
+	const renderStatus = (): void => {
+		const focused = interactivePanels[focusedPanelIndex];
+		status.fg = resolveThemeToken(focused ? "muted" : idleStatusToken);
+		status.content = focused
+			? `panel: ${focused.id} — Esc to return`
+			: idleStatusContent;
 	};
-	const renderSidebar = (): void => {
-		const table = fold.table();
-		const seats = formatSeatList(table, options.session.actor);
-		const panelLines = options.entry.view.panels
-			.map((panel) =>
-				panel.render({
-					dispatch: (command: unknown) => {
-						void options.store
-							.submit({
-								actor: options.session.actor,
-								command,
-							})
-							.catch(showConnectionLost);
-					},
-					state: fold.state(),
-					table,
+	const showConnectionLost = (): void => {
+		idleStatusToken = "danger";
+		idleStatusContent = "Connection lost. The command was not delivered.";
+		renderStatus();
+	};
+	const showSubmission = (result: RoomSubmission): void => {
+		if ("rejected" in result) {
+			idleStatusToken = "danger";
+			idleStatusContent = result.message;
+		} else {
+			idleStatusContent = "";
+		}
+		renderStatus();
+	};
+	const panelInput = (): GamePanelInput<unknown, unknown> => ({
+		dispatch: (command: unknown) => {
+			void options.store
+				.submit({
+					actor: options.session.actor,
+					command,
 				})
-			)
-			.map((line) => line.runs.map((run) => run.text).join(""));
+				.then(showSubmission)
+				.catch(showConnectionLost);
+		},
+		state: fold.state(),
+		table: fold.table(),
+	});
+	const renderSidebar = (): void => {
+		const inputForPanels = panelInput();
+		const seats = formatSeatList(inputForPanels.table, options.session.actor);
+		const panelLines = options.entry.view.panels.flatMap((panel) =>
+			panel
+				.render(inputForPanels)
+				.map((line) => line.runs.map((run) => run.text).join(""))
+		);
 		sidebarText.content = ["Seats", seats, "", ...panelLines].join("\n");
 	};
 	const teardown = (): void => {
 		if (!renderer.isDestroyed) {
 			renderer.destroy();
-		}
-	};
-	const showSubmission = (result: RoomSubmission): void => {
-		if ("rejected" in result) {
-			status.fg = resolveThemeToken("danger");
-			status.content = result.message;
-		} else {
-			status.content = "";
 		}
 	};
 	const submitInput = async (value: unknown): Promise<void> => {
@@ -167,8 +217,9 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			return;
 		}
 		if (parsed.kind === "unknown-command") {
-			status.fg = resolveThemeToken("muted");
-			status.content = `Unknown command '${parsed.command}'.`;
+			idleStatusToken = "muted";
+			idleStatusContent = `Unknown command '${parsed.command}'.`;
+			renderStatus();
 			return;
 		}
 		if (parsed.kind === "empty") {
@@ -191,10 +242,50 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	input.on(InputRenderableEvents.ENTER, (value: unknown) => {
 		void submitInput(value);
 	});
+	const focusInput = (): void => {
+		focusedPanelIndex = -1;
+		input.focus();
+		renderStatus();
+	};
+	renderer.keyInput.on("keypress", (key: KeyEvent) => {
+		if (key.name === "tab") {
+			key.preventDefault();
+			key.stopPropagation();
+			focusedPanelIndex = nextPanelFocus(
+				focusedPanelIndex,
+				interactivePanels.length
+			);
+			if (focusedPanelIndex === -1) {
+				input.focus();
+			} else {
+				input.blur();
+			}
+			renderStatus();
+			renderSidebar();
+			return;
+		}
+		if (focusedPanelIndex === -1) {
+			return;
+		}
+		key.preventDefault();
+		key.stopPropagation();
+		if (key.name === "escape") {
+			focusInput();
+			return;
+		}
+		const panel = interactivePanels[focusedPanelIndex];
+		if (
+			panel !== undefined &&
+			forwardPanelKey(adaptPanelKey(key), panel, panelInput())
+		) {
+			renderSidebar();
+		}
+	});
 	const unsubscribeResize = options.session.onResize(({ columns, rows }) =>
 		renderer.resize(columns, rows)
 	);
 	const unsubscribeClose = options.session.onClose(teardown);
+	feedText.content = feedContent(lines);
 	renderSidebar();
 	input.focus();
 	renderer.start();

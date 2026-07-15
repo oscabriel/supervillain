@@ -7,10 +7,24 @@ export const view: GameView<FakeState, FakeCommand, FakeEvent> = {
 	panels: [
 		{
 			id: "fake-visits",
+			onKey(key, input) {
+				if (key.name !== "v") {
+					return false;
+				}
+				const seat = input.table.seats.find(
+					(candidate) => candidate.actor === input.table.actor
+				);
+				if (seat !== undefined) {
+					input.dispatch({ seatId: seat.id, type: "fake.visit" });
+				}
+				return true;
+			},
 			render({ state }) {
-				return {
-					runs: [{ text: `Visits: ${state.visits}`, token: "primary" }],
-				};
+				return [
+					{
+						runs: [{ text: `Visits: ${state.visits}`, token: "primary" }],
+					},
+				];
 			},
 			slot: "sidebar",
 		},

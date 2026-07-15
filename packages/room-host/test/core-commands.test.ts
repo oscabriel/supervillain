@@ -71,6 +71,7 @@ describe("RoomHost core commands", () => {
 				})
 			).toEqual({ accepted: true, envelopes: [] });
 			expect(host.snapshot().table).toEqual({
+				actor: "",
 				gmSeatId: "gm",
 				seats: [
 					{ actor: "gm-key", id: "gm" },
