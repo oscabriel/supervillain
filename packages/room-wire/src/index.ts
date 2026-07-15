@@ -24,6 +24,10 @@ export interface RoomInfo {
 
 export interface ServeRoomStoreOptions {
 	readonly info: RoomInfo;
+	/** Connection identities (64 lowercase hex chars) allowed to submit
+	 * commands on behalf of actors other than themselves — the trusted
+	 * gateway stamping proxied players (ADR-0004). */
+	readonly trustedStampers?: readonly string[];
 }
 
 export interface RemoteRoomStoreOptions {
@@ -214,23 +218,24 @@ const handleStream = async (
 const handleConnection = async (
 	connection: TransportConnection,
 	store: RoomStore,
-	info: RoomInfo
+	options: ServeRoomStoreOptions
 ): Promise<void> => {
 	try {
 		const hello = parseHello(decodeJson(await connection.receive()));
 		if (hello.channel === "info") {
-			await connection.send(encodeJson(info));
+			await connection.send(encodeJson(options.info));
 			return;
 		}
 		if (hello.channel === "stream") {
 			await handleStream(connection, store, hello.fromSeq);
 			return;
 		}
+		const trusted = options.trustedStampers?.includes(connection.remoteId);
 		for (;;) {
 			// oxlint-disable-next-line eslint/no-await-in-loop -- serving each lockstep request is the loop's purpose.
 			const command = parseRoomCommand(decodeJson(await connection.receive()));
 			const submission: RoomSubmission =
-				command.actor === connection.remoteId
+				command.actor === connection.remoteId || trusted === true
 					? // oxlint-disable-next-line eslint/no-await-in-loop -- each response follows one submitted command.
 						await store.submit(command)
 					: {
@@ -259,11 +264,10 @@ const isClosedAccept = (error: unknown): boolean =>
 	error instanceof Error &&
 	error.message === "Transport endpoint closed while accepting";
 
-/** Serves a RoomStore over the transport seam. Accepts until closed. */
-export const serveRoomStore = (
+const serveConnections = (
 	endpoint: TransportEndpoint,
-	store: RoomStore,
-	options: ServeRoomStoreOptions
+	handle: (connection: TransportConnection) => Promise<void>,
+	failureMessage: string
 ): { readonly close: () => Promise<void> } => {
 	const handlers = new Set<Promise<void>>();
 	let closing = false;
@@ -273,7 +277,7 @@ export const serveRoomStore = (
 			try {
 				// oxlint-disable-next-line eslint/no-await-in-loop -- accepting continuously is the serving loop's purpose.
 				const connection = await endpoint.accept();
-				const handler = handleConnection(connection, store, options.info);
+				const handler = handle(connection);
 				handlers.add(handler);
 				void removeHandlerWhenSettled(handlers, handler);
 			} catch (error) {
@@ -293,15 +297,25 @@ export const serveRoomStore = (
 				await acceptLoop;
 				await Promise.allSettled(handlers);
 				if (acceptFailure !== undefined) {
-					throw new Error("RoomStore server accept loop failed.", {
-						cause: acceptFailure,
-					});
+					throw new Error(failureMessage, { cause: acceptFailure });
 				}
 			})();
 			return closePromise;
 		},
 	};
 };
+
+/** Serves a RoomStore over the transport seam. Accepts until closed. */
+export const serveRoomStore = (
+	endpoint: TransportEndpoint,
+	store: RoomStore,
+	options: ServeRoomStoreOptions
+): { readonly close: () => Promise<void> } =>
+	serveConnections(
+		endpoint,
+		(connection) => handleConnection(connection, store, options),
+		"RoomStore server accept loop failed."
+	);
 
 const defaultReconnectDelay = (attempt: number): number =>
 	Math.min(250 * 2 ** (attempt - 1), 4000);
@@ -510,5 +524,133 @@ export const connectRoomStore = async (
 	} catch (error) {
 		await closeQuietly(connection);
 		throw error;
+	}
+};
+
+// --- room registration: how a GM-hosted room gets a name at the gateway (ADR-0004) ---
+
+const ROOM_NAME = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/u;
+
+/** Room names are 1–32 chars of lowercase a–z, 0–9, and interior hyphens. */
+export const isValidRoomName = (name: string): boolean => ROOM_NAME.test(name);
+
+export interface RoomRegistration {
+	readonly name: string;
+	/** The host endpoint's serialized transport address. */
+	readonly address: string;
+}
+
+export type RegistrationOutcome =
+	| {
+			readonly accepted: true;
+			/** Hostname players ssh to, for the GM's summon line. */
+			readonly sshHost: string;
+			readonly sshPort: number;
+	  }
+	| { readonly rejected: true; readonly message: string };
+
+/** The gateway's registry seam: `owner` is the registering connection's
+ * authenticated identity — name ownership is key-as-account. */
+export interface RoomRegistry {
+	readonly register: (
+		owner: string,
+		registration: RoomRegistration
+	) => Promise<RegistrationOutcome>;
+}
+
+const parseRegisterHello = (value: unknown): RoomRegistration => {
+	if (
+		!isRecord(value) ||
+		value.channel !== "register" ||
+		typeof value.name !== "string" ||
+		typeof value.address !== "string"
+	) {
+		throw new TypeError("Registration hello is invalid.");
+	}
+	return { address: value.address, name: value.name };
+};
+
+const parseRegistrationOutcome = (value: unknown): RegistrationOutcome => {
+	if (isRecord(value)) {
+		if (
+			value.accepted === true &&
+			typeof value.sshHost === "string" &&
+			typeof value.sshPort === "number" &&
+			Number.isSafeInteger(value.sshPort)
+		) {
+			return { accepted: true, sshHost: value.sshHost, sshPort: value.sshPort };
+		}
+		if (value.rejected === true && typeof value.message === "string") {
+			return { message: value.message, rejected: true };
+		}
+	}
+	throw new TypeError("Registration outcome is invalid.");
+};
+
+const handleRegistryConnection = async (
+	connection: TransportConnection,
+	registry: RoomRegistry
+): Promise<void> => {
+	try {
+		const registration = parseRegisterHello(
+			decodeJson(await connection.receive())
+		);
+		const outcome: RegistrationOutcome = isValidRoomName(registration.name)
+			? await registry.register(connection.remoteId, registration)
+			: {
+					message:
+						"Room names are 1-32 lowercase letters, digits, and hyphens.",
+					rejected: true,
+				};
+		await connection.send(encodeJson(outcome));
+	} catch {
+		// Malformed messages and transport closure end only this connection.
+	} finally {
+		await closeQuietly(connection);
+	}
+};
+
+/** Serves a RoomRegistry over the transport seam — the gateway's serving half. */
+export const serveRoomRegistry = (
+	endpoint: TransportEndpoint,
+	registry: RoomRegistry
+): { readonly close: () => Promise<void> } =>
+	serveConnections(
+		endpoint,
+		(connection) => handleRegistryConnection(connection, registry),
+		"Room registry accept loop failed."
+	);
+
+export interface RegistrationReceipt {
+	/** The gateway's authenticated identity — the host passes it to
+	 * `serveRoomStore` as a trusted stamper. */
+	readonly gatewayId: string;
+	readonly sshHost: string;
+	readonly sshPort: number;
+}
+
+/** Registers a room name with a gateway. Throws on rejection — a room that
+ * asked for a name should not open with silence where its door was meant to be. */
+export const registerRoom = async (
+	dialer: TransportEndpoint,
+	gatewayAddress: TransportAddress,
+	registration: RoomRegistration
+): Promise<RegistrationReceipt> => {
+	const connection = await dialer.dial(gatewayAddress);
+	try {
+		await connection.send(encodeJson({ channel: "register", ...registration }));
+		const outcome = parseRegistrationOutcome(
+			decodeJson(await connection.receive())
+		);
+		if ("rejected" in outcome) {
+			throw new Error(outcome.message);
+		}
+		return {
+			gatewayId: connection.remoteId,
+			sshHost: outcome.sshHost,
+			sshPort: outcome.sshPort,
+		};
+	} finally {
+		await closeQuietly(connection);
 	}
 };

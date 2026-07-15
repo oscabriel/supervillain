@@ -9,6 +9,36 @@ export interface Identity {
 
 const HEX_KEY = /^[0-9a-f]{64}$/u;
 
+const SSH_ED25519 = "ssh-ed25519";
+const SSH_ED25519_BLOB_LENGTH = 4 + SSH_ED25519.length + 4 + 32;
+
+/** Extracts the actor string (64 lowercase hex chars) from an SSH wire-format
+ * `ssh-ed25519` public-key blob — key-as-account at the SSH door. Returns
+ * undefined for anything that is not exactly an ed25519 public key. */
+export const actorFromSshEd25519Blob = (
+	blob: Uint8Array
+): string | undefined => {
+	if (blob.byteLength !== SSH_ED25519_BLOB_LENGTH) {
+		return undefined;
+	}
+	const view = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+	if (view.getUint32(0) !== SSH_ED25519.length) {
+		return undefined;
+	}
+	const algo = new TextDecoder().decode(
+		blob.subarray(4, 4 + SSH_ED25519.length)
+	);
+	if (algo !== SSH_ED25519) {
+		return undefined;
+	}
+	if (view.getUint32(4 + SSH_ED25519.length) !== 32) {
+		return undefined;
+	}
+	return Buffer.from(blob.subarray(SSH_ED25519_BLOB_LENGTH - 32)).toString(
+		"hex"
+	);
+};
+
 const decodeBase64Url = (value: string): string =>
 	Buffer.from(value, "base64url").toString("hex");
 

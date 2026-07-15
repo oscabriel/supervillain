@@ -22,6 +22,14 @@ module.exports = {
 			to: { path: "(^|/)authority(\\.ts)?$|(^|/)decide(\\.ts)?$" },
 		},
 		{
+			from: { path: "^apps/gateway/" },
+			name: "gateway-does-not-import-authority",
+			severity: "error",
+			to: {
+				path: "(^|/)authority(\\.ts)?$|(^|/)decide(\\.ts)?$|^packages/room-host/",
+			},
+		},
+		{
 			from: { path: "^packages/games/[^/]+/src/content\\.ts$" },
 			name: "game-content-imports-model-only",
 			severity: "error",
