@@ -39,8 +39,12 @@ chmod 755 "$runner"
 
 case $(uname -s) in
 	Darwin)
-		script -q "$transcript" env -i HOME="$HOME" TERM=xterm PATH=/usr/bin:/bin \
-			RUN_BINARY="$runtime_binary" CAMPAIGN="$campaign" /bin/sh "$runner" <"$input" &
+		# BSD script demands a tty stdin (tcgetattr), which CI lacks; python's
+		# pty.spawn tolerates a non-tty stdin and still gives the child a real pty.
+		env -i HOME="$HOME" TERM=xterm PATH=/usr/bin:/bin \
+			RUN_BINARY="$runtime_binary" CAMPAIGN="$campaign" \
+			/usr/bin/python3 -c 'import pty,sys; sys.exit(pty.spawn(["/bin/sh", sys.argv[1]]))' "$runner" \
+			<"$input" >"$transcript" 2>&1 &
 		;;
 	Linux)
 		command="env -i HOME='$HOME' TERM=xterm PATH=/usr/bin:/bin RUN_BINARY='$runtime_binary' CAMPAIGN='$campaign' /bin/sh '$runner'"
