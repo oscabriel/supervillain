@@ -1,6 +1,6 @@
 /* oxlint-disable promise/avoid-new, eslint/no-await-in-loop, vitest/prefer-importing-vitest-globals -- timed PTY writes and sequential cleanup are required by the Bun-lane E2E protocol. */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -44,6 +44,22 @@ describe("supervillain create", () => {
 		folders.push(scratch);
 		const campaign = path.join(scratch, "campaign");
 		const config = path.join(scratch, "config");
+		const characters = path.join(campaign, "characters");
+		await mkdir(characters, { recursive: true });
+		await writeFile(
+			path.join(characters, "coda.json"),
+			JSON.stringify({
+				characteristics: {
+					agility: 1,
+					intuition: 1,
+					might: 2,
+					presence: 2,
+					reason: 0,
+				},
+				name: "Coda",
+			})
+		);
+		await writeFile(path.join(characters, "invalid.json"), "not json");
 		const first = await runCli(campaign, config, [
 			"hello table\r",
 			"/roll 2d6+1\r",
@@ -52,6 +68,9 @@ describe("supervillain create", () => {
 		expect(first.code).toBe(0);
 		expect(first.output).toContain(
 			"your table is live. summon your players:\r\n\r\n  supervillain join "
+		);
+		expect(first.output).toContain(
+			"invalid.json: Character file must contain valid UTF-8 JSON."
 		);
 		const door = await readFile(path.join(campaign, "door.txt"), "utf-8");
 		expect(door.endsWith("\n")).toBe(true);
@@ -68,17 +87,21 @@ describe("supervillain create", () => {
 		expect(events.map((event) => event.type)).toEqual([
 			"core.room-created",
 			"core.seat-claimed",
+			"ds.character-entered",
 			"core.chat-posted",
 			"core.dice-rolled",
 		]);
-		expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4]);
+		expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5]);
 		expect(events.every((event) => event.actor === identity.publicKeyHex)).toBe(
 			true
 		);
-		expect(events[0].payload).toEqual({ gameId: "fake" });
+		expect(events[0].payload).toEqual({ gameId: "draw-steel" });
 		expect(events[1].payload).toEqual({ seatId: "gm" });
-		expect(events[2].payload).toEqual({ text: "hello table" });
-		const dice = events[3].payload;
+		expect(events[2].payload).toMatchObject({
+			statBlock: { name: "Coda" },
+		});
+		expect(events[3].payload).toEqual({ text: "hello table" });
+		const dice = events[4].payload;
 		expect(dice.rolls).toHaveLength(2);
 		expect(dice.rolls.every((roll: number) => roll >= 1 && roll <= 6)).toBe(
 			true

@@ -58,6 +58,7 @@ export interface SeatView {
 }
 
 export interface TableView {
+	readonly actor: string;
 	readonly seats: readonly SeatView[];
 	readonly gmSeatId: string;
 }
@@ -110,15 +111,22 @@ export interface GamePanelInput<S, C> {
 	readonly dispatch: (command: C) => void;
 }
 
+export interface PanelKey {
+	readonly name: string;
+	readonly text?: string;
+}
+
 export interface GamePanel<S, C> {
 	readonly id: string;
 	readonly slot: LayoutSlot;
-	readonly render: (input: GamePanelInput<S, C>) => FeedLine;
+	readonly render: (input: GamePanelInput<S, C>) => readonly FeedLine[];
+	readonly onKey?: (key: PanelKey, input: GamePanelInput<S, C>) => boolean;
 }
 
 export interface GameView<S, C, E> {
 	readonly renderEvent: (event: E, state: Readonly<S>) => FeedLine | null;
 	readonly panels: readonly GamePanel<S, C>[];
+	readonly notices?: readonly FeedLine[];
 }
 
 export interface ValidationIssue {

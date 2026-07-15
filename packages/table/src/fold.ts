@@ -23,13 +23,15 @@ export interface TableFold<S> {
 
 export const createTableFold = <S, C, E>(
 	entry: ViewEntry<S, C, E>,
-	gameId: string
+	gameId: string,
+	actor: string
 ): TableFold<S> => {
 	let game = entry.model.init();
 	const seats: { actor: string; id: string }[] = [];
-	const table: TableView = { gmSeatId: "gm", seats };
-	const actorLabel = (actor: string): string =>
-		table.seats.find((seat) => seat.actor === actor)?.id ?? actor.slice(0, 8);
+	const table: TableView = { actor, gmSeatId: "gm", seats };
+	const actorLabel = (candidateActor: string): string =>
+		table.seats.find((seat) => seat.actor === candidateActor)?.id ??
+		candidateActor.slice(0, 8);
 	return {
 		actorLabel,
 		apply(envelope) {
@@ -81,11 +83,7 @@ export const createTableFold = <S, C, E>(
 			if (envelope.type.startsWith("core.")) {
 				return null;
 			}
-			if (
-				!envelope.type.startsWith(`${gameId}.`) ||
-				typeof envelope.payload !== "object" ||
-				envelope.payload === null
-			) {
+			if (typeof envelope.payload !== "object" || envelope.payload === null) {
 				return null;
 			}
 			const event = { type: envelope.type, ...envelope.payload } as E;

@@ -45,7 +45,7 @@ Interface invariants (not implementation notes):
 
 Riders:
 
-- **`TableView` is a read-only snapshot value captured at command time** (not a live handle), exposing the narrow core facts `decide` may read (seats, who holds the GM seat). It is the **licensed churn point**: v1 growth there (e.g. character↔seat bindings) is honest interface evolution.
+- **`TableView` is a read-only snapshot value captured at command time** (not a live handle), exposing the narrow core facts `decide` may read (seats, who holds the GM seat). It is the **licensed churn point**: v1 growth there (e.g. character↔seat bindings) is honest interface evolution. _(Correction 2026-07-14, surfaced by issue #10, [ADR-0003](../../adr/0003-tableview-carries-the-authenticated-actor.md): `TableView` also carries `actor` — the authenticated key of the perspective the snapshot serves: the command's connection-authenticated issuer in `decide`, the viewing player in panels. GM-only authority rules read it instead of trusting command payloads.)_
 - **The envelope is the core's forever-promise; payload schema versioning is the module's problem.** The v1 Draw Steel module must replay v0 events.
 
 ## Render end
@@ -61,7 +61,7 @@ Slot-based: the core layout owns placement via a tiny slot vocabulary — **v0 n
 
 1. **`renderEvent` is deterministic** — it runs in the same fold as `apply`, on live events and on replay. Its `state` parameter means **state after applying this event**. In practice the results-in-payload rule makes events self-describing, so it should rarely need state at all.
 2. **`FeedLine` is semantic** — text runs tagged with core theme tokens, never ANSI. Color and width resolution happen once in core chrome against exact-ANSI-16 (prototype lesson: remote capability detection is conservative). Same rule for panels: compose tokens, never pick colors.
-3. **Panel input contract, minimal and one-directional:** core owns focus routing; a focused panel receives input; its only output is `dispatch(command)`.
+3. **Panel input contract, minimal and one-directional:** core owns focus routing; a focused panel receives input; its only output is `dispatch(command)`. _(Correction 2026-07-14, issue #10 — the contract's concrete v0 shape: `GamePanel.onKey?: (key, input) => boolean` receives semantic key values while focused and returns whether it handled the key; `render` returns `readonly FeedLine[]` so panels can be multi-row; ephemeral view-local state (row selection, an in-panel text buffer) may live in the panel, never game facts. `GameView` also gains optional `notices: readonly FeedLine[]`, rendered by core chrome at table start — how a module's license-mandated text reaches the table without the gateway importing `content`.)_
 4. **Render symmetry with the namespace discipline:** the module renders only `ds.*` feed lines, the core renders only `core.*`. Rejections close their loop in core chrome — the module supplies the message, the core renders it as ephemeral feedback to the issuing client.
 5. **The namespace id is the join key** between the host registry (→ authority) and the gateway registry (→ view); the package keeps the game whole.
 
@@ -83,7 +83,7 @@ Render-side code may consult packaged content freely (deterministic per module v
 
 ## Binding
 
-A room binds to its module via a logged game id (`core.*` room-creation event). The id is an **opaque registry key** — storing it isn't "core naming Draw Steel" any more than a filename is. It joins the host and gateway registries. **Replay hitting an unregistered id fails loudly**; a log the registry can't interpret is an error, never a degraded generic table.
+A room binds to its module via a logged game id (`core.*` room-creation event). The id is an **opaque registry key** — storing it isn't "core naming Draw Steel" any more than a filename is. It joins the host and gateway registries. **Replay hitting an unregistered id fails loudly**; a log the registry can't interpret is an error, never a degraded generic table. _(Correction 2026-07-14, issue #10: the game id is NOT the event-namespace prefix — `draw-steel` binds a room whose module emits `ds.*`. Routing is by ownership, not prefix-matching: `core.*` events belong to the core, every other event in a room's log belongs to that room's single bound module, and the host refuses a module emission typed `core.*`. The module prefix is a module convention the core never reads.)_
 
 ## The fake game module
 

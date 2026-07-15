@@ -81,6 +81,7 @@ describe("RoomHost", () => {
 				},
 			]);
 			expect(host.snapshot().table).toEqual({
+				actor: "",
 				gmSeatId: "gm",
 				seats: [{ actor: "actor-gm", id: "gm" }],
 			});
@@ -104,6 +105,7 @@ describe("RoomHost", () => {
 				gameId: "fake",
 				seq: 5,
 				table: {
+					actor: "",
 					gmSeatId: "gm",
 					seats: [
 						{ actor: "actor-gm", id: "gm" },
