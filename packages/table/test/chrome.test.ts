@@ -9,6 +9,7 @@ import {
 	forwardPanelKey,
 	initialFeedLines,
 	nextPanelFocus,
+	rerenderOnPanelFocusTransition,
 } from "../src/chrome.js";
 
 describe("table sidebar", () => {
@@ -35,6 +36,19 @@ describe("table sidebar", () => {
 		expect(nextPanelFocus(-1, 0)).toBe(-1);
 	});
 
+	test("rerenders panels when they gain and lose focus", () => {
+		const transitions: string[] = [];
+		const rerender = (): void => {
+			transitions.push("render");
+		};
+
+		rerenderOnPanelFocusTransition(-1, 0, rerender);
+		rerenderOnPanelFocusTransition(0, -1, rerender);
+		rerenderOnPanelFocusTransition(-1, -1, rerender);
+
+		expect(transitions).toEqual(["render", "render"]);
+	});
+
 	test("starts the feed with module notices", () => {
 		const notice = {
 			runs: [{ text: "independent", token: "muted" as const }],
@@ -56,6 +70,7 @@ describe("table sidebar", () => {
 		};
 		const input: GamePanelInput<unknown, unknown> = {
 			dispatch: () => {},
+			focused: true,
 			state: {},
 			table: { actor: "viewer", gmSeatId: "gm", seats: [] },
 		};

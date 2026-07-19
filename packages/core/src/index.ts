@@ -108,6 +108,7 @@ export type LayoutSlot = "sidebar";
 export interface GamePanelInput<S, C> {
 	readonly state: Readonly<S>;
 	readonly table: TableView;
+	readonly focused: boolean;
 	readonly dispatch: (command: C) => void;
 }
 

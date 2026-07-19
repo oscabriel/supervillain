@@ -19,10 +19,13 @@ export const view: GameView<FakeState, FakeCommand, FakeEvent> = {
 				}
 				return true;
 			},
-			render({ state }) {
+			render({ focused, state }) {
+				const hint = focused ? " · v to visit" : "";
 				return [
 					{
-						runs: [{ text: `Visits: ${state.visits}`, token: "primary" }],
+						runs: [
+							{ text: `Visits: ${state.visits}${hint}`, token: "primary" },
+						],
 					},
 				];
 			},

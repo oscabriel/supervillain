@@ -74,11 +74,19 @@ describe("game module seam", () => {
 		const dispatched: unknown[] = [];
 		const input = {
 			dispatch: (command: unknown) => dispatched.push(command),
+			focused: false,
 			state: init(),
 			table,
 		};
-		expect(panel.render(input)).toBeArray();
-		expect(panel.onKey?.({ name: "v", text: "v" }, input)).toBe(true);
+		expect(panel.render(input)).toEqual([
+			{ runs: [{ text: "Visits: 0", token: "primary" }] },
+		]);
+		expect(panel.render({ ...input, focused: true })).toEqual([
+			{ runs: [{ text: "Visits: 0 · v to visit", token: "primary" }] },
+		]);
+		expect(
+			panel.onKey?.({ name: "v", text: "v" }, { ...input, focused: true })
+		).toBe(true);
 		expect(dispatched).toEqual([{ seatId: "guest", type: "fake.visit" }]);
 	});
 

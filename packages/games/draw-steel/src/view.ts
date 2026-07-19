@@ -76,7 +76,6 @@ const createInitiativePanel = (): GamePanel<DsState, DsCommand> => {
 	let selectedIndex = 0;
 	let mode: PanelMode = { kind: "normal" };
 	let buffer = "";
-	let focused = false;
 
 	const renderHints = (): FeedLine => {
 		if (mode.kind === "add") {
@@ -132,7 +131,7 @@ const createInitiativePanel = (): GamePanel<DsState, DsCommand> => {
 		} else {
 			lines.push(line({ text: "no encounter", token: "muted" }));
 		}
-		if (focused) {
+		if (input.focused) {
 			lines.push(renderHints());
 		}
 		return lines;
@@ -143,7 +142,6 @@ const createInitiativePanel = (): GamePanel<DsState, DsCommand> => {
 		key: PanelKey,
 		input: GamePanelInput<DsState, DsCommand>
 	): boolean => {
-		focused = true;
 		if (mode.kind === "add") {
 			if (key.name === "backspace") {
 				buffer = buffer.slice(0, -1);
@@ -162,7 +160,6 @@ const createInitiativePanel = (): GamePanel<DsState, DsCommand> => {
 			if (key.name === "escape") {
 				buffer = "";
 				mode = { kind: "normal" };
-				focused = false;
 				return true;
 			}
 			if (key.text !== undefined) {
@@ -207,7 +204,6 @@ const createInitiativePanel = (): GamePanel<DsState, DsCommand> => {
 			}
 			if (key.name === "escape") {
 				mode = { kind: "normal" };
-				focused = false;
 				return true;
 			}
 			return false;

@@ -52,12 +52,14 @@ describe("Draw Steel view", () => {
 		}
 		const inactive = panel.render({
 			dispatch: () => {},
+			focused: false,
 			state: init(),
 			table,
 		});
 		expect(inactive.map(text)).toEqual(["Initiative", "no encounter"]);
 		const active = panel.render({
 			dispatch: () => {},
+			focused: true,
 			state: stateWithRoster(),
 			table,
 		});
@@ -65,6 +67,8 @@ describe("Draw Steel view", () => {
 		expect(active.map(text)).toContain("▸ · Coda [H]");
 		expect(active.map(text)).toContain("  · Goblin [E]");
 		expect(active.map(text)).toContain("M+2 A+1 R+0 I+1 P+2 · stamina 20");
+		expect(active.map(text)).toContain("↑/↓ select · s/e · t · a/m · r");
+		expect(inactive.map(text)).not.toContain("↑/↓ select · s/e · t · a/m · r");
 	});
 
 	test("renders every event type from payloads, with turn names from state", () => {
@@ -128,6 +132,7 @@ describe("Draw Steel view", () => {
 		const dispatched: DsCommand[] = [];
 		const input: GamePanelInput<DsState, DsCommand> = {
 			dispatch: (command) => dispatched.push(command),
+			focused: true,
 			state: stateWithRoster(),
 			table,
 		};

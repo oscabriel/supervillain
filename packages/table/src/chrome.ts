@@ -57,6 +57,16 @@ export const adaptPanelKey = (
 export const nextPanelFocus = (current: number, count: number): number =>
 	count === 0 || current >= count - 1 ? -1 : current + 1;
 
+export const rerenderOnPanelFocusTransition = (
+	previousPanelIndex: number,
+	nextPanelIndex: number,
+	rerender: () => void
+): void => {
+	if (previousPanelIndex !== nextPanelIndex) {
+		rerender();
+	}
+};
+
 export const forwardPanelKey = <S, C>(
 	key: PanelKey,
 	panel: GamePanel<S, C>,
@@ -175,7 +185,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 		renderStatus();
 	};
-	const panelInput = (): GamePanelInput<unknown, unknown> => ({
+	const panelInput = (focused: boolean): GamePanelInput<unknown, unknown> => ({
 		dispatch: (command: unknown) => {
 			void options.store
 				.submit({
@@ -185,15 +195,16 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 				.then(showSubmission)
 				.catch(showConnectionLost);
 		},
+		focused,
 		state: fold.state(),
 		table: fold.table(),
 	});
 	const renderSidebar = (): void => {
-		const inputForPanels = panelInput();
-		const seats = formatSeatList(inputForPanels.table, options.session.actor);
+		const seats = formatSeatList(fold.table(), options.session.actor);
+		const focusedPanel = interactivePanels[focusedPanelIndex];
 		const panelLines = options.entry.view.panels.flatMap((panel) =>
 			panel
-				.render(inputForPanels)
+				.render(panelInput(panel === focusedPanel))
 				.map((line) => line.runs.map((run) => run.text).join(""))
 		);
 		sidebarText.content = ["Seats", seats, "", ...panelLines].join("\n");
@@ -243,14 +254,21 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		void submitInput(value);
 	});
 	const focusInput = (): void => {
+		const previousPanelIndex = focusedPanelIndex;
 		focusedPanelIndex = -1;
 		input.focus();
 		renderStatus();
+		rerenderOnPanelFocusTransition(
+			previousPanelIndex,
+			focusedPanelIndex,
+			renderSidebar
+		);
 	};
 	renderer.keyInput.on("keypress", (key: KeyEvent) => {
 		if (key.name === "tab") {
 			key.preventDefault();
 			key.stopPropagation();
+			const previousPanelIndex = focusedPanelIndex;
 			focusedPanelIndex = nextPanelFocus(
 				focusedPanelIndex,
 				interactivePanels.length
@@ -261,7 +279,11 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 				input.blur();
 			}
 			renderStatus();
-			renderSidebar();
+			rerenderOnPanelFocusTransition(
+				previousPanelIndex,
+				focusedPanelIndex,
+				renderSidebar
+			);
 			return;
 		}
 		if (focusedPanelIndex === -1) {
@@ -276,7 +298,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		const panel = interactivePanels[focusedPanelIndex];
 		if (
 			panel !== undefined &&
-			forwardPanelKey(adaptPanelKey(key), panel, panelInput())
+			forwardPanelKey(adaptPanelKey(key), panel, panelInput(true))
 		) {
 			renderSidebar();
 		}
