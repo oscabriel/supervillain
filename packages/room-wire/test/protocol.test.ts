@@ -8,6 +8,7 @@ import type {
 } from "@supervillain/core";
 
 import { connectRoomStore, serveRoomStore } from "../src/index.js";
+import type { RemoteRoomStoreOptions } from "../src/index.js";
 import { createMemoryEndpointPair, describe, expect, test } from "./harness.js";
 
 interface Waiter {
@@ -102,7 +103,7 @@ const nextEnvelope = async (
 	return result.value;
 };
 
-const openFixture = async () => {
+const openFixture = async (options: RemoteRoomStoreOptions = {}) => {
 	const endpoints = createMemoryEndpointPair();
 	const local = new TestRoomStore();
 	const server = serveRoomStore(endpoints.server, local, {
@@ -113,6 +114,7 @@ const openFixture = async () => {
 		endpoints.server.address,
 		{
 			reconnectDelayMs: () => 1,
+			...options,
 		}
 	);
 	return { endpoints, local, remote, server };
@@ -233,6 +235,39 @@ describe("RoomStore wire protocol", () => {
 			fixture.local.blockSubmit = undefined;
 			expect(fixture.local.submissions).toHaveLength(2);
 		} finally {
+			await fixture.remote.close();
+			await fixture.server.close();
+		}
+	});
+
+	test("times out a submit, discards its connection, and never retries it", async () => {
+		const fixture = await openFixture({ submitTimeoutMs: 10 });
+		let release!: () => void;
+		fixture.local.blockSubmit = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		try {
+			await expect(
+				fixture.remote.submit({
+					actor: "client-id",
+					command: { number: 1 },
+				})
+			).rejects.toThrow("RoomStore submit timed out.");
+			expect(fixture.local.submissions).toHaveLength(1);
+
+			release();
+			fixture.local.blockSubmit = undefined;
+			await expect(
+				fixture.remote.submit({
+					actor: "client-id",
+					command: { number: 2 },
+				})
+			).resolves.toMatchObject({ accepted: true });
+			expect(
+				fixture.local.submissions.map((submission) => submission.command)
+			).toEqual([{ number: 1 }, { number: 2 }]);
+		} finally {
+			release();
 			await fixture.remote.close();
 			await fixture.server.close();
 		}

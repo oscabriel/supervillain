@@ -34,6 +34,8 @@ export interface RemoteRoomStoreOptions {
 	/** Delay in ms before reconnect attempt `attempt` (1-based).
 	 * Default: exponential 250ms doubling, capped at 4000ms. */
 	readonly reconnectDelayMs?: (attempt: number) => number;
+	/** Maximum time in ms for one queued submit send/receive exchange. */
+	readonly submitTimeoutMs?: number;
 }
 
 export interface RemoteRoomStore extends RoomStore {
@@ -320,10 +322,22 @@ export const serveRoomStore = (
 const defaultReconnectDelay = (attempt: number): number =>
 	Math.min(250 * 2 ** (attempt - 1), 4000);
 
+interface SubmitContext {
+	connection?: TransportConnection;
+	readonly error: Error;
+	timedOut: boolean;
+}
+
+const submitFailure = (
+	context: SubmitContext | undefined,
+	error: unknown
+): unknown => (context?.timedOut === true ? context.error : error);
+
 class TransportRemoteRoomStore implements RemoteRoomStore {
 	readonly #address: TransportAddress;
 	readonly #dialer: TransportEndpoint;
 	readonly #reconnectDelayMs: (attempt: number) => number;
+	readonly #submitTimeoutMs: number | undefined;
 	readonly #connections = new Set<TransportConnection>();
 	readonly #pendingConnections = new Set<Promise<TransportConnection>>();
 	readonly #closedSignal = Promise.withResolvers<boolean>();
@@ -343,6 +357,7 @@ class TransportRemoteRoomStore implements RemoteRoomStore {
 		this.#submitConnection = submitConnection;
 		this.#connections.add(submitConnection);
 		this.#reconnectDelayMs = options.reconnectDelayMs ?? defaultReconnectDelay;
+		this.#submitTimeoutMs = options.submitTimeoutMs;
 	}
 
 	async submit(command: RoomCommand): Promise<RoomSubmission> {
@@ -352,31 +367,30 @@ class TransportRemoteRoomStore implements RemoteRoomStore {
 		try {
 			await previous;
 			this.#assertOpen();
-			const existing = this.#submitConnection;
-			let connection = await this.#ensureSubmitConnection();
-			try {
-				await connection.send(encodeJson(command));
-			} catch (error) {
-				this.#discardSubmitConnection(connection);
-				await closeQuietly(connection);
-				if (existing === undefined) {
-					throw error;
-				}
-				connection = await this.#ensureSubmitConnection();
-				try {
-					await connection.send(encodeJson(command));
-				} catch (redialError) {
-					this.#discardSubmitConnection(connection);
-					await closeQuietly(connection);
-					throw redialError;
-				}
+			if (this.#submitTimeoutMs === undefined) {
+				return await this.#exchangeSubmit(command);
 			}
+
+			const context: SubmitContext = {
+				error: new Error("RoomStore submit timed out."),
+				timedOut: false,
+			};
+			const timeout = Promise.withResolvers<never>();
+			const timer = setTimeout(() => {
+				context.timedOut = true;
+				if (context.connection !== undefined) {
+					this.#discardSubmitConnection(context.connection);
+					void closeQuietly(context.connection);
+				}
+				timeout.reject(context.error);
+			}, this.#submitTimeoutMs);
 			try {
-				return parseRoomSubmission(decodeJson(await connection.receive()));
-			} catch (error) {
-				this.#discardSubmitConnection(connection);
-				await closeQuietly(connection);
-				throw error;
+				return await Promise.race([
+					this.#exchangeSubmit(command, context),
+					timeout.promise,
+				]);
+			} finally {
+				clearTimeout(timer);
 			}
 		} finally {
 			turn.resolve(true);
@@ -460,6 +474,62 @@ class TransportRemoteRoomStore implements RemoteRoomStore {
 				}
 			}
 		}
+	}
+
+	async #exchangeSubmit(
+		command: RoomCommand,
+		context?: SubmitContext
+	): Promise<RoomSubmission> {
+		const existing = this.#submitConnection;
+		let connection = await this.#ensureSubmitConnection();
+		if (context !== undefined) {
+			context.connection = connection;
+		}
+		await this.#stopTimedOutSubmit(context, connection);
+		try {
+			await connection.send(encodeJson(command));
+		} catch (error) {
+			this.#discardSubmitConnection(connection);
+			await closeQuietly(connection);
+			if (context?.timedOut === true) {
+				throw context.error;
+			}
+			if (existing === undefined) {
+				throw error;
+			}
+			connection = await this.#ensureSubmitConnection();
+			if (context !== undefined) {
+				context.connection = connection;
+			}
+			await this.#stopTimedOutSubmit(context, connection);
+			try {
+				await connection.send(encodeJson(command));
+			} catch (redialError) {
+				this.#discardSubmitConnection(connection);
+				await closeQuietly(connection);
+				throw submitFailure(context, redialError);
+			}
+		}
+		await this.#stopTimedOutSubmit(context, connection);
+		try {
+			return parseRoomSubmission(decodeJson(await connection.receive()));
+		} catch (error) {
+			this.#discardSubmitConnection(connection);
+			await closeQuietly(connection);
+			throw submitFailure(context, error);
+		}
+	}
+
+	async #stopTimedOutSubmit(
+		context: SubmitContext | undefined,
+		connection: TransportConnection
+	): Promise<void> {
+		if (context?.timedOut !== true) {
+			return;
+		}
+		this.#discardSubmitConnection(connection);
+		await closeQuietly(connection);
+		throw context.error;
 	}
 
 	async #ensureSubmitConnection(): Promise<TransportConnection> {

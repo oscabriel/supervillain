@@ -1,7 +1,11 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- dual-lane suite; the harness picks bun:test or vitest at runtime. */
 import { generateKeyPairSync } from "node:crypto";
 
-import { openIrohEndpoint } from "../src/index.js";
+import {
+	DialTimeoutError,
+	openIrohEndpoint,
+	SelfDialError,
+} from "../src/index.js";
 import type {
 	IrohEndpointOptions,
 	TransportConnection,
@@ -90,6 +94,42 @@ describe("iroh transport", () => {
 			openIrohEndpoint({ secretKeyHex: "A".repeat(64) })
 		).rejects.toThrow("secretKeyHex must be 64 lowercase hex chars.");
 	});
+
+	test("rejects a self-dial immediately with a recognizable error", async () => {
+		const endpoint = await openIrohEndpoint({ routing: "direct" });
+		try {
+			const rejection = await endpoint
+				.dial(endpoint.address)
+				.catch((error: unknown) => error);
+			expect(rejection).toBeInstanceOf(SelfDialError);
+			expect(rejection).toMatchObject({ name: "SelfDialError" });
+		} finally {
+			await endpoint.close();
+		}
+	});
+
+	test("bounds an unreachable dial with a recognizable timeout", async () => {
+		const unavailable = await openIrohEndpoint({ routing: "direct" });
+		const unavailableAddress = unavailable.address;
+		await unavailable.close();
+		const dialer = await openIrohEndpoint({
+			dialTimeoutMs: 25,
+			routing: "direct",
+		});
+		const startedAt = performance.now();
+		try {
+			const rejection = await dialer
+				.dial(unavailableAddress)
+				.catch((error: unknown) => error);
+			expect(rejection).toBeInstanceOf(DialTimeoutError);
+			expect(rejection).toMatchObject({ name: "DialTimeoutError" });
+			const elapsedMs = performance.now() - startedAt;
+			expect(elapsedMs).toBeGreaterThanOrEqual(20);
+			expect(elapsedMs).toBeLessThan(1000);
+		} finally {
+			await dialer.close();
+		}
+	}, 30_000);
 
 	test("connects two peers directly and exchanges framed messages", async () => {
 		const [first, second] = await openPair({ routing: "direct" });

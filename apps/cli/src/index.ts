@@ -36,7 +36,11 @@ import {
 import type { RegistrationReceipt } from "@supervillain/room-wire";
 import { attachLocalTty } from "@supervillain/session";
 import { runTable } from "@supervillain/table";
-import { openIrohEndpoint } from "@supervillain/transport-iroh";
+import {
+	DialTimeoutError,
+	openIrohEndpoint,
+	SelfDialError,
+} from "@supervillain/transport-iroh";
 import type { TransportAddress } from "@supervillain/transport-iroh";
 
 const USAGE = `Usage:
@@ -286,8 +290,17 @@ const join = async (args: readonly string[]): Promise<number> => {
 	let store: Awaited<ReturnType<typeof connectRoomStore>>;
 	try {
 		store = await connectRoomStore(endpoint, roomRef as TransportAddress);
-	} catch {
-		console.error("Could not reach that room. Is the GM's table live?");
+	} catch (error) {
+		if (error instanceof SelfDialError) {
+			console.error(
+				"that's your own table — you're already hosting it. to sit as a player, use the ssh door."
+			);
+		} else {
+			console.error("Could not reach that room. Is the GM's table live?");
+			if (!(error instanceof DialTimeoutError)) {
+				console.error(error instanceof Error ? error.message : String(error));
+			}
+		}
 		await endpoint.close();
 		return 1;
 	}

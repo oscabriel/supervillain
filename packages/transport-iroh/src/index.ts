@@ -4,6 +4,7 @@ import type {
 } from "@number0/iroh";
 
 import { IrohConnection } from "./connection.js";
+import { DialTimeoutError, SelfDialError } from "./errors.js";
 import { loadIrohNative } from "./native.js";
 import type {
 	IrohEndpointOptions,
@@ -12,6 +13,7 @@ import type {
 	TransportEndpoint,
 } from "./seam.js";
 
+export { DialTimeoutError, SelfDialError } from "./errors.js";
 export { provideIrohNative } from "./native.js";
 export type { IrohNative } from "./native.js";
 export type {
@@ -23,17 +25,24 @@ export type {
 } from "./seam.js";
 
 const ALPN = [...new TextEncoder().encode("supervillain/transport/1")];
+const DEFAULT_DIAL_TIMEOUT_MS = 5000;
 const HEX_KEY = /^[0-9a-f]{64}$/u;
 
 class IrohEndpoint implements TransportEndpoint {
+	readonly #dialTimeoutMs: number;
 	readonly #endpoint: NativeEndpoint;
 	readonly #connections = new Set<IrohConnection>();
 	readonly address: TransportAddress;
 	#closed = false;
 
-	constructor(endpoint: NativeEndpoint, address: TransportAddress) {
+	constructor(
+		endpoint: NativeEndpoint,
+		address: TransportAddress,
+		dialTimeoutMs: number
+	) {
 		this.#endpoint = endpoint;
 		this.address = address;
+		this.#dialTimeoutMs = dialTimeoutMs;
 	}
 
 	async dial(address: TransportAddress): Promise<TransportConnection> {
@@ -45,9 +54,30 @@ class IrohEndpoint implements TransportEndpoint {
 		} catch (error) {
 			throw new Error("Invalid transport address", { cause: error });
 		}
+		if (remoteAddress.id().equals(this.#endpoint.id())) {
+			throw new SelfDialError();
+		}
 
-		const connection = await this.#endpoint.connect(remoteAddress, ALPN);
-		return this.#track(connection);
+		const pendingConnection = this.#endpoint.connect(remoteAddress, ALPN);
+		const timeout = Promise.withResolvers<never>();
+		const timer = setTimeout(
+			() => timeout.reject(new DialTimeoutError(this.#dialTimeoutMs)),
+			this.#dialTimeoutMs
+		);
+		try {
+			const connection = await Promise.race([
+				pendingConnection,
+				timeout.promise,
+			]);
+			return this.#track(connection);
+		} catch (error) {
+			if (error instanceof DialTimeoutError) {
+				void this.#closeLateConnection(pendingConnection);
+			}
+			throw error;
+		} finally {
+			clearTimeout(timer);
+		}
 	}
 
 	async accept(): Promise<TransportConnection> {
@@ -71,6 +101,17 @@ class IrohEndpoint implements TransportEndpoint {
 		);
 		this.#connections.clear();
 		await this.#endpoint.close();
+	}
+
+	async #closeLateConnection(
+		pendingConnection: Promise<NativeConnection>
+	): Promise<void> {
+		try {
+			const connection = await pendingConnection;
+			await this.#track(connection).close();
+		} catch {
+			// A connect that eventually fails has no connection to clean up.
+		}
 	}
 
 	#track(connection: NativeConnection): IrohConnection {
@@ -129,7 +170,11 @@ export const openIrohEndpoint = async (
 		const address = EndpointTicket.fromAddr(
 			advertisedAddress
 		).toString() as TransportAddress;
-		return new IrohEndpoint(endpoint, address);
+		return new IrohEndpoint(
+			endpoint,
+			address,
+			options.dialTimeoutMs ?? DEFAULT_DIAL_TIMEOUT_MS
+		);
 	} catch (error) {
 		await endpoint.close();
 		throw error;

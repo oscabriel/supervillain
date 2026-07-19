@@ -26,6 +26,8 @@ export interface TransportEndpoint {
 }
 
 export interface IrohEndpointOptions {
+	/** Maximum time in ms for a dial to establish. Default: 5000ms. */
+	readonly dialTimeoutMs?: number;
 	/**
 	 * `direct` disables relays. `relay` publishes no direct addresses so the initial
 	 * connection must use a relay. `adaptive` lets iroh choose and is the default.
