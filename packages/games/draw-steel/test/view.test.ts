@@ -100,27 +100,65 @@ describe("Draw Steel view", () => {
 		for (const [event, expected] of cases) {
 			expect(text(view.renderEvent(event, state))).toBe(expected);
 		}
-		const roll: DsEvent = {
-			banes: 0,
-			characterName: "Coda",
-			characteristic: "might",
-			critical: true,
-			dice: [9, 10],
-			edges: 1,
-			modifier: 2,
-			tier: 3,
-			total: 23,
-			type: "ds.power-rolled",
-		};
-		const rendered = view.renderEvent(roll, state);
-		expect(text(rendered)).toBe(
-			"Coda — power roll (might): 9 + 10 + 2, edge = 23 → tier 3 · crit!"
+		const rollCases: readonly [Partial<DsEvent>, string][] = [
+			[{}, "Sir Vile — power roll (might): 8 + 2 + 2 = 12 → tier 2"],
+			[
+				{ edges: 1, total: 14 },
+				"Sir Vile — power roll (might): 8 + 2 + 2 + 2 (edge) = 14 → tier 2",
+			],
+			[
+				{ banes: 1, tier: 1, total: 10 },
+				"Sir Vile — power roll (might): 8 + 2 + 2 − 2 (bane) = 10 → tier 1",
+			],
+			[
+				{ edges: 2, tier: 3 },
+				"Sir Vile — power roll (might): 8 + 2 + 2 = 12 → tier 3 (double edge: tier up)",
+			],
+			[
+				{ banes: 2, tier: 1 },
+				"Sir Vile — power roll (might): 8 + 2 + 2 = 12 → tier 1 (double bane: tier down)",
+			],
+			[
+				{ critical: true },
+				"Sir Vile — power roll (might): 8 + 2 + 2 = 12 → tier 2 · crit!",
+			],
+		];
+		for (const [overrides, expected] of rollCases) {
+			const roll: DsEvent = {
+				banes: 0,
+				characterName: "Sir Vile",
+				characteristic: "might",
+				critical: false,
+				dice: [8, 2],
+				edges: 0,
+				modifier: 2,
+				tier: 2,
+				total: 12,
+				type: "ds.power-rolled",
+				...overrides,
+			};
+			expect(text(view.renderEvent(roll, state))).toBe(expected);
+		}
+		const rendered = view.renderEvent(
+			{
+				banes: 0,
+				characterName: "Sir Vile",
+				characteristic: "might",
+				critical: false,
+				dice: [8, 2],
+				edges: 0,
+				modifier: 2,
+				tier: 2,
+				total: 12,
+				type: "ds.power-rolled",
+			},
+			state
 		);
-		expect(rendered?.runs.find((run) => run.text === "23")?.token).toBe(
+		expect(rendered?.runs.find((run) => run.text === "12")?.token).toBe(
 			"accent"
 		);
-		expect(rendered?.runs.find((run) => run.text === "tier 3")?.token).toBe(
-			"success"
+		expect(rendered?.runs.find((run) => run.text === "tier 2")?.token).toBe(
+			"primary"
 		);
 	});
 

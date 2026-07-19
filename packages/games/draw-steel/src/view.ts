@@ -254,17 +254,27 @@ const tierToken = (tier: 1 | 2 | 3) => {
 	return tier === 2 ? ("primary" as const) : ("danger" as const);
 };
 
-const edgeBaneLabel = (net: number): string => {
-	if (net === 0) {
-		return "flat";
-	}
+const edgeBaneLabel = (edges: number, banes: number) => {
+	const net = edges - banes;
 	if (net === 1) {
-		return "edge";
+		return { rollAdjustment: " + 2 (edge)", tierShift: "" };
+	}
+	if (net === -1) {
+		return { rollAdjustment: " − 2 (bane)", tierShift: "" };
 	}
 	if (net === 2) {
-		return "2 edges";
+		return {
+			rollAdjustment: "",
+			tierShift: " (double edge: tier up)",
+		};
 	}
-	return net === -1 ? "bane" : "2 banes";
+	if (net === -2) {
+		return {
+			rollAdjustment: "",
+			tierShift: " (double bane: tier down)",
+		};
+	}
+	return { rollAdjustment: "", tierShift: "" };
 };
 
 export const view: GameView<DsState, DsCommand, DsEvent> = {
@@ -312,18 +322,19 @@ export const view: GameView<DsState, DsCommand, DsEvent> = {
 				return line({ text: `round ${event.round} begins`, token: "primary" });
 			}
 			case "ds.power-rolled": {
-				const edgeBane = edgeBaneLabel(event.edges - event.banes);
+				const edgeBane = edgeBaneLabel(event.edges, event.banes);
 				const modifier = arithmeticModifier(event.modifier);
 				const prefix =
 					event.characterName === null ? "" : `${event.characterName} — `;
 				return line(
 					{
-						text: `${prefix}power roll (${event.characteristic}): ${event.dice[0]} + ${event.dice[1]} ${modifier}, ${edgeBane} = `,
+						text: `${prefix}power roll (${event.characteristic}): ${event.dice[0]} + ${event.dice[1]} ${modifier}${edgeBane.rollAdjustment} = `,
 						token: "primary",
 					},
 					{ text: String(event.total), token: "accent" },
 					{ text: " → ", token: "primary" },
 					{ text: terminology.tiers[event.tier], token: tierToken(event.tier) },
+					{ text: edgeBane.tierShift, token: "primary" },
 					...(event.critical
 						? ([{ text: " · crit!", token: "success" }] as const)
 						: [])
