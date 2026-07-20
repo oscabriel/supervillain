@@ -69,7 +69,7 @@ Key-as-account, everywhere ([009](../tickets/009-identity-across-surfaces.md)):
 
 The `supervillain` CLI is the GM's tool ([010](../tickets/010-cli-artifact-scope.md)):
 
-- **Launch nouns: campaigns and characters.** Maps are deferred — they drag in the battle-map (FrameBuffer) story, its own scope tier.
+- **Launch nouns: campaigns and characters.** Maps are deferred — they drag in the battle-map (FrameBuffer) story, its own scope tier. _(Correction 2026-07-18, [v1 launch plan map #29](https://github.com/oscabriel/supervillain/issues/29): battle maps moved into v1, so maps join the launch noun set; the map-artifact shape is specified on the map's battle-map ticket [#39](https://github.com/oscabriel/supervillain/issues/39).)_
 - **A campaign is a folder of plain files** on the GM's disk: a JSONL event log plus human-readable sidecar character files a GM can hand-edit between sessions. No opaque database.
 - **Portability is "move the folder."** `export`/sync verbs are vN polish.
 - **`supervillain publish <artifact>`** mints the read-only capability URL — the bridge that makes the web surface real.
@@ -118,7 +118,7 @@ Exactly as ticket [014](../tickets/014-scope-tiers.md) resolved them:
 - **Persistent:** rooms append JSONL to the campaign folder and resume after GM restart. No artifacts, publish, web, or key linking in v0; identity is key-as-account automatically.
 - **Seats are log-derived** _(correction 2026-07-14, surfaced by issue #8 — the definition said the core owns seats but never specified claiming)_: room creation claims the GM seat (`gm`) for the creating key; a joining key claims a seat on arrival (`core.seat-claimed`, seats named `player-N` in claim order); a key holds at most one seat per room, so reconnecting with the same key returns to the same seat, and claiming is idempotent. Seat events replay like everything else — a joiner's fold derives the same seating the host holds. Guest identity is the SSH door's concern (#9); the direct door always has a key. Before the gateway registry exists, the direct door's room-ref is the iroh ticket `create` prints — names arrive with #9. _(Correction 2026-07-14, issue #9, [ADR-0004](../../adr/0004-gateway-registration-trusted-stamping-and-guest-actors.md): names arrive via `create --name <room> [--gateway <addr>]`, which registers name→host-address at the gateway over iroh; ownership is the registering key, re-registration by the same key updates the address. The receipt's gateway identity becomes the host's sole trusted stamper, letting the gateway submit for the players it proxies without weakening ADR-0002. Keyless SSH lands as a per-session `guest:<12 hex>` actor via keyboard-interactive, behind the upgrade box.)_
 
-**v1 depth:** DS at **play-support depth only** — full sheet rendering, condition tracking, resource tracking (heroic resources, recoveries, surges), victory tallies. Character files are still authored outside the app. **No builder** (biggest scope trap, and the licensing-heaviest surface — held to v2).
+**v1 depth:** DS at **play-support depth only** — full sheet rendering, condition tracking, resource tracking (heroic resources, recoveries, surges), victory tallies. Character files are still authored outside the app. **No builder** (biggest scope trap, and the licensing-heaviest surface — held to v2). _(Correction 2026-07-18, [v1 launch plan map #29](https://github.com/oscabriel/supervillain/issues/29): **battle maps move from the vN roadmap into v1** — the FrameBuffer story, map artifacts, and their sharing model, which the definition held must arrive together, arrive here. Scope is pinned by tickets [#38](https://github.com/oscabriel/supervillain/issues/38) and [#39](https://github.com/oscabriel/supervillain/issues/39); the vN row keeps its original text as history.)_
 
 **Accepted launch gap:** v1 has no answer for "my GM's machine is off." That is what v3 gateway-hosting resolves, deliberately.
 
@@ -208,12 +208,13 @@ Deferred by decision, not oversight — recorded so nothing looks forgotten.
 | macos-x64 (Intel Mac) CLI | CLI triples | trigger: real Intel-Mac GM cohort + a darwin-x64 iroh artifact ([ADR-0001](../../adr/0001-drop-macos-x64-from-v0-gm-platforms.md)) |
 | brew tap / npm shim | CLI distribution | post-v0 |
 | Drizzle-or-similar ORM | web backend | attached to v1 web |
+| Durable Object per room as the gateway-hosted room host | RoomStore seam / room-host | v3, only if the iroh-reachability question gets an answer _(added 2026-07-18, [#30](https://github.com/oscabriel/supervillain/issues/30))_ |
 
 **Open fog** (deliberately unspecified — [map.md](../map.md)):
 
 - **v1 web framework pick** — deferred; constraints recorded (SSR, OG images, push-ingest snapshot DB, capability-URL routes, passkey-ready empty auth slot). Decided when `apps/web` arrives. Its lattice edge is **model + content only, never authority/view** — and possibly _no_ game import at all if published snapshots are self-describing.
 - **Expansion playbook** — what adding a second game demands (content pipeline, per-game licensing). Placed v4+; full spec is a later effort.
-- **Battle maps** — deferred from the launch noun set; the FrameBuffer story, map artifacts, and their sharing model arrive together when maps enter the roadmap.
+- **Battle maps** — deferred from the launch noun set; the FrameBuffer story, map artifacts, and their sharing model arrive together when maps enter the roadmap. _(Correction 2026-07-18: maps entered the roadmap at v1 — this fog graduated into the [v1 launch plan map #29](https://github.com/oscabriel/supervillain/issues/29), tickets [#38](https://github.com/oscabriel/supervillain/issues/38) and [#39](https://github.com/oscabriel/supervillain/issues/39).)_
 - **AI features** — an explicit MAYBE on the paid tier (v3 earliest); what they'd even be (GM assistance? recap from event logs?) is undiscovered.
 - **Paid-tier mechanics** — pricing, checkout venue, passkey onboarding flow. Placed v3; specified when payments enter the roadmap.
 - **Production relays** — iroh needs dedicated managed or self-hosted relays (≥2 regions); n0's public relays are dev-only. Managed pricing vs self-hosted egress is unpriced ([iroh-viability](iroh-viability.md)).
