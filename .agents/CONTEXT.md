@@ -18,6 +18,12 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Guest**: A keyless player identity. Guest progress is adopted on upgrade by appending a linking event — historical attribution stays immutable while progress becomes reachable. _Avoid_: anonymous user, temp account
 
+**Battle map**: The core-owned tactical surface (v1): a terrain grid loaded from a map file plus live tokens, rendered by core chrome as one cell grid. It adjudicates nothing — shared positional truth the GM manipulates. _Avoid_: board, scene, arena
+
+**Map file**: A plain-text file in the campaign folder's `maps/`: a metadata header (name, legend) then an ASCII grid, one character per cell, legend-mapped to the core tile vocabulary. Terrain only — authored in a text editor; entering play copies its content into the log (`core.map-loaded`), so replay never reads it. _Avoid_: map asset, level file
+
+**Token**: A movable marker on the battle map: id, glyph, label, position, optional seat binding — never game fields. The GM controls all tokens; a player moves only tokens bound to their own seat. _Avoid_: piece, miniature; unqualified "token" for theme tokens (that's **Theme token**)
+
 ## Identity
 
 **Key-as-account**: The identity model: an ed25519 public key is the account everywhere — SSH key fingerprint for players, iroh NodeId for GM/CLI, passkey for the future browser. No signup. _Avoid_: user account, profile, registration
@@ -80,7 +86,7 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Publish**: Snapshot push: `supervillain publish` copies an artifact's data out of the campaign folder to the web backend, minting a capability URL. Re-publish updates; revoke deletes. _Avoid_: share, upload, sync
 
-**Artifact**: A publishable snapshot of campaign data — character sheets and session logs at launch. _Avoid_: document, export, page
+**Artifact**: A publishable snapshot of campaign data — character sheets, session logs, and battle maps (terrain-only) at launch. _Avoid_: document, export, page
 
 ## Process
 
