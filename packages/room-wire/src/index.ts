@@ -1,5 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 
+import { isRecord } from "@supervillain/core";
 import type {
 	Envelope,
 	NamespacedType,
@@ -53,9 +54,6 @@ const encodeJson = (value: unknown): Uint8Array =>
 
 const decodeJson = (message: Uint8Array): unknown =>
 	JSON.parse(decoder.decode(message)) as unknown;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
 
 const parseHello = (value: unknown): Hello => {
 	if (!isRecord(value)) {

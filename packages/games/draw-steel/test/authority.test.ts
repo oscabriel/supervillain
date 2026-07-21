@@ -252,6 +252,28 @@ describe("Draw Steel authority", () => {
 		]);
 	});
 
+	test("rejects forged condition and side values", () => {
+		for (const condition of ["", "banana"]) {
+			const command = {
+				combatantId: "c1",
+				condition,
+				type: "ds.apply-condition",
+			} as unknown as DsCommand;
+			expect(rejectionMessage(decide(init(), command, gmTable))).toBe(
+				`Unknown condition '${condition}'.`
+			);
+		}
+
+		const command = {
+			name: "X",
+			side: "banana",
+			type: "ds.add-combatant",
+		} as unknown as DsCommand;
+		expect(rejectionMessage(decide(init(), command, gmTable))).toBe(
+			"Unknown side 'banana'."
+		);
+	});
+
 	test("enforces alternating sides and rolls the round over", () => {
 		let state = activeState();
 		expect(
@@ -531,6 +553,22 @@ describe("Draw Steel authority", () => {
 				)
 			)
 		).toBe("No character named 'Missing' has entered play.");
+	});
+
+	test("rejects prototype names without own play entries", () => {
+		expect(
+			rejectionMessage(
+				decide(
+					init(),
+					{
+						amount: 1,
+						characterName: "__proto__",
+						type: "ds.gain-resource",
+					},
+					gmTable
+				)
+			)
+		).toBe("No character named '__proto__' has entered play.");
 	});
 
 	test("tracks per-character victories under GM authority", () => {

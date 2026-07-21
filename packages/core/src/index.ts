@@ -1,5 +1,11 @@
 export type NamespacedType = `${string}.${string}`;
 
+/** Returns whether a value is a non-array object with string keys. */
+export const isRecord = (
+	value: unknown
+): value is Readonly<Record<string, unknown>> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
 export const CORE_ROOM_CREATED = "core.room-created";
 export const CORE_SEAT_CLAIMED = "core.seat-claimed";
 export const CORE_CHARACTER_BOUND = "core.character-bound";
@@ -137,7 +143,7 @@ export interface GamePanel<S, C> {
 
 export interface GameView<S, C, E> {
 	readonly renderEvent: (event: E, state: Readonly<S>) => FeedLine | null;
-	readonly panels: readonly GamePanel<S, C>[];
+	readonly createPanels: () => readonly GamePanel<S, C>[];
 	readonly notices?: readonly FeedLine[];
 }
 

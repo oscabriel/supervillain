@@ -4,7 +4,7 @@ import { terminology } from "./content.js";
 import type { FakeCommand, FakeEvent, FakeState } from "./model.js";
 
 export const view: GameView<FakeState, FakeCommand, FakeEvent> = {
-	panels: [
+	createPanels: () => [
 		{
 			id: "fake-visits",
 			onKey(key, input) {
@@ -39,8 +39,14 @@ export const view: GameView<FakeState, FakeCommand, FakeEvent> = {
 			};
 		}
 
-		return {
-			runs: [{ text: `${terminology.visit} ${event.visits}`, token: "accent" }],
-		};
+		if (event.type === "fake.visit-counted") {
+			return {
+				runs: [
+					{ text: `${terminology.visit} ${event.visits}`, token: "accent" },
+				],
+			};
+		}
+
+		return null;
 	},
 };

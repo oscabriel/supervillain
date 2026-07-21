@@ -38,6 +38,8 @@ export const apply = (
 		case "fake.visit-counted": {
 			return { ...state, visits: event.visits };
 		}
+		// Unknown runtime events are skipped for forward compatibility.
 		// No default
 	}
+	return state;
 };

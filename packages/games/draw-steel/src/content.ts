@@ -1,3 +1,4 @@
+import { isRecord } from "./model.js";
 import type { DsCharacteristic, DsCommand } from "./model.js";
 
 export const independenceNotice =
@@ -26,9 +27,6 @@ const CHARACTERISTICS: readonly DsCharacteristic[] = [
 
 const issue = (message: string) =>
 	({ errors: [{ message }], ok: false }) as const;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isBoundedString = (value: unknown, maximumLength: number): boolean =>
 	typeof value === "string" &&

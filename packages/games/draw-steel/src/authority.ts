@@ -1,7 +1,7 @@
 import type { GameAuthority, Rejection, TableView } from "@supervillain/core";
 
 import { validate } from "./content.js";
-import { apply, init } from "./model.js";
+import { apply, DS_CONDITIONS, DS_SIDES, init, playOf } from "./model.js";
 import type {
 	DsCharacteristic,
 	DsCharacterSheet,
@@ -18,6 +18,8 @@ const CHARACTERISTICS: ReadonlySet<DsCharacteristic> = new Set([
 	"intuition",
 	"presence",
 ]);
+const CONDITIONS = new Set(DS_CONDITIONS);
+const SIDES = new Set(DS_SIDES);
 
 const rejection = (message: string): Rejection => ({ message, rejected: true });
 
@@ -166,6 +168,9 @@ const conditionChange = (
 	state: Readonly<DsState>,
 	command: ConditionCommand
 ): DsEvent[] | Rejection => {
+	if (!CONDITIONS.has(command.condition)) {
+		return rejection(`Unknown condition '${String(command.condition)}'.`);
+	}
 	if (!state.encounter.active) {
 		return rejection("Start an encounter first.");
 	}
@@ -204,7 +209,7 @@ const playChange = (
 	state: Readonly<DsState>,
 	command: PlayCommand
 ): DsEvent[] | Rejection => {
-	const play = state.play[command.characterName];
+	const play = playOf(state, command.characterName);
 	if (play === undefined) {
 		return rejection(
 			`No character named '${command.characterName}' has entered play.`
@@ -386,6 +391,9 @@ export const createDecide =
 					: rejection("No encounter is underway.");
 			}
 			case "ds.add-combatant": {
+				if (!SIDES.has(command.side)) {
+					return rejection(`Unknown side '${String(command.side)}'.`);
+				}
 				if (!state.encounter.active) {
 					return rejection("Start an encounter first.");
 				}
@@ -417,7 +425,7 @@ export const createDecide =
 				return conditionChange(state, command);
 			}
 			case "ds.gain-victory": {
-				const play = state.play[command.characterName];
+				const play = playOf(state, command.characterName);
 				return play === undefined
 					? rejection(
 							`No character named '${command.characterName}' has entered play.`

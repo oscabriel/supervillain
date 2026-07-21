@@ -49,12 +49,37 @@ const stateWithRoster = (): DsState => {
 	return state;
 };
 
+const stateWithCharacters = (names: readonly string[]): DsState => {
+	const [base] = stateWithRoster().characters;
+	if (base === undefined) {
+		throw new Error("character missing");
+	}
+	let state = init();
+	for (const name of names) {
+		state = apply(state, {
+			sheet: { ...base, name },
+			type: "ds.character-entered",
+		});
+	}
+	return state;
+};
+
+const threeCharacterTable: TableView = {
+	actor: "b-key",
+	gmSeatId: "a",
+	seats: [
+		{ actor: "a-key", characterId: "A", id: "a" },
+		{ actor: "b-key", characterId: "B", id: "b" },
+		{ actor: "c-key", characterId: "C", id: "c" },
+	],
+};
+
 describe("Draw Steel view", () => {
 	test("renders the independence notice and initiative rows", () => {
 		expect(view.notices).toEqual([
 			{ runs: [{ text: independenceNotice, token: "muted" }] },
 		]);
-		const [panel] = view.panels;
+		const [panel] = view.createPanels();
 		if (panel === undefined) {
 			throw new Error("initiative panel missing");
 		}
@@ -263,6 +288,33 @@ describe("Draw Steel view", () => {
 		);
 	});
 
+	test("renders legacy character events", () => {
+		const event = {
+			statBlock: {
+				characteristics: {
+					agility: 1,
+					intuition: 1,
+					might: 2,
+					presence: 2,
+					reason: 0,
+				},
+				name: "Coda",
+				stamina: 20,
+			},
+			type: "ds.character-entered",
+		} as unknown as DsEvent;
+
+		expect(text(view.renderEvent(event, init()))).toBe(
+			"Coda enters play (M+2 A+1 R+0 I+1 P+2)"
+		);
+	});
+
+	test("skips unknown future events", () => {
+		const event = { type: "ds.unknown-future" } as unknown as DsEvent;
+
+		expect(view.renderEvent(event, stateWithRoster())).toBeNull();
+	});
+
 	test("renders bound sheets, pages between seats, and reflects folded play state", () => {
 		let state = stateWithRoster();
 		state = apply(state, {
@@ -301,7 +353,7 @@ describe("Draw Steel view", () => {
 				{ actor: "rook-key", characterId: "Rook", id: "player" },
 			],
 		};
-		const [, sheetPanel] = view.panels;
+		const [, sheetPanel] = view.createPanels();
 		if (sheetPanel?.onKey === undefined) {
 			throw new Error("sheet panel missing");
 		}
@@ -378,8 +430,116 @@ describe("Draw Steel view", () => {
 		]);
 	});
 
+	test("keeps the selected seat when an earlier seat unbinds", () => {
+		const [, sheetPanel] = view.createPanels();
+		if (sheetPanel?.onKey === undefined) {
+			throw new Error("sheet panel missing");
+		}
+		const input: GamePanelInput<DsState, DsCommand> = {
+			dispatch: () => {},
+			focused: true,
+			state: stateWithCharacters(["A", "B", "C"]),
+			table: threeCharacterTable,
+		};
+		expect(text(sheetPanel.render(input)[0] ?? null)).toBe(
+			"B — Human Troubadour"
+		);
+		expect(sheetPanel.onKey({ name: "right" }, input)).toBe(true);
+		expect(text(sheetPanel.render(input)[0] ?? null)).toBe(
+			"C — Human Troubadour"
+		);
+
+		const unbound = {
+			...input,
+			table: {
+				...threeCharacterTable,
+				seats: threeCharacterTable.seats.map((seat) =>
+					seat.id === "a" ? { ...seat, characterId: null } : seat
+				),
+			},
+		};
+		expect(text(sheetPanel.render(unbound)[0] ?? null)).toBe(
+			"C — Human Troubadour"
+		);
+	});
+
+	test("falls back to the viewer's sheet when the selected seat unbinds", () => {
+		const [, sheetPanel] = view.createPanels();
+		if (sheetPanel?.onKey === undefined) {
+			throw new Error("sheet panel missing");
+		}
+		const input: GamePanelInput<DsState, DsCommand> = {
+			dispatch: () => {},
+			focused: true,
+			state: stateWithCharacters(["A", "B", "C"]),
+			table: threeCharacterTable,
+		};
+		expect(sheetPanel.onKey({ name: "right" }, input)).toBe(true);
+
+		const selectedUnbound = {
+			...input,
+			table: {
+				...threeCharacterTable,
+				seats: threeCharacterTable.seats.map((seat) =>
+					seat.id === "c" ? { ...seat, characterId: null } : seat
+				),
+			},
+		};
+		expect(text(sheetPanel.render(selectedUnbound)[0] ?? null)).toBe(
+			"B — Human Troubadour"
+		);
+	});
+
+	test("mints independent panel state for each table session", () => {
+		let state = stateWithRoster();
+		const [coda] = state.characters;
+		if (coda === undefined) {
+			throw new Error("character missing");
+		}
+		state = apply(state, {
+			sheet: {
+				...coda,
+				ancestry: "Orc",
+				className: "Fury",
+				heroicResource: "Ferocity",
+				name: "Rook",
+			},
+			type: "ds.character-entered",
+		});
+		const boundTable: TableView = {
+			actor: "coda-key",
+			gmSeatId: "gm",
+			seats: [
+				{ actor: "coda-key", characterId: "Coda", id: "gm" },
+				{ actor: "rook-key", characterId: "Rook", id: "player" },
+			],
+		};
+		const [, firstSheetPanel] = view.createPanels();
+		const [, secondSheetPanel] = view.createPanels();
+		if (
+			firstSheetPanel?.onKey === undefined ||
+			secondSheetPanel === undefined
+		) {
+			throw new Error("sheet panel missing");
+		}
+		const input: GamePanelInput<DsState, DsCommand> = {
+			dispatch: () => {},
+			focused: true,
+			state,
+			table: boundTable,
+		};
+
+		expect(firstSheetPanel.onKey({ name: "right" }, input)).toBe(true);
+		expect(text(firstSheetPanel.render(input)[0] ?? null)).toBe(
+			"Rook — Orc Fury"
+		);
+		expect(text(secondSheetPanel.render(input)[0] ?? null)).toBe(
+			"Coda — Human Troubadour"
+		);
+	});
+
 	test("dispatches add and roll builder flows with and without a character match", () => {
-		const [panel] = view.panels;
+		const [panel] = view.createPanels();
 		if (panel?.onKey === undefined) {
 			throw new Error("interactive panel missing");
 		}

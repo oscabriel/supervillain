@@ -120,7 +120,7 @@ describe("game module seam", () => {
 	});
 
 	test("panels render arrays and dispatch through their input", () => {
-		const [panel] = view.panels;
+		const [panel] = view.createPanels();
 		expect(panel).toBeDefined();
 		if (panel === undefined) {
 			return;

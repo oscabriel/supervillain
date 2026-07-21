@@ -18,7 +18,7 @@ const entry: ViewEntry<State, unknown, Event> = {
 		init: () => ({ count: 0 }),
 	},
 	view: {
-		panels: [],
+		createPanels: () => [],
 		renderEvent: (event, state) => ({
 			runs: [{ text: `${event.type}:${state.count}`, token: "primary" }],
 		}),

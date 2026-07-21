@@ -1,6 +1,14 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- CLI tests run in Bun's native test lane. */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	access,
+	chmod,
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -68,6 +76,118 @@ describe("supervillain noun commands", () => {
 			output: "",
 		});
 		expect(await readFile(filePath, "utf-8")).toBe(original);
+	});
+
+	test("rejects character names with no filename-safe characters", async () => {
+		const campaign = await makeCampaign();
+		const results = await Promise.all(
+			["---", "英雄"].map((name) =>
+				runCli(["character", "new", campaign, name])
+			)
+		);
+		for (const result of results) {
+			expect(result).toEqual({
+				code: 1,
+				error:
+					"Character name has no filename-safe characters; pass an ASCII name.\n",
+				output: "",
+			});
+		}
+		await expect(
+			access(path.join(campaign, "characters"))
+		).rejects.toMatchObject({
+			code: "ENOENT",
+		});
+	});
+
+	test("reports a missing character file as not found", async () => {
+		const campaign = await makeCampaign();
+		const result = await runCli([
+			"character",
+			"check",
+			campaign,
+			"missing.json",
+		]);
+		expect(result).toEqual({
+			code: 1,
+			error: "",
+			output: "missing.json: file not found.\n",
+		});
+	});
+
+	test.skipIf(process.getuid?.() === 0)(
+		"does not report a permission error as file not found",
+		async () => {
+			const campaign = await makeCampaign();
+			const created = await runCli(["character", "new", campaign, "Private"]);
+			expect(created.code).toBe(0);
+			const filePath = path.join(campaign, "characters", "private.json");
+			await chmod(filePath, 0o000);
+			try {
+				const result = await runCli([
+					"character",
+					"check",
+					campaign,
+					"private.json",
+				]);
+				expect(result.code).toBe(1);
+				expect(result.error).toBe("");
+				expect(result.output).toStartWith("private.json:");
+				expect(result.output).toMatch(/EACCES|permission denied/iu);
+				expect(result.output).not.toContain("file not found.");
+			} finally {
+				await chmod(filePath, 0o600);
+			}
+		}
+	);
+
+	test("atomically rejects concurrent creation of the same character", async () => {
+		const campaign = await makeCampaign();
+		const filePath = path.join(campaign, "characters", "coda.json");
+		const results = await Promise.all([
+			runCli(["character", "new", campaign, "Coda"]),
+			runCli(["character", "new", campaign, "Coda"]),
+		]);
+		expect(results.filter((result) => result.code === 0)).toHaveLength(1);
+		expect(results.filter((result) => result.code === 1)).toEqual([
+			{ code: 1, error: `${filePath} already exists.\n`, output: "" },
+		]);
+		expect(JSON.parse(await readFile(filePath, "utf-8"))).toEqual({
+			abilities: [],
+			ancestry: "Human",
+			characteristics: {
+				agility: 1,
+				intuition: 0,
+				might: 2,
+				presence: 0,
+				reason: 1,
+			},
+			class: "Tactician",
+			heroicResource: "Focus",
+			kit: "Sword and Board",
+			name: "Coda",
+			recoveries: 8,
+			stamina: 21,
+			surges: 0,
+			victories: 0,
+		});
+	});
+
+	test("rejects invalid UTF-8 character bytes", async () => {
+		const campaign = await makeCampaign();
+		const directory = path.join(campaign, "characters");
+		await mkdir(directory, { recursive: true });
+		await writeFile(
+			path.join(directory, "broken.json"),
+			new Uint8Array([255, 254])
+		);
+
+		const result = await runCli(["character", "check", campaign]);
+		expect(result).toEqual({
+			code: 1,
+			error: "",
+			output: "broken.json: Character file must contain valid UTF-8 JSON.\n",
+		});
 	});
 
 	test("checks every character and reports field-level errors", async () => {

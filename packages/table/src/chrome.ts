@@ -109,6 +109,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		options.session.actor
 	);
 	const lines = initialFeedLines(options.entry.view.notices);
+	const panels = options.entry.view.createPanels();
 	const root = new BoxRenderable(renderer, {
 		flexDirection: "column",
 		height: "100%",
@@ -161,9 +162,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	let focusedPanelIndex = -1;
 	let idleStatusContent = "";
 	let idleStatusToken: "danger" | "muted" = "muted";
-	const interactivePanels = options.entry.view.panels.filter(
-		(panel) => panel.onKey !== undefined
-	);
+	const interactivePanels = panels.filter((panel) => panel.onKey !== undefined);
 	const renderStatus = (): void => {
 		const focused = interactivePanels[focusedPanelIndex];
 		status.fg = resolveThemeToken(focused ? "muted" : idleStatusToken);
@@ -202,7 +201,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	const renderSidebar = (): void => {
 		const seats = formatSeatList(fold.table(), options.session.actor);
 		const focusedPanel = interactivePanels[focusedPanelIndex];
-		const panelLines = options.entry.view.panels.flatMap((panel) =>
+		const panelLines = panels.flatMap((panel) =>
 			panel
 				.render(panelInput(panel === focusedPanel))
 				.map((line) => line.runs.map((run) => run.text).join(""))

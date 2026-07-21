@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
+import { isRecord } from "@supervillain/core";
 import type {
 	GameContent,
 	GatewayRegistry,
@@ -125,9 +126,6 @@ interface CharacterFileResult {
 	readonly name?: string;
 	readonly ok: boolean;
 }
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
 
 const readRoomLog = async (
 	campaignFolder: string
@@ -371,9 +369,13 @@ const characterList = async (
 const character = async (args: readonly string[]): Promise<number> => {
 	let parsed: ReturnType<typeof parseArgs>;
 	try {
+		const parseableArgs =
+			args[0] === "new" && args[2]?.startsWith("-")
+				? [...args.slice(0, 2), ...args.slice(3), "--", args[2]]
+				: [...args];
 		parsed = parseArgs({
 			allowPositionals: true,
-			args: [...args],
+			args: parseableArgs,
 			options: { game: { type: "string" } },
 		});
 	} catch (error) {

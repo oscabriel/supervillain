@@ -8,6 +8,7 @@ import type {
 } from "@supervillain/core";
 
 import { independenceNotice, terminology } from "./content.js";
+import { playOf, sheetOfEnteredEvent } from "./model.js";
 import type {
 	DsCharacteristic,
 	DsCharacterSheet,
@@ -267,19 +268,21 @@ const boundSheets = (input: GamePanelInput<DsState, DsCommand>) =>
 	});
 
 const createSheetPanel = (): GamePanel<DsState, DsCommand> => {
-	let pageOverride: number | null = null;
+	let pageSeatId: string | null = null;
 
 	const shownIndex = (
 		input: GamePanelInput<DsState, DsCommand>,
 		bound: ReturnType<typeof boundSheets>
 	): number => {
-		if (pageOverride !== null) {
-			return ((pageOverride % bound.length) + bound.length) % bound.length;
-		}
 		const ownIndex = bound.findIndex(
 			({ seat }) => seat.actor === input.table.actor
 		);
-		return ownIndex === -1 ? 0 : ownIndex;
+		const defaultIndex = ownIndex === -1 ? 0 : ownIndex;
+		if (pageSeatId === null) {
+			return defaultIndex;
+		}
+		const pageIndex = bound.findIndex(({ seat }) => seat.id === pageSeatId);
+		return pageIndex === -1 ? defaultIndex : pageIndex;
 	};
 
 	const render = (input: GamePanelInput<DsState, DsCommand>): FeedLine[] => {
@@ -306,7 +309,7 @@ const createSheetPanel = (): GamePanel<DsState, DsCommand> => {
 			line({ text: characteristicSummary(sheet), token: "primary" }),
 			line({ text: `stamina ${sheet.stamina}`, token: "primary" }),
 		];
-		const play = input.state.play[sheet.name];
+		const play = playOf(input.state, sheet.name);
 		if (play !== undefined) {
 			lines.push(
 				line({
@@ -367,7 +370,11 @@ const createSheetPanel = (): GamePanel<DsState, DsCommand> => {
 		}
 		const bound = boundSheets(input);
 		if (bound.length > 0) {
-			pageOverride = shownIndex(input, bound) + direction;
+			const currentIndex = shownIndex(input, bound);
+			const nextIndex =
+				(((currentIndex + direction) % bound.length) + bound.length) %
+				bound.length;
+			pageSeatId = bound[nextIndex]?.seat.id ?? null;
 		}
 		return true;
 	};
@@ -406,17 +413,18 @@ const edgeBaneLabel = (edges: number, banes: number) => {
 };
 
 export const view: GameView<DsState, DsCommand, DsEvent> = {
+	createPanels: () => [createInitiativePanel(), createSheetPanel()],
 	notices: [line({ text: independenceNotice, token: "muted" })],
-	panels: [createInitiativePanel(), createSheetPanel()],
 	// oxlint-disable-next-line eslint/complexity -- branches mirror the pinned event register for exhaustive rendering.
 	renderEvent(event, state) {
 		switch (event.type) {
 			case "ds.character-entered": {
+				const sheet = sheetOfEnteredEvent(event);
 				return line(
-					{ text: event.sheet.name, token: "accent" },
+					{ text: sheet.name, token: "accent" },
 					{ text: " enters play ", token: "primary" },
 					{
-						text: `(${characteristicSummary(event.sheet)})`,
+						text: `(${characteristicSummary(sheet)})`,
 						token: "muted",
 					}
 				);
@@ -524,7 +532,9 @@ export const view: GameView<DsState, DsCommand, DsEvent> = {
 						: [])
 				);
 			}
+			// Unknown runtime events are skipped for forward compatibility.
 			// No default
 		}
+		return null;
 	},
 };

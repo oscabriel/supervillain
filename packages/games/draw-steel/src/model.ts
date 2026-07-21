@@ -4,17 +4,20 @@ export type DsCharacteristic =
 	| "reason"
 	| "intuition"
 	| "presence";
-export type DsSide = "heroes" | "enemies";
-export type DsCondition =
-	| "bleeding"
-	| "dazed"
-	| "frightened"
-	| "grabbed"
-	| "prone"
-	| "restrained"
-	| "slowed"
-	| "taunted"
-	| "weakened";
+export const DS_SIDES = ["heroes", "enemies"] as const;
+export type DsSide = (typeof DS_SIDES)[number];
+export const DS_CONDITIONS = [
+	"bleeding",
+	"dazed",
+	"frightened",
+	"grabbed",
+	"prone",
+	"restrained",
+	"slowed",
+	"taunted",
+	"weakened",
+] as const;
+export type DsCondition = (typeof DS_CONDITIONS)[number];
 
 export interface DsStatBlock {
 	readonly name: string;
@@ -198,7 +201,9 @@ export const init = (): DsState => ({
 	play: {},
 });
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+export const isRecord = (
+	value: unknown
+): value is Readonly<Record<string, unknown>> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
 const hasSheet = (
@@ -206,12 +211,18 @@ const hasSheet = (
 ): event is { readonly sheet: DsCharacterSheet } =>
 	isRecord(event) && "sheet" in event;
 
+export const playOf = (
+	state: Readonly<DsState>,
+	name: string
+): DsPlayState | undefined =>
+	Object.hasOwn(state.play, name) ? state.play[name] : undefined;
+
 const patchPlay = (
 	state: Readonly<DsState>,
 	name: string,
 	patch: Partial<DsPlayState>
 ): DsState => {
-	const play = state.play[name];
+	const play = playOf(state, name);
 	return play === undefined
 		? state
 		: { ...state, play: { ...state.play, [name]: { ...play, ...patch } } };
@@ -245,20 +256,36 @@ const upgradeStatBlock = (statBlock: DsStatBlock): DsCharacterSheet => ({
 	victories: 0,
 });
 
+export const sheetOfEnteredEvent = (
+	event: Extract<DsEvent, { readonly type: "ds.character-entered" }>
+): DsCharacterSheet => {
+	const runtimeEvent: unknown = event;
+	return hasSheet(runtimeEvent)
+		? runtimeEvent.sheet
+		: upgradeStatBlock(
+				(runtimeEvent as { readonly statBlock: DsStatBlock }).statBlock
+			);
+};
+
 // oxlint-disable-next-line eslint/complexity -- branches mirror the pinned event grammar for exhaustive replay folding.
 export const apply = (state: Readonly<DsState>, event: DsEvent): DsState => {
 	switch (event.type) {
 		case "ds.character-entered": {
-			const runtimeEvent: unknown = event;
-			const sheet = hasSheet(runtimeEvent)
-				? runtimeEvent.sheet
-				: upgradeStatBlock(
-						(runtimeEvent as { readonly statBlock: DsStatBlock }).statBlock
-					);
+			const sheetEvent = hasSheet(event);
+			const sheet = sheetOfEnteredEvent(event);
 			const index = state.characters.findIndex(
 				(character) => character.name === sheet.name
 			);
-			const currentPlay = state.play[sheet.name];
+			const characters =
+				index === -1
+					? [...state.characters, sheet]
+					: state.characters.map((character, characterIndex) =>
+							characterIndex === index ? sheet : character
+						);
+			if (!sheetEvent) {
+				return { ...state, characters };
+			}
+			const currentPlay = playOf(state, sheet.name);
 			const play: DsPlayState =
 				currentPlay === undefined
 					? {
@@ -273,12 +300,7 @@ export const apply = (state: Readonly<DsState>, event: DsEvent): DsState => {
 						};
 			return {
 				...state,
-				characters:
-					index === -1
-						? [...state.characters, sheet]
-						: state.characters.map((character, characterIndex) =>
-								characterIndex === index ? sheet : character
-							),
+				characters,
 				play: { ...state.play, [sheet.name]: play },
 			};
 		}
@@ -365,6 +387,8 @@ export const apply = (state: Readonly<DsState>, event: DsEvent): DsState => {
 		case "ds.power-rolled": {
 			return state;
 		}
+		// Unknown runtime events are skipped for forward compatibility.
 		// No default
 	}
+	return state;
 };

@@ -132,10 +132,7 @@ describe("Draw Steel model", () => {
 				type: envelope.type,
 			} as unknown as DsEvent);
 		}
-		expect(state.play).toEqual({
-			Coda: { heroicResource: 0, recoveries: 0, surges: 0, victories: 0 },
-			Echo: { heroicResource: 0, recoveries: 0, surges: 0, victories: 0 },
-		});
+		expect(state.play).toEqual({});
 		expect(state.characters).toEqual([
 			{
 				abilities: [],
@@ -164,6 +161,48 @@ describe("Draw Steel model", () => {
 				victories: 0,
 			},
 		]);
+	});
+
+	test("starts play from a full sheet after a legacy entry", () => {
+		const legacyEvent = {
+			statBlock: {
+				characteristics: sheet().characteristics,
+				name: "Coda",
+				stamina: 20,
+			},
+			type: "ds.character-entered",
+		} as unknown as DsEvent;
+		let state = apply(init(), legacyEvent);
+		state = apply(state, {
+			sheet: { ...sheet(), surges: 2, victories: 1 },
+			type: "ds.character-entered",
+		});
+
+		expect(state.play.Coda).toEqual({
+			heroicResource: 0,
+			recoveries: 8,
+			surges: 2,
+			victories: 1,
+		});
+	});
+
+	test("skips unknown future events", () => {
+		const state = replay();
+		const event = { type: "ds.unknown-future" } as unknown as DsEvent;
+
+		expect(apply(state, event)).toEqual(state);
+	});
+
+	test("ignores play events for prototype names without own entries", () => {
+		const state = init();
+		const next = apply(state, {
+			characterName: "__proto__",
+			delta: 1,
+			total: 1,
+			type: "ds.resource-changed",
+		});
+
+		expect(next).toEqual(state);
 	});
 
 	test("folds conditions and sets play values from event payloads", () => {
