@@ -45,7 +45,7 @@ Interface invariants (not implementation notes):
 
 Riders:
 
-- **`TableView` is a read-only snapshot value captured at command time** (not a live handle), exposing the narrow core facts `decide` may read (seats, who holds the GM seat). It is the **licensed churn point**: v1 growth there (e.g. character↔seat bindings) is honest interface evolution. _(Correction 2026-07-14, surfaced by issue #10, [ADR-0003](../../adr/0003-tableview-carries-the-authenticated-actor.md): `TableView` also carries `actor` — the authenticated key of the perspective the snapshot serves: the command's connection-authenticated issuer in `decide`, the viewing player in panels. GM-only authority rules read it instead of trusting command payloads.)_
+- **`TableView` is a read-only snapshot value captured at command time** (not a live handle), exposing the narrow core facts `decide` may read (seats, who holds the GM seat). It is the **licensed churn point**: v1 growth there (e.g. character↔seat bindings) is honest interface evolution. _(Correction 2026-07-14, surfaced by issue #10, [ADR-0003](../../adr/0003-tableview-carries-the-authenticated-actor.md): `TableView` also carries `actor` — the authenticated key of the perspective the snapshot serves: the command's connection-authenticated issuer in `decide`, the viewing player in panels. GM-only authority rules read it instead of trusting command payloads.)_ _(Correction 2026-07-20, issues #21/#24: `SeatView` carries `characterId: string | null`; bindings are established by the core-owned `core.bind-character` command → `core.character-bound` event, bind the issuer's own seat (actor-resolved, ADR-0003), are opaque to the core, last-write-wins in log order, and derive purely from replay.)_
 - **The envelope is the core's forever-promise; payload schema versioning is the module's problem.** The v1 Draw Steel module must replay v0 events.
 
 ## Render end
@@ -93,7 +93,7 @@ The second adapter that makes the seam real in v0 (two-adapters rule): a trivial
 
 | churn | where | when |
 | --- | --- | --- |
-| character↔seat bindings | `TableView` | v1 |
+| character↔seat bindings | `TableView` | landed v1, 2026-07-20 #21/#24 |
 | per-game chat idioms | `GameView` | v1, if real play demands |
 | field-level schema introspection | content entry | v2 (builder) |
 | creation-wizard flow | new entry point or CLI-side | v2 — zero present consumers, so no entry point now |

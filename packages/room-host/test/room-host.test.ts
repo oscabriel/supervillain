@@ -1,5 +1,5 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals, unicorn/no-await-expression-member -- dual-lane suite uses direct assertions on ordered async iterator and file results. */
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -83,7 +83,7 @@ describe("RoomHost", () => {
 			expect(host.snapshot().table).toEqual({
 				actor: "",
 				gmSeatId: "gm",
-				seats: [{ actor: "actor-gm", id: "gm" }],
+				seats: [{ actor: "actor-gm", characterId: null, id: "gm" }],
 			});
 		});
 	});
@@ -101,15 +101,23 @@ describe("RoomHost", () => {
 			});
 			expect(accepted).toMatchObject({ accepted: true });
 			expect(host.snapshot()).toEqual({
-				game: { lastSeatId: "player-1", visits: 1 },
+				game: {
+					lastCharacterId: null,
+					lastSeatId: "player-1",
+					visits: 1,
+				},
 				gameId: "fake",
 				seq: 5,
 				table: {
 					actor: "",
 					gmSeatId: "gm",
 					seats: [
-						{ actor: "actor-gm", id: "gm" },
-						{ actor: "actor-guest", id: "player-1" },
+						{ actor: "actor-gm", characterId: null, id: "gm" },
+						{
+							actor: "actor-guest",
+							characterId: null,
+							id: "player-1",
+						},
 					],
 				},
 			});
@@ -163,6 +171,107 @@ describe("RoomHost", () => {
 				accepted: true,
 				envelopes: [{ seq: 6 }, { seq: 7 }],
 			});
+		});
+	});
+
+	test("replays v0-shaped logs byte-identically with null bindings", async () => {
+		await withCampaign(async (campaignFolder) => {
+			const envelopes = [
+				{
+					actor: "actor-gm",
+					payload: { gameId: "fake" },
+					seq: 1,
+					timestamp: timestamps[0],
+					type: "core.room-created",
+				},
+				{
+					actor: "actor-gm",
+					payload: { seatId: "gm" },
+					seq: 2,
+					timestamp: timestamps[1],
+					type: "core.seat-claimed",
+				},
+				{
+					actor: "actor-gm",
+					payload: { text: "hello" },
+					seq: 3,
+					timestamp: timestamps[2],
+					type: "core.chat-posted",
+				},
+				{
+					actor: "actor-gm",
+					payload: { modifier: 0, notation: "d6", rolls: [4], total: 4 },
+					seq: 4,
+					timestamp: timestamps[3],
+					type: "core.dice-rolled",
+				},
+				{
+					actor: "actor-gm",
+					payload: { seatId: "gm" },
+					seq: 5,
+					timestamp: "2026-01-01T00:00:04.000Z",
+					type: "fake.seat-observed",
+				},
+				{
+					actor: "actor-gm",
+					payload: { visits: 1 },
+					seq: 6,
+					timestamp: "2026-01-01T00:00:05.000Z",
+					type: "fake.visit-counted",
+				},
+			];
+			const bytes = `${envelopes.map((value) => JSON.stringify(value)).join("\n")}\n`;
+			const logPath = path.join(campaignFolder, "events.jsonl");
+			await writeFile(logPath, bytes);
+
+			const host = await RoomHost.open({ campaignFolder, registry });
+			expect(await readFile(logPath, "utf-8")).toBe(bytes);
+			expect(host.snapshot()).toEqual({
+				game: { lastCharacterId: null, lastSeatId: "gm", visits: 1 },
+				gameId: "fake",
+				seq: 6,
+				table: {
+					actor: "",
+					gmSeatId: "gm",
+					seats: [{ actor: "actor-gm", characterId: null, id: "gm" }],
+				},
+			});
+		});
+	});
+
+	test("rejects a log binding an unknown seat", async () => {
+		await withCampaign(async (campaignFolder) => {
+			const envelopes = [
+				{
+					actor: "actor-gm",
+					payload: { gameId: "fake" },
+					seq: 1,
+					timestamp: timestamps[0],
+					type: "core.room-created",
+				},
+				{
+					actor: "actor-gm",
+					payload: { seatId: "gm" },
+					seq: 2,
+					timestamp: timestamps[1],
+					type: "core.seat-claimed",
+				},
+				{
+					actor: "actor-gm",
+					payload: { characterId: "hero", seatId: "missing" },
+					seq: 3,
+					timestamp: timestamps[2],
+					type: "core.character-bound",
+				},
+			];
+			await writeFile(
+				path.join(campaignFolder, "events.jsonl"),
+				`${envelopes.map((value) => JSON.stringify(value)).join("\n")}\n`
+			);
+
+			await expect(RoomHost.open({ campaignFolder, registry })).rejects.toThrow(
+				"Log binds a character to unknown seat 'missing'."
+			);
 		});
 	});
 

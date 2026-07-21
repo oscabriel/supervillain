@@ -21,7 +21,11 @@ export const decide = (
 	}
 
 	return [
-		{ seatId: seat.id, type: "fake.seat-observed" },
+		{
+			characterId: seat.characterId,
+			seatId: seat.id,
+			type: "fake.seat-observed",
+		},
 		{ type: "fake.visit-counted", visits: state.visits + 1 },
 	];
 };

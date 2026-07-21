@@ -1,18 +1,22 @@
-/* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; the runner is the runtime claim. */
 import { describe, expect, test } from "bun:test";
+/* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; the runner is the runtime claim. */
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { decide } from "../../games/fake/src/authority.js";
 import { apply, init } from "../../games/fake/src/model.js";
 import type { FakeEvent, FakeState } from "../../games/fake/src/model.js";
 import { view } from "../../games/fake/src/view.js";
-import type { Envelope, TableView } from "../src/index.js";
+import { RoomHost } from "../../room-host/src/index.js";
+import type { Envelope, HostRegistry, TableView } from "../src/index.js";
 
 const table: TableView = {
 	actor: "actor-guest",
 	gmSeatId: "gm",
 	seats: [
-		{ actor: "actor-gm", id: "gm" },
-		{ actor: "actor-guest", id: "guest" },
+		{ actor: "actor-gm", characterId: null, id: "gm" },
+		{ actor: "actor-guest", characterId: "hero", id: "guest" },
 	],
 };
 
@@ -60,9 +64,59 @@ describe("game module seam", () => {
 		expect(
 			decide(init(), { seatId: "guest", type: "fake.visit" }, table)
 		).toEqual([
-			{ seatId: "guest", type: "fake.seat-observed" },
+			{
+				characterId: "hero",
+				seatId: "guest",
+				type: "fake.seat-observed",
+			},
 			{ type: "fake.visit-counted", visits: 1 },
 		]);
+	});
+
+	test("crosses character bindings through host decide and fresh replay", async () => {
+		const folder = await mkdtemp(
+			path.join(tmpdir(), "supervillain-conformance-")
+		);
+		const registry: HostRegistry = {
+			get: (gameId) =>
+				gameId === "fake"
+					? { authority: { decide }, model: { apply, init } }
+					: undefined,
+		};
+		try {
+			const host = await RoomHost.open({
+				actor: "actor-gm",
+				campaignFolder: folder,
+				gameId: "fake",
+				registry,
+			});
+			await host.submit({
+				actor: "actor-guest",
+				command: { type: "core.claim-seat" },
+			});
+			await host.submit({
+				actor: "actor-guest",
+				command: { characterId: "  hero  ", type: "core.bind-character" },
+			});
+			await host.submit({
+				actor: "actor-guest",
+				command: { seatId: "player-1", type: "fake.visit" },
+			});
+			const expected = host.snapshot();
+			expect(expected.game).toEqual({
+				lastCharacterId: "hero",
+				lastSeatId: "player-1",
+				visits: 1,
+			});
+
+			const replayed = await RoomHost.open({
+				campaignFolder: folder,
+				registry,
+			});
+			expect(replayed.snapshot()).toEqual(expected);
+		} finally {
+			await rm(folder, { force: true, recursive: true });
+		}
 	});
 
 	test("panels render arrays and dispatch through their input", () => {
@@ -92,7 +146,11 @@ describe("game module seam", () => {
 
 	test("replay is byte-identical", () => {
 		const events: FakeEvent[] = [
-			{ seatId: "guest", type: "fake.seat-observed" },
+			{
+				characterId: "hero",
+				seatId: "guest",
+				type: "fake.seat-observed",
+			},
 			{ type: "fake.visit-counted", visits: 1 },
 		];
 		const replay = (): FakeState => {

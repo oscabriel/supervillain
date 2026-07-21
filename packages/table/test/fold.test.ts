@@ -49,7 +49,7 @@ describe("createTableFold", () => {
 		expect(fold.table()).toEqual({
 			actor: "viewer-key",
 			gmSeatId: "gm",
-			seats: [{ actor: "actor-key-long", id: "gm" }],
+			seats: [{ actor: "actor-key-long", characterId: null, id: "gm" }],
 		});
 		expect(fold.actorLabel("actor-key-long")).toBe("gm");
 		expect(
@@ -62,6 +62,43 @@ describe("createTableFold", () => {
 				{ text: "hello", token: "primary" },
 			],
 		});
+	});
+
+	test("folds character bindings last-write-wins and skips unknown seats", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		fold.apply(
+			envelope("core.seat-claimed", { seatId: "gm" }, "actor-key-long", 2)
+		);
+		expect(
+			fold.apply(
+				envelope(
+					"core.character-bound",
+					{ characterId: "hero", seatId: "gm" },
+					"actor-key-long",
+					3
+				)
+			)
+		).toBeNull();
+		expect(fold.table().seats[0]?.characterId).toBe("hero");
+		fold.apply(
+			envelope(
+				"core.character-bound",
+				{ characterId: null, seatId: "gm" },
+				"actor-key-long",
+				4
+			)
+		);
+		expect(fold.table().seats[0]?.characterId).toBeNull();
+		expect(
+			fold.apply(
+				envelope(
+					"core.character-bound",
+					{ characterId: "ignored", seatId: "missing" },
+					"actor-key-long",
+					5
+				)
+			)
+		).toBeNull();
 	});
 
 	test("renders core room and dice envelopes", () => {

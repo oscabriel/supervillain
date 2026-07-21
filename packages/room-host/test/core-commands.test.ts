@@ -74,15 +74,91 @@ describe("RoomHost core commands", () => {
 				actor: "",
 				gmSeatId: "gm",
 				seats: [
-					{ actor: "gm-key", id: "gm" },
-					{ actor: "player-one", id: "player-1" },
-					{ actor: "player-two", id: "player-2" },
+					{ actor: "gm-key", characterId: null, id: "gm" },
+					{ actor: "player-one", characterId: null, id: "player-1" },
+					{ actor: "player-two", characterId: null, id: "player-2" },
 				],
 			});
 			const lines = (await readFile(path.join(folder, "events.jsonl"), "utf-8"))
 				.trim()
 				.split("\n");
 			expect(lines).toHaveLength(4);
+		}));
+
+	test("binds the issuer's seat with validation and idempotence", async () =>
+		withHost(async (host, folder) => {
+			expect(
+				await host.submit({
+					actor: "stranger",
+					command: { characterId: "hero", type: "core.bind-character" },
+				})
+			).toEqual({
+				message: "You do not hold a seat at this table.",
+				rejected: true,
+			});
+			for (const characterId of ["", "   ", "x".repeat(61)]) {
+				expect(
+					await host.submit({
+						actor: "gm-key",
+						command: { characterId, type: "core.bind-character" },
+					})
+				).toEqual({
+					message:
+						"Character id must be a non-empty string of at most 60 characters.",
+					rejected: true,
+				});
+			}
+			const bound = await host.submit({
+				actor: "gm-key",
+				command: { characterId: "  hero  ", type: "core.bind-character" },
+			});
+			expect(bound).toMatchObject({
+				accepted: true,
+				envelopes: [
+					{
+						actor: "gm-key",
+						payload: { characterId: "hero", seatId: "gm" },
+						seq: 3,
+						type: "core.character-bound",
+					},
+				],
+			});
+			expect(
+				await host.submit({
+					actor: "gm-key",
+					command: { characterId: "hero", type: "core.bind-character" },
+				})
+			).toEqual({ accepted: true, envelopes: [] });
+			expect(host.snapshot().table.seats[0]?.characterId).toBe("hero");
+			const stream = host.stream(1)[Symbol.asyncIterator]();
+			await stream.next();
+			await stream.next();
+			expect((await stream.next()).value).toMatchObject({
+				payload: { characterId: "hero", seatId: "gm" },
+				type: "core.character-bound",
+			});
+			await stream.return?.();
+
+			const reopened = await RoomHost.open({
+				campaignFolder: folder,
+				registry,
+			});
+			expect(reopened.snapshot().table.seats[0]?.characterId).toBe("hero");
+			expect(
+				await reopened.submit({
+					actor: "gm-key",
+					command: { characterId: null, type: "core.bind-character" },
+				})
+			).toMatchObject({
+				accepted: true,
+				envelopes: [{ payload: { characterId: null, seatId: "gm" }, seq: 4 }],
+			});
+			expect(
+				await reopened.submit({
+					actor: "gm-key",
+					command: { characterId: null, type: "core.bind-character" },
+				})
+			).toEqual({ accepted: true, envelopes: [] });
 		}));
 
 	test("posts trimmed chat and validates messages and seats", async () =>

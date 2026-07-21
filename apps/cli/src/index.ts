@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import type { Dirent } from "node:fs";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -47,6 +47,10 @@ const USAGE = `Usage:
   supervillain create <campaign-folder> [--game <id>] [--name <room> [--gateway <addr>]]
   supervillain join <room-ref>
   supervillain publish
+  supervillain character new <campaign-folder> <name> [--game <id>]
+  supervillain character check <campaign-folder> [file] [--game <id>]
+  supervillain character list <campaign-folder> [--game <id>]
+  supervillain campaign info <campaign-folder>
 
   --name registers the room at a gateway so players can ssh in; the gateway
   address comes from --gateway or SUPERVILLAIN_GATEWAY.`;
@@ -91,17 +95,386 @@ interface Intake {
 
 interface RegisteredContent extends GameContent {
 	readonly intake?: Intake;
+	readonly template?: (name: string) => string;
 }
 
 const contentRegistry = new Map<string, RegisteredContent>([
 	["fake", fakeContent],
-	["draw-steel", { ...drawSteelContent, intake: drawSteelIntake }],
+	[
+		"draw-steel",
+		{
+			...drawSteelContent,
+			intake: drawSteelIntake,
+		},
+	],
 ]);
 
 const isNodeError = (
 	error: unknown
 ): error is Error & { readonly code: string } =>
 	error instanceof Error && "code" in error && typeof error.code === "string";
+
+interface RoomLogSummary {
+	readonly eventCount: number;
+	readonly gameId: string;
+}
+
+interface CharacterFileResult {
+	readonly fileName: string;
+	readonly message: string;
+	readonly name?: string;
+	readonly ok: boolean;
+}
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+const readRoomLog = async (
+	campaignFolder: string
+): Promise<RoomLogSummary | null> => {
+	let text: string;
+	try {
+		text = await readFile(path.join(campaignFolder, "events.jsonl"), "utf-8");
+	} catch (error) {
+		if (isNodeError(error) && error.code === "ENOENT") {
+			return null;
+		}
+		throw error;
+	}
+	const lines = text.split(/\r?\n/u);
+	if (lines.at(-1) === "") {
+		lines.pop();
+	}
+	const [firstLine] = lines;
+	let firstEvent: unknown;
+	try {
+		firstEvent = JSON.parse(firstLine ?? "");
+	} catch {
+		throw new Error("events.jsonl is not a room log.");
+	}
+	if (!isRecord(firstEvent) || !isRecord(firstEvent.payload)) {
+		throw new Error("events.jsonl is not a room log.");
+	}
+	const { gameId } = firstEvent.payload;
+	if (typeof gameId !== "string") {
+		throw new TypeError("events.jsonl is not a room log.");
+	}
+	return { eventCount: lines.length, gameId };
+};
+
+const resolveContent = async (
+	campaignFolder: string,
+	requestedGameId: string | undefined
+): Promise<{ readonly entry: RegisteredContent; readonly gameId: string }> => {
+	const roomLog = await readRoomLog(campaignFolder);
+	const gameId = roomLog?.gameId ?? requestedGameId ?? "draw-steel";
+	const entry = contentRegistry.get(gameId);
+	if (entry === undefined) {
+		throw new Error(`Unknown game '${gameId}'.`);
+	}
+	return { entry, gameId };
+};
+
+const characterFileNames = async (
+	campaignFolder: string
+): Promise<readonly string[]> => {
+	const directory = path.join(campaignFolder, "characters");
+	let entries: Dirent<string>[];
+	try {
+		entries = await readdir(directory, { withFileTypes: true });
+	} catch (error) {
+		if (isNodeError(error) && error.code === "ENOENT") {
+			return [];
+		}
+		throw error;
+	}
+	return entries
+		.filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+		.map((entry) => entry.name)
+		.toSorted();
+};
+
+const inspectCharacterFile = async (
+	filePath: string,
+	fileName: string,
+	entry: RegisteredContent
+): Promise<CharacterFileResult> => {
+	let bytes: Uint8Array;
+	try {
+		bytes = await readFile(filePath);
+	} catch (error) {
+		let message: string;
+		if (isNodeError(error) && error.code === "ENOENT") {
+			message = "file not found.";
+		} else {
+			message = error instanceof Error ? error.message : String(error);
+		}
+		return { fileName, message, ok: false };
+	}
+	const result = entry.validate(bytes);
+	if (!result.ok) {
+		return {
+			fileName,
+			message: result.errors[0]?.message ?? "Character file is invalid.",
+			ok: false,
+		};
+	}
+	let value: unknown;
+	try {
+		value = JSON.parse(new TextDecoder().decode(bytes));
+	} catch {
+		return { fileName, message: "ok", ok: true };
+	}
+	return {
+		fileName,
+		message: "ok",
+		name:
+			isRecord(value) && typeof value.name === "string"
+				? value.name
+				: undefined,
+		ok: true,
+	};
+};
+
+const inspectCharacterDirectory = async (
+	campaignFolder: string,
+	entry: RegisteredContent,
+	fileNames: readonly string[]
+): Promise<readonly CharacterFileResult[]> =>
+	await Promise.all(
+		fileNames.map((fileName) =>
+			inspectCharacterFile(
+				path.join(campaignFolder, "characters", fileName),
+				fileName,
+				entry
+			)
+		)
+	);
+
+const resolveCharacterFile = async (
+	campaignFolder: string,
+	file: string
+): Promise<string> => {
+	try {
+		await access(file);
+		return file;
+	} catch (error) {
+		if (!isNodeError(error) || error.code !== "ENOENT") {
+			throw error;
+		}
+	}
+	return path.join(campaignFolder, "characters", file);
+};
+
+const characterNew = async (
+	campaignFolder: string,
+	name: string,
+	requestedGameId: string | undefined
+): Promise<number> => {
+	const trimmedName = name.trim();
+	if (trimmedName.length === 0 || trimmedName.length > 60) {
+		console.error(
+			"Field 'name' must be a non-empty string of at most 60 characters."
+		);
+		return 1;
+	}
+	const { entry } = await resolveContent(campaignFolder, requestedGameId);
+	if (entry.template === undefined) {
+		console.error("This game does not provide a character template.");
+		return 1;
+	}
+	const slug = trimmedName
+		.toLowerCase()
+		.replaceAll(" ", "-")
+		.replaceAll(/[^a-z0-9-]/gu, "")
+		.replaceAll(/-+/gu, "-")
+		.replaceAll(/^-|-$/gu, "");
+	if (slug.length === 0) {
+		console.error(
+			"Character name has no filename-safe characters; pass an ASCII name."
+		);
+		return 1;
+	}
+	const directory = path.join(campaignFolder, "characters");
+	const filePath = path.join(directory, `${slug}.json`);
+	await mkdir(directory, { recursive: true });
+	try {
+		await writeFile(filePath, entry.template(trimmedName), { flag: "wx" });
+	} catch (error) {
+		if (isNodeError(error) && error.code === "EEXIST") {
+			console.error(`${filePath} already exists.`);
+			return 1;
+		}
+		throw error;
+	}
+	console.log(filePath);
+	return 0;
+};
+
+const characterCheck = async (
+	campaignFolder: string,
+	file: string | undefined,
+	requestedGameId: string | undefined
+): Promise<number> => {
+	const { entry } = await resolveContent(campaignFolder, requestedGameId);
+	let results: readonly CharacterFileResult[];
+	if (file === undefined) {
+		const fileNames = await characterFileNames(campaignFolder);
+		if (fileNames.length === 0) {
+			console.log("no character files.");
+			return 0;
+		}
+		results = await inspectCharacterDirectory(campaignFolder, entry, fileNames);
+	} else {
+		const filePath = await resolveCharacterFile(campaignFolder, file);
+		results = [
+			await inspectCharacterFile(filePath, path.basename(filePath), entry),
+		];
+	}
+	for (const result of results) {
+		console.log(`${result.fileName}: ${result.message}`);
+	}
+	return results.every((result) => result.ok) ? 0 : 1;
+};
+
+const printCharacterRoster = async (
+	campaignFolder: string,
+	entry: RegisteredContent,
+	fileNames: readonly string[]
+): Promise<void> => {
+	const results = await inspectCharacterDirectory(
+		campaignFolder,
+		entry,
+		fileNames
+	);
+	for (const result of results) {
+		console.log(
+			`${result.ok && result.name !== undefined ? result.name : "invalid"} — ${result.fileName}`
+		);
+	}
+};
+
+const characterList = async (
+	campaignFolder: string,
+	requestedGameId: string | undefined
+): Promise<number> => {
+	const { entry } = await resolveContent(campaignFolder, requestedGameId);
+	const fileNames = await characterFileNames(campaignFolder);
+	if (fileNames.length === 0) {
+		console.log("no character files.");
+		return 0;
+	}
+	await printCharacterRoster(campaignFolder, entry, fileNames);
+	return 0;
+};
+
+const character = async (args: readonly string[]): Promise<number> => {
+	let parsed: ReturnType<typeof parseArgs>;
+	try {
+		parsed = parseArgs({
+			allowPositionals: true,
+			args: [...args],
+			options: { game: { type: "string" } },
+		});
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	const positionals = parsed.positionals.filter(
+		(value): value is string => typeof value === "string"
+	);
+	const [subcommand, campaignFolder, value] = positionals;
+	const requestedGameId =
+		typeof parsed.values.game === "string" ? parsed.values.game : undefined;
+	try {
+		if (subcommand === "new") {
+			if (
+				campaignFolder === undefined ||
+				value === undefined ||
+				positionals.length !== 3
+			) {
+				console.error("character new requires a campaign folder and a name.");
+				return 1;
+			}
+			return await characterNew(campaignFolder, value, requestedGameId);
+		}
+		if (subcommand === "check") {
+			if (campaignFolder === undefined || positionals.length > 3) {
+				console.error(
+					"character check requires a campaign folder and optional file."
+				);
+				return 1;
+			}
+			return await characterCheck(campaignFolder, value, requestedGameId);
+		}
+		if (subcommand === "list") {
+			if (campaignFolder === undefined || positionals.length !== 2) {
+				console.error("character list requires a campaign folder.");
+				return 1;
+			}
+			return await characterList(campaignFolder, requestedGameId);
+		}
+		console.error("character requires new, check, or list.");
+		return 1;
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+};
+
+const campaignInfo = async (campaignFolder: string): Promise<number> => {
+	const roomLog = await readRoomLog(campaignFolder);
+	if (roomLog === null) {
+		console.log("no room yet.");
+	} else {
+		console.log(`game: ${roomLog.gameId}`);
+		console.log(`events: ${roomLog.eventCount}`);
+	}
+	const fileNames = await characterFileNames(campaignFolder);
+	console.log(`characters: ${fileNames.length}`);
+	if (fileNames.length === 0) {
+		return 0;
+	}
+	const gameId = roomLog?.gameId ?? "draw-steel";
+	const entry = contentRegistry.get(gameId);
+	if (entry === undefined) {
+		throw new Error(`Unknown game '${gameId}'.`);
+	}
+	await printCharacterRoster(campaignFolder, entry, fileNames);
+	return 0;
+};
+
+const campaign = async (args: readonly string[]): Promise<number> => {
+	let parsed: ReturnType<typeof parseArgs>;
+	try {
+		parsed = parseArgs({
+			allowPositionals: true,
+			args: [...args],
+			options: {},
+		});
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	const positionals = parsed.positionals.filter(
+		(value): value is string => typeof value === "string"
+	);
+	const [subcommand, campaignFolder] = positionals;
+	if (
+		subcommand !== "info" ||
+		campaignFolder === undefined ||
+		positionals.length !== 2
+	) {
+		console.error("campaign info requires a campaign folder.");
+		return 1;
+	}
+	try {
+		return await campaignInfo(campaignFolder);
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+};
 
 const runIntake = async (
 	campaignFolder: string,
@@ -343,6 +716,12 @@ const main = async (args: readonly string[]): Promise<number> => {
 	if (verb === undefined) {
 		console.error(USAGE);
 		return 1;
+	}
+	if (verb === "campaign") {
+		return await campaign(rest);
+	}
+	if (verb === "character") {
+		return await character(rest);
 	}
 	if (verb === "create") {
 		return await create(rest);

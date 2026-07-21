@@ -49,6 +49,7 @@ describe("supervillain create", () => {
 		await writeFile(
 			path.join(characters, "coda.json"),
 			JSON.stringify({
+				ancestry: "Human",
 				characteristics: {
 					agility: 1,
 					intuition: 1,
@@ -56,7 +57,11 @@ describe("supervillain create", () => {
 					presence: 2,
 					reason: 0,
 				},
+				class: "Troubadour",
+				heroicResource: "Drama",
 				name: "Coda",
+				recoveries: 8,
+				stamina: 20,
 			})
 		);
 		await writeFile(path.join(characters, "invalid.json"), "not json");
@@ -98,7 +103,12 @@ describe("supervillain create", () => {
 		expect(events[0].payload).toEqual({ gameId: "draw-steel" });
 		expect(events[1].payload).toEqual({ seatId: "gm" });
 		expect(events[2].payload).toMatchObject({
-			statBlock: { name: "Coda" },
+			sheet: {
+				ancestry: "Human",
+				className: "Troubadour",
+				heroicResource: "Drama",
+				name: "Coda",
+			},
 		});
 		expect(events[3].payload).toEqual({ text: "hello table" });
 		const dice = events[4].payload;

@@ -1,10 +1,12 @@
 import {
+	CORE_CHARACTER_BOUND,
 	CORE_CHAT_POSTED,
 	CORE_DICE_ROLLED,
 	CORE_ROOM_CREATED,
 	CORE_SEAT_CLAIMED,
 } from "@supervillain/core";
 import type {
+	CharacterBoundPayload,
 	ChatPostedPayload,
 	DiceRolledPayload,
 	Envelope,
@@ -27,7 +29,11 @@ export const createTableFold = <S, C, E>(
 	actor: string
 ): TableFold<S> => {
 	let game = entry.model.init();
-	const seats: { actor: string; id: string }[] = [];
+	const seats: {
+		actor: string;
+		characterId: string | null;
+		id: string;
+	}[] = [];
 	const table: TableView = { actor, gmSeatId: "gm", seats };
 	const actorLabel = (candidateActor: string): string =>
 		table.seats.find((seat) => seat.actor === candidateActor)?.id ??
@@ -48,7 +54,11 @@ export const createTableFold = <S, C, E>(
 			}
 			if (envelope.type === CORE_SEAT_CLAIMED) {
 				const payload = envelope.payload as SeatClaimedPayload;
-				seats.push({ actor: envelope.actor, id: payload.seatId });
+				seats.push({
+					actor: envelope.actor,
+					characterId: null,
+					id: payload.seatId,
+				});
 				return {
 					runs: [
 						{
@@ -57,6 +67,14 @@ export const createTableFold = <S, C, E>(
 						},
 					],
 				};
+			}
+			if (envelope.type === CORE_CHARACTER_BOUND) {
+				const payload = envelope.payload as CharacterBoundPayload;
+				const seat = seats.find(({ id }) => id === payload.seatId);
+				if (seat !== undefined) {
+					seat.characterId = payload.characterId;
+				}
+				return null;
 			}
 			if (envelope.type === CORE_CHAT_POSTED) {
 				const payload = envelope.payload as ChatPostedPayload;

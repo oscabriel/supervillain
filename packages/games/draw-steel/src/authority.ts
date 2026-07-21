@@ -4,10 +4,10 @@ import { validate } from "./content.js";
 import { apply, init } from "./model.js";
 import type {
 	DsCharacteristic,
+	DsCharacterSheet,
 	DsCommand,
 	DsEvent,
 	DsSide,
-	DsStatBlock,
 	DsState,
 } from "./model.js";
 
@@ -24,13 +24,31 @@ const rejection = (message: string): Rejection => ({ message, rejected: true });
 const isGm = (table: TableView): boolean =>
 	table.seats.find((seat) => seat.id === table.gmSeatId)?.actor === table.actor;
 
-const deriveStatBlock = (text: string): DsStatBlock => {
+const deriveSheet = (text: string): DsCharacterSheet => {
 	const value = JSON.parse(text) as {
-		readonly name: string;
+		readonly abilities?: readonly {
+			readonly cost?: string;
+			readonly name: string;
+			readonly text: string;
+		}[];
+		readonly ancestry: string;
 		readonly characteristics: Record<DsCharacteristic, number>;
-		readonly stamina?: number;
+		readonly class: string;
+		readonly heroicResource: string;
+		readonly kit?: string;
+		readonly name: string;
+		readonly recoveries: number;
+		readonly stamina: number;
+		readonly surges?: number;
+		readonly victories?: number;
 	};
-	const statBlock: DsStatBlock = {
+	return {
+		abilities: (value.abilities ?? []).map((ability) => ({
+			cost: ability.cost?.trim() ?? null,
+			name: ability.name.trim(),
+			text: ability.text.trim(),
+		})),
+		ancestry: value.ancestry.trim(),
 		characteristics: {
 			agility: value.characteristics.agility,
 			intuition: value.characteristics.intuition,
@@ -38,11 +56,52 @@ const deriveStatBlock = (text: string): DsStatBlock => {
 			presence: value.characteristics.presence,
 			reason: value.characteristics.reason,
 		},
-		name: value.name,
+		className: value.class.trim(),
+		heroicResource: value.heroicResource.trim(),
+		kit: value.kit?.trim() ?? null,
+		name: value.name.trim(),
+		recoveries: value.recoveries,
+		stamina: value.stamina,
+		surges: value.surges ?? 0,
+		victories: value.victories ?? 0,
 	};
-	return value.stamina === undefined
-		? statBlock
-		: { ...statBlock, stamina: value.stamina };
+};
+
+const sheetsEqual = (
+	left: Readonly<DsCharacterSheet>,
+	right: Readonly<DsCharacterSheet>
+): boolean => {
+	if (
+		left.name !== right.name ||
+		left.ancestry !== right.ancestry ||
+		left.className !== right.className ||
+		left.kit !== right.kit ||
+		left.stamina !== right.stamina ||
+		left.recoveries !== right.recoveries ||
+		left.heroicResource !== right.heroicResource ||
+		left.surges !== right.surges ||
+		left.victories !== right.victories ||
+		left.abilities.length !== right.abilities.length
+	) {
+		return false;
+	}
+	for (const characteristic of CHARACTERISTICS) {
+		if (
+			left.characteristics[characteristic] !==
+			right.characteristics[characteristic]
+		) {
+			return false;
+		}
+	}
+	return left.abilities.every((ability, index) => {
+		const other = right.abilities[index];
+		return (
+			other !== undefined &&
+			ability.name === other.name &&
+			ability.cost === other.cost &&
+			ability.text === other.text
+		);
+	});
 };
 
 const otherSide = (side: DsSide): DsSide =>
@@ -75,6 +134,147 @@ const powerTier = (
 		tier -= 1;
 	}
 	return Math.max(1, Math.min(3, tier)) as 1 | 2 | 3;
+};
+
+type ConditionCommand = Extract<
+	DsCommand,
+	{ readonly type: "ds.apply-condition" | "ds.remove-condition" }
+>;
+type PlayCommand = Extract<
+	DsCommand,
+	{
+		readonly type:
+			| "ds.gain-resource"
+			| "ds.spend-resource"
+			| "ds.spend-recovery"
+			| "ds.gain-surges"
+			| "ds.spend-surges";
+	}
+>;
+
+const isPlayCommand = (command: DsCommand): command is PlayCommand =>
+	command.type === "ds.gain-resource" ||
+	command.type === "ds.spend-resource" ||
+	command.type === "ds.spend-recovery" ||
+	command.type === "ds.gain-surges" ||
+	command.type === "ds.spend-surges";
+
+const validAmount = (amount: number): boolean =>
+	Number.isInteger(amount) && amount >= 1 && amount <= 99;
+
+const conditionChange = (
+	state: Readonly<DsState>,
+	command: ConditionCommand
+): DsEvent[] | Rejection => {
+	if (!state.encounter.active) {
+		return rejection("Start an encounter first.");
+	}
+	const combatant = state.encounter.combatants.find(
+		(candidate) => candidate.id === command.combatantId
+	);
+	if (combatant === undefined) {
+		return rejection(
+			`No combatant '${command.combatantId}' is in the encounter.`
+		);
+	}
+	const hasCondition = combatant.conditions.includes(command.condition);
+	if (command.type === "ds.apply-condition") {
+		return hasCondition
+			? rejection(`${combatant.name} is already ${command.condition}.`)
+			: [
+					{
+						combatantId: command.combatantId,
+						condition: command.condition,
+						type: "ds.condition-applied",
+					},
+				];
+	}
+	return hasCondition
+		? [
+				{
+					combatantId: command.combatantId,
+					condition: command.condition,
+					type: "ds.condition-removed",
+				},
+			]
+		: rejection(`${combatant.name} is not ${command.condition}.`);
+};
+
+const playChange = (
+	state: Readonly<DsState>,
+	command: PlayCommand
+): DsEvent[] | Rejection => {
+	const play = state.play[command.characterName];
+	if (play === undefined) {
+		return rejection(
+			`No character named '${command.characterName}' has entered play.`
+		);
+	}
+	if (command.type === "ds.spend-recovery") {
+		return play.recoveries === 0
+			? rejection("No recoveries left.")
+			: [
+					{
+						characterName: command.characterName,
+						remaining: play.recoveries - 1,
+						type: "ds.recovery-spent",
+					},
+				];
+	}
+	const amount =
+		command.type === "ds.gain-surges" || command.type === "ds.spend-surges"
+			? command.count
+			: command.amount;
+	if (!validAmount(amount)) {
+		return rejection("Amounts are whole numbers from 1 to 99.");
+	}
+	if (command.type === "ds.gain-resource") {
+		return [
+			{
+				characterName: command.characterName,
+				delta: amount,
+				total: play.heroicResource + amount,
+				type: "ds.resource-changed",
+			},
+		];
+	}
+	if (command.type === "ds.spend-resource") {
+		if (amount > play.heroicResource) {
+			const resourceName =
+				state.characters.find(
+					(character) => character.name === command.characterName
+				)?.heroicResource ?? "heroic resource";
+			return rejection(`Not enough ${resourceName.toLowerCase()}.`);
+		}
+		return [
+			{
+				characterName: command.characterName,
+				delta: -amount,
+				total: play.heroicResource - amount,
+				type: "ds.resource-changed",
+			},
+		];
+	}
+	if (command.type === "ds.gain-surges") {
+		return [
+			{
+				characterName: command.characterName,
+				delta: amount,
+				total: play.surges + amount,
+				type: "ds.surges-changed",
+			},
+		];
+	}
+	return amount > play.surges
+		? rejection("Not enough surges.")
+		: [
+				{
+					characterName: command.characterName,
+					delta: -amount,
+					total: play.surges - amount,
+					type: "ds.surges-changed",
+				},
+			];
 };
 
 const powerRoll = (
@@ -143,6 +343,13 @@ export const createDecide =
 		if (command.type === "ds.power-roll") {
 			return powerRoll(state, command, random);
 		}
+		if (isPlayCommand(command)) {
+			const actorSeat = table.seats.find((seat) => seat.actor === table.actor);
+			if (!isGm(table) && actorSeat?.characterId !== command.characterName) {
+				return rejection("Only the GM or the bound player can do that.");
+			}
+			return playChange(state, command);
+		}
 		if (!isGm(table)) {
 			return rejection("Only the GM can do that.");
 		}
@@ -154,17 +361,14 @@ export const createDecide =
 						result.errors[0]?.message ?? "Character file is invalid."
 					);
 				}
-				const statBlock = deriveStatBlock(command.text);
+				const sheet = deriveSheet(command.text);
 				const existing = state.characters.find(
-					(character) => character.name === statBlock.name
+					(character) => character.name === sheet.name
 				);
-				if (
-					existing !== undefined &&
-					JSON.stringify(existing) === JSON.stringify(statBlock)
-				) {
+				if (existing !== undefined && sheetsEqual(existing, sheet)) {
 					return [];
 				}
-				return [{ statBlock, type: "ds.character-entered" }];
+				return [{ sheet, type: "ds.character-entered" }];
 			}
 			case "ds.start-encounter": {
 				return state.encounter.active
@@ -207,6 +411,24 @@ export const createDecide =
 						type: "ds.combatant-added",
 					},
 				];
+			}
+			case "ds.apply-condition":
+			case "ds.remove-condition": {
+				return conditionChange(state, command);
+			}
+			case "ds.gain-victory": {
+				const play = state.play[command.characterName];
+				return play === undefined
+					? rejection(
+							`No character named '${command.characterName}' has entered play.`
+						)
+					: [
+							{
+								characterName: command.characterName,
+								total: play.victories + 1,
+								type: "ds.victory-gained",
+							},
+						];
 			}
 			case "ds.take-turn": {
 				if (!state.encounter.active) {

@@ -20,8 +20,8 @@ describe("table sidebar", () => {
 					actor: "player-key",
 					gmSeatId: "gm",
 					seats: [
-						{ actor: "gm-key", id: "gm" },
-						{ actor: "player-key", id: "player-1" },
+						{ actor: "gm-key", characterId: null, id: "gm" },
+						{ actor: "player-key", characterId: null, id: "player-1" },
 					],
 				},
 				"player-key"

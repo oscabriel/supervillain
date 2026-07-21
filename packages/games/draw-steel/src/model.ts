@@ -5,6 +5,16 @@ export type DsCharacteristic =
 	| "intuition"
 	| "presence";
 export type DsSide = "heroes" | "enemies";
+export type DsCondition =
+	| "bleeding"
+	| "dazed"
+	| "frightened"
+	| "grabbed"
+	| "prone"
+	| "restrained"
+	| "slowed"
+	| "taunted"
+	| "weakened";
 
 export interface DsStatBlock {
 	readonly name: string;
@@ -12,11 +22,39 @@ export interface DsStatBlock {
 	readonly stamina?: number;
 }
 
+export interface DsAbility {
+	readonly name: string;
+	readonly cost: string | null;
+	readonly text: string;
+}
+
+export interface DsCharacterSheet {
+	readonly name: string;
+	readonly ancestry: string;
+	readonly className: string;
+	readonly kit: string | null;
+	readonly characteristics: Readonly<Record<DsCharacteristic, number>>;
+	readonly stamina: number;
+	readonly recoveries: number;
+	readonly heroicResource: string;
+	readonly surges: number;
+	readonly victories: number;
+	readonly abilities: readonly DsAbility[];
+}
+
 export interface DsCombatant {
 	readonly id: string;
 	readonly name: string;
 	readonly side: DsSide;
 	readonly actedRound: number;
+	readonly conditions: readonly DsCondition[];
+}
+
+export interface DsPlayState {
+	readonly heroicResource: number;
+	readonly recoveries: number;
+	readonly surges: number;
+	readonly victories: number;
 }
 
 export interface DsEncounter {
@@ -27,8 +65,9 @@ export interface DsEncounter {
 }
 
 export interface DsState {
-	readonly characters: readonly DsStatBlock[];
+	readonly characters: readonly DsCharacterSheet[];
 	readonly encounter: DsEncounter;
+	readonly play: Readonly<Record<string, DsPlayState>>;
 }
 
 export type DsCommand =
@@ -46,6 +85,38 @@ export type DsCommand =
 	  }
 	| { readonly type: "ds.take-turn"; readonly combatantId: string }
 	| {
+			readonly type: "ds.apply-condition";
+			readonly combatantId: string;
+			readonly condition: DsCondition;
+	  }
+	| {
+			readonly type: "ds.remove-condition";
+			readonly combatantId: string;
+			readonly condition: DsCondition;
+	  }
+	| {
+			readonly type: "ds.gain-resource";
+			readonly characterName: string;
+			readonly amount: number;
+	  }
+	| {
+			readonly type: "ds.spend-resource";
+			readonly characterName: string;
+			readonly amount: number;
+	  }
+	| { readonly type: "ds.spend-recovery"; readonly characterName: string }
+	| {
+			readonly type: "ds.gain-surges";
+			readonly characterName: string;
+			readonly count: number;
+	  }
+	| {
+			readonly type: "ds.spend-surges";
+			readonly characterName: string;
+			readonly count: number;
+	  }
+	| { readonly type: "ds.gain-victory"; readonly characterName: string }
+	| {
 			readonly type: "ds.power-roll";
 			readonly characteristic: DsCharacteristic;
 			readonly edges: number;
@@ -54,7 +125,7 @@ export type DsCommand =
 	  };
 
 export type DsEvent =
-	| { readonly type: "ds.character-entered"; readonly statBlock: DsStatBlock }
+	| { readonly type: "ds.character-entered"; readonly sheet: DsCharacterSheet }
 	| { readonly type: "ds.encounter-started" }
 	| { readonly type: "ds.encounter-ended"; readonly rounds: number }
 	| {
@@ -69,6 +140,38 @@ export type DsEvent =
 			readonly round: number;
 	  }
 	| { readonly type: "ds.round-started"; readonly round: number }
+	| {
+			readonly type: "ds.condition-applied";
+			readonly combatantId: string;
+			readonly condition: DsCondition;
+	  }
+	| {
+			readonly type: "ds.condition-removed";
+			readonly combatantId: string;
+			readonly condition: DsCondition;
+	  }
+	| {
+			readonly type: "ds.resource-changed";
+			readonly characterName: string;
+			readonly delta: number;
+			readonly total: number;
+	  }
+	| {
+			readonly type: "ds.recovery-spent";
+			readonly characterName: string;
+			readonly remaining: number;
+	  }
+	| {
+			readonly type: "ds.surges-changed";
+			readonly characterName: string;
+			readonly delta: number;
+			readonly total: number;
+	  }
+	| {
+			readonly type: "ds.victory-gained";
+			readonly characterName: string;
+			readonly total: number;
+	  }
 	| {
 			readonly type: "ds.power-rolled";
 			readonly characteristic: DsCharacteristic;
@@ -92,22 +195,91 @@ const emptyEncounter = (): DsEncounter => ({
 export const init = (): DsState => ({
 	characters: [],
 	encounter: emptyEncounter(),
+	play: {},
 });
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+const hasSheet = (
+	event: unknown
+): event is { readonly sheet: DsCharacterSheet } =>
+	isRecord(event) && "sheet" in event;
+
+const patchPlay = (
+	state: Readonly<DsState>,
+	name: string,
+	patch: Partial<DsPlayState>
+): DsState => {
+	const play = state.play[name];
+	return play === undefined
+		? state
+		: { ...state, play: { ...state.play, [name]: { ...play, ...patch } } };
+};
+
+const mapCombatant = (
+	state: Readonly<DsState>,
+	combatantId: string,
+	fn: (combatant: DsCombatant) => DsCombatant
+): DsState => ({
+	...state,
+	encounter: {
+		...state.encounter,
+		combatants: state.encounter.combatants.map((combatant) =>
+			combatant.id === combatantId ? fn(combatant) : combatant
+		),
+	},
+});
+
+const upgradeStatBlock = (statBlock: DsStatBlock): DsCharacterSheet => ({
+	abilities: [],
+	ancestry: "",
+	characteristics: statBlock.characteristics,
+	className: "",
+	heroicResource: "",
+	kit: null,
+	name: statBlock.name,
+	recoveries: 0,
+	stamina: statBlock.stamina ?? 0,
+	surges: 0,
+	victories: 0,
+});
+
+// oxlint-disable-next-line eslint/complexity -- branches mirror the pinned event grammar for exhaustive replay folding.
 export const apply = (state: Readonly<DsState>, event: DsEvent): DsState => {
 	switch (event.type) {
 		case "ds.character-entered": {
+			const runtimeEvent: unknown = event;
+			const sheet = hasSheet(runtimeEvent)
+				? runtimeEvent.sheet
+				: upgradeStatBlock(
+						(runtimeEvent as { readonly statBlock: DsStatBlock }).statBlock
+					);
 			const index = state.characters.findIndex(
-				(character) => character.name === event.statBlock.name
+				(character) => character.name === sheet.name
 			);
-			if (index === -1) {
-				return { ...state, characters: [...state.characters, event.statBlock] };
-			}
+			const currentPlay = state.play[sheet.name];
+			const play: DsPlayState =
+				currentPlay === undefined
+					? {
+							heroicResource: 0,
+							recoveries: sheet.recoveries,
+							surges: sheet.surges,
+							victories: sheet.victories,
+						}
+					: {
+							...currentPlay,
+							recoveries: Math.min(currentPlay.recoveries, sheet.recoveries),
+						};
 			return {
 				...state,
-				characters: state.characters.map((character, characterIndex) =>
-					characterIndex === index ? event.statBlock : character
-				),
+				characters:
+					index === -1
+						? [...state.characters, sheet]
+						: state.characters.map((character, characterIndex) =>
+								characterIndex === index ? sheet : character
+							),
+				play: { ...state.play, [sheet.name]: play },
 			};
 		}
 		case "ds.encounter-started": {
@@ -126,7 +298,13 @@ export const apply = (state: Readonly<DsState>, event: DsEvent): DsState => {
 					...state.encounter,
 					combatants: [
 						...state.encounter.combatants,
-						{ actedRound: 0, id: event.id, name: event.name, side: event.side },
+						{
+							actedRound: 0,
+							conditions: [],
+							id: event.id,
+							name: event.name,
+							side: event.side,
+						},
 					],
 				},
 			};
@@ -153,6 +331,36 @@ export const apply = (state: Readonly<DsState>, event: DsEvent): DsState => {
 				...state,
 				encounter: { ...state.encounter, lastSide: null, round: event.round },
 			};
+		}
+		case "ds.condition-applied": {
+			return mapCombatant(state, event.combatantId, (combatant) => ({
+				...combatant,
+				conditions: [...combatant.conditions, event.condition],
+			}));
+		}
+		case "ds.condition-removed": {
+			return mapCombatant(state, event.combatantId, (combatant) => ({
+				...combatant,
+				conditions: combatant.conditions.filter(
+					(condition) => condition !== event.condition
+				),
+			}));
+		}
+		case "ds.resource-changed": {
+			return patchPlay(state, event.characterName, {
+				heroicResource: event.total,
+			});
+		}
+		case "ds.recovery-spent": {
+			return patchPlay(state, event.characterName, {
+				recoveries: event.remaining,
+			});
+		}
+		case "ds.surges-changed": {
+			return patchPlay(state, event.characterName, { surges: event.total });
+		}
+		case "ds.victory-gained": {
+			return patchPlay(state, event.characterName, { victories: event.total });
 		}
 		case "ds.power-rolled": {
 			return state;

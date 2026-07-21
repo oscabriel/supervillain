@@ -2,6 +2,7 @@ export type NamespacedType = `${string}.${string}`;
 
 export const CORE_ROOM_CREATED = "core.room-created";
 export const CORE_SEAT_CLAIMED = "core.seat-claimed";
+export const CORE_CHARACTER_BOUND = "core.character-bound";
 export const CORE_CHAT_POSTED = "core.chat-posted";
 export const CORE_DICE_ROLLED = "core.dice-rolled";
 
@@ -11,6 +12,11 @@ export interface RoomCreatedPayload {
 
 export interface SeatClaimedPayload {
 	readonly seatId: string;
+}
+
+export interface CharacterBoundPayload {
+	readonly seatId: string;
+	readonly characterId: string | null;
 }
 
 export interface ChatPostedPayload {
@@ -28,7 +34,11 @@ export interface DiceRolledPayload {
 export type CoreCommand =
 	| { readonly type: "core.chat"; readonly text: string }
 	| { readonly type: "core.roll"; readonly notation: string }
-	| { readonly type: "core.claim-seat" };
+	| { readonly type: "core.claim-seat" }
+	| {
+			readonly type: "core.bind-character";
+			readonly characterId: string | null;
+	  };
 
 export interface Envelope<
 	TType extends NamespacedType = NamespacedType,
@@ -55,6 +65,7 @@ export interface Log<TEnvelope extends Envelope = Envelope>
 export interface SeatView {
 	readonly id: string;
 	readonly actor: string | null;
+	readonly characterId: string | null;
 }
 
 export interface TableView {

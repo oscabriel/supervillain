@@ -16,9 +16,21 @@ const gmTable: TableView = {
 	],
 };
 const playerTable: TableView = { ...gmTable, actor: "player-key" };
+const boundPlayerTable: TableView = {
+	...playerTable,
+	seats: [
+		{ actor: "gm-key", characterId: null, id: "gm" },
+		{ actor: "player-key", characterId: "Coda", id: "player-1" },
+	],
+};
 const outsiderTable: TableView = { ...gmTable, actor: "outsider-key" };
 const characterText = (might = 2): string =>
 	JSON.stringify({
+		abilities: [
+			{ name: " Encore ", text: " Act again. " },
+			{ cost: " 2 Drama ", name: " Finale ", text: " End the scene. " },
+		],
+		ancestry: " Human ",
 		characteristics: {
 			agility: 1,
 			intuition: 1,
@@ -26,7 +38,10 @@ const characterText = (might = 2): string =>
 			presence: 2,
 			reason: 0,
 		},
-		name: "Coda",
+		class: " Troubadour ",
+		heroicResource: " Drama ",
+		name: " Coda ",
+		recoveries: 8,
 		stamina: 20,
 		unknown: "ignored",
 	});
@@ -67,6 +82,22 @@ const power = (
 		throw new Error(result.message);
 	}
 	return result[0] as Extract<DsEvent, { type: "ds.power-rolled" }>;
+};
+
+const enteredState = (): DsState => {
+	const result = decide(
+		init(),
+		{
+			fileName: "coda.json",
+			text: characterText(),
+			type: "ds.load-character",
+		},
+		gmTable
+	);
+	if ("rejected" in result) {
+		throw new Error(result.message);
+	}
+	return fold(result);
 };
 
 const activeState = (): DsState =>
@@ -112,7 +143,12 @@ describe("Draw Steel authority", () => {
 		const first = decide(init(), command, gmTable);
 		expect(first).toEqual([
 			{
-				statBlock: {
+				sheet: {
+					abilities: [
+						{ cost: null, name: "Encore", text: "Act again." },
+						{ cost: "2 Drama", name: "Finale", text: "End the scene." },
+					],
+					ancestry: "Human",
 					characteristics: {
 						agility: 1,
 						intuition: 1,
@@ -120,8 +156,14 @@ describe("Draw Steel authority", () => {
 						presence: 2,
 						reason: 0,
 					},
+					className: "Troubadour",
+					heroicResource: "Drama",
+					kit: null,
 					name: "Coda",
+					recoveries: 8,
 					stamina: 20,
+					surges: 0,
+					victories: 0,
 				},
 				type: "ds.character-entered",
 			},
@@ -138,7 +180,7 @@ describe("Draw Steel authority", () => {
 		);
 		expect(edited).toMatchObject([
 			{
-				statBlock: { characteristics: { might: 3 } },
+				sheet: { characteristics: { might: 3 } },
 				type: "ds.character-entered",
 			},
 		]);
@@ -277,6 +319,236 @@ describe("Draw Steel authority", () => {
 		).toBeArray();
 	});
 
+	test("enforces condition authority and condition state transitions", () => {
+		let state = activeState();
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{
+						combatantId: "c1",
+						condition: "prone",
+						type: "ds.apply-condition",
+					},
+					playerTable
+				)
+			)
+		).toBe("Only the GM can do that.");
+		expect(
+			rejectionMessage(
+				decide(
+					init(),
+					{
+						combatantId: "c1",
+						condition: "prone",
+						type: "ds.apply-condition",
+					},
+					gmTable
+				)
+			)
+		).toBe("Start an encounter first.");
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{
+						combatantId: "missing",
+						condition: "prone",
+						type: "ds.apply-condition",
+					},
+					gmTable
+				)
+			)
+		).toBe("No combatant 'missing' is in the encounter.");
+		const applied = decide(
+			state,
+			{ combatantId: "c1", condition: "prone", type: "ds.apply-condition" },
+			gmTable
+		);
+		expect(applied).toEqual([
+			{ combatantId: "c1", condition: "prone", type: "ds.condition-applied" },
+		]);
+		if ("rejected" in applied) {
+			throw new Error(applied.message);
+		}
+		state = fold(applied, state);
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{
+						combatantId: "c1",
+						condition: "prone",
+						type: "ds.apply-condition",
+					},
+					gmTable
+				)
+			)
+		).toBe("Hero One is already prone.");
+		const removed = decide(
+			state,
+			{ combatantId: "c1", condition: "prone", type: "ds.remove-condition" },
+			gmTable
+		);
+		expect(removed).toEqual([
+			{ combatantId: "c1", condition: "prone", type: "ds.condition-removed" },
+		]);
+		if ("rejected" in removed) {
+			throw new Error(removed.message);
+		}
+		state = fold(removed, state);
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{
+						combatantId: "c1",
+						condition: "prone",
+						type: "ds.remove-condition",
+					},
+					gmTable
+				)
+			)
+		).toBe("Hero One is not prone.");
+	});
+
+	test("allows bound players and the GM to manage resources", () => {
+		let state = enteredState();
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{ amount: 1, characterName: "Coda", type: "ds.gain-resource" },
+					playerTable
+				)
+			)
+		).toBe("Only the GM or the bound player can do that.");
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{ amount: 1, characterName: "Coda", type: "ds.gain-resource" },
+					outsiderTable
+				)
+			)
+		).toBe("You do not hold a seat at this table.");
+		const gained = decide(
+			state,
+			{ amount: 5, characterName: "Coda", type: "ds.gain-resource" },
+			boundPlayerTable
+		);
+		expect(gained).toEqual([
+			{
+				characterName: "Coda",
+				delta: 5,
+				total: 5,
+				type: "ds.resource-changed",
+			},
+		]);
+		if ("rejected" in gained) {
+			throw new Error(gained.message);
+		}
+		state = fold(gained, state);
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{ amount: 6, characterName: "Coda", type: "ds.spend-resource" },
+					boundPlayerTable
+				)
+			)
+		).toBe("Not enough drama.");
+		expect(
+			decide(
+				state,
+				{ amount: 2, characterName: "Coda", type: "ds.spend-resource" },
+				gmTable
+			)
+		).toEqual([
+			{
+				characterName: "Coda",
+				delta: -2,
+				total: 3,
+				type: "ds.resource-changed",
+			},
+		]);
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{ amount: 0, characterName: "Coda", type: "ds.gain-resource" },
+					boundPlayerTable
+				)
+			)
+		).toBe("Amounts are whole numbers from 1 to 99.");
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{ characterName: "Coda", count: 1.5, type: "ds.gain-surges" },
+					boundPlayerTable
+				)
+			)
+		).toBe("Amounts are whole numbers from 1 to 99.");
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{ characterName: "Coda", count: 1, type: "ds.spend-surges" },
+					boundPlayerTable
+				)
+			)
+		).toBe("Not enough surges.");
+		expect(
+			decide(
+				state,
+				{ characterName: "Coda", count: 2, type: "ds.gain-surges" },
+				boundPlayerTable
+			)
+		).toEqual([
+			{
+				characterName: "Coda",
+				delta: 2,
+				total: 2,
+				type: "ds.surges-changed",
+			},
+		]);
+		expect(
+			decide(
+				state,
+				{ characterName: "Coda", type: "ds.spend-recovery" },
+				boundPlayerTable
+			)
+		).toEqual([
+			{ characterName: "Coda", remaining: 7, type: "ds.recovery-spent" },
+		]);
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{ amount: 1, characterName: "Missing", type: "ds.gain-resource" },
+					gmTable
+				)
+			)
+		).toBe("No character named 'Missing' has entered play.");
+	});
+
+	test("tracks per-character victories under GM authority", () => {
+		const state = enteredState();
+		expect(
+			rejectionMessage(
+				decide(
+					state,
+					{ characterName: "Coda", type: "ds.gain-victory" },
+					boundPlayerTable
+				)
+			)
+		).toBe("Only the GM can do that.");
+		expect(
+			decide(state, { characterName: "Coda", type: "ds.gain-victory" }, gmTable)
+		).toEqual([{ characterName: "Coda", total: 1, type: "ds.victory-gained" }]);
+	});
+
 	test("covers tier boundaries and every net edge/bane result", () => {
 		expect([
 			power([5, 6]).tier,
@@ -298,22 +570,22 @@ describe("Draw Steel authority", () => {
 		expect(power([9, 10], { banes: 2 }).critical).toBe(true);
 		expect(power([9, 10], { banes: 2 }).tier).toBe(3);
 		expect(power([10, 10], { banes: 2 }).tier).toBe(3);
-		const loaded = fold([
-			{
-				statBlock: {
-					characteristics: {
-						agility: 1,
-						intuition: 1,
-						might: 2,
-						presence: 2,
-						reason: 0,
-					},
-					name: "Coda",
+		const legacyCharacterEntered = {
+			statBlock: {
+				characteristics: {
+					agility: 1,
+					intuition: 1,
+					might: 2,
+					presence: 2,
+					reason: 0,
 				},
-				type: "ds.character-entered",
+				name: "Coda",
 			},
-		]);
+			type: "ds.character-entered",
+		} as unknown as DsEvent;
+		const loaded = fold([legacyCharacterEntered]);
 		const rolled = power([5, 5], { characterName: "Coda" }, loaded);
+		expect(rolled.characterName).toBe("Coda");
 		expect(rolled.modifier).toBe(2);
 		expect(rolled.total).toBe(12);
 	});

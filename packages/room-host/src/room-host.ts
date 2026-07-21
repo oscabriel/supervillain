@@ -2,6 +2,7 @@ import { mkdir, open, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
+	CORE_CHARACTER_BOUND,
 	CORE_CHAT_POSTED,
 	CORE_DICE_ROLLED,
 	CORE_ROOM_CREATED,
@@ -9,6 +10,7 @@ import {
 } from "@supervillain/core";
 import type {
 	AuthorityEntry,
+	CharacterBoundPayload,
 	ChatPostedPayload,
 	DiceRolledPayload,
 	Envelope,
@@ -304,11 +306,45 @@ export class RoomHost {
 			await this.#append([envelope]);
 			return { accepted: true, envelopes: [envelope] };
 		}
-		if (!this.#table.seats.some((seat) => seat.actor === actor)) {
+		const actorSeat = this.#table.seats.find((seat) => seat.actor === actor);
+		if (actorSeat === undefined) {
 			return {
 				message: "You do not hold a seat at this table.",
 				rejected: true,
 			};
+		}
+		if (command.type === "core.bind-character") {
+			const characterId =
+				typeof command.characterId === "string"
+					? command.characterId.trim()
+					: command.characterId;
+			if (
+				characterId !== null &&
+				(typeof characterId !== "string" ||
+					characterId.length === 0 ||
+					characterId.length > 60)
+			) {
+				return {
+					message:
+						"Character id must be a non-empty string of at most 60 characters.",
+					rejected: true,
+				};
+			}
+			if (actorSeat.characterId === characterId) {
+				return { accepted: true, envelopes: [] };
+			}
+			const envelope: Envelope = {
+				actor,
+				payload: {
+					characterId,
+					seatId: actorSeat.id,
+				} satisfies CharacterBoundPayload,
+				seq: this.#envelopes.length + 1,
+				timestamp: this.#clock(),
+				type: CORE_CHARACTER_BOUND,
+			};
+			await this.#append([envelope]);
+			return { accepted: true, envelopes: [envelope] };
 		}
 		let type: typeof CORE_CHAT_POSTED | typeof CORE_DICE_ROLLED;
 		let payload: ChatPostedPayload | DiceRolledPayload;
@@ -420,10 +456,31 @@ export class RoomHost {
 					`Log gives actor '${envelope.actor}' more than one seat.`
 				);
 			}
-			(this.#table.seats as { actor: string; id: string }[]).push({
+			(
+				this.#table.seats as {
+					actor: string;
+					characterId: string | null;
+					id: string;
+				}[]
+			).push({
 				actor: envelope.actor,
+				characterId: null,
 				id: payload.seatId,
 			});
+			return;
+		}
+		if (envelope.type === CORE_CHARACTER_BOUND) {
+			const payload = envelope.payload as CharacterBoundPayload;
+			const seat = this.#table.seats.find(
+				(candidate) => candidate.id === payload.seatId
+			);
+			if (seat === undefined) {
+				throw new Error(
+					`Log binds a character to unknown seat '${payload.seatId}'.`
+				);
+			}
+			(seat as { characterId: string | null }).characterId =
+				payload.characterId;
 			return;
 		}
 		if (envelope.type.startsWith("core.")) {
