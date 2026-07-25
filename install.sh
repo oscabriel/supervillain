@@ -15,8 +15,7 @@ case "$system:$machine" in
 		triple=macos-arm64
 		;;
 	Darwin:x86_64)
-		echo "no darwin-x64 iroh artifact; Intel Macs: use a Linux VM." >&2
-		exit 1
+		triple=macos-x64
 		;;
 	*)
 		echo "unsupported platform: $system $machine. Windows GMs: use WSL2." >&2

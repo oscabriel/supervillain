@@ -50,6 +50,86 @@ afterEach(async () => {
 });
 
 describe("supervillain noun commands", () => {
+	test("--version prints the CLI version and exits 0", async () => {
+		const result = await runCli(["--version"]);
+		expect(result.code).toBe(0);
+		expect(result.error).toBe("");
+		expect(result.output).toMatch(/^\d+\.\d+\.\d+\n$/u);
+		// CLI_VERSION is hand-mirrored from package.json (a compiled binary has
+		// no package.json to read); this is what keeps the two from drifting.
+		const pkg = JSON.parse(
+			await readFile(path.resolve(import.meta.dir, "../package.json"), "utf-8")
+		) as { version: string };
+		expect(result.output).toBe(`${pkg.version}\n`);
+	});
+
+	test("key link needs a gateway, and takes at most one code", async () => {
+		const config = await makeCampaign();
+		const cli = path.resolve(import.meta.dir, "../dist/index.js");
+		const run = async (
+			args: readonly string[]
+		): Promise<{ readonly code: number; readonly error: string }> => {
+			const childProcess = Bun.spawn(["bun", cli, ...args], {
+				env: {
+					...process.env,
+					SUPERVILLAIN_GATEWAY: "",
+					XDG_CONFIG_HOME: config,
+				},
+				stderr: "pipe",
+				stdout: "pipe",
+			});
+			const error = new Response(childProcess.stderr).text();
+			return { code: await childProcess.exited, error: await error };
+		};
+		expect(await run(["key", "link"])).toEqual({
+			code: 1,
+			error:
+				"key link needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY.\n",
+		});
+		expect(await run(["key", "link", "ONE", "TWO"])).toEqual({
+			code: 1,
+			error: "key link takes at most one code.\n",
+		});
+		expect(await run(["key", "sever"])).toEqual({
+			code: 1,
+			error: "key requires show, link, or revoke.\n",
+		});
+	});
+
+	test("key revoke needs a gateway, and exactly one key", async () => {
+		const config = await makeCampaign();
+		const cli = path.resolve(import.meta.dir, "../dist/index.js");
+		const run = async (
+			args: readonly string[]
+		): Promise<{ readonly code: number; readonly error: string }> => {
+			const childProcess = Bun.spawn(["bun", cli, ...args], {
+				env: {
+					...process.env,
+					SUPERVILLAIN_GATEWAY: "",
+					XDG_CONFIG_HOME: config,
+				},
+				stderr: "pipe",
+				stdout: "pipe",
+			});
+			const error = new Response(childProcess.stderr).text();
+			return { code: await childProcess.exited, error: await error };
+		};
+		// The key to retire is never guessed: naming it is the whole request.
+		expect(await run(["key", "revoke"])).toEqual({
+			code: 1,
+			error: "key revoke takes exactly one key.\n",
+		});
+		expect(await run(["key", "revoke", "ONE", "TWO"])).toEqual({
+			code: 1,
+			error: "key revoke takes exactly one key.\n",
+		});
+		expect(await run(["key", "revoke", "abc123"])).toEqual({
+			code: 1,
+			error:
+				"key revoke needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY.\n",
+		});
+	});
+
 	test("creates, validates, and never overwrites a character file", async () => {
 		const campaign = await makeCampaign();
 		const created = await runCli(["character", "new", campaign, "Coda Prime!"]);

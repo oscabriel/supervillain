@@ -1,9 +1,10 @@
-/* oxlint-disable promise/avoid-new, promise/param-names, eslint/no-unused-private-class-members, eslint/require-await, eslint/max-classes-per-file, eslint/prefer-const -- the deterministic duplex transport fake needs explicit deferreds, paired connection/endpoint classes, and interface-shaped async methods. */
+/* oxlint-disable promise/avoid-new, promise/param-names, eslint/no-unused-private-class-members, eslint/require-await, eslint/max-classes-per-file, eslint/prefer-const -- the deterministic duplex transport fake needs explicit deferreds, paired connection/listener classes, and interface-shaped async methods. */
+import { TransportListenerClosedError } from "../src/index.js";
 import type {
-	TransportAddress,
 	TransportConnection,
-	TransportEndpoint,
-} from "@supervillain/transport-iroh";
+	TransportDialer,
+	TransportListener,
+} from "../src/index.js";
 
 const testHarness = process.versions.bun
 	? await import("bun:test")
@@ -33,7 +34,6 @@ class MemoryConnection implements TransportConnection {
 	#closed = false;
 	#peer: MemoryConnection | undefined;
 	readonly remoteId: string;
-	readonly route = "direct" as const;
 
 	constructor(remoteId: string, remove: () => void) {
 		this.remoteId = remoteId;
@@ -90,44 +90,23 @@ class MemoryConnection implements TransportConnection {
 	}
 }
 
-class MemoryEndpoint implements TransportEndpoint {
+class MemoryListener implements TransportListener {
 	readonly #accepted: MemoryConnection[] = [];
 	readonly #acceptors: Deferred<TransportConnection>[] = [];
 	readonly #connections = new Set<MemoryConnection>();
-	readonly #network: Map<string, MemoryEndpoint>;
 	readonly #id: string;
 	#closed = false;
-	readonly address: TransportAddress;
 
-	constructor(id: string, network: Map<string, MemoryEndpoint>) {
+	constructor(id: string) {
 		this.#id = id;
-		this.#network = network;
-		this.address = `memory:${id}` as TransportAddress;
-		network.set(this.address, this);
 	}
 
-	async dial(address: TransportAddress): Promise<TransportConnection> {
-		if (this.#closed) {
-			throw new Error("Fake transport endpoint is closed.");
-		}
-		const remote = this.#network.get(address);
-		if (remote === undefined || remote.#closed) {
-			throw new Error("Fake transport address is unreachable.");
-		}
-		let outbound!: MemoryConnection;
-		let inbound!: MemoryConnection;
-		outbound = new MemoryConnection(remote.#id, () =>
-			this.#connections.delete(outbound)
-		);
-		inbound = new MemoryConnection(this.#id, () =>
-			remote.#connections.delete(inbound)
-		);
-		outbound.pair(inbound);
-		inbound.pair(outbound);
-		this.#connections.add(outbound);
-		remote.#connections.add(inbound);
-		remote.#enqueue(inbound);
-		return outbound;
+	get id(): string {
+		return this.#id;
+	}
+
+	get isClosed(): boolean {
+		return this.#closed;
 	}
 
 	accept(): Promise<TransportConnection> {
@@ -136,9 +115,7 @@ class MemoryEndpoint implements TransportEndpoint {
 			return Promise.resolve(connection);
 		}
 		if (this.#closed) {
-			return Promise.reject(
-				new Error("Transport endpoint closed while accepting")
-			);
+			return Promise.reject(new TransportListenerClosedError());
 		}
 		const acceptor = deferred<TransportConnection>();
 		this.#acceptors.push(acceptor);
@@ -150,12 +127,9 @@ class MemoryEndpoint implements TransportEndpoint {
 			return;
 		}
 		this.#closed = true;
-		this.#network.delete(this.address);
-		await Promise.all(
-			[...this.#connections].map((connection) => connection.close())
-		);
+		await this.dropConnections();
 		for (const acceptor of this.#acceptors.splice(0)) {
-			acceptor.reject(new Error("Transport endpoint closed while accepting"));
+			acceptor.reject(new TransportListenerClosedError());
 		}
 	}
 
@@ -165,7 +139,15 @@ class MemoryEndpoint implements TransportEndpoint {
 		);
 	}
 
-	#enqueue(connection: MemoryConnection): void {
+	track(connection: MemoryConnection): void {
+		this.#connections.add(connection);
+	}
+
+	untrack(connection: MemoryConnection): void {
+		this.#connections.delete(connection);
+	}
+
+	enqueue(connection: MemoryConnection): void {
 		const acceptor = this.#acceptors.shift();
 		if (acceptor === undefined) {
 			this.#accepted.push(connection);
@@ -175,22 +157,78 @@ class MemoryEndpoint implements TransportEndpoint {
 	}
 }
 
-export interface MemoryEndpointPair {
-	readonly client: TransportEndpoint & {
+class MemoryDialer implements TransportDialer {
+	readonly #connections = new Set<MemoryConnection>();
+	readonly #id: string;
+	readonly #listener: MemoryListener;
+
+	constructor(id: string, listener: MemoryListener) {
+		this.#id = id;
+		this.#listener = listener;
+	}
+
+	async dial(): Promise<TransportConnection> {
+		if (this.#listener.isClosed) {
+			throw new Error("Fake transport address is unreachable.");
+		}
+		let outbound!: MemoryConnection;
+		let inbound!: MemoryConnection;
+		outbound = new MemoryConnection(this.#listener.id, () =>
+			this.#connections.delete(outbound)
+		);
+		inbound = new MemoryConnection(this.#id, () =>
+			this.#listener.untrack(inbound)
+		);
+		outbound.pair(inbound);
+		inbound.pair(outbound);
+		this.#connections.add(outbound);
+		this.#listener.track(inbound);
+		this.#listener.enqueue(inbound);
+		return outbound;
+	}
+
+	async dropConnections(): Promise<void> {
+		await Promise.all(
+			[...this.#connections].map((connection) => connection.close())
+		);
+	}
+}
+
+export interface MemoryTransportPair {
+	readonly dialer: TransportDialer & {
 		readonly dropConnections: () => Promise<void>;
 	};
-	readonly server: TransportEndpoint & {
+	readonly listener: TransportListener & {
 		readonly dropConnections: () => Promise<void>;
 	};
 }
 
-export const createMemoryEndpointPair = (
+/** One dialer wired to one listener — the seam with no sockets underneath. */
+export const createMemoryTransportPair = (
 	clientId = "client-id",
 	serverId = "server-id"
-): MemoryEndpointPair => {
-	const network = new Map<string, MemoryEndpoint>();
+): MemoryTransportPair => {
+	const listener = new MemoryListener(serverId);
+	return { dialer: new MemoryDialer(clientId, listener), listener };
+};
+
+export interface MemoryTransportHub {
+	readonly listener: TransportListener & {
+		readonly dropConnections: () => Promise<void>;
+	};
+	readonly dialer: (
+		clientId: string
+	) => TransportDialer & { readonly dropConnections: () => Promise<void> };
+}
+
+/** Several dialers, each with its own identity, wired to one listener — the
+ * gateway shape: many Hosts, one door. */
+export const createMemoryTransportHub = (
+	serverId = "server-id"
+): MemoryTransportHub => {
+	const listener = new MemoryListener(serverId);
 	return {
-		client: new MemoryEndpoint(clientId, network),
-		server: new MemoryEndpoint(serverId, network),
+		dialer: (clientId: string) => new MemoryDialer(clientId, listener),
+		listener,
 	};
 };

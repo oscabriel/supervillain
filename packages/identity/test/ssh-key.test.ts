@@ -1,8 +1,17 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; the runner is the runtime claim. */
 import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
-import { actorFromSshEd25519Blob } from "../src/index.js";
+import {
+	actorFromSshEd25519Blob,
+	loadOrCreateIdentity,
+	openSshPrivateKey,
+	openSshPublicKeyLine,
+} from "../src/index.js";
+import type { Identity } from "../src/index.js";
 
 const SSH_ED25519 = "ssh-ed25519";
 
@@ -55,5 +64,112 @@ describe("actorFromSshEd25519Blob", () => {
 		const padded = new Uint8Array(blob.length + 8);
 		padded.set(blob, 8);
 		expect(actorFromSshEd25519Blob(padded.subarray(8))).toBe(key.hex);
+	});
+});
+
+const PEM_HEADER = "-----BEGIN OPENSSH PRIVATE KEY-----";
+const PEM_FOOTER = "-----END OPENSSH PRIVATE KEY-----";
+
+/** Walks the length-prefixed fields of an OpenSSH key container back out. */
+class SshReader {
+	#at = 0;
+	readonly #bytes: Buffer;
+
+	constructor(bytes: Buffer) {
+		this.#bytes = bytes;
+	}
+
+	take(length: number): Buffer {
+		const slice = this.#bytes.subarray(this.#at, this.#at + length);
+		this.#at += length;
+		return slice;
+	}
+
+	string(): Buffer {
+		const length = this.#bytes.readUInt32BE(this.#at);
+		this.#at += 4;
+		return this.take(length);
+	}
+
+	rest(): Buffer {
+		return this.#bytes.subarray(this.#at);
+	}
+}
+
+const decodePem = (pem: string): Buffer => {
+	const lines = pem.trim().split("\n");
+	expect(lines.at(0)).toBe(PEM_HEADER);
+	expect(lines.at(-1)).toBe(PEM_FOOTER);
+	return Buffer.from(lines.slice(1, -1).join(""), "base64");
+};
+
+const identityFrom = async (): Promise<Identity> => {
+	const folder = await mkdtemp(path.join(tmpdir(), "supervillain-ssh-key-"));
+	try {
+		return await loadOrCreateIdentity(folder);
+	} finally {
+		await rm(folder, { force: true, recursive: true });
+	}
+};
+
+describe("openSshPrivateKey", () => {
+	test("re-encodes the identity as an unencrypted OpenSSH ed25519 key", async () => {
+		const identity = await identityFrom();
+		const reader = new SshReader(decodePem(openSshPrivateKey(identity)));
+		expect(reader.take(15).toString("binary")).toBe("openssh-key-v1\0");
+		expect(reader.string().toString()).toBe("none");
+		expect(reader.string().toString()).toBe("none");
+		expect(reader.string()).toHaveLength(0);
+		expect(reader.take(4).readUInt32BE(0)).toBe(1);
+
+		const publicBlob = reader.string();
+		expect(actorFromSshEd25519Blob(publicBlob)).toBe(identity.publicKeyHex);
+
+		const body = new SshReader(reader.string());
+		expect(reader.rest()).toHaveLength(0);
+		const checkOne = body.take(4);
+		expect(body.take(4)).toEqual(checkOne);
+		expect(body.string().toString()).toBe(SSH_ED25519);
+		expect(body.string().toString("hex")).toBe(identity.publicKeyHex);
+		// OpenSSH's ed25519 private half is seed || public key.
+		expect(body.string().toString("hex")).toBe(
+			`${identity.secretKeyHex}${identity.publicKeyHex}`
+		);
+		expect(body.string().toString()).toBe("supervillain");
+	});
+
+	test("pads the private section to the cipher block and stays deterministic", async () => {
+		const identity = await identityFrom();
+		const pem = openSshPrivateKey(identity);
+		expect(openSshPrivateKey(identity)).toBe(pem);
+		const reader = new SshReader(decodePem(pem));
+		reader.take(15);
+		reader.string();
+		reader.string();
+		reader.string();
+		reader.take(4);
+		reader.string();
+		expect(reader.string().byteLength % 8).toBe(0);
+	});
+
+	test("refuses an identity that is not raw ed25519 material", () => {
+		expect(() =>
+			openSshPrivateKey({ publicKeyHex: "nope", secretKeyHex: "nope" })
+		).toThrow("Identity does not hold raw ed25519 key material.");
+		expect(() =>
+			openSshPublicKeyLine({ publicKeyHex: "", secretKeyHex: "" })
+		).toThrow("Identity does not hold a raw ed25519 public key.");
+	});
+});
+
+describe("openSshPublicKeyLine", () => {
+	test("prints the authorized_keys form of the same key", async () => {
+		const identity = await identityFrom();
+		const [algo, encoded, comment] = openSshPublicKeyLine(identity).split(" ");
+		expect(algo).toBe(SSH_ED25519);
+		expect(comment).toBe("supervillain");
+		expect(actorFromSshEd25519Blob(Buffer.from(encoded ?? "", "base64"))).toBe(
+			identity.publicKeyHex
+		);
 	});
 });

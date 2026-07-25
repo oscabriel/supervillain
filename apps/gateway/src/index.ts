@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -15,29 +15,115 @@ import {
 	actorFromSshEd25519Blob,
 	loadOrCreateIdentity,
 } from "@supervillain/identity";
-import { connectRoomStore, serveRoomRegistry } from "@supervillain/room-wire";
-import { runTable } from "@supervillain/table";
-import { openIrohEndpoint } from "@supervillain/transport-iroh";
-import type { TransportAddress } from "@supervillain/transport-iroh";
+import { serveHostPipes } from "@supervillain/room-wire";
+import type {
+	GatewayPipeEvent,
+	HostPipeServer,
+	LiveRoom,
+	RoomView,
+} from "@supervillain/room-wire";
+import { createSessionRenderer, runTable } from "@supervillain/table";
+import type { TableHold } from "@supervillain/table";
+import { runLobby } from "@supervillain/table/lobby";
+import type { LobbyNotice, LobbyOutcome } from "@supervillain/table/lobby";
+import { startWsListener } from "@supervillain/transport-ws/server";
 import { Server, utils } from "ssh2";
 import type {
 	AuthContext,
 	AuthenticationType,
+	ClientInfo,
 	Connection,
 	PseudoTtyInfo,
 	WindowChangeInfo,
 } from "ssh2";
 
-import { guestUpgradeBox, isGuestActor, mintGuestActor } from "./guest.js";
+import {
+	capacityFromEnvironment,
+	clampPtySize,
+	DEFAULT_CAPACITY_LIMITS,
+	isOversizedPty,
+	oversizedTerminalNotice,
+} from "./capacity.js";
+import type { CapacityLimits, GatewayCapacity, PtySize } from "./capacity.js";
+import { guestIdentity, guestUpgradeBox, keyedIdentity } from "./guest.js";
+import type { SessionIdentity } from "./guest.js";
+import {
+	createConnectionRateLimiter,
+	createLobbyDeadlines,
+	DEFAULT_LOBBY_LIMITS,
+	LOBBY_EXPIRY_MESSAGE,
+} from "./hardening.js";
+import type { LobbyDeadlines, LobbyExpiry, LobbyLimits } from "./hardening.js";
+import { createOfflineMetrics } from "./offline-metrics.js";
+import type { OfflineCounts, OfflineMetrics } from "./offline-metrics.js";
 import { openRoomRegistry } from "./registry.js";
 import type { GatewayRoomRegistry } from "./registry.js";
-import { attachSshChannel } from "./ssh-session.js";
-import type { SshChannelStream, SshSession } from "./ssh-session.js";
+import {
+	createKeyedSessions,
+	doorRefusal,
+	keyedActorOf,
+	REVOKED_SESSION_MESSAGE,
+} from "./revocation.js";
+import type { KeyedSessions } from "./revocation.js";
+import { GATEWAY_ROLE_USAGE, parseGatewayRoleArgs } from "./role.js";
+import { holdRoom } from "./room-hold.js";
+import { attachSshChannel, sessionForActor } from "./ssh-session.js";
+import type { SshChannelStream, SshConnection } from "./ssh-session.js";
+import { pipePairingCode, resolveGatewayTls } from "./tls.js";
+import type { GatewayTlsOptions } from "./tls.js";
+
+export {
+	loadOrMintPipeCertificate,
+	pipePairingCode,
+	resolveGatewayTls,
+} from "./tls.js";
+export type {
+	GatewayTlsMode,
+	GatewayTlsOptions,
+	ResolvedGatewayTls,
+} from "./tls.js";
+
+export {
+	CAPACITY_ENVIRONMENT,
+	capacityFromEnvironment,
+	clampPtySize,
+	DEFAULT_CAPACITY_LIMITS,
+	DEFAULT_GATEWAY_CAPACITY,
+	isOversizedPty,
+	oversizedTerminalNotice,
+	PTY_LIBRARY_CEILING,
+} from "./capacity.js";
+export type { CapacityLimits, GatewayCapacity, PtySize } from "./capacity.js";
+
+export {
+	GATEWAY_ROLE_USAGE,
+	parseGatewayRoleArgs,
+	type GatewayRoleEnvironment,
+	type GatewayRoleOptions,
+	type GatewayRoleParse,
+} from "./role.js";
+export {
+	OPERATED_GATEWAY_STATE_DIR,
+	resolveGatewayStateDir,
+} from "./state-dir.js";
+export {
+	createKeyedSessions,
+	doorRefusal,
+	keyedActorOf,
+	REVOKED_DOOR_MESSAGE,
+	REVOKED_SESSION_MESSAGE,
+} from "./revocation.js";
+export type { KeyedSessions } from "./revocation.js";
 
 const AUTH_METHODS: AuthenticationType[] = [
 	"publickey",
 	"keyboard-interactive",
 ];
+
+/** The one port a self-hosted operator forwards. A tunable default, not a
+ * protocol constant: 443 belongs to Caddy on the hosted box (#40), so the pipe
+ * takes the conventional alternate. */
+const DEFAULT_PIPE_PORT = 8443;
 
 const gatewayRegistry: GatewayRegistry = {
 	get: (gameId) => {
@@ -63,12 +149,43 @@ export interface GatewayOptions {
 	/** Hostname players are told to ssh to — the summon line, not the bind. */
 	readonly sshHost: string;
 	readonly bindHost?: string;
+	/** TCP port for the room-wire pipe. Defaults to 8443 when this process is the
+	 * TLS edge — the one port a self-hosted operator forwards — and to an
+	 * ephemeral port when TLS is terminated upstream. */
+	readonly brokerPort?: number;
+	/** The pipe URL Hosts should dial, when it differs from the bind. */
+	readonly brokerUrl?: string;
+	/** Where the pipe's TLS ends (ADR-0014). Default: `self-signed`, so a gateway
+	 * started with no arguments never carries production traffic in the clear. */
+	readonly tls?: GatewayTlsOptions;
+	/** Connection-lifecycle exhaust. Metadata only (ADR-0012, NQ-11). */
+	readonly onEvent?: (event: GatewayPipeEvent) => void;
+	/** Lobby hardening: idle/max timeouts and the per-IP connection window. The
+	 * lobby is an unauthenticated held session, so these are on from day one
+	 * (ADR-0008). Defaults are floors against squatting, not capacity policy. */
+	readonly lobbyLimits?: LobbyLimits;
+	/** The protective caps of ADR-0012 (NQ-10) and the PTY cap (NQ-14): rooms
+	 * per identity, sessions per Room, the per-session output budget, and the
+	 * rendered terminal ceiling. Ops-tunable — `serveGateway` reads them from
+	 * the environment. Defaults are the R9 benchmark's chosen numbers. */
+	readonly capacity?: CapacityLimits;
+	/** How long a seated player is held when their Host goes offline. */
+	readonly graceWindowMs?: number;
+	readonly gracePollMs?: number;
 }
 
 export interface RunningGateway {
-	/** The gateway's transport address — what `create --gateway` dials. */
-	readonly address: TransportAddress;
+	/** The gateway's transport URL — what `create --gateway` dials. */
+	readonly url: string;
 	readonly sshPort: number;
+	/** The offline tripwire's running counts (ADR-0012, NQ-15). */
+	readonly offline: () => OfflineCounts;
+	/** The Host-onboarding pairing code: this gateway's URL, carrying its
+	 * certificate fingerprint when trust comes from a pin rather than a CA.
+	 * Undefined when the address Hosts reach this box at is not knowable here. */
+	readonly pairingCode: string | undefined;
+	/** The fingerprint a Host pins, for a gateway with no CA behind it. */
+	readonly certificateFingerprint: string | undefined;
 	readonly close: () => Promise<void>;
 }
 
@@ -88,7 +205,11 @@ const loadOrCreateHostKey = async (folder: string): Promise<string> => {
 	return generated.private;
 };
 
-const authenticate = (ctx: AuthContext): string | undefined => {
+/** Resolves the connection's identity state. A key resolves to an actor at
+ * connect — the key *is* the identity, nothing is minted. A keyless visitor
+ * resolves to the pre-identity guest state: ADR-0008 mints the `guest:` actor
+ * lazily, at first room entry, because the lobby writes to no log. */
+const authenticate = (ctx: AuthContext): SessionIdentity | undefined => {
 	if (ctx.method === "publickey" && ctx.key.algo === "ssh-ed25519") {
 		const actor = actorFromSshEd25519Blob(ctx.key.data);
 		if (actor === undefined) {
@@ -110,20 +231,32 @@ const authenticate = (ctx: AuthContext): string | undefined => {
 			return undefined;
 		}
 		ctx.accept();
-		return actor;
+		return keyedIdentity(actor);
 	}
 	if (ctx.method === "keyboard-interactive") {
-		// The keyless guest door: no prompts, straight in.
+		// The keyless guest door: no prompts, straight in, and no actor yet.
 		ctx.accept();
-		return mintGuestActor();
+		return guestIdentity();
 	}
 	ctx.reject(AUTH_METHODS);
 	return undefined;
 };
 
-const farewell = (stream: SshChannelStream, message: string): void => {
-	stream.write(`${message}\r\n`);
+/** Closes the channel with an explicit exit status. A client that never gets
+ * one calls the session a failure (ssh exits 255), so every ordinary goodbye —
+ * leaving the lobby, quitting the table — has to say 0 out loud. */
+const closeChannel = (stream: SshChannelStream, status: number): void => {
+	stream.exit?.(status);
 	stream.end();
+};
+
+const farewell = (
+	stream: SshChannelStream,
+	message: string,
+	status = 0
+): void => {
+	stream.write(`${message}\r\n`);
+	closeChannel(stream, status);
 };
 
 const awaitKeypress = (stream: SshChannelStream): Promise<void> =>
@@ -132,111 +265,440 @@ const awaitKeypress = (stream: SshChannelStream): Promise<void> =>
 		stream.once("data", () => resolve());
 	});
 
+interface RoomEntryContext {
+	/** The durable half — it answers whether a name is claimed at all. */
+	readonly registry: GatewayRoomRegistry;
+	/** The live half — which Host pipe currently carries a name (ADR-0012). */
+	readonly pipes: HostPipeServer;
+	readonly identity: SessionIdentity;
+	/** The offline tripwire's counters (NQ-15). Counts only. */
+	readonly metrics: OfflineMetrics;
+	/** The protective caps this door enforces (NQ-10). */
+	readonly limits: CapacityLimits;
+	/** How long a seat is held when its Host goes offline. */
+	readonly graceMs?: number;
+	readonly gracePollMs?: number;
+}
+
+/** How one attempt at sitting down ended. `notice` is the lobby's business —
+ * an unregistered or unreachable name is never a disconnect (ADR-0008).
+ * `failed` is the floor: a plain-text one-liner, then the door closes. */
+type RoomEntryResult =
+	| { readonly kind: "entered" }
+	| { readonly kind: "notice"; readonly notice: LobbyNotice }
+	| { readonly kind: "failed"; readonly message: string };
+
+const runRoomTable = async (
+	connection: SshConnection,
+	stream: SshChannelStream,
+	store: RoomView,
+	context: RoomEntryContext,
+	hold: TableHold
+): Promise<RoomEntryResult> => {
+	const info = await store.info();
+	const entry = gatewayRegistry.get(info.gameId);
+	if (entry === undefined) {
+		return { kind: "failed", message: `Unknown game '${info.gameId}'.` };
+	}
+	// The minting threshold: one `guest:` actor per SSH session, minted here at
+	// first room entry and reused across hops, with the upgrade box on the same
+	// edge — before the guest sits down (ADR-0008).
+	const assumed = context.identity.assume();
+	if (assumed.minted) {
+		// The adoption code is bound to this guest actor and lives seven days in
+		// the gateway's own store, so it survives a restart (ADR-0005/0013).
+		const minted = context.registry.mintAdoptionCode(assumed.actor);
+		stream.write(
+			guestUpgradeBox("accepted" in minted ? minted.code : undefined)
+		);
+		await awaitKeypress(stream);
+	}
+	const claim = await store.submit({
+		actor: assumed.actor,
+		command: { type: "core.claim-seat" },
+	});
+	if ("rejected" in claim) {
+		return { kind: "failed", message: claim.message };
+	}
+	await runTable({
+		// One seat's renderer, drawn on demand: an ambient render loop here is
+		// a cost paid once per seat (ADR-0012, NQ-14).
+		createRenderer: createSessionRenderer,
+		entry,
+		gameId: info.gameId,
+		hold,
+		roomLabel: info.label,
+		session: sessionForActor(connection, assumed.actor),
+		store,
+	});
+	return { kind: "entered" };
+};
+
+/** Which inline notice a name that has no live pipe deserves. The two halves of
+ * registration answer two different questions (ADR-0012, NQ-4): the durable
+ * half says whether anyone owns the name at all, the live half says whether a
+ * Host pipe is carrying it right now. That split is exactly ADR-0008's
+ * unknown-versus-offline distinction, and neither is ever a disconnect.
+ *
+ * ADR-0008 accepts knowingly that distinct copy discloses which names exist:
+ * rate limiting mitigates it and names were never capability secrets. */
+export const noticeForMissingRoom = (
+	roomName: string,
+	registry: Pick<GatewayRoomRegistry, "isClaimed">
+): LobbyNotice =>
+	registry.isClaimed(roomName)
+		? { kind: "offline-room", roomName }
+		: { kind: "unknown-room", roomName };
+
+/**
+ * What one arrival is told, or `undefined` when it may sit down. Three honest
+ * answers and no fourth: the name is unknown, the name is registered but no
+ * pipe carries it, or the Room is carrying as many sessions as this gateway
+ * allows (ADR-0012, NQ-10).
+ *
+ * The capacity answer is decided *here*, before a view is opened, which is the
+ * whole "never degrade a live table" rule expressed as an order of operations:
+ * a refused arrival reads a count and touches nothing else.
+ */
+export const arrivalNotice = (
+	roomName: string,
+	live: Pick<LiveRoom, "views"> | undefined,
+	registry: Pick<GatewayRoomRegistry, "isClaimed">,
+	limits: Pick<CapacityLimits, "sessionsPerRoom">
+): LobbyNotice | undefined => {
+	if (live === undefined) {
+		return noticeForMissingRoom(roomName, registry);
+	}
+	return live.views() >= limits.sessionsPerRoom
+		? { kind: "full-room", roomName }
+		: undefined;
+};
+
+/** What a seat is told when the fold drops it for falling too far behind. */
+export const SEAT_BEHIND_MESSAGE =
+	"this terminal fell too far behind to keep up. Reconnect to sit down again.";
+
+/**
+ * One attempt at sitting down, and the grace window that follows a Host dying
+ * under it (ADR-0012). A drop is not a disconnect: the seat holds with an
+ * honest notice while the Host redials, and the loop re-seats the player on the
+ * new pipe if it makes it back inside the window. If it does not, the session
+ * lands in the lobby's offline chrome — never on a closed door.
+ */
+const enterRoom = async (
+	connection: SshConnection,
+	stream: SshChannelStream,
+	roomName: string,
+	context: RoomEntryContext
+): Promise<RoomEntryResult> => {
+	let attempt = 0;
+	// oxlint-disable-next-line eslint/no-unreachable-loop -- a Host that returns inside the grace window continues this loop onto its new fold.
+	for (;;) {
+		const live = context.pipes.live(roomName);
+		if (attempt === 0 && context.registry.isClaimed(roomName)) {
+			// The tripwire's denominator counts attempts at names that exist; a
+			// re-seat after a Host returned is the same join, not a new one.
+			context.metrics.recordJoinAttempt(live !== undefined);
+		}
+		attempt += 1;
+		// Unknown, offline, or full — three honest notices and never a
+		// disconnect. Decided before a view is opened, so a refused arrival
+		// costs the Room's fold nothing at all (ADR-0012, NQ-10).
+		const refusal = arrivalNotice(
+			roomName,
+			live,
+			context.registry,
+			context.limits
+		);
+		if (refusal !== undefined || live === undefined) {
+			return {
+				kind: "notice",
+				notice: refusal ?? noticeForMissingRoom(roomName, context.registry),
+			};
+		}
+		// The unknown-key-joins case (ADR-0005): before anyone claims a seat, let
+		// the room learn whether the graph already knows the person behind this
+		// key — the same derived query registration uses, and no queue either way.
+		// oxlint-disable-next-line eslint/no-await-in-loop -- each attempt sits on a fresh pipe, and the fresh pipe has to be told.
+		await live.deliverLinks();
+		const store = live.openStore();
+		const hold = holdRoom({
+			attached: live,
+			// Both halves of the per-session output budget end this seat the same
+			// way: a view that fell behind its envelope budget, and a client that
+			// stopped reading its socket. Either is one seat's problem alone.
+			dropped: Promise.race([store.dropped, connection.outputOverflowed]),
+			graceMs: context.graceMs,
+			live: () => context.pipes.live(roomName),
+			onGraceExpiry: () => context.metrics.recordGraceExpiry(),
+			onHostDrop: () => context.metrics.recordHostDrop(),
+			pollMs: context.gracePollMs,
+		});
+		let result: RoomEntryResult;
+		try {
+			// oxlint-disable-next-line eslint/no-await-in-loop -- one seat at a time: the next attempt only exists because this one ended.
+			result = await runRoomTable(connection, stream, store, context, hold);
+		} finally {
+			hold.stop();
+			// oxlint-disable-next-line eslint/no-await-in-loop -- the view is released before the next one opens.
+			await store.close();
+		}
+		if (result.kind !== "entered") {
+			return result;
+		}
+		const end = hold.end();
+		if (end === "host-returned") {
+			continue;
+		}
+		if (end === "grace-expired") {
+			return { kind: "notice", notice: { kind: "offline-room", roomName } };
+		}
+		if (end === "dropped") {
+			// The fold dropped this seat for falling behind its budget. The lobby's
+			// notice vocabulary is ADR-0008's and says nothing about backpressure,
+			// so this takes the pinned floor: one honest plain-text line.
+			return { kind: "failed", message: SEAT_BEHIND_MESSAGE };
+		}
+		return result;
+	}
+};
+
+const LOBBY_FAREWELL = "the gate closes behind you.";
+
+/** What happens after one visit to the lobby: hold it again (with whatever
+ * notice the attempted room entry produced), or close the door with a
+ * plain-text line. */
+type LobbyStep =
+	| { readonly kind: "again"; readonly notice: LobbyNotice | undefined }
+	| { readonly kind: "done"; readonly message: string };
+
+/** One visit to the lobby plus whatever room entry it asked for. The idle and
+ * max deadlines are armed only while the lobby holds the terminal: a player
+ * sitting at a table is not squatting, and a long game is not an idle one. */
+const lobbyRound = async (
+	connection: SshConnection,
+	stream: SshChannelStream,
+	notice: LobbyNotice | undefined,
+	options: {
+		readonly context: RoomEntryContext;
+		readonly sshHost: string;
+		readonly deadlines: LobbyDeadlines;
+		readonly expired: () => LobbyExpiry | undefined;
+	}
+): Promise<LobbyStep> => {
+	const touch = (): void => options.deadlines.touch();
+	options.deadlines.hold();
+	stream.on("data", touch);
+	let outcome: LobbyOutcome;
+	try {
+		outcome = await runLobby({
+			connection,
+			createRenderer: createSessionRenderer,
+			keyed: options.context.identity.keyed,
+			notice,
+			sshHost: options.sshHost,
+		});
+	} finally {
+		stream.off("data", touch);
+		options.deadlines.release();
+	}
+	const expiry = options.expired();
+	if (expiry !== undefined) {
+		return { kind: "done", message: LOBBY_EXPIRY_MESSAGE[expiry] };
+	}
+	if (outcome.kind === "leave") {
+		return { kind: "done", message: LOBBY_FAREWELL };
+	}
+	const result = await enterRoom(
+		connection,
+		stream,
+		outcome.roomName,
+		options.context
+	);
+	if (result.kind === "failed") {
+		return { kind: "done", message: result.message };
+	}
+	return {
+		kind: "again",
+		notice: result.kind === "notice" ? result.notice : undefined,
+	};
+};
+
+/** Everything a session needs that is the gateway's rather than the visitor's:
+ * both halves of registration, the tripwire's counters, and the grace numbers. */
+interface RoomServices {
+	readonly registry: GatewayRoomRegistry;
+	readonly pipes: HostPipeServer;
+	readonly metrics: OfflineMetrics;
+	/** The live keyed terminals, so a key retired right now takes the sessions
+	 * it is holding with it rather than waiting for the next login. */
+	readonly sessions: KeyedSessions;
+	readonly limits: CapacityLimits;
+	readonly graceMs?: number;
+	readonly gracePollMs?: number;
+}
+
 const serveShell = async (
-	session: SshSession,
+	connection: SshConnection,
 	stream: SshChannelStream,
 	options: {
 		readonly roomName: string;
-		readonly registry: GatewayRoomRegistry;
-		readonly dial: (
-			address: TransportAddress
-		) => ReturnType<typeof connectRoomStore>;
+		readonly rooms: RoomServices;
+		readonly identity: SessionIdentity;
+		readonly sshHost: string;
+		readonly limits: LobbyLimits;
+		/** The terminal size the client asked for, when it was larger than this
+		 * gateway renders. Undefined for every ordinary window. */
+		readonly oversized?: PtySize;
 	}
 ): Promise<void> => {
-	const address = options.registry.resolve(options.roomName);
-	if (address === undefined) {
-		farewell(stream, `no room named '${options.roomName}' is registered here.`);
+	if (options.oversized !== undefined) {
+		// Said before anything is drawn, because the alt-screen would swallow it
+		// afterwards: the capped render is honest about being capped (NQ-14).
+		stream.write(
+			oversizedTerminalNotice(options.oversized, options.rooms.limits.pty)
+		);
+		await awaitKeypress(stream);
+	}
+	const context: RoomEntryContext = {
+		graceMs: options.rooms.graceMs,
+		gracePollMs: options.rooms.gracePollMs,
+		identity: options.identity,
+		limits: options.rooms.limits,
+		metrics: options.rooms.metrics,
+		pipes: options.rooms.pipes,
+		registry: options.rooms.registry,
+	};
+	// A name that resolves to a live table goes straight to the table. The lobby
+	// is where you land when there is nothing to land in — which is also where
+	// bare `ssh <gateway>` lands, since an SSH client with no user sends the
+	// local account name and that is indistinguishable from a typed room name.
+	const arrival = await enterRoom(
+		connection,
+		stream,
+		options.roomName,
+		context
+	);
+	if (arrival.kind === "entered") {
+		closeChannel(stream, 0);
 		return;
 	}
-	let store: Awaited<ReturnType<typeof connectRoomStore>>;
-	try {
-		store = await options.dial(address as TransportAddress);
-	} catch {
-		farewell(stream, "Could not reach that room. Is the GM's table live?");
+	if (arrival.kind === "failed") {
+		farewell(stream, arrival.message, 1);
 		return;
 	}
-	try {
-		const info = await store.info();
-		const entry = gatewayRegistry.get(info.gameId);
-		if (entry === undefined) {
-			farewell(stream, `Unknown game '${info.gameId}'.`);
-			return;
-		}
-		const claim = await store.submit({
-			actor: session.actor,
-			command: { type: "core.claim-seat" },
-		});
-		if ("rejected" in claim) {
-			farewell(stream, claim.message);
-			return;
-		}
-		if (isGuestActor(session.actor)) {
-			stream.write(guestUpgradeBox());
-			await awaitKeypress(stream);
-		}
-		await runTable({
-			entry,
-			gameId: info.gameId,
-			roomLabel: info.label,
-			session,
-			store,
-		});
-	} finally {
-		await store.close();
-		stream.end();
+	let expiry: LobbyExpiry | undefined;
+	const deadlines = createLobbyDeadlines({
+		limits: options.limits,
+		onExpire: (reason) => {
+			expiry = reason;
+			connection.close();
+		},
+	});
+	const round = {
+		context,
+		deadlines,
+		expired: (): LobbyExpiry | undefined => expiry,
+		sshHost: options.sshHost,
+	};
+	let step: LobbyStep = { kind: "again", notice: arrival.notice };
+	while (step.kind === "again") {
+		// oxlint-disable-next-line eslint/no-await-in-loop -- the lobby is a held session: one visit finishes before the next room entry starts.
+		step = await lobbyRound(connection, stream, step.notice, round);
 	}
+	farewell(stream, step.message);
 };
 
 const handleConnection = (
 	client: Connection,
-	registry: GatewayRoomRegistry,
-	dial: (address: TransportAddress) => ReturnType<typeof connectRoomStore>
+	options: {
+		readonly rooms: RoomServices;
+		readonly sshHost: string;
+		readonly limits: LobbyLimits;
+	}
 ): void => {
-	let actor: string | undefined;
+	let identity: SessionIdentity | undefined;
 	let roomName = "";
+	// The production PTY cap (ADR-0012, NQ-14): a terminal larger than this is
+	// rendered at the cap, never refused, and told so once. Every cell above the
+	// cap is per-session gateway cost, which is the whole reason it exists.
+	const ptyCap = options.rooms.limits.pty;
 	client
 		.on("authentication", (ctx) => {
 			roomName = ctx.username;
-			actor = authenticate(ctx) ?? actor;
+			identity = authenticate(ctx) ?? identity;
 		})
 		.on("ready", () => {
 			client.on("session", (acceptSession) => {
 				const session = acceptSession();
 				let size = { columns: 0, rows: 0 };
-				let sshSession: SshSession | undefined;
+				let oversized: PtySize | undefined;
+				let connection: SshConnection | undefined;
 				session.on("pty", (acceptPty, _rejectPty, info: PseudoTtyInfo) => {
-					size = { columns: info.cols, rows: info.rows };
+					const asked = { columns: info.cols, rows: info.rows };
+					if (isOversizedPty(asked, ptyCap)) {
+						oversized = asked;
+					}
+					size = clampPtySize(asked, ptyCap);
 					acceptPty?.();
 				});
 				session.on(
 					"window-change",
 					(acceptWc, _rejectWc, info: WindowChangeInfo) => {
-						sshSession?.resize({ columns: info.cols, rows: info.rows });
+						connection?.resize(
+							clampPtySize({ columns: info.cols, rows: info.rows }, ptyCap)
+						);
 						acceptWc?.();
 					}
 				);
 				session.on("shell", (acceptShell) => {
 					const stream = acceptShell() as unknown as SshChannelStream;
-					if (actor === undefined) {
-						farewell(stream, "authentication left no identity.");
+					const shellIdentity = identity;
+					if (shellIdentity === undefined) {
+						farewell(stream, "authentication left no identity.", 1);
 						return;
 					}
-					sshSession = attachSshChannel({
-						actor,
+					// The door's half of the revoked-key refusal (ADR-0012, NQ-3). It
+					// lands here rather than at the auth callback because rejecting the
+					// publickey method would drop the visitor into the keyless guest
+					// path — a retired key would become a guest instead of being told
+					// anything.
+					const refusal = doorRefusal(shellIdentity, options.rooms.registry);
+					if (refusal !== undefined) {
+						farewell(stream, refusal, 1);
+						client.end();
+						return;
+					}
+					const keyed = keyedActorOf(shellIdentity);
+					connection = attachSshChannel({
 						initialSize: size,
+						outputBudgetBytes: options.rooms.limits.sessionOutputBytes,
+						outputStallMs: options.rooms.limits.sessionStallMs,
 						stream,
 					});
-					const shellSession = sshSession;
+					const shellConnection = connection;
+					const release =
+						keyed === undefined
+							? undefined
+							: options.rooms.sessions.hold(keyed, () => {
+									farewell(stream, REVOKED_SESSION_MESSAGE, 1);
+								});
 					void (async (): Promise<void> => {
 						try {
-							await serveShell(shellSession, stream, {
-								dial,
-								registry,
+							await serveShell(shellConnection, stream, {
+								identity: shellIdentity,
+								limits: options.limits,
+								oversized,
 								roomName,
+								rooms: options.rooms,
+								sshHost: options.sshHost,
 							});
 						} catch {
-							farewell(stream, "The table collapsed. Try again.");
+							// The floor beneath a TUI failure: one plain-text line, then
+							// the door closes (ADR-0008).
+							farewell(stream, "The table collapsed. Try again.", 1);
 						} finally {
+							release?.();
 							client.end();
 						}
 					})();
@@ -252,21 +714,79 @@ export const startGateway = async (
 	options: GatewayOptions
 ): Promise<RunningGateway> => {
 	const identity = await loadOrCreateIdentity(options.stateDir);
-	const endpoint = await openIrohEndpoint({
+	const tls = await resolveGatewayTls(
+		options.stateDir,
+		options.tls ?? { mode: "self-signed" }
+	);
+	// The bind follows the TLS edge: a process that terminates its own TLS is the
+	// public edge and must be reachable through the forwarded port, while a
+	// process behind a proxy is reached over loopback and should be no wider
+	// (#40 holds the web backend to the same line).
+	const brokerBind =
+		options.bindHost ?? (tls.terminatesHere ? "0.0.0.0" : "127.0.0.1");
+	const listener = await startWsListener({
+		advertisedUrl: options.brokerUrl,
+		host: brokerBind,
+		port: options.brokerPort ?? (tls.terminatesHere ? DEFAULT_PIPE_PORT : 0),
 		secretKeyHex: identity.secretKeyHex,
+		tls: tls.listenerTls,
 	});
+	const capacity = options.capacity ?? DEFAULT_CAPACITY_LIMITS;
 	const registry = openRoomRegistry({
 		path: path.join(options.stateDir, "registry.db"),
-		sshHost: options.sshHost,
-		sshPort: options.sshPort,
 	});
-	const registryServer = serveRoomRegistry(endpoint, registry);
+	const sessions = createKeyedSessions();
+	/** Revocation is immediate on every surface, not just the one it was asked
+	 * on: the pipe half closes the retired key's pipes, and this closes the
+	 * terminals it is sitting at. */
+	const onPipeEvent = (event: GatewayPipeEvent): void => {
+		if (event.kind === "key-revoked") {
+			sessions.drop(event.key);
+		}
+		options.onEvent?.(event);
+	};
+	// The Host dials in; the gateway never dials a Host (ADR-0012). Logging is
+	// metadata only — lifecycle and room names, never a payload (NQ-11).
+	const pipes = serveHostPipes({
+		door: { sshHost: options.sshHost, sshPort: options.sshPort },
+		// The key-equivalence graph reaches the broker as an injected interface,
+		// never a driver: `room-wire` compiles and tests under Node too (NQ-12).
+		keys: registry,
+		listener,
+		onEvent: onPipeEvent,
+		ownership: registry,
+		roomsPerIdentity: capacity.roomsPerIdentity,
+		sessionBudget: capacity.sessionBudget,
+	});
+	const metrics = createOfflineMetrics();
 	const hostKey = await loadOrCreateHostKey(options.stateDir);
-	const server = new Server({ hostKeys: [hostKey] }, (client) => {
-		handleConnection(client, registry, (address) =>
-			connectRoomStore(endpoint, address)
-		);
-	});
+	const limits = options.lobbyLimits ?? DEFAULT_LOBBY_LIMITS;
+	const rateLimiter = createConnectionRateLimiter({ limits });
+	const server = new Server(
+		{ hostKeys: [hostKey] },
+		(client, info: ClientInfo) => {
+			if (!rateLimiter.admit(info.ip)) {
+				// Per-IP rate limiting is on from the lobby's first commit: the lobby
+				// is an unauthenticated held session (ADR-0008). Refused before the
+				// handshake, so there is no channel to say it on.
+				client.end();
+				return;
+			}
+			handleConnection(client, {
+				limits,
+				rooms: {
+					graceMs: options.graceWindowMs,
+					gracePollMs: options.gracePollMs,
+					limits: capacity,
+					metrics,
+					pipes,
+					registry,
+					sessions,
+				},
+				sshHost: options.sshHost,
+			});
+		}
+	);
 	// oxlint-disable-next-line promise/avoid-new -- ssh2's listen is callback-shaped.
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
@@ -277,45 +797,140 @@ export const startGateway = async (
 	});
 	let closePromise: Promise<void> | undefined;
 	return {
-		address: endpoint.address,
+		certificateFingerprint: tls.fingerprint,
 		close: () => {
 			closePromise ??= (async (): Promise<void> => {
 				// oxlint-disable-next-line promise/avoid-new -- ssh2's close is callback-shaped.
 				await new Promise<void>((resolve) => {
 					server.close(() => resolve());
 				});
-				await registryServer.close();
-				await endpoint.close();
+				await pipes.close();
+				await listener.close();
 				registry.close();
 			})();
 			return closePromise;
 		},
+		offline: () => metrics.counts(),
+		pairingCode: pipePairingCode({
+			advertisedUrl: options.brokerUrl,
+			bindHost: brokerBind,
+			boundUrl: listener.url,
+			fingerprint: tls.fingerprint,
+		}),
 		sshPort: options.sshPort,
+		url: listener.url,
 	};
 };
 
-const main = async (): Promise<void> => {
-	const stateRoot =
-		process.env.XDG_STATE_HOME ?? path.join(homedir(), ".local", "state");
-	const gateway = await startGateway({
-		bindHost: process.env.SUPERVILLAIN_GATEWAY_BIND,
-		sshHost: process.env.SUPERVILLAIN_GATEWAY_SSH_HOST ?? "127.0.0.1",
-		sshPort: Number(process.env.SUPERVILLAIN_GATEWAY_SSH_PORT ?? 2222),
-		stateDir:
-			process.env.SUPERVILLAIN_GATEWAY_STATE ??
-			path.join(stateRoot, "supervillain-gateway"),
-	});
-	process.stdout.write(
-		`the gate is open.\n\n  ssh port: ${gateway.sshPort}\n  gateway address (for supervillain create --gateway):\n\n  ${gateway.address}\n\n`
+/** Reads `SUPERVILLAIN_GATEWAY_TLS`. Anything unrecognised is a refusal rather
+ * than a silent fall back to the default: the difference between the modes is
+ * whether production traffic is encrypted by this process, and guessing at it
+ * is not a thing an operator can audit. */
+const tlsFromEnvironment = (): GatewayTlsOptions => {
+	const mode = process.env.SUPERVILLAIN_GATEWAY_TLS ?? "self-signed";
+	if (mode === "self-signed" || mode === "terminated-upstream") {
+		return { mode };
+	}
+	if (mode === "files") {
+		const certificatePath = process.env.SUPERVILLAIN_GATEWAY_TLS_CERT;
+		const privateKeyPath = process.env.SUPERVILLAIN_GATEWAY_TLS_KEY;
+		if (certificatePath === undefined || privateKeyPath === undefined) {
+			throw new Error(
+				"SUPERVILLAIN_GATEWAY_TLS=files needs SUPERVILLAIN_GATEWAY_TLS_CERT and SUPERVILLAIN_GATEWAY_TLS_KEY."
+			);
+		}
+		return { certificatePath, mode, privateKeyPath };
+	}
+	throw new Error(
+		`SUPERVILLAIN_GATEWAY_TLS='${mode}' is not one of self-signed, terminated-upstream, files.`
 	);
-	process.once("SIGINT", () => {
-		void (async (): Promise<void> => {
-			await gateway.close();
-			process.exit(0);
-		})();
+};
+
+/** What the operator reads on start. A pairing code when this process knows the
+ * address Hosts reach it at; otherwise the fingerprint plus the one variable
+ * that completes it — never a code naming a wildcard bind. */
+export const gatewayBanner = (
+	gateway: RunningGateway,
+	stateDir?: string
+): string => {
+	const state = stateDir === undefined ? "" : `  state:    ${stateDir}\n`;
+	const door = `the gate is open.\n\n  ssh port: ${gateway.sshPort}\n${state}`;
+	if (gateway.pairingCode !== undefined) {
+		return `${door}  host pairing code (for supervillain create --gateway):\n\n  ${gateway.pairingCode}\n\n`;
+	}
+	const fingerprint =
+		gateway.certificateFingerprint === undefined
+			? ""
+			: `  certificate fingerprint: sha256:${gateway.certificateFingerprint}\n`;
+	return `${door}  the pipe is listening on ${gateway.url}\n${fingerprint}\n  set SUPERVILLAIN_GATEWAY_BROKER_URL to the address your Hosts reach this\n  box at — your domain or dynamic-DNS name and the forwarded port — and a\n  pairing code is printed here instead.\n\n`;
+};
+
+/** Resolves the first time the operator asks the gateway to stop. An
+ * always-on box is stopped by a service manager (SIGTERM) at least as often as
+ * by a human at a terminal (SIGINT), so both are the same event here. */
+const untilShutdown = (): Promise<void> =>
+	// oxlint-disable-next-line promise/avoid-new -- a process signal is an event, not a promise-returning API.
+	new Promise<void>((resolve) => {
+		const stop = (): void => {
+			process.off("SIGINT", stop);
+			process.off("SIGTERM", stop);
+			resolve();
+		};
+		process.once("SIGINT", stop);
+		process.once("SIGTERM", stop);
 	});
+
+/**
+ * The gateway **role**, run out of the one compiled binary (ADR-0015). This is
+ * what `supervillain gateway serve` reaches, and it is the whole self-hosted
+ * posture: the SSH door, the broker Hosts dial out to, the gateway's own store,
+ * and — since the default TLS mode is `self-signed` — a certificate it mints
+ * for itself, so a clean box needs no CA, no domain, and no proxy. No web
+ * surface, no publishing: those are hosted-only at v1 (ADR-0013).
+ */
+export const serveGateway = async (
+	args: readonly string[]
+): Promise<number> => {
+	const parsed = parseGatewayRoleArgs(args, {
+		env: process.env,
+		homeDir: homedir(),
+	});
+	if (parsed.kind === "help") {
+		console.log(GATEWAY_ROLE_USAGE);
+		return 0;
+	}
+	if (parsed.kind === "error") {
+		console.error(parsed.message);
+		console.error(GATEWAY_ROLE_USAGE);
+		return 1;
+	}
+	let tls: GatewayTlsOptions;
+	let capacity: GatewayCapacity;
+	try {
+		tls = tlsFromEnvironment();
+		// The caps are ops-tunable and read here, not compiled in (ADR-0012,
+		// NQ-10): a box with more headroom than the benchmark's raises them, and
+		// a smaller one lowers them, without a rebuild.
+		capacity = capacityFromEnvironment(process.env);
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	// A clean box has no state directory yet; the gateway makes its own rather
+	// than demanding a provisioning step (ADR-0015's clean-box criterion).
+	await mkdir(parsed.options.stateDir, { mode: 0o700, recursive: true });
+	const gateway = await startGateway({
+		...parsed.options,
+		capacity: capacity.limits,
+		lobbyLimits: capacity.lobby,
+		tls,
+	});
+	process.stdout.write(gatewayBanner(gateway, parsed.options.stateDir));
+	await untilShutdown();
+	await gateway.close();
+	return 0;
 };
 
 if (import.meta.main) {
-	await main();
+	process.exitCode = await serveGateway(process.argv.slice(2));
 }

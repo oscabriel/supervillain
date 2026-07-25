@@ -1,7 +1,4 @@
-/* oxlint-disable unicorn/prefer-module -- bun build --compile needs a static bare require of the per-triple .node addon (#11) */
-import { provideIrohNative } from "@supervillain/transport-iroh";
-
-const native = require("@number0/iroh-darwin-arm64/iroh.darwin-arm64.node");
-
-provideIrohNative(native as never);
+// Per-triple compile entry point. The napi transport artifact is gone (ADR-0012),
+// so every triple now embeds the same pure-JS CLI; the entry points stay one-per-triple
+// because the release matrix builds each on its own native runner.
 await import("../index.js");

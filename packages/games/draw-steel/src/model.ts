@@ -188,6 +188,27 @@ export type DsEvent =
 			readonly characterName: string | null;
 	  };
 
+/** Every event type this module's fold recognizes, legacy shapes included —
+ * the `statBlock`-shaped `ds.character-entered` is the same recognized type,
+ * upgraded on read (ADR-0010). Kept in step with `apply` by the module's own
+ * tests; `model.ts` imports nothing, so the entry that registers this module
+ * lifts it into an `EventGrammar`. */
+export const eventTypes = [
+	"ds.character-entered",
+	"ds.encounter-started",
+	"ds.encounter-ended",
+	"ds.combatant-added",
+	"ds.turn-taken",
+	"ds.round-started",
+	"ds.condition-applied",
+	"ds.condition-removed",
+	"ds.resource-changed",
+	"ds.recovery-spent",
+	"ds.surges-changed",
+	"ds.victory-gained",
+	"ds.power-rolled",
+] as const satisfies readonly DsEvent["type"][];
+
 const emptyEncounter = (): DsEncounter => ({
 	active: false,
 	combatants: [],

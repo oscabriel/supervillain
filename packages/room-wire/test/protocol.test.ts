@@ -9,7 +9,12 @@ import type {
 
 import { connectRoomStore, serveRoomStore } from "../src/index.js";
 import type { RemoteRoomStoreOptions } from "../src/index.js";
-import { createMemoryEndpointPair, describe, expect, test } from "./harness.js";
+import {
+	createMemoryTransportPair,
+	describe,
+	expect,
+	test,
+} from "./harness.js";
 
 interface Waiter {
 	readonly afterSeq: number;
@@ -104,20 +109,16 @@ const nextEnvelope = async (
 };
 
 const openFixture = async (options: RemoteRoomStoreOptions = {}) => {
-	const endpoints = createMemoryEndpointPair();
+	const transport = createMemoryTransportPair();
 	const local = new TestRoomStore();
-	const server = serveRoomStore(endpoints.server, local, {
+	const server = serveRoomStore(transport.listener, local, {
 		info: { gameId: "test", label: "Test Room" },
 	});
-	const remote = await connectRoomStore(
-		endpoints.client,
-		endpoints.server.address,
-		{
-			reconnectDelayMs: () => 1,
-			...options,
-		}
-	);
-	return { endpoints, local, remote, server };
+	const remote = await connectRoomStore(transport.dialer, {
+		reconnectDelayMs: () => 1,
+		...options,
+	});
+	return { local, remote, server, transport };
 };
 
 describe("RoomStore wire protocol", () => {
@@ -193,7 +194,7 @@ describe("RoomStore wire protocol", () => {
 		const iterator = fixture.remote.stream(1)[Symbol.asyncIterator]();
 		try {
 			const sequences = [(await nextEnvelope(iterator)).seq];
-			await fixture.endpoints.client.dropConnections();
+			await fixture.transport.dialer.dropConnections();
 			fixture.local.append("test.third", {});
 			sequences.push(
 				(await nextEnvelope(iterator)).seq,
@@ -210,7 +211,7 @@ describe("RoomStore wire protocol", () => {
 	test("redials submit after a drop but never retries a mid-flight submission", async () => {
 		const fixture = await openFixture();
 		try {
-			await fixture.endpoints.client.dropConnections();
+			await fixture.transport.dialer.dropConnections();
 			expect(
 				await fixture.remote.submit({
 					actor: "client-id",
@@ -229,7 +230,7 @@ describe("RoomStore wire protocol", () => {
 			while (fixture.local.submissions.length < 2) {
 				await new Promise((resolve) => setTimeout(resolve, 1));
 			}
-			await fixture.endpoints.client.dropConnections();
+			await fixture.transport.dialer.dropConnections();
 			await expect(pending).rejects.toThrow();
 			release();
 			fixture.local.blockSubmit = undefined;

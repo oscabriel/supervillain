@@ -71,15 +71,18 @@ describe("supervillain create", () => {
 			"/quit\r",
 		]);
 		expect(first.code).toBe(0);
+		// No --name, so no gateway and no door: the honest answer is that this
+		// table is local to this machine (ADR-0012, NQ-7 — `join` dials nothing).
 		expect(first.output).toContain(
-			"your table is live. summon your players:\r\n\r\n  supervillain join "
+			"your table is live. this machine is the Host."
 		);
+		expect(first.output).not.toContain("supervillain join ");
 		expect(first.output).toContain(
 			"invalid.json: Character file must contain valid UTF-8 JSON."
 		);
 		const door = await readFile(path.join(campaign, "door.txt"), "utf-8");
 		expect(door.endsWith("\n")).toBe(true);
-		expect(door.trim().length).toBeGreaterThan(40);
+		expect(door.trim()).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/?$/u);
 
 		const bytes = await readFile(path.join(campaign, "events.jsonl"));
 		const events = bytes.toString().trim().split("\n").map(JSON.parse);

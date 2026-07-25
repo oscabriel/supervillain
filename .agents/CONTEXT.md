@@ -8,7 +8,7 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Table**: The shared terminal client that renders a room — core chrome (feed, layout slots, focus routing) plus the module's panels. It is the only OpenTUI consumer outside game `view` entries. _Avoid_: client app, frontend, renderer (the table contains the renderer fold)
 
-**Seat**: A position at the table held by an identity; the core owns seats, presence, and who holds the GM seat. _Avoid_: slot (reserved for layout), player object
+**Seat**: A position at the table held by an identity; the core owns seats, presence, and who holds the GM seat. The seat belongs to the actor, not the connection: an actor joining a room where it already holds a seat — a GM `join`ing their own table included — gets a second **view** of that one seat, never a second seat _(pinned 2026-07-25, grilling session, after [#63](https://github.com/oscabriel/supervillain/issues/63))_. _Avoid_: slot (reserved for layout), player object
 
 **GM**: The person with authority over a room; every supported game has one. The GM's machine hosts the room by default. _Avoid_: mastermind (rejected theming), dungeon master, admin
 
@@ -36,6 +36,10 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Key linking**: Binding a second key to the same identity via a one-time code (v1). GM roaming falls out of it. _Avoid_: device sync, multi-login
 
+**Key revocation**: Retiring a key — a **state on the key, not a deletion**. The key leaves its equivalence class for authentication only: it can no longer host, join, link, or revoke, while the identity keeps its other keys, its rooms, and every line the retired key wrote. The state is a column in the gateway store, so refusal is a local read that works with our servers unreachable (ADR-0012 NQ-3, located by ADR-0013). Rotation is "link new, retire old"; `supervillain key revoke` is the retire, run from a machine you still control. It takes effect **immediately** — live pipes and terminals on that key are dropped, not merely refused at their next login ([#59](https://github.com/oscabriel/supervillain/issues/59)). _Avoid_: delete key, unlink, deactivate, ban
+
+**Pairing code**: The one pasteable string that onboards a Host to a gateway — the gateway's `wss://` URL carrying its certificate fingerprint in a `#fp=sha256:…` fragment (ADR-0014). Only a gateway with no CA behind it publishes one; a hosted gateway's address is a bare URL. The first connection pins the fingerprint in per-machine config; a gateway that later serves a different certificate is refused, never prompted. Distinct from **key linking**'s one-time code, which binds a key to an identity. _Avoid_: invite code, join token, gateway secret
+
 **Capability URL**: An unguessable share link that _is_ the permission for a published web artifact; revocable by the owner. The web access model at launch — no web accounts. _Avoid_: share token, public link, permalink
 
 **Trusted stamper**: A connection identity a room host allows to submit commands on behalf of other actors — in v0, exactly the gateway the GM registered with. Everyone else remains bound to connection-equals-actor (ADR-0001/0004). _Avoid_: proxy auth, impersonation, service account
@@ -62,6 +66,8 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Fold posture**: The pinned contract for events a fold can't cleanly apply (ADR-0010). Two tiers, keyed on type recognition: **unknown** (unrecognized type — silent skip, forward compat) vs **known-invalid** (recognized type, violated payload shape or fold invariant). Writers halt, readers tolerate: the host refuses to open on either tier; render folds never halt — unknown skips silently, known-invalid skips loudly (a warning FeedLine with seq/type/reason). Shapes a released host ever wrote stay valid forever via upgrade-on-read. _Avoid_: error handling, validation policy, fault tolerance
 
+**Event grammar**: A game module's declared list of every event type its fold recognizes, legacy shapes included — the mechanism the writer fold asks to tell _unknown_ from _known-invalid_ on module events (ADR-0010, implemented in [#53](https://github.com/oscabriel/supervillain/issues/53)). It rides on the module's authority entry beside `model` and `authority`; a declaration, not a derivation, so the module's own conformance test is what holds it to `apply`. _Avoid_: event schema, event registry, type whitelist
+
 ## Game modules
 
 **Game module**: A TypeScript package satisfying the core's seam interface — statically imported, compile-time registered. Code, not a plugin: no rules DSL, no dynamic loading. _Avoid_: plugin, extension, game pack
@@ -84,7 +90,9 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 ## Infrastructure
 
-**Gateway**: The stateless doorway on our servers: SSH session adapter, the name registry (name→owner identity, durable; name→live pipe, memory), and the broker the Host dials out to (one shared per-Room fold, per-session views). It folds `apply` over streamed events to feed views; it never imports `decide` and never holds the campaign folder. "Stateless" means **no durable game state** — the registry, host key, and presentation prefs are durable; game-derived state is memory-only and game content never enters logs or telemetry _(correction 2026-07-22, [#44](https://github.com/oscabriel/supervillain/issues/44), ADR-0008)_ _(correction 2026-07-24, [#54](https://github.com/oscabriel/supervillain/issues/54), ADR-0012: iroh proxy → outbound broker; also runs self-hosted — the same MIT binary)_. _Avoid_: server, host (reserved), relay
+**Gateway**: The stateless doorway on our servers: SSH session adapter, the name registry (name→owner identity, durable; name→live pipe, memory), and the broker the Host dials out to (one shared per-Room fold, per-session views). What the per-Room fold shares is each live Room's **envelope history and live tail**; each session's table still runs the module's `apply` to build its own render state _(correction 2026-07-25, after [#58](https://github.com/oscabriel/supervillain/issues/58): an earlier phrasing here said the gateway "folds `apply` over streamed events", which overclaims — genuinely shared game state would need a gateway-owned per-module snapshot, a real `packages/table` change nothing has authorized)_. It never imports `decide` and never holds the campaign folder. "Stateless" means **no durable game state** — the registry, host key, and presentation prefs are durable; game-derived state is memory-only and game content never enters logs or telemetry _(correction 2026-07-22, [#44](https://github.com/oscabriel/supervillain/issues/44), ADR-0008)_ _(correction 2026-07-24, [#54](https://github.com/oscabriel/supervillain/issues/54), ADR-0012: iroh proxy → outbound broker; also runs self-hosted — the same MIT binary)_. _Avoid_: server, host (reserved), relay
+
+**Role**: Which of the two things the one compiled `supervillain` binary is doing. The **table roles** are `create`/`join` and the management nouns; the **gateway role** is `supervillain gateway serve` — the SSH door, the broker, and the gateway's own store, and the whole of the self-hosted posture (ADR-0015). A role selector is not a verb: the pinned `create`/`join`/`publish` set is the table surface and stays closed. _Avoid_: mode, subcommand (the selector is one), daemon
 
 **Lobby**: The gateway's first-contact TUI, served on bare `ssh supervillain.app` and as the chrome for unknown/offline-room arrivals: splash (pixel-glyph wordmark), interactive join, become-a-GM screen, settings. Pre-identity for guests — a `guest:` actor mints only at room entry. Never creates rooms; no game imports (ADR-0008). _Avoid_: storefront, landing page, menu (unqualified); "lobby" for a room (a room is a live session)
 

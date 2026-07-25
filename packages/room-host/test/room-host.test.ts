@@ -6,14 +6,18 @@ import path from "node:path";
 import type { HostRegistry, RoomStore } from "@supervillain/core";
 
 import { decide } from "../../games/fake/src/authority.js";
-import { apply, init } from "../../games/fake/src/model.js";
+import { apply, eventTypes, init } from "../../games/fake/src/model.js";
 import { InProcessRoomStore, RoomHost } from "../src/index.js";
 import { describe, expect, test } from "./harness.js";
 
 const registry: HostRegistry = {
 	get(gameId) {
 		return gameId === "fake"
-			? { authority: { decide }, model: { apply, init } }
+			? {
+					authority: { decide },
+					grammar: { eventTypes },
+					model: { apply, init },
+				}
 			: undefined;
 	},
 };
@@ -43,6 +47,35 @@ const clockAt = (start = 0): (() => string) => {
 		index += 1;
 		return value ?? "2026-01-01T00:00:59.000Z";
 	};
+};
+
+/** Writes a campaign log that opens with the two envelopes every room starts
+ * with, then the given ones — sequence numbers are the JSONL line numbers. */
+const writeLog = async (
+	campaignFolder: string,
+	tail: readonly {
+		readonly actor: string;
+		readonly payload: unknown;
+		readonly type: string;
+	}[]
+): Promise<void> => {
+	const envelopes = [
+		{
+			actor: "actor-gm",
+			payload: { gameId: "fake" },
+			type: "core.room-created",
+		},
+		{ actor: "actor-gm", payload: { seatId: "gm" }, type: "core.seat-claimed" },
+		...tail,
+	].map((envelope, index) => ({
+		...envelope,
+		seq: index + 1,
+		timestamp: timestamps[index] ?? "2026-01-01T00:00:59.000Z",
+	}));
+	await writeFile(
+		path.join(campaignFolder, "events.jsonl"),
+		`${envelopes.map((value) => JSON.stringify(value)).join("\n")}\n`
+	);
 };
 
 const openHost = (campaignFolder: string, start = 0): Promise<RoomHost> =>
@@ -107,6 +140,7 @@ describe("RoomHost", () => {
 					visits: 1,
 				},
 				gameId: "fake",
+				map: null,
 				seq: 5,
 				table: {
 					actor: "",
@@ -120,6 +154,7 @@ describe("RoomHost", () => {
 						},
 					],
 				},
+				tokens: [],
 			});
 		});
 	});
@@ -229,12 +264,14 @@ describe("RoomHost", () => {
 			expect(host.snapshot()).toEqual({
 				game: { lastCharacterId: null, lastSeatId: "gm", visits: 1 },
 				gameId: "fake",
+				map: null,
 				seq: 6,
 				table: {
 					actor: "",
 					gmSeatId: "gm",
 					seats: [{ actor: "actor-gm", characterId: null, id: "gm" }],
 				},
+				tokens: [],
 			});
 		});
 	});
@@ -270,8 +307,104 @@ describe("RoomHost", () => {
 			);
 
 			await expect(RoomHost.open({ campaignFolder, registry })).rejects.toThrow(
-				"Log binds a character to unknown seat 'missing'."
+				"Log binds a character to unknown seat 'missing' at line 3."
 			);
+		});
+	});
+
+	test("refuses to open a log carrying an unknown core event type", async () => {
+		await withCampaign(async (campaignFolder) => {
+			// Deliberately a type no host in this tree implements: the fixture has
+			// to stay unknown as core grows, so it names no real future event.
+			await writeLog(campaignFolder, [
+				{
+					actor: "actor-gm",
+					payload: { name: "the keep" },
+					type: "core.written-by-a-newer-host",
+				},
+			]);
+
+			await expect(RoomHost.open({ campaignFolder, registry })).rejects.toThrow(
+				"Log contains unknown event type 'core.written-by-a-newer-host' at line 3 — this host is too old."
+			);
+		});
+	});
+
+	test("refuses to open a log carrying a game event outside the grammar", async () => {
+		await withCampaign(async (campaignFolder) => {
+			await writeLog(campaignFolder, [
+				{ actor: "actor-gm", payload: { size: 3 }, type: "fake.party-grown" },
+			]);
+
+			await expect(RoomHost.open({ campaignFolder, registry })).rejects.toThrow(
+				"Log contains unknown event type 'fake.party-grown' at line 3 — this host is too old."
+			);
+		});
+	});
+
+	test("refuses to open a log whose game event carries no object payload", async () => {
+		await withCampaign(async (campaignFolder) => {
+			await writeLog(campaignFolder, [
+				{
+					actor: "actor-gm",
+					payload: "not-an-object",
+					type: "fake.visit-counted",
+				},
+			]);
+
+			await expect(RoomHost.open({ campaignFolder, registry })).rejects.toThrow(
+				"Event 'fake.visit-counted' at line 3 must carry an object payload."
+			);
+		});
+	});
+
+	test("refuses to write a game event outside the module's declared grammar", async () => {
+		await withCampaign(async (campaignFolder) => {
+			const rogue: HostRegistry = {
+				get: () => ({
+					authority: { decide: () => [{ type: "fake.undeclared" }] },
+					grammar: { eventTypes },
+					model: { apply, init },
+				}),
+			};
+			const host = await RoomHost.open({
+				actor: "actor-gm",
+				campaignFolder,
+				gameId: "fake",
+				registry: rogue,
+			});
+
+			await expect(
+				host.submit({ actor: "actor-gm", command: { type: "fake.visit" } })
+			).rejects.toThrow(
+				"Game 'fake' emitted event 'fake.undeclared', which is outside its declared event grammar."
+			);
+		});
+	});
+
+	test("replays a shipped legacy game event shape green", async () => {
+		await withCampaign(async (campaignFolder) => {
+			// The pre-`characterId` `fake.seat-observed` a released host once
+			// wrote: recognized and valid forever, upgraded on read (ADR-0010).
+			await writeLog(campaignFolder, [
+				{
+					actor: "actor-gm",
+					payload: { seatId: "gm" },
+					type: "fake.seat-observed",
+				},
+				{
+					actor: "actor-gm",
+					payload: { characterId: "hero", seatId: "gm" },
+					type: "fake.seat-observed",
+				},
+			]);
+
+			const host = await RoomHost.open({ campaignFolder, registry });
+			expect(host.snapshot().game).toEqual({
+				lastCharacterId: "hero",
+				lastSeatId: "gm",
+				visits: 0,
+			});
 		});
 	});
 

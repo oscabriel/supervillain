@@ -12,6 +12,10 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./lobby": {
+			"types": "./dist/lobby.d.ts",
+			"import": "./dist/lobby.js"
 		}
 	},
 	"dependencies": {

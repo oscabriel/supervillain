@@ -43,7 +43,7 @@ module.exports = {
 		},
 		{
 			from: {
-				path: "^packages/(core|room-host|room-wire|transport-iroh|session|identity)/|^packages/games/[^/]+/src/(model|authority|content)\\.ts$",
+				path: "^packages/(core|room-host|room-wire|transport-ws|session|identity)/|^packages/games/[^/]+/src/(model|authority|content)\\.ts$",
 			},
 			name: "node-compat-is-platform-free",
 			severity: "error",
@@ -54,6 +54,48 @@ module.exports = {
 			name: "room-wire-never-imports-room-host",
 			severity: "error",
 			to: { path: "^packages/room-host/" },
+		},
+		{
+			// room-wire owns the transport seam and implements it for nobody
+			// (ADR-0012, NQ-13). The arrow only ever points the other way: an
+			// adapter imports the seam, never the reverse.
+			from: { path: "^packages/room-wire/" },
+			name: "room-wire-imports-no-transport",
+			severity: "error",
+			to: { path: "^(@supervillain/transport-|packages/transport-)" },
+		},
+		{
+			// The server half is the gateway's: ADR-0012 has the Host dialing out
+			// and the gateway listening, and the render side imports neither half.
+			// apps/cli is a named, temporary exception. #57 inverted the *gateway*
+			// direction — the Host now dials out and the gateway never dials back —
+			// and #63 replaced `supervillain join <url>` with an ordinary SSH
+			// session, so nothing dials the CLI's listener any more. The listener
+			// itself outlived that change only because #63 declared `create` out of
+			// scope; deleting it (and `door.txt` with it) is its own decision, and
+			// this exception goes with it.
+			from: { pathNot: "^(apps/gateway|apps/cli)/" },
+			name: "transport-server-half-is-gateway-only",
+			severity: "error",
+			to: {
+				path: "^(@supervillain/transport-[a-z]+/server$|packages/transport-[a-z]+/src/server\\.ts$)",
+			},
+		},
+		{
+			// One binary, two roles (ADR-0015): the gateway's server half is
+			// compiled into the same artifact the CLI ships as, and this rule
+			// keeps that from becoming a merge of the two halves. Exactly one
+			// file may name the gateway — apps/cli/src/gateway-role.ts, whose
+			// whole job is to defer-load it when an operator asks for the
+			// gateway role. Nothing on the client path (create, join, the
+			// render side) may reach it, so the halves stay apart behind the
+			// role selector rather than by luck.
+			from: {
+				pathNot: "^(apps/gateway/|apps/cli/src/gateway-role\\.ts$)",
+			},
+			name: "gateway-role-behind-one-door",
+			severity: "error",
+			to: { path: "^(@supervillain/gateway$|apps/gateway/)" },
 		},
 		{
 			// apps/gateway is the only thing touching the GATEWAY's store — not

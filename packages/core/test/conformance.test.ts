@@ -1,15 +1,36 @@
-import { describe, expect, test } from "bun:test";
-/* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; the runner is the runtime claim. */
-import { mkdtemp, rm } from "node:fs/promises";
+/* oxlint-disable vitest/prefer-importing-vitest-globals -- dual-lane suite: the harness picks the runner. */
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { decide } from "../../games/fake/src/authority.js";
-import { apply, init } from "../../games/fake/src/model.js";
-import type { FakeEvent, FakeState } from "../../games/fake/src/model.js";
+import { apply, eventTypes, init } from "../../games/fake/src/model.js";
+import type {
+	FakeCommand,
+	FakeEvent,
+	FakeState,
+} from "../../games/fake/src/model.js";
 import { view } from "../../games/fake/src/view.js";
 import { RoomHost } from "../../room-host/src/index.js";
-import type { Envelope, HostRegistry, TableView } from "../src/index.js";
+import { createTableFold } from "../../table/src/fold.js";
+import type {
+	Envelope,
+	HostRegistry,
+	TableView,
+	ViewEntry,
+} from "../src/index.js";
+import { describe, expect, test } from "./harness.js";
+
+const registry: HostRegistry = {
+	get: (gameId) =>
+		gameId === "fake"
+			? {
+					authority: { decide },
+					grammar: { eventTypes },
+					model: { apply, init },
+				}
+			: undefined,
+};
 
 const table: TableView = {
 	actor: "actor-guest",
@@ -77,12 +98,6 @@ describe("game module seam", () => {
 		const folder = await mkdtemp(
 			path.join(tmpdir(), "supervillain-conformance-")
 		);
-		const registry: HostRegistry = {
-			get: (gameId) =>
-				gameId === "fake"
-					? { authority: { decide }, model: { apply, init } }
-					: undefined,
-		};
 		try {
 			const host = await RoomHost.open({
 				actor: "actor-gm",
@@ -162,5 +177,129 @@ describe("game module seam", () => {
 		};
 
 		expect(JSON.stringify(replay())).toBe(JSON.stringify(replay()));
+	});
+});
+
+/** A permanent old-log fixture for the reference module, carrying the
+ * pre-`characterId` `fake.seat-observed` shape beside the current one. */
+const legacyLogPath = path.join(
+	import.meta.dirname,
+	"fixtures",
+	"legacy-fake-log.jsonl"
+);
+
+const viewEntry: ViewEntry<FakeState, FakeCommand, FakeEvent> = {
+	model: { apply, init },
+	view,
+};
+
+const envelope = (
+	type: `${string}.${string}`,
+	payload: unknown,
+	seq: number
+): Envelope => ({
+	actor: "actor-gm",
+	payload,
+	seq,
+	timestamp: "2026-01-01T00:00:09.000Z",
+	type,
+});
+
+describe("fold posture across the seam", () => {
+	test("both folds replay a shipped legacy module shape green", async () => {
+		const text = await readFile(legacyLogPath, "utf-8");
+		const envelopes = text
+			.split("\n")
+			.filter((line) => line !== "")
+			.map((line) => JSON.parse(line) as Envelope);
+		const expected: FakeState = {
+			lastCharacterId: "hero",
+			lastSeatId: "gm",
+			visits: 1,
+		};
+		const folder = await mkdtemp(path.join(tmpdir(), "supervillain-legacy-"));
+		try {
+			await writeFile(path.join(folder, "events.jsonl"), text);
+			const host = await RoomHost.open({ campaignFolder: folder, registry });
+			expect(host.snapshot().game).toEqual(expected);
+		} finally {
+			await rm(folder, { force: true, recursive: true });
+		}
+
+		const fold = createTableFold(viewEntry, "fake", "actor-gm");
+		for (const value of envelopes) {
+			fold.apply(value);
+		}
+		expect(fold.endReplay()).toBeNull();
+		expect(fold.skips()).toEqual([]);
+		expect(fold.state()).toEqual(expected);
+	});
+
+	test("the writer fold halts on a module event outside the grammar", async () => {
+		const folder = await mkdtemp(path.join(tmpdir(), "supervillain-unknown-"));
+		try {
+			await writeFile(
+				path.join(folder, "events.jsonl"),
+				`${[
+					envelope("core.room-created", { gameId: "fake" }, 1),
+					envelope("core.seat-claimed", { seatId: "gm" }, 2),
+					envelope("fake.party-grown", { size: 3 }, 3),
+				]
+					.map((value) => JSON.stringify(value))
+					.join("\n")}\n`
+			);
+
+			await expect(
+				RoomHost.open({ campaignFolder: folder, registry })
+			).rejects.toThrow(
+				"Log contains unknown event type 'fake.party-grown' at line 3 — this host is too old."
+			);
+		} finally {
+			await rm(folder, { force: true, recursive: true });
+		}
+	});
+
+	test("the render fold skips the unknown tier silently and stays alive", () => {
+		const fold = createTableFold(viewEntry, "fake", "actor-gm");
+		fold.endReplay();
+		expect(fold.apply(envelope("fake.party-grown", { size: 3 }, 3))).toBeNull();
+		expect(
+			fold.apply(envelope("core.written-by-a-newer-host", { name: "keep" }, 4))
+		).toBeNull();
+		expect(fold.skips()).toEqual([]);
+		expect(
+			fold.apply(envelope("fake.visit-counted", { visits: 2 }, 5))
+		).toEqual({ runs: [{ text: "visit 2", token: "accent" }] });
+	});
+
+	test("the render fold skips the known-invalid tier loudly and stays alive", () => {
+		const fold = createTableFold(viewEntry, "fake", "actor-gm");
+		fold.endReplay();
+		expect(fold.apply(envelope("fake.visit-counted", "nope", 6))).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #6 (fake.visit-counted): payload is not an object",
+					token: "danger",
+				},
+			],
+		});
+		expect(
+			fold.apply(envelope("fake.visit-counted", { visits: 2 }, 7))
+		).toEqual({ runs: [{ text: "visit 2", token: "accent" }] });
+	});
+
+	test("the module's declared grammar covers every event its authority emits", () => {
+		const emitted = decide(
+			init(),
+			{ seatId: "guest", type: "fake.visit" },
+			table
+		);
+		expect(Array.isArray(emitted)).toBe(true);
+		if (!Array.isArray(emitted)) {
+			return;
+		}
+		for (const event of emitted) {
+			expect(eventTypes as readonly string[]).toContain(event.type);
+		}
 	});
 });
