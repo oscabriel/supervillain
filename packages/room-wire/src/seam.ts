@@ -1,3 +1,5 @@
+/* oxlint-disable eslint/max-classes-per-file -- the transport seam's two error contracts belong to the seam that defines them. */
+
 /**
  * The transport seam. `room-wire` owns it and imports no transport package
  * (ADR-0012, NQ-13): adapters implement these three types, the wire protocol
@@ -37,5 +39,21 @@ export class TransportListenerClosedError extends Error {
 	constructor() {
 		super("Transport listener closed while accepting.");
 		this.name = "TransportListenerClosedError";
+	}
+}
+
+/**
+ * The peer at that address is not the peer this machine agreed to talk to.
+ *
+ * The seam names this because redialing is the wrong response to it and the
+ * redial loop must be able to tell: an unreachable gateway deserves patience,
+ * but a gateway serving a certificate other than the pinned one deserves a stop
+ * and a human (ADR-0012 NQ-9, ADR-0014). Adapters raise subclasses of it; the
+ * seam never learns what trust was made of.
+ */
+export class TransportTrustError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "TransportTrustError";
 	}
 }

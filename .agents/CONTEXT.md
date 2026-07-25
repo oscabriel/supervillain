@@ -36,6 +36,8 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Key linking**: Binding a second key to the same identity via a one-time code (v1). GM roaming falls out of it. _Avoid_: device sync, multi-login
 
+**Pairing code**: The one pasteable string that onboards a Host to a gateway — the gateway's `wss://` URL carrying its certificate fingerprint in a `#fp=sha256:…` fragment (ADR-0014). Only a gateway with no CA behind it publishes one; a hosted gateway's address is a bare URL. The first connection pins the fingerprint in per-machine config; a gateway that later serves a different certificate is refused, never prompted. Distinct from **key linking**'s one-time code, which binds a key to an identity. _Avoid_: invite code, join token, gateway secret
+
 **Capability URL**: An unguessable share link that _is_ the permission for a published web artifact; revocable by the owner. The web access model at launch — no web accounts. _Avoid_: share token, public link, permalink
 
 **Trusted stamper**: A connection identity a room host allows to submit commands on behalf of other actors — in v0, exactly the gateway the GM registered with. Everyone else remains bound to connection-equals-actor (ADR-0001/0004). _Avoid_: proxy auth, impersonation, service account

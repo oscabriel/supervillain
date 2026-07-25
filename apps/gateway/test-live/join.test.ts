@@ -165,7 +165,11 @@ const openDoor = async (): Promise<LiveDoor> => {
 		path.join(playerConfig, "supervillain"),
 		sshPort
 	);
-	return { attached, gateway, playerConfig, scratch, sshPort };
+	// The gateway mints a self-signed certificate by default (ADR-0014), so the
+	// Host has to be handed the pairing code, not the bare URL — the fingerprint
+	// on the end is what it pins.
+	const pipeAddress = gateway.pairingCode ?? gateway.url;
+	return { attached, gateway, pipeAddress, playerConfig, scratch, sshPort };
 };
 
 afterEach(async () => {
@@ -187,7 +191,7 @@ afterEach(async () => {
 
 describe("supervillain join through a live gateway", () => {
 	test("reaches a created room over ssh and exchanges live table commands", async () => {
-		const { attached, gateway, playerConfig, scratch, sshPort } =
+		const { attached, gateway, pipeAddress, playerConfig, scratch, sshPort } =
 			await openDoor();
 		const campaign = path.join(scratch, "campaign");
 		const gmConfig = path.join(scratch, "gm-config");
@@ -195,7 +199,7 @@ describe("supervillain join through a live gateway", () => {
 		const playerTranscript = path.join(scratch, "player-screen.txt");
 
 		const gm = spawnPty(
-			`create ${quote(campaign)} --name ${ROOM} --gateway ${quote(gateway.url)}`,
+			`create ${quote(campaign)} --name ${ROOM} --gateway ${quote(pipeAddress)}`,
 			{ XDG_CONFIG_HOME: gmConfig },
 			gmTranscript
 		);

@@ -26,6 +26,7 @@ import type { RoomInfo } from "./messages.js";
 import { MultiplexPipe } from "./pipe.js";
 import type { PipeStream } from "./pipe.js";
 import type { TransportConnection, TransportDialer } from "./seam.js";
+import { TransportTrustError } from "./seam.js";
 import { createSubmissionMemory } from "./submissions.js";
 import type { SubmissionMemory } from "./submissions.js";
 
@@ -343,7 +344,15 @@ export const openHostPipe = (options: HostPipeOptions): HostPipe => {
 				await attach();
 				attempt = 0;
 			} catch (error) {
-				if (error instanceof HostPipeRefusedError) {
+				// Two errors stop the redial loop rather than feeding it. A refusal
+				// is the gateway's answer and will not change on retry; a trust
+				// failure is worse — redialing a gateway whose certificate is not
+				// the pinned one is exactly the silent continue trust-on-first-use
+				// exists to prevent (ADR-0014).
+				if (
+					error instanceof HostPipeRefusedError ||
+					error instanceof TransportTrustError
+				) {
 					if (settled) {
 						onEvent({ kind: "refused", reason: error.message });
 					} else {

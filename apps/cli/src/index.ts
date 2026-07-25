@@ -64,9 +64,16 @@ import { createLocalTtyRenderer, runTable } from "@supervillain/table";
 import { DialTimeoutError, openWsDialer } from "@supervillain/transport-ws";
 import { startWsListener } from "@supervillain/transport-ws/server";
 
+import {
+	pinGateway,
+	plaintextWarning,
+	resolveGatewayTarget,
+} from "./gateways.js";
+import type { GatewayTarget } from "./gateways.js";
+
 const USAGE = `Usage:
-  supervillain create <campaign-folder> [--game <id>] [--name <room> [--gateway <addr>]]
-  supervillain join <room> [--gateway <url>] [--ssh-port <port>]
+  supervillain create <campaign-folder> [--game <id>] [--name <room> [--gateway <addr-or-pairing-code>]]
+  supervillain join <room> [--gateway <addr-or-pairing-code>] [--ssh-port <port>]
   supervillain publish
   supervillain key show
   supervillain key link [<code>] [--gateway <addr>]
@@ -78,9 +85,13 @@ const USAGE = `Usage:
   supervillain campaign info <campaign-folder>
 
   --name registers the room at a gateway so players can ssh in; the gateway
-  address comes from --gateway or SUPERVILLAIN_GATEWAY. A room name is held by
-  an identity, so to host it from a second machine, run 'key link' on the
-  machine that already holds it and redeem the code on the new one.
+  address comes from --gateway or SUPERVILLAIN_GATEWAY. That address is a
+  wss:// URL, or the pairing code a self-hosted gateway prints — the same URL
+  with its certificate fingerprint on the end. The first connection pins that
+  certificate on this machine; a gateway that later serves a different one is
+  refused rather than trusted. A room name is held by an identity, so to host
+  it from a second machine, run 'key link' on the machine that already holds
+  it and redeem the code on the new one.
 
   join opens an ordinary ssh session to that same gateway with this machine's
   key, and the gateway resolves the room name. It is a convenience wrapper
@@ -785,6 +796,75 @@ const summonNotice = (options: {
 	return `your table is live. summon your players:\n\n  ssh ${portFlag}${roomName}@${attachment.sshHost}\n  supervillain join ${roomName}${gatewayFlag}${sshPortFlag}\n\nthis name is held by your identity. to host it from another machine, run\n'supervillain key link' here and redeem the code there.\n\n`;
 };
 
+type HostRoom = Parameters<typeof openHostPipe>[0]["rooms"][number];
+
+/** The live pipe, or the one line explaining why there isn't one. Registration
+ * fails for reasons a human fixes — a bad room name, a missing gateway, a
+ * gateway whose certificate is not the pinned one — so every path out of here
+ * is a sentence, never a stack trace. */
+type Registration =
+	| { readonly pipe: HostPipe; readonly attachment: HostPipeAttachment }
+	| { readonly failed: string };
+
+/**
+ * Claims the room name at the gateway and holds the pipe open. Trust is settled
+ * before the dial (ADR-0014): the address may be a pairing code carrying the
+ * certificate this machine must find, and a pin that disagrees is a refusal
+ * rather than a prompt. The pin is written only once the gateway has answered,
+ * so a code that never connected leaves nothing behind to un-pair.
+ */
+const registerAtGateway = async (options: {
+	readonly gatewayAddress: string | undefined;
+	readonly room: HostRoom;
+	readonly secretKeyHex: string;
+}): Promise<Registration> => {
+	if (!isValidRoomName(options.room.name)) {
+		return { failed: ROOM_NAME_RULE };
+	}
+	if (options.gatewayAddress === undefined) {
+		return {
+			failed:
+				"--name needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY.",
+		};
+	}
+	let target: GatewayTarget;
+	try {
+		target = await resolveGatewayTarget(configFolder(), options.gatewayAddress);
+	} catch (error) {
+		return { failed: error instanceof Error ? error.message : String(error) };
+	}
+	const plaintext = plaintextWarning(target.url);
+	if (plaintext !== undefined) {
+		console.error(plaintext);
+	}
+	// The Host dials out and keeps dialing (ADR-0012): the gateway never
+	// reaches back for this machine, so no port here is ever opened to it.
+	const pipe = openHostPipe({
+		dialer: openWsDialer({
+			certificateFingerprint: target.fingerprint,
+			secretKeyHex: options.secretKeyHex,
+			url: target.url,
+		}),
+		rooms: [options.room],
+	});
+	let attachment: HostPipeAttachment;
+	try {
+		attachment = await pipe.attached;
+	} catch (error) {
+		await pipe.close();
+		return {
+			failed:
+				error instanceof Error
+					? error.message
+					: "Could not register the room at the gateway.",
+		};
+	}
+	if (target.pinOnSuccess && target.fingerprint !== undefined) {
+		await pinGateway(configFolder(), target.origin, target.fingerprint);
+	}
+	return { attachment, pipe };
+};
+
 const create = async (args: readonly string[]): Promise<number> => {
 	let parsed: ReturnType<typeof parseArgs>;
 	try {
@@ -840,53 +920,29 @@ const create = async (args: readonly string[]): Promise<number> => {
 	let pipe: HostPipe | undefined;
 	let gatewayAddress: string | undefined;
 	if (typeof roomName === "string") {
-		if (!isValidRoomName(roomName)) {
-			console.error(ROOM_NAME_RULE);
-			await listener.close();
-			return 1;
-		}
 		gatewayAddress =
 			typeof parsed.values.gateway === "string"
 				? parsed.values.gateway
 				: process.env.SUPERVILLAIN_GATEWAY;
-		if (gatewayAddress === undefined) {
-			console.error(
-				"--name needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY."
-			);
-			await listener.close();
-			return 1;
-		}
-		// The Host dials out and keeps dialing (ADR-0012): the gateway never
-		// reaches back for this machine, so no port here is ever opened to it.
-		pipe = openHostPipe({
-			dialer: openWsDialer({
-				secretKeyHex: identity.secretKeyHex,
-				url: gatewayAddress,
-			}),
-			rooms: [
-				{
-					// The roster the gateway resolves against its graph at every
-					// registration — which is how this room learns about linking
-					// that happened while it was offline (ADR-0013).
-					actors: () => host.actors(),
-					info: { gameId, label: roomLabel },
-					name: roomName,
-					store,
-				},
-			],
+		const registration = await registerAtGateway({
+			gatewayAddress,
+			room: {
+				// The roster the gateway resolves against its graph at every
+				// registration — which is how this room learns about linking
+				// that happened while it was offline (ADR-0013).
+				actors: () => host.actors(),
+				info: { gameId, label: roomLabel },
+				name: roomName,
+				store,
+			},
+			secretKeyHex: identity.secretKeyHex,
 		});
-		try {
-			attachment = await pipe.attached;
-		} catch (error) {
-			console.error(
-				error instanceof Error
-					? error.message
-					: "Could not register the room at the gateway."
-			);
-			await pipe.close();
+		if ("failed" in registration) {
+			console.error(registration.failed);
 			await listener.close();
 			return 1;
 		}
+		({ attachment, pipe } = registration);
 	}
 	const server = serveRoomStore(listener, store, {
 		info: { gameId, label: roomLabel },
