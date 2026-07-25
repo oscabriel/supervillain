@@ -5,23 +5,34 @@ import {
 	CORE_CHARACTER_BOUND,
 	CORE_CHAT_POSTED,
 	CORE_DICE_ROLLED,
+	CORE_MAP_CLEARED,
+	CORE_MAP_LOADED,
 	CORE_ROOM_CREATED,
 	CORE_SEAT_CLAIMED,
+	isValidMapName,
+	mapFilePath,
+	parseMapFile,
+	readMapLoadedPayload,
 } from "@supervillain/core";
 import type {
 	AuthorityEntry,
+	BattleMap,
 	CharacterBoundPayload,
 	ChatPostedPayload,
 	DiceRolledPayload,
 	Envelope,
 	HostRegistry,
+	MapClearedPayload,
+	MapLoadedPayload,
 	NamespacedType,
 	Rejection,
 	RoomCommand,
 	RoomCreatedPayload,
 	RoomSubmission,
 	SeatClaimedPayload,
+	SeatView,
 	TableView,
+	ValidationIssue,
 } from "@supervillain/core";
 
 import { Latch } from "./latch.js";
@@ -43,6 +54,7 @@ export interface RoomSnapshot {
 	readonly gameId: string;
 	readonly game: unknown;
 	readonly table: TableView;
+	readonly map: BattleMap | null;
 	readonly seq: number;
 }
 
@@ -90,7 +102,14 @@ const isNodeError = (
 ): error is Error & { readonly code: string } =>
 	error instanceof Error && "code" in error && typeof error.code === "string";
 
+const describeIssues = (errors: readonly ValidationIssue[]): string => {
+	const [first, ...rest] = errors;
+	const message = first?.message ?? "Map file is invalid.";
+	return rest.length === 0 ? message : `${message} (+${rest.length} more)`;
+};
+
 export class RoomHost {
+	readonly #campaignFolder: string;
 	readonly #logPath: string;
 	readonly #registry: HostRegistry;
 	readonly #table: TableView = { actor: "", gmSeatId: "gm", seats: [] };
@@ -101,9 +120,11 @@ export class RoomHost {
 	#authority: AuthorityEntry<unknown, unknown, unknown> | undefined;
 	#gameId: string | undefined;
 	#game: unknown;
+	#map: BattleMap | null = null;
 	#writeTail: Promise<void> = Promise.resolve();
 
 	private constructor(options: RoomHostOptions) {
+		this.#campaignFolder = options.campaignFolder;
 		this.#logPath = path.join(options.campaignFolder, LOG_FILE);
 		this.#registry = options.registry;
 		this.#clock = options.clock ?? (() => new Date().toISOString());
@@ -159,6 +180,7 @@ export class RoomHost {
 		return {
 			game: this.#game,
 			gameId: this.#gameId,
+			map: this.#map,
 			seq: this.#envelopes.length,
 			table: this.#table,
 		};
@@ -313,6 +335,9 @@ export class RoomHost {
 				rejected: true,
 			};
 		}
+		if (command.type === "core.load-map" || command.type === "core.clear-map") {
+			return await this.#submitMap(actor, actorSeat, command);
+		}
 		if (command.type === "core.bind-character") {
 			const characterId =
 				typeof command.characterId === "string"
@@ -409,6 +434,78 @@ export class RoomHost {
 		return { accepted: true, envelopes: [envelope] };
 	}
 
+	async #submitMap(
+		actor: string,
+		actorSeat: SeatView,
+		command: Record<string, unknown> & { readonly type: string }
+	): Promise<RoomSubmission> {
+		if (actorSeat.id !== this.#table.gmSeatId) {
+			return {
+				message: "Only the GM can load or clear the battle map.",
+				rejected: true,
+			};
+		}
+		return command.type === "core.clear-map"
+			? await this.#clearMap(actor)
+			: await this.#loadMap(actor, command.name);
+	}
+
+	async #clearMap(actor: string): Promise<RoomSubmission> {
+		if (this.#map === null) {
+			return { accepted: true, envelopes: [] };
+		}
+		const envelope: Envelope = {
+			actor,
+			payload: {} satisfies MapClearedPayload,
+			seq: this.#envelopes.length + 1,
+			timestamp: this.#clock(),
+			type: CORE_MAP_CLEARED,
+		};
+		await this.#append([envelope]);
+		return { accepted: true, envelopes: [envelope] };
+	}
+
+	async #loadMap(actor: string, requested: unknown): Promise<RoomSubmission> {
+		const name = typeof requested === "string" ? requested.trim() : "";
+		if (!isValidMapName(name)) {
+			return {
+				message:
+					"Map names are 1-60 letters, digits, hyphens, and underscores.",
+				rejected: true,
+			};
+		}
+		const relativePath = mapFilePath(name);
+		let bytes: Uint8Array;
+		try {
+			bytes = await readFile(path.join(this.#campaignFolder, relativePath));
+		} catch (error) {
+			if (isNodeError(error) && error.code === "ENOENT") {
+				return { message: `No map file at ${relativePath}.`, rejected: true };
+			}
+			throw error;
+		}
+		const parsed = parseMapFile(bytes);
+		if (!parsed.ok) {
+			return {
+				message: `${relativePath}: ${describeIssues(parsed.errors)}`,
+				rejected: true,
+			};
+		}
+		const envelope: Envelope = {
+			actor,
+			payload: {
+				legend: parsed.map.legend,
+				name: parsed.map.name,
+				rows: parsed.map.rows,
+			} satisfies MapLoadedPayload,
+			seq: this.#envelopes.length + 1,
+			timestamp: this.#clock(),
+			type: CORE_MAP_LOADED,
+		};
+		await this.#append([envelope]);
+		return { accepted: true, envelopes: [envelope] };
+	}
+
 	async #append(envelopes: readonly Envelope[]): Promise<void> {
 		if (envelopes.length === 0) {
 			return;
@@ -481,6 +578,20 @@ export class RoomHost {
 			}
 			(seat as { characterId: string | null }).characterId =
 				payload.characterId;
+			return;
+		}
+		if (envelope.type === CORE_MAP_LOADED) {
+			const map = readMapLoadedPayload(envelope.payload);
+			if (map === null) {
+				throw new Error(
+					`Log loads a map with an invalid payload at event ${envelope.seq}.`
+				);
+			}
+			this.#map = map;
+			return;
+		}
+		if (envelope.type === CORE_MAP_CLEARED) {
+			this.#map = null;
 			return;
 		}
 		if (envelope.type.startsWith("core.")) {

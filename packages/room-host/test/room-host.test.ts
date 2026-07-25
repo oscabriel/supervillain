@@ -107,6 +107,7 @@ describe("RoomHost", () => {
 					visits: 1,
 				},
 				gameId: "fake",
+				map: null,
 				seq: 5,
 				table: {
 					actor: "",
@@ -229,6 +230,7 @@ describe("RoomHost", () => {
 			expect(host.snapshot()).toEqual({
 				game: { lastCharacterId: null, lastSeatId: "gm", visits: 1 },
 				gameId: "fake",
+				map: null,
 				seq: 6,
 				table: {
 					actor: "",

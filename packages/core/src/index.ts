@@ -1,16 +1,39 @@
-export type NamespacedType = `${string}.${string}`;
+import type { MapLegend } from "./map.js";
+import type { ContentValidator } from "./validation.js";
 
-/** Returns whether a value is a non-array object with string keys. */
-export const isRecord = (
-	value: unknown
-): value is Readonly<Record<string, unknown>> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
+export type { BattleMap, MapLegend, MapParseResult, MapTile } from "./map.js";
+export {
+	DEFAULT_MAP_LEGEND,
+	isValidMapName,
+	MAP_DIRECTORY,
+	MAP_FILE_EXTENSION,
+	MAP_MAX_HEIGHT,
+	MAP_MAX_LEGEND_ENTRIES,
+	MAP_MAX_WIDTH,
+	MAP_NAME_MAX_LENGTH,
+	MAP_SEPARATOR,
+	MAP_TILES,
+	mapFilePath,
+	parseMapFile,
+	readMapLoadedPayload,
+	validateMapFile,
+} from "./map.js";
+export type {
+	ContentValidator,
+	ValidationIssue,
+	ValidationResult,
+} from "./validation.js";
+export { isRecord } from "./validation.js";
+
+export type NamespacedType = `${string}.${string}`;
 
 export const CORE_ROOM_CREATED = "core.room-created";
 export const CORE_SEAT_CLAIMED = "core.seat-claimed";
 export const CORE_CHARACTER_BOUND = "core.character-bound";
 export const CORE_CHAT_POSTED = "core.chat-posted";
 export const CORE_DICE_ROLLED = "core.dice-rolled";
+export const CORE_MAP_LOADED = "core.map-loaded";
+export const CORE_MAP_CLEARED = "core.map-cleared";
 
 export interface RoomCreatedPayload {
 	readonly gameId: string;
@@ -36,6 +59,15 @@ export interface DiceRolledPayload {
 	readonly total: number;
 }
 
+/** The whole validated map file — replay never reads the file itself. */
+export interface MapLoadedPayload {
+	readonly name: string;
+	readonly legend: MapLegend;
+	readonly rows: readonly string[];
+}
+
+export type MapClearedPayload = Readonly<Record<string, never>>;
+
 /** Commands the core decides itself — never routed to a game authority. */
 export type CoreCommand =
 	| { readonly type: "core.chat"; readonly text: string }
@@ -44,7 +76,9 @@ export type CoreCommand =
 	| {
 			readonly type: "core.bind-character";
 			readonly characterId: string | null;
-	  };
+	  }
+	| { readonly type: "core.load-map"; readonly name: string }
+	| { readonly type: "core.clear-map" };
 
 export interface Envelope<
 	TType extends NamespacedType = NamespacedType,
@@ -146,16 +180,6 @@ export interface GameView<S, C, E> {
 	readonly createPanels: () => readonly GamePanel<S, C>[];
 	readonly notices?: readonly FeedLine[];
 }
-
-export interface ValidationIssue {
-	readonly message: string;
-}
-
-export type ValidationResult =
-	| { readonly ok: true }
-	| { readonly ok: false; readonly errors: readonly ValidationIssue[] };
-
-export type ContentValidator = (bytes: Uint8Array) => ValidationResult;
 
 export interface GameContent {
 	readonly validate: ContentValidator;

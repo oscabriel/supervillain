@@ -67,6 +67,10 @@
     "packages/core": {
       "name": "@supervillain/core",
       "version": "0.0.0",
+      "devDependencies": {
+        "@types/node": "^24.0.0",
+        "vitest": "^3.2.4",
+      },
     },
     "packages/games/draw-steel": {
       "name": "@supervillain/draw-steel",

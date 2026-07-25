@@ -2,10 +2,14 @@ import {
 	CORE_CHARACTER_BOUND,
 	CORE_CHAT_POSTED,
 	CORE_DICE_ROLLED,
+	CORE_MAP_CLEARED,
+	CORE_MAP_LOADED,
 	CORE_ROOM_CREATED,
 	CORE_SEAT_CLAIMED,
+	readMapLoadedPayload,
 } from "@supervillain/core";
 import type {
+	BattleMap,
 	CharacterBoundPayload,
 	ChatPostedPayload,
 	DiceRolledPayload,
@@ -21,7 +25,19 @@ export interface TableFold<S> {
 	readonly state: () => Readonly<S>;
 	readonly actorLabel: (actor: string) => string;
 	readonly table: () => TableView;
+	/** The battle map the log has folded to, or `null` when none is loaded. */
+	readonly map: () => BattleMap | null;
 }
+
+/** Readers tolerate: a known-invalid event is skipped loudly (ADR-0010). */
+const skipped = (envelope: Envelope, reason: string): FeedLine => ({
+	runs: [
+		{
+			text: `⚠ skipped event #${envelope.seq} (${envelope.type}): ${reason}`,
+			token: "danger",
+		},
+	],
+});
 
 export const createTableFold = <S, C, E>(
 	entry: ViewEntry<S, C, E>,
@@ -29,6 +45,7 @@ export const createTableFold = <S, C, E>(
 	actor: string
 ): TableFold<S> => {
 	let game = entry.model.init();
+	let map: BattleMap | null = null;
 	const seats: {
 		actor: string;
 		characterId: string | null;
@@ -98,6 +115,20 @@ export const createTableFold = <S, C, E>(
 					],
 				};
 			}
+			if (envelope.type === CORE_MAP_LOADED) {
+				const loaded = readMapLoadedPayload(envelope.payload);
+				if (loaded === null) {
+					return skipped(envelope, "map payload is not a valid map");
+				}
+				map = loaded;
+				return {
+					runs: [{ text: `map loaded · ${loaded.name}`, token: "muted" }],
+				};
+			}
+			if (envelope.type === CORE_MAP_CLEARED) {
+				map = null;
+				return { runs: [{ text: "map cleared", token: "muted" }] };
+			}
 			if (envelope.type.startsWith("core.")) {
 				return null;
 			}
@@ -108,6 +139,7 @@ export const createTableFold = <S, C, E>(
 			game = entry.model.apply(game, event);
 			return entry.view.renderEvent(event, game);
 		},
+		map: () => map,
 		state: () => game,
 		table: () => table,
 	};
