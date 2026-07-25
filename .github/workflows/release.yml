@@ -39,6 +39,8 @@ jobs:
           codesign --verify --strict dist-bin/supervillain
       - name: Smoke runtime-free binary outside checkout
         run: sh smoke/release-smoke.sh "$PWD/dist-bin/supervillain"
+      - name: Smoke the gateway role out of the same binary
+        run: sh smoke/gateway-smoke.sh "$PWD/dist-bin/supervillain"
       - name: Package binary
         run: tar -czf supervillain-${{ matrix.triple }}.tar.gz -C dist-bin supervillain
       - uses: actions/upload-artifact@v4

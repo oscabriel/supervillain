@@ -1,7 +1,14 @@
 #!/bin/sh
+# Usage: release-smoke.sh <binary> [extra create args...]
+# Proves the downloaded artifact runs the CLI role — `create` reaching a live
+# table — with no repo checkout, no bun, and no node. Extra arguments are
+# appended to the `create` line; smoke/gateway-smoke.sh uses them to point this
+# same run at a gateway the same binary is serving.
 set -eu
 
 binary=$1
+shift
+create_arguments=$*
 case "$binary" in
 	/*) ;;
 	*) binary=$(pwd)/$binary ;;
@@ -33,7 +40,8 @@ mkfifo "$input"
 cat >"$runner" <<'EOF'
 #!/bin/sh
 stty cols 100 rows 30
-exec "$RUN_BINARY" create "$CAMPAIGN"
+# shellcheck disable=SC2086 -- CREATE_ARGS is our own flag list and must split.
+exec "$RUN_BINARY" create "$CAMPAIGN" $CREATE_ARGS
 EOF
 chmod 755 "$runner"
 
@@ -43,11 +51,12 @@ case $(uname -s) in
 		# pty.spawn tolerates a non-tty stdin and still gives the child a real pty.
 		env -i HOME="$HOME" TERM=xterm PATH=/usr/bin:/bin \
 			RUN_BINARY="$runtime_binary" CAMPAIGN="$campaign" \
+			CREATE_ARGS="$create_arguments" \
 			/usr/bin/python3 -c 'import pty,sys; sys.exit(pty.spawn(["/bin/sh", sys.argv[1]]))' "$runner" \
 			<"$input" >"$transcript" 2>&1 &
 		;;
 	Linux)
-		command="env -i HOME='$HOME' TERM=xterm PATH=/usr/bin:/bin RUN_BINARY='$runtime_binary' CAMPAIGN='$campaign' /bin/sh '$runner'"
+		command="env -i HOME='$HOME' TERM=xterm PATH=/usr/bin:/bin RUN_BINARY='$runtime_binary' CAMPAIGN='$campaign' CREATE_ARGS='$create_arguments' /bin/sh '$runner'"
 		script -qec "$command" "$transcript" <"$input" &
 		;;
 	*)

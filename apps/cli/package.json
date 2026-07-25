@@ -21,6 +21,7 @@
 		"@supervillain/core": "workspace:*",
 		"@supervillain/draw-steel": "workspace:*",
 		"@supervillain/fake": "workspace:*",
+		"@supervillain/gateway": "workspace:*",
 		"@supervillain/identity": "workspace:*",
 		"@supervillain/room-host": "workspace:*",
 		"@supervillain/room-wire": "workspace:*",

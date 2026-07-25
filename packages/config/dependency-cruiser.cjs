@@ -82,6 +82,22 @@ module.exports = {
 			},
 		},
 		{
+			// One binary, two roles (ADR-0015): the gateway's server half is
+			// compiled into the same artifact the CLI ships as, and this rule
+			// keeps that from becoming a merge of the two halves. Exactly one
+			// file may name the gateway — apps/cli/src/gateway-role.ts, whose
+			// whole job is to defer-load it when an operator asks for the
+			// gateway role. Nothing on the client path (create, join, the
+			// render side) may reach it, so the halves stay apart behind the
+			// role selector rather than by luck.
+			from: {
+				pathNot: "^(apps/gateway/|apps/cli/src/gateway-role\\.ts$)",
+			},
+			name: "gateway-role-behind-one-door",
+			severity: "error",
+			to: { path: "^(@supervillain/gateway$|apps/gateway/)" },
+		},
+		{
 			// apps/gateway is the only thing touching the GATEWAY's store — not
 			// "the only thing touching a DB", which stopped being true when
 			// ADR-0013 gave the web backend its own store. apps/web must not

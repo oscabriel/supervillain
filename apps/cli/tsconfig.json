@@ -7,6 +7,7 @@
 	},
 	"include": ["src/**/*.ts"],
 	"references": [
+		{ "path": "../gateway" },
 		{ "path": "../../packages/core" },
 		{ "path": "../../packages/games/draw-steel" },
 		{ "path": "../../packages/games/fake" },
