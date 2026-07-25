@@ -238,16 +238,29 @@ describe("derived linking facts", () => {
 		registry.close();
 	});
 
-	test("the schema holds no queue of pending linkings", () => {
-		const registry = openAt(DAY_ONE);
-		registry.close();
+	test("the schema holds no queue of pending linkings", async () => {
 		const file = `${tmpdir()}/supervillain-schema-${randomUUID()}.db`;
 		const store = openRoomRegistry({ clock: at(DAY_ONE), path: file });
 		store.close();
-		// A queue would be a staler second copy of a computable fact (ADR-0013).
-		const opened = openRoomRegistry({ clock: at(DAY_ONE), path: file });
-		expect(opened.identityOf(DESKTOP)).toBeUndefined();
-		opened.close();
+		// A queue would be a staler second copy of a computable fact (ADR-0013),
+		// so the assertion is against the schema itself: these tables and no
+		// others.
+		const { Database } = await import("bun:sqlite");
+		const raw = new Database(file, { strict: true });
+		const tables = raw
+			.query<{ name: string }, []>(
+				"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+			)
+			.all()
+			.map((row) => row.name);
+		raw.close();
+		await rm(file);
+		expect(tables).toEqual([
+			"identities",
+			"identity_keys",
+			"link_codes",
+			"rooms",
+		]);
 	});
 });
 

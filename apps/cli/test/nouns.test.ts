@@ -55,6 +55,12 @@ describe("supervillain noun commands", () => {
 		expect(result.code).toBe(0);
 		expect(result.error).toBe("");
 		expect(result.output).toMatch(/^\d+\.\d+\.\d+\n$/u);
+		// CLI_VERSION is hand-mirrored from package.json (a compiled binary has
+		// no package.json to read); this is what keeps the two from drifting.
+		const pkg = JSON.parse(
+			await readFile(path.resolve(import.meta.dir, "../package.json"), "utf-8")
+		) as { version: string };
+		expect(result.output).toBe(`${pkg.version}\n`);
 	});
 
 	test("key link needs a gateway, and takes at most one code", async () => {

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import path from "node:path";
 
 import {
+	CAPACITY_ENVIRONMENT,
 	GATEWAY_ROLE_USAGE,
 	parseGatewayRoleArgs,
 	resolveGatewayStateDir,
@@ -140,6 +141,14 @@ describe("parseGatewayRoleArgs", () => {
 			kind: "help",
 		});
 		expect(GATEWAY_ROLE_USAGE).toContain("supervillain gateway serve");
+	});
+
+	test("the usage text names every capacity environment variable", () => {
+		// CAPACITY_ENVIRONMENT exists so the usage text and the parser cannot
+		// drift apart; this is the binding that makes that sentence true.
+		for (const name of CAPACITY_ENVIRONMENT) {
+			expect(GATEWAY_ROLE_USAGE).toContain(name);
+		}
 	});
 
 	test("a bad port is a one-line complaint, not a crash", () => {
