@@ -17,8 +17,8 @@ import {
 } from "@supervillain/identity";
 import { connectRoomStore, serveRoomRegistry } from "@supervillain/room-wire";
 import { runTable } from "@supervillain/table";
-import { openIrohEndpoint } from "@supervillain/transport-iroh";
-import type { TransportAddress } from "@supervillain/transport-iroh";
+import { openWsDialer } from "@supervillain/transport-ws";
+import { startWsListener } from "@supervillain/transport-ws/server";
 import { Server, utils } from "ssh2";
 import type {
 	AuthContext,
@@ -63,11 +63,15 @@ export interface GatewayOptions {
 	/** Hostname players are told to ssh to — the summon line, not the bind. */
 	readonly sshHost: string;
 	readonly bindHost?: string;
+	/** TCP port for the room-wire pipe; 0 takes an ephemeral port. Default: 0. */
+	readonly brokerPort?: number;
+	/** The pipe URL Hosts should dial, when it differs from the bind. */
+	readonly brokerUrl?: string;
 }
 
 export interface RunningGateway {
-	/** The gateway's transport address — what `create --gateway` dials. */
-	readonly address: TransportAddress;
+	/** The gateway's transport URL — what `create --gateway` dials. */
+	readonly url: string;
 	readonly sshPort: number;
 	readonly close: () => Promise<void>;
 }
@@ -138,9 +142,7 @@ const serveShell = async (
 	options: {
 		readonly roomName: string;
 		readonly registry: GatewayRoomRegistry;
-		readonly dial: (
-			address: TransportAddress
-		) => ReturnType<typeof connectRoomStore>;
+		readonly dial: (address: string) => ReturnType<typeof connectRoomStore>;
 	}
 ): Promise<void> => {
 	const address = options.registry.resolve(options.roomName);
@@ -150,7 +152,7 @@ const serveShell = async (
 	}
 	let store: Awaited<ReturnType<typeof connectRoomStore>>;
 	try {
-		store = await options.dial(address as TransportAddress);
+		store = await options.dial(address);
 	} catch {
 		farewell(stream, "Could not reach that room. Is the GM's table live?");
 		return;
@@ -190,7 +192,7 @@ const serveShell = async (
 const handleConnection = (
 	client: Connection,
 	registry: GatewayRoomRegistry,
-	dial: (address: TransportAddress) => ReturnType<typeof connectRoomStore>
+	dial: (address: string) => ReturnType<typeof connectRoomStore>
 ): void => {
 	let actor: string | undefined;
 	let roomName = "";
@@ -252,7 +254,10 @@ export const startGateway = async (
 	options: GatewayOptions
 ): Promise<RunningGateway> => {
 	const identity = await loadOrCreateIdentity(options.stateDir);
-	const endpoint = await openIrohEndpoint({
+	const listener = await startWsListener({
+		advertisedUrl: options.brokerUrl,
+		host: options.bindHost,
+		port: options.brokerPort,
 		secretKeyHex: identity.secretKeyHex,
 	});
 	const registry = openRoomRegistry({
@@ -260,11 +265,13 @@ export const startGateway = async (
 		sshHost: options.sshHost,
 		sshPort: options.sshPort,
 	});
-	const registryServer = serveRoomRegistry(endpoint, registry);
+	const registryServer = serveRoomRegistry(listener, registry);
 	const hostKey = await loadOrCreateHostKey(options.stateDir);
 	const server = new Server({ hostKeys: [hostKey] }, (client) => {
 		handleConnection(client, registry, (address) =>
-			connectRoomStore(endpoint, address)
+			connectRoomStore(
+				openWsDialer({ secretKeyHex: identity.secretKeyHex, url: address })
+			)
 		);
 	});
 	// oxlint-disable-next-line promise/avoid-new -- ssh2's listen is callback-shaped.
@@ -277,7 +284,6 @@ export const startGateway = async (
 	});
 	let closePromise: Promise<void> | undefined;
 	return {
-		address: endpoint.address,
 		close: () => {
 			closePromise ??= (async (): Promise<void> => {
 				// oxlint-disable-next-line promise/avoid-new -- ssh2's close is callback-shaped.
@@ -285,20 +291,24 @@ export const startGateway = async (
 					server.close(() => resolve());
 				});
 				await registryServer.close();
-				await endpoint.close();
+				await listener.close();
 				registry.close();
 			})();
 			return closePromise;
 		},
 		sshPort: options.sshPort,
+		url: listener.url,
 	};
 };
 
 const main = async (): Promise<void> => {
 	const stateRoot =
 		process.env.XDG_STATE_HOME ?? path.join(homedir(), ".local", "state");
+	const brokerPort = process.env.SUPERVILLAIN_GATEWAY_BROKER_PORT;
 	const gateway = await startGateway({
 		bindHost: process.env.SUPERVILLAIN_GATEWAY_BIND,
+		brokerPort: brokerPort === undefined ? undefined : Number(brokerPort),
+		brokerUrl: process.env.SUPERVILLAIN_GATEWAY_BROKER_URL,
 		sshHost: process.env.SUPERVILLAIN_GATEWAY_SSH_HOST ?? "127.0.0.1",
 		sshPort: Number(process.env.SUPERVILLAIN_GATEWAY_SSH_PORT ?? 2222),
 		stateDir:
@@ -306,7 +316,7 @@ const main = async (): Promise<void> => {
 			path.join(stateRoot, "supervillain-gateway"),
 	});
 	process.stdout.write(
-		`the gate is open.\n\n  ssh port: ${gateway.sshPort}\n  gateway address (for supervillain create --gateway):\n\n  ${gateway.address}\n\n`
+		`the gate is open.\n\n  ssh port: ${gateway.sshPort}\n  gateway address (for supervillain create --gateway):\n\n  ${gateway.url}\n\n`
 	);
 	process.once("SIGINT", () => {
 		void (async (): Promise<void> => {

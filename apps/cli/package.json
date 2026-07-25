@@ -26,14 +26,9 @@
 		"@supervillain/room-wire": "workspace:*",
 		"@supervillain/session": "workspace:*",
 		"@supervillain/table": "workspace:*",
-		"@supervillain/transport-iroh": "workspace:*"
+		"@supervillain/transport-ws": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^24.0.0"
-	},
-	"optionalDependencies": {
-		"@number0/iroh-darwin-arm64": "1.0.0",
-		"@number0/iroh-linux-arm64-gnu": "1.0.0",
-		"@number0/iroh-linux-x64-gnu": "1.0.0"
 	}
 }

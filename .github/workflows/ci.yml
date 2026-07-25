@@ -30,8 +30,13 @@ jobs:
       - run: bun run test:gateway
       - run: bun run test:install
 
-  # The full matrix uses costly macOS minutes and the public iroh relay network,
-  # so it runs only for main pushes and intentional manual dispatches.
+  # The dual Bun/Node lane is the standing claim that the event-sourced core stays
+  # runtime-portable: only the edges (Table, gateway render, CLI binary) are
+  # Bun-bound, so room-host, room-wire and transport-ws run identical specs under
+  # both runners (ADR-0012, NQ-12). Nothing here touches an external network any
+  # more — the remaining reason this is not a per-PR job is the macOS runner's
+  # cost, so it stays main-push-and-dispatch until that runner earns its place on
+  # every PR or leaves the matrix.
   dual-lane:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     strategy:
@@ -53,9 +58,9 @@ jobs:
       - name: Run live direct-door CLI test
         if: runner.os == 'Linux'
         run: bun run test:cli-live
-      - name: Run dual-lane suites with one network retry
+      - name: Run dual-lane suites with one retry
         run: |
-          bun run test:room-host && bun run test:transport-iroh && bun run test:room-wire || {
+          bun run test:room-host && bun run test:transport-ws && bun run test:room-wire || {
             echo "::warning::dual-lane suites failed once; retrying"
-            bun run test:room-host && bun run test:transport-iroh && bun run test:room-wire
+            bun run test:room-host && bun run test:transport-ws && bun run test:room-wire
           }

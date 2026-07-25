@@ -1,9 +1,0 @@
-{
-	"name": "hello-iroh-smoke",
-	"private": true,
-	"license": "MIT",
-	"type": "module",
-	"dependencies": {
-		"@number0/iroh": "1.0.0"
-	}
-}

@@ -39,10 +39,10 @@ import { attachLocalTty } from "@supervillain/session";
 import { runTable } from "@supervillain/table";
 import {
 	DialTimeoutError,
-	openIrohEndpoint,
+	openWsDialer,
 	SelfDialError,
-} from "@supervillain/transport-iroh";
-import type { TransportAddress } from "@supervillain/transport-iroh";
+} from "@supervillain/transport-ws";
+import { startWsListener } from "@supervillain/transport-ws/server";
 
 const USAGE = `Usage:
   supervillain create <campaign-folder> [--game <id>] [--name <room> [--gateway <addr>]]
@@ -566,7 +566,8 @@ const create = async (args: readonly string[]): Promise<number> => {
 	});
 	const store = new InProcessRoomStore(host);
 	const roomLabel = path.basename(path.resolve(campaignFolder));
-	const endpoint = await openIrohEndpoint({
+	const listener = await startWsListener({
+		host: process.env.SUPERVILLAIN_HOST_BIND,
 		secretKeyHex: identity.secretKeyHex,
 	});
 	const roomName = parsed.values.name;
@@ -576,7 +577,7 @@ const create = async (args: readonly string[]): Promise<number> => {
 			console.error(
 				"Room names are 1-32 lowercase letters, digits, and hyphens."
 			);
-			await endpoint.close();
+			await listener.close();
 			return 1;
 		}
 		const gatewayAddress =
@@ -587,14 +588,16 @@ const create = async (args: readonly string[]): Promise<number> => {
 			console.error(
 				"--name needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY."
 			);
-			await endpoint.close();
+			await listener.close();
 			return 1;
 		}
 		try {
 			receipt = await registerRoom(
-				endpoint,
-				gatewayAddress as TransportAddress,
-				{ address: endpoint.address, name: roomName }
+				openWsDialer({
+					secretKeyHex: identity.secretKeyHex,
+					url: gatewayAddress,
+				}),
+				{ address: listener.url, name: roomName }
 			);
 		} catch (error) {
 			console.error(
@@ -602,30 +605,27 @@ const create = async (args: readonly string[]): Promise<number> => {
 					? error.message
 					: "Could not register the room at the gateway."
 			);
-			await endpoint.close();
+			await listener.close();
 			return 1;
 		}
 	}
-	const server = serveRoomStore(endpoint, store, {
+	const server = serveRoomStore(listener, store, {
 		info: { gameId, label: roomLabel },
 		trustedStampers: receipt === undefined ? undefined : [receipt.gatewayId],
 	});
-	await writeFile(
-		path.join(campaignFolder, "door.txt"),
-		`${endpoint.address}\n`
-	);
+	await writeFile(path.join(campaignFolder, "door.txt"), `${listener.url}\n`);
 	const sshDoor =
 		receipt === undefined || typeof roomName !== "string"
 			? ""
 			: `  ssh ${receipt.sshPort === 22 ? "" : `-p ${receipt.sshPort} `}${roomName}@${receipt.sshHost}\n`;
 	process.stdout.write(
-		`your table is live. summon your players:\n\n  supervillain join ${endpoint.address}\n${sshDoor}\n`
+		`your table is live. summon your players:\n\n  supervillain join ${listener.url}\n${sshDoor}\n`
 	);
 	await runIntake(campaignFolder, gameId, actor, store);
 	const session = attachLocalTty({ actor });
 	await runTable({ entry, gameId, roomLabel, session, store });
 	await server.close();
-	await endpoint.close();
+	await listener.close();
 	return 0;
 };
 
@@ -659,12 +659,11 @@ const join = async (args: readonly string[]): Promise<number> => {
 		path.join(configRoot, "supervillain")
 	);
 	const actor = identity.publicKeyHex;
-	const endpoint = await openIrohEndpoint({
-		secretKeyHex: identity.secretKeyHex,
-	});
 	let store: Awaited<ReturnType<typeof connectRoomStore>>;
 	try {
-		store = await connectRoomStore(endpoint, roomRef as TransportAddress);
+		store = await connectRoomStore(
+			openWsDialer({ secretKeyHex: identity.secretKeyHex, url: roomRef })
+		);
 	} catch (error) {
 		if (error instanceof SelfDialError) {
 			console.error(
@@ -676,7 +675,6 @@ const join = async (args: readonly string[]): Promise<number> => {
 				console.error(error instanceof Error ? error.message : String(error));
 			}
 		}
-		await endpoint.close();
 		return 1;
 	}
 	const info = await store.info();
@@ -684,7 +682,6 @@ const join = async (args: readonly string[]): Promise<number> => {
 	if (entry === undefined) {
 		console.error(`Unknown game '${info.gameId}'.`);
 		await store.close();
-		await endpoint.close();
 		return 1;
 	}
 	const claim = await store.submit({
@@ -694,7 +691,6 @@ const join = async (args: readonly string[]): Promise<number> => {
 	if ("rejected" in claim) {
 		console.error(claim.message);
 		await store.close();
-		await endpoint.close();
 		return 1;
 	}
 	await runTable({
@@ -705,7 +701,6 @@ const join = async (args: readonly string[]): Promise<number> => {
 		store,
 	});
 	await store.close();
-	await endpoint.close();
 	return 0;
 };
 

@@ -79,7 +79,7 @@ describe("supervillain create", () => {
 		);
 		const door = await readFile(path.join(campaign, "door.txt"), "utf-8");
 		expect(door.endsWith("\n")).toBe(true);
-		expect(door.trim().length).toBeGreaterThan(40);
+		expect(door.trim()).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/?$/u);
 
 		const bytes = await readFile(path.join(campaign, "events.jsonl"));
 		const events = bytes.toString().trim().split("\n").map(JSON.parse);

@@ -19,7 +19,7 @@ What survives from bts: **conventions as reference, not its generator** — a `p
 
 ```
 apps/
-  gateway/           # SSH session adapter, name registry, iroh proxy
+  gateway/           # SSH session adapter, name registry, outbound broker
   cli/               # supervillain: host embedding, campaign nouns, local attach
 packages/
   config/            # strict tsconfig base, dependency-cruiser rules, shared tool config
@@ -29,7 +29,7 @@ packages/
                      # slots, focus routing, rejection feedback), token→ANSI resolution
   room-host/         # single-writer host: decide loop, JSONL persistence,
                      # in-process RoomStore adapter
-  transport-iroh/    # iroh endpoint behind the narrow transport seam
+  transport-ws/      # WebSocket adapter behind room-wire's transport seam
   session/           # transport-neutral session contract
   identity/          # ed25519 key-as-account primitives (SSH key ↔ NodeId)
   games/draw-steel/  # model / authority / view / content
@@ -56,9 +56,10 @@ Structural calls, made explicit:
   2. `@opentui/*` is importable only by `packages/table` and `games/*/view`.
   3. Nothing on the table side imports `decide`/authority entries.
   4. `games/*/content` imports `games/*/model` only; `model` imports nothing.
-  5. **The hedge's third door:** `bun:*` and `@opentui/*` are banned across the Node-compat set (core, room-host, transport-iroh, session, identity, games' model/authority/content).
-  6. Only apps/gateway imports `bun:sqlite` — "the gateway is the only thing touching a DB" is mechanically checkable. (v3's gateway-hosted rooms revisit the gateway's edges via the RoomStore seam — a deliberate future widening, not a rule to pre-relax.) _(Correction 2026-07-25, [ADR-0013](../../adr/0013-server-data-layer-gateway-owned-identity-and-two-stores.md): the stated intent is now false — the web backend touches its own SQLite store via Drizzle. The rule's real and narrower purpose is that **apps/gateway is the only thing touching the gateway's store**, and the rule text is reworded to say so. Its bypass is also closed: the rule matched `^bun:sqlite$` while `doNotFollow: node_modules` meant a Drizzle SQLite driver would import straight past the fence without firing.)_
-- **Test discipline — the runner is the runtime claim.** Bun-bound code (table, gateway, cli, game view entries) → `bun test`. The Node-compat set → vitest run under Node. **transport-iroh and room-host — where the fallback lands — run the same spec files under both runners; that dual lane IS the 008 CI matrix** (two-peer direct / forced-relay / reconnect / shutdown, cross-platform), which is milestone 1's gate per ticket 014. Near-free complement: a CI smoke importing each Node-compat package's **built** entry under Node, since vitest transforms source and never loads the emitted artifacts.
+  5. **The hedge's third door:** `bun:*` and `@opentui/*` are banned across the Node-compat set (core, room-host, room-wire, transport-ws, session, identity, games' model/authority/content). _(Correction 2026-07-25, [#55](https://github.com/oscabriel/supervillain/issues/55), [ADR-0012](../../adr/0012-outbound-only-hybrid-drop-iroh-host-dials-out.md): the slot reads `transport-ws`, not `transport-iroh`.)_
+  6. `room-wire` imports no transport package, and the transport's **server half** (`@supervillain/transport-*/server`) is the gateway's alone — the render side imports neither half. _(Added 2026-07-25, [#55](https://github.com/oscabriel/supervillain/issues/55), [ADR-0012](../../adr/0012-outbound-only-hybrid-drop-iroh-host-dials-out.md) NQ-13: `room-wire` owns the transport seam, so the arrow only ever points from adapter to seam. Named interim exception: `apps/cli` is on the server half's allow-list because the Host still serves over WS until the topology inversion lands — that is [#57](https://github.com/oscabriel/supervillain/issues/57), and the exception is removed with it.)_
+  7. Only apps/gateway imports `bun:sqlite` — "the gateway is the only thing touching a DB" is mechanically checkable. (v3's gateway-hosted rooms revisit the gateway's edges via the RoomStore seam — a deliberate future widening, not a rule to pre-relax.) _(Correction 2026-07-25, [ADR-0013](../../adr/0013-server-data-layer-gateway-owned-identity-and-two-stores.md): the stated intent is now false — the web backend touches its own SQLite store via Drizzle. The rule's real and narrower purpose is that **apps/gateway is the only thing touching the gateway's store**, and the rule text is reworded to say so. Its bypass is also closed: the rule matched `^bun:sqlite$` while `doNotFollow: node_modules` meant a Drizzle SQLite driver would import straight past the fence without firing.)_
+- **Test discipline — the runner is the runtime claim.** Bun-bound code (table, gateway, cli, game view entries) → `bun test`. The Node-compat set → vitest run under Node. **transport-iroh and room-host — where the fallback lands — run the same spec files under both runners; that dual lane IS the 008 CI matrix** (two-peer direct / forced-relay / reconnect / shutdown, cross-platform), which is milestone 1's gate per ticket 014. _(Correction 2026-07-25, [#55](https://github.com/oscabriel/supervillain/issues/55), [ADR-0012](../../adr/0012-outbound-only-hybrid-drop-iroh-host-dials-out.md) NQ-12: the dual lane survives with a new rationale — the event-sourced core stays runtime-portable and only the edges are Bun-bound — and the packages are now **room-host, room-wire and transport-ws**. The forced-relay leg died with the relay fleet; the lane needs no external network at all, so its remaining cost is the macOS runner.)_ Near-free complement: a CI smoke importing each Node-compat package's **built** entry under Node, since vitest transforms source and never loads the emitted artifacts.
 
 ## The CLI artifact
 
@@ -85,7 +86,7 @@ Caveats to burn down in the new repo's first days, not blockers:
 
 1. TS7 `declarationMap` emit (absent at RC) — built-output consumption makes cross-package go-to-definition depend on it.
 2. dependency-cruiser pins its own `typescript@6` for parsing while tsc 7 builds — no stable TS7 programmatic API until 7.1.
-3. The hello-iroh compile smoke per triple (direct platform-specific `.node` import inside `bun build --compile` output).
+3. The hello-iroh compile smoke per triple (direct platform-specific `.node` import inside `bun build --compile` output). _(Closed 2026-07-25, [#55](https://github.com/oscabriel/supervillain/issues/55): the smoke and its workflow are deleted with the napi artifact. OpenTUI's Zig library is the binary's only remaining native piece.)_
 4. oxfmt 0.x pinning; absorb format churn deliberately when the Prettier port lands.
 
 ## First commit (the 006 handoff, restated as this repo's genesis)

@@ -47,7 +47,7 @@ describe("openRoomRegistry", () => {
 	test("registers a name and resolves it to the host address", async () => {
 		const registry = openTestRegistry();
 		const outcome = await registry.register("gm-key", {
-			address: "iroh:host-a",
+			address: "ws://host-a.test:9000",
 			name: "iron-keep",
 		});
 		expect(outcome).toEqual({
@@ -55,7 +55,7 @@ describe("openRoomRegistry", () => {
 			sshHost: "supervillain.test",
 			sshPort: 2222,
 		});
-		expect(registry.resolve("iron-keep")).toBe("iroh:host-a");
+		expect(registry.resolve("iron-keep")).toBe("ws://host-a.test:9000");
 		expect(registry.resolve("unknown")).toBe(undefined);
 		registry.close();
 	});
@@ -63,24 +63,24 @@ describe("openRoomRegistry", () => {
 	test("lets the owning key update its address but rejects other keys", async () => {
 		const registry = openTestRegistry();
 		await registry.register("gm-key", {
-			address: "iroh:host-a",
+			address: "ws://host-a.test:9000",
 			name: "iron-keep",
 		});
 		const updated = await registry.register("gm-key", {
-			address: "iroh:host-b",
+			address: "ws://host-b.test:9000",
 			name: "iron-keep",
 		});
 		expect(updated).toMatchObject({ accepted: true });
-		expect(registry.resolve("iron-keep")).toBe("iroh:host-b");
+		expect(registry.resolve("iron-keep")).toBe("ws://host-b.test:9000");
 		const stolen = await registry.register("thief-key", {
-			address: "iroh:host-c",
+			address: "ws://host-c.test:9000",
 			name: "iron-keep",
 		});
 		expect(stolen).toEqual({
 			message: "The name 'iron-keep' is already claimed by another key.",
 			rejected: true,
 		});
-		expect(registry.resolve("iron-keep")).toBe("iroh:host-b");
+		expect(registry.resolve("iron-keep")).toBe("ws://host-b.test:9000");
 		registry.close();
 	});
 });

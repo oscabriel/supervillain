@@ -5,13 +5,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { loadOrCreateIdentity } from "@supervillain/identity";
-import { openIrohEndpoint } from "@supervillain/transport-iroh";
-import type { TransportAddress } from "@supervillain/transport-iroh";
+import { startWsListener } from "@supervillain/transport-ws/server";
 
 const DEAD_ROOM = "Could not reach that room. Is the GM's table live?";
 const SELF_DIAL =
 	"that's your own table — you're already hosting it. to sit as a player, use the ssh door.";
 const folders: string[] = [];
+const listeners: { readonly close: () => Promise<void> }[] = [];
 
 const runJoin = async (
 	config: string,
@@ -27,20 +27,26 @@ const runJoin = async (
 	return { code: await childProcess.exited, error };
 };
 
-const unavailableAddress = async (
-	config: string,
-	self: boolean
-): Promise<TransportAddress> => {
+/** A live listener wearing the caller's own key — dialing it is dialing yourself. */
+const ownTableAddress = async (config: string): Promise<string> => {
 	const identity = await loadOrCreateIdentity(
 		path.join(config, "supervillain")
 	);
-	const endpoint = await openIrohEndpoint({
-		routing: "direct",
-		secretKeyHex: self ? identity.secretKeyHex : undefined,
+	const listener = await startWsListener({
+		secretKeyHex: identity.secretKeyHex,
 	});
-	const { address } = endpoint;
-	await endpoint.close();
-	return address;
+	listeners.push(listener);
+	return listener.url;
+};
+
+/** A URL nothing is listening on: the port is bound, then given back. */
+const unreachableAddress = async (): Promise<string> => {
+	const listener = await startWsListener({
+		secretKeyHex: `${"0".repeat(63)}1`,
+	});
+	const { url } = listener;
+	await listener.close();
+	return url;
 };
 
 const makeConfig = async (): Promise<string> => {
@@ -50,6 +56,7 @@ const makeConfig = async (): Promise<string> => {
 };
 
 afterEach(async () => {
+	await Promise.all(listeners.splice(0).map((listener) => listener.close()));
 	await Promise.all(
 		folders
 			.splice(0)
@@ -60,28 +67,23 @@ afterEach(async () => {
 describe("supervillain join failures", () => {
 	test("explains that the room reference points to the caller's own table", async () => {
 		const config = await makeConfig();
-		const result = await runJoin(
-			config,
-			await unavailableAddress(config, true)
-		);
+		const result = await runJoin(config, await ownTableAddress(config));
 		expect(result).toEqual({ code: 1, error: `${SELF_DIAL}\n` });
 	});
 
-	test("keeps the dead-room copy for a dial timeout", async () => {
+	test("keeps the dead-room copy for an address nothing answers on", async () => {
 		const config = await makeConfig();
-		const result = await runJoin(
-			config,
-			await unavailableAddress(config, false)
-		);
-		expect(result).toEqual({ code: 1, error: `${DEAD_ROOM}\n` });
+		const result = await runJoin(config, await unreachableAddress());
+		expect(result.code).toBe(1);
+		expect(result.error.startsWith(`${DEAD_ROOM}\n`)).toBe(true);
 	}, 20_000);
 
 	test("shows an unexpected connection error below the dead-room copy", async () => {
 		const config = await makeConfig();
-		const result = await runJoin(config, "not-an-iroh-address");
+		const result = await runJoin(config, "not-a-ws-address");
 		expect(result).toEqual({
 			code: 1,
-			error: `${DEAD_ROOM}\nInvalid transport address\n`,
+			error: `${DEAD_ROOM}\nTransport address 'not-a-ws-address' is not a ws:// or wss:// URL.\n`,
 		});
 	});
 });
