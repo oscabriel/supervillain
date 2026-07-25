@@ -15,9 +15,13 @@ import {
 	actorFromSshEd25519Blob,
 	loadOrCreateIdentity,
 } from "@supervillain/identity";
-import { connectRoomStore, serveRoomRegistry } from "@supervillain/room-wire";
+import { serveHostPipes } from "@supervillain/room-wire";
+import type {
+	GatewayPipeEvent,
+	HostPipeServer,
+	PipeRoomStore,
+} from "@supervillain/room-wire";
 import { createSessionRenderer, runTable } from "@supervillain/table";
-import { openWsDialer } from "@supervillain/transport-ws";
 import { startWsListener } from "@supervillain/transport-ws/server";
 import { Server, utils } from "ssh2";
 import type {
@@ -67,6 +71,8 @@ export interface GatewayOptions {
 	readonly brokerPort?: number;
 	/** The pipe URL Hosts should dial, when it differs from the bind. */
 	readonly brokerUrl?: string;
+	/** Connection-lifecycle exhaust. Metadata only (ADR-0012, NQ-11). */
+	readonly onEvent?: (event: GatewayPipeEvent) => void;
 }
 
 export interface RunningGateway {
@@ -142,21 +148,20 @@ const serveShell = async (
 	options: {
 		readonly roomName: string;
 		readonly registry: GatewayRoomRegistry;
-		readonly dial: (address: string) => ReturnType<typeof connectRoomStore>;
+		readonly pipes: HostPipeServer;
 	}
 ): Promise<void> => {
-	const address = options.registry.resolve(options.roomName);
-	if (address === undefined) {
-		farewell(stream, `no room named '${options.roomName}' is registered here.`);
+	const live = options.pipes.live(options.roomName);
+	if (live === undefined) {
+		farewell(
+			stream,
+			options.registry.isClaimed(options.roomName)
+				? `'${options.roomName}' is offline — its host is not connected right now. try again when the GM's table is live.`
+				: `no room named '${options.roomName}' is registered here.`
+		);
 		return;
 	}
-	let store: Awaited<ReturnType<typeof connectRoomStore>>;
-	try {
-		store = await options.dial(address);
-	} catch {
-		farewell(stream, "Could not reach that room. Is the GM's table live?");
-		return;
-	}
+	const store: PipeRoomStore = live.openStore();
 	try {
 		const info = await store.info();
 		const entry = gatewayRegistry.get(info.gameId);
@@ -195,7 +200,7 @@ const serveShell = async (
 const handleConnection = (
 	client: Connection,
 	registry: GatewayRoomRegistry,
-	dial: (address: string) => ReturnType<typeof connectRoomStore>
+	pipes: HostPipeServer
 ): void => {
 	let actor: string | undefined;
 	let roomName = "";
@@ -235,7 +240,7 @@ const handleConnection = (
 					void (async (): Promise<void> => {
 						try {
 							await serveShell(shellSession, stream, {
-								dial,
+								pipes,
 								registry,
 								roomName,
 							});
@@ -265,17 +270,18 @@ export const startGateway = async (
 	});
 	const registry = openRoomRegistry({
 		path: path.join(options.stateDir, "registry.db"),
-		sshHost: options.sshHost,
-		sshPort: options.sshPort,
 	});
-	const registryServer = serveRoomRegistry(listener, registry);
+	// The Host dials in; the gateway never dials a Host (ADR-0012). Logging is
+	// metadata only — lifecycle and room names, never a payload (NQ-11).
+	const pipes = serveHostPipes({
+		door: { sshHost: options.sshHost, sshPort: options.sshPort },
+		listener,
+		onEvent: options.onEvent,
+		ownership: registry,
+	});
 	const hostKey = await loadOrCreateHostKey(options.stateDir);
 	const server = new Server({ hostKeys: [hostKey] }, (client) => {
-		handleConnection(client, registry, (address) =>
-			connectRoomStore(
-				openWsDialer({ secretKeyHex: identity.secretKeyHex, url: address })
-			)
-		);
+		handleConnection(client, registry, pipes);
 	});
 	// oxlint-disable-next-line promise/avoid-new -- ssh2's listen is callback-shaped.
 	await new Promise<void>((resolve, reject) => {
@@ -293,7 +299,7 @@ export const startGateway = async (
 				await new Promise<void>((resolve) => {
 					server.close(() => resolve());
 				});
-				await registryServer.close();
+				await pipes.close();
 				await listener.close();
 				registry.close();
 			})();

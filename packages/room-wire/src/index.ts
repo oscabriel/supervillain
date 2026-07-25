@@ -3,12 +3,21 @@ import { setTimeout as delay } from "node:timers/promises";
 import { isRecord } from "@supervillain/core";
 import type {
 	Envelope,
-	NamespacedType,
 	RoomCommand,
 	RoomStore,
 	RoomSubmission,
 } from "@supervillain/core";
 
+import {
+	decodeJson,
+	encodeJson,
+	parseEnvelope,
+	parseRoomCommand,
+	parseRoomInfo,
+	parseRoomSubmission,
+	parseStreamCredit,
+} from "./messages.js";
+import type { RoomInfo } from "./messages.js";
 import { TransportListenerClosedError } from "./seam.js";
 import type {
 	TransportConnection,
@@ -16,6 +25,60 @@ import type {
 	TransportListener,
 } from "./seam.js";
 
+export {
+	chunkPayload,
+	decodeFrame,
+	encodeControlFrame,
+	encodeFrame,
+	encodePipeHandshakeOutcome,
+	encodePipeHello,
+	isControlFrame,
+	isPipeChannel,
+	MAX_FRAME_PAYLOAD_BYTES,
+	negotiatePipeVersion,
+	parsePipeHandshakeOutcome,
+	parsePipeHello,
+	PIPE_PROTOCOL_VERSION,
+	PipeProtocolError,
+	SUPPORTED_PIPE_PROTOCOL_VERSIONS,
+	UNSUPPORTED_VERSION_MESSAGE,
+} from "./frames.js";
+export type {
+	DecodedFrame,
+	FrameKind,
+	PipeChannel,
+	PipeControlFrame,
+	PipeFrame,
+	PipeHandshakeOutcome,
+	PipeHello,
+} from "./frames.js";
+export { serveHostPipes } from "./gateway-pipe.js";
+export type {
+	ClaimOutcome,
+	GatewayPipeEvent,
+	HostPipeServer,
+	HostPipeServerOptions,
+	LiveRoom,
+	PipeRoomStore,
+	RoomOwnership,
+} from "./gateway-pipe.js";
+export { HostPipeRefusedError, openHostPipe } from "./host-pipe.js";
+export type {
+	HostedRoom,
+	HostPipe,
+	HostPipeAttachment,
+	HostPipeEvent,
+	HostPipeOptions,
+} from "./host-pipe.js";
+export { isValidRoomName, ROOM_NAME_RULE } from "./messages.js";
+export type { RegistrationOutcome, RoomInfo } from "./messages.js";
+export {
+	DEFAULT_HEARTBEAT_INTERVAL_MS,
+	DEFAULT_HEARTBEAT_MISSES,
+	PipeHeartbeatError,
+	PipeStreamClosedError,
+} from "./pipe.js";
+export type { PipeStream } from "./pipe.js";
 export { TransportListenerClosedError } from "./seam.js";
 export type {
 	TransportConnection,
@@ -23,14 +86,7 @@ export type {
 	TransportListener,
 } from "./seam.js";
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 const CLOSED_ERROR = "Remote RoomStore is closed.";
-
-export interface RoomInfo {
-	readonly gameId: string;
-	readonly label: string;
-}
 
 export interface ServeRoomStoreOptions {
 	readonly info: RoomInfo;
@@ -58,12 +114,6 @@ type Hello =
 	| { readonly channel: "submit" }
 	| { readonly channel: "stream"; readonly fromSeq: number };
 
-const encodeJson = (value: unknown): Uint8Array =>
-	encoder.encode(JSON.stringify(value));
-
-const decodeJson = (message: Uint8Array): unknown =>
-	JSON.parse(decoder.decode(message)) as unknown;
-
 const parseHello = (value: unknown): Hello => {
 	if (!isRecord(value)) {
 		throw new TypeError("RoomStore hello must be an object.");
@@ -83,63 +133,6 @@ const parseHello = (value: unknown): Hello => {
 		return { channel: "stream", fromSeq: value.fromSeq };
 	}
 	throw new TypeError("RoomStore hello has an invalid channel.");
-};
-
-const parseRoomCommand = (value: unknown): RoomCommand => {
-	if (
-		!isRecord(value) ||
-		typeof value.actor !== "string" ||
-		!("command" in value)
-	) {
-		throw new TypeError("RoomStore command is invalid.");
-	}
-	return { actor: value.actor, command: value.command };
-};
-
-const parseEnvelope = (value: unknown): Envelope => {
-	if (
-		!isRecord(value) ||
-		typeof value.actor !== "string" ||
-		typeof value.seq !== "number" ||
-		!Number.isSafeInteger(value.seq) ||
-		typeof value.timestamp !== "string" ||
-		typeof value.type !== "string" ||
-		!value.type.includes(".") ||
-		!("payload" in value)
-	) {
-		throw new TypeError("RoomStore envelope is invalid.");
-	}
-	return {
-		actor: value.actor,
-		payload: value.payload,
-		seq: value.seq,
-		timestamp: value.timestamp,
-		type: value.type as NamespacedType,
-	};
-};
-
-const parseRoomSubmission = (value: unknown): RoomSubmission => {
-	if (!isRecord(value)) {
-		throw new TypeError("RoomStore submission is invalid.");
-	}
-	if (value.accepted === true && Array.isArray(value.envelopes)) {
-		return { accepted: true, envelopes: value.envelopes.map(parseEnvelope) };
-	}
-	if (value.rejected === true && typeof value.message === "string") {
-		return { message: value.message, rejected: true };
-	}
-	throw new TypeError("RoomStore submission is invalid.");
-};
-
-const parseRoomInfo = (value: unknown): RoomInfo => {
-	if (
-		!isRecord(value) ||
-		typeof value.gameId !== "string" ||
-		typeof value.label !== "string"
-	) {
-		throw new TypeError("RoomStore info is invalid.");
-	}
-	return { gameId: value.gameId, label: value.label };
 };
 
 const closeQuietly = async (connection: TransportConnection): Promise<void> => {
@@ -191,10 +184,7 @@ const handleStream = async (
 	try {
 		for (;;) {
 			// oxlint-disable-next-line eslint/no-await-in-loop -- each credit requests exactly one streamed Envelope.
-			const credit = decodeJson(await pendingInput);
-			if (!isRecord(credit) || credit.next !== true) {
-				throw new TypeError("RoomStore stream credit is invalid.");
-			}
+			parseStreamCredit(decodeJson(await pendingInput));
 			pendingNext = iterator.next();
 			pendingInput = connection.receive();
 			// oxlint-disable-next-line eslint/no-await-in-loop -- each credit waits for either its Envelope or peer closure.
@@ -596,133 +586,5 @@ export const connectRoomStore = async (
 	} catch (error) {
 		await closeQuietly(connection);
 		throw error;
-	}
-};
-
-// --- room registration: how a GM-hosted room gets a name at the gateway (ADR-0003) ---
-
-const ROOM_NAME = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/u;
-
-/** Room names are 1–32 chars of lowercase a–z, 0–9, and interior hyphens. */
-export const isValidRoomName = (name: string): boolean => ROOM_NAME.test(name);
-
-export interface RoomRegistration {
-	readonly name: string;
-	/** Where the gateway dials to reach this room's Host. Opaque to the wire
-	 * protocol: only the transport adapter on either end reads its form. */
-	readonly address: string;
-}
-
-export type RegistrationOutcome =
-	| {
-			readonly accepted: true;
-			/** Hostname players ssh to, for the GM's summon line. */
-			readonly sshHost: string;
-			readonly sshPort: number;
-	  }
-	| { readonly rejected: true; readonly message: string };
-
-/** The gateway's registry seam: `owner` is the registering connection's
- * authenticated identity — name ownership is key-as-account. */
-export interface RoomRegistry {
-	readonly register: (
-		owner: string,
-		registration: RoomRegistration
-	) => Promise<RegistrationOutcome>;
-}
-
-const parseRegisterHello = (value: unknown): RoomRegistration => {
-	if (
-		!isRecord(value) ||
-		value.channel !== "register" ||
-		typeof value.name !== "string" ||
-		typeof value.address !== "string"
-	) {
-		throw new TypeError("Registration hello is invalid.");
-	}
-	return { address: value.address, name: value.name };
-};
-
-const parseRegistrationOutcome = (value: unknown): RegistrationOutcome => {
-	if (isRecord(value)) {
-		if (
-			value.accepted === true &&
-			typeof value.sshHost === "string" &&
-			typeof value.sshPort === "number" &&
-			Number.isSafeInteger(value.sshPort)
-		) {
-			return { accepted: true, sshHost: value.sshHost, sshPort: value.sshPort };
-		}
-		if (value.rejected === true && typeof value.message === "string") {
-			return { message: value.message, rejected: true };
-		}
-	}
-	throw new TypeError("Registration outcome is invalid.");
-};
-
-const handleRegistryConnection = async (
-	connection: TransportConnection,
-	registry: RoomRegistry
-): Promise<void> => {
-	try {
-		const registration = parseRegisterHello(
-			decodeJson(await connection.receive())
-		);
-		const outcome: RegistrationOutcome = isValidRoomName(registration.name)
-			? await registry.register(connection.remoteId, registration)
-			: {
-					message:
-						"Room names are 1-32 lowercase letters, digits, and hyphens.",
-					rejected: true,
-				};
-		await connection.send(encodeJson(outcome));
-	} catch {
-		// Malformed messages and transport closure end only this connection.
-	} finally {
-		await closeQuietly(connection);
-	}
-};
-
-/** Serves a RoomRegistry over the transport seam — the gateway's serving half. */
-export const serveRoomRegistry = (
-	listener: TransportListener,
-	registry: RoomRegistry
-): { readonly close: () => Promise<void> } =>
-	serveConnections(
-		listener,
-		(connection) => handleRegistryConnection(connection, registry),
-		"Room registry accept loop failed."
-	);
-
-export interface RegistrationReceipt {
-	/** The gateway's authenticated identity — the host passes it to
-	 * `serveRoomStore` as a trusted stamper. */
-	readonly gatewayId: string;
-	readonly sshHost: string;
-	readonly sshPort: number;
-}
-
-/** Registers a room name with a gateway. Throws on rejection — a room that
- * asked for a name should not open with silence where its door was meant to be. */
-export const registerRoom = async (
-	gateway: TransportDialer,
-	registration: RoomRegistration
-): Promise<RegistrationReceipt> => {
-	const connection = await gateway.dial();
-	try {
-		await connection.send(encodeJson({ channel: "register", ...registration }));
-		const outcome = parseRegistrationOutcome(
-			decodeJson(await connection.receive())
-		);
-		if ("rejected" in outcome) {
-			throw new Error(outcome.message);
-		}
-		return {
-			gatewayId: connection.remoteId,
-			sshHost: outcome.sshHost,
-			sshPort: outcome.sshPort,
-		};
-	} finally {
-		await closeQuietly(connection);
 	}
 };

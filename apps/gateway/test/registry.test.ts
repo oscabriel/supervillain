@@ -1,6 +1,9 @@
 import { Database } from "bun:sqlite";
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; the gateway is Bun-bound by bun:sqlite. */
 import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 import { migrate } from "../src/migrate.js";
 import { openRoomRegistry } from "../src/registry.js";
@@ -9,8 +12,6 @@ const openTestRegistry = () =>
 	openRoomRegistry({
 		clock: () => "2026-07-14T00:00:00.000Z",
 		path: ":memory:",
-		sshHost: "supervillain.test",
-		sshPort: 2222,
 	});
 
 describe("migrate", () => {
@@ -44,43 +45,84 @@ describe("migrate", () => {
 });
 
 describe("openRoomRegistry", () => {
-	test("registers a name and resolves it to the host address", async () => {
+	test("claims a name for the key's owner identity", async () => {
 		const registry = openTestRegistry();
-		const outcome = await registry.register("gm-key", {
-			address: "ws://host-a.test:9000",
-			name: "iron-keep",
-		});
+		const outcome = await registry.claim("gm-key", "iron-keep");
 		expect(outcome).toEqual({
 			accepted: true,
-			sshHost: "supervillain.test",
-			sshPort: 2222,
+			ownerId: registry.resolveIdentity("gm-key"),
 		});
-		expect(registry.resolve("iron-keep")).toBe("ws://host-a.test:9000");
-		expect(registry.resolve("unknown")).toBe(undefined);
+		expect(registry.isClaimed("iron-keep")).toBe(true);
+		expect(registry.isClaimed("unknown")).toBe(false);
 		registry.close();
 	});
 
-	test("lets the owning key update its address but rejects other keys", async () => {
+	test("resolves one key to one stable identity", () => {
 		const registry = openTestRegistry();
-		await registry.register("gm-key", {
-			address: "ws://host-a.test:9000",
-			name: "iron-keep",
-		});
-		const updated = await registry.register("gm-key", {
-			address: "ws://host-b.test:9000",
-			name: "iron-keep",
-		});
-		expect(updated).toMatchObject({ accepted: true });
-		expect(registry.resolve("iron-keep")).toBe("ws://host-b.test:9000");
-		const stolen = await registry.register("thief-key", {
-			address: "ws://host-c.test:9000",
-			name: "iron-keep",
-		});
+		const first = registry.resolveIdentity("gm-key");
+		expect(registry.resolveIdentity("gm-key")).toBe(first);
+		// No linking exists yet: a second key is a second identity, which is
+		// exactly why GM roaming does not work until ADR-0005 lands.
+		expect(registry.resolveIdentity("laptop-key")).not.toBe(first);
+		registry.close();
+	});
+
+	test("lets the owning identity renew but rejects another key", async () => {
+		const registry = openTestRegistry();
+		await registry.claim("gm-key", "iron-keep");
+		const renewed = await registry.claim("gm-key", "iron-keep");
+		expect(renewed).toMatchObject({ accepted: true });
+		const stolen = await registry.claim("thief-key", "iron-keep");
 		expect(stolen).toEqual({
 			message: "The name 'iron-keep' is already claimed by another key.",
 			rejected: true,
 		});
-		expect(registry.resolve("iron-keep")).toBe("ws://host-b.test:9000");
+		expect(registry.ownerOf("iron-keep")).toBe(
+			registry.resolveIdentity("gm-key")
+		);
 		registry.close();
+	});
+
+	test("carries an iroh-era registration through the address column's death", async () => {
+		const file = `${tmpdir()}/supervillain-legacy-${randomUUID()}.db`;
+		const legacy = new Database(file, { create: true, strict: true });
+		legacy.run(
+			`CREATE TABLE rooms (
+				name TEXT PRIMARY KEY,
+				address TEXT NOT NULL,
+				owner TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			) STRICT`
+		);
+		legacy.run("PRAGMA user_version = 1");
+		legacy.run(
+			"INSERT INTO rooms (name, address, owner, updated_at) VALUES ('iron-keep', 'ws://old.test:9000', 'gm-key', '2026-07-14T00:00:00.000Z')"
+		);
+		legacy.close();
+		const registry = openRoomRegistry({ path: file });
+		expect(registry.isClaimed("iron-keep")).toBe(true);
+		expect(registry.ownerOf("iron-keep")).toBe(
+			registry.resolveIdentity("gm-key")
+		);
+		expect(await registry.claim("gm-key", "iron-keep")).toMatchObject({
+			accepted: true,
+		});
+		expect(await registry.claim("thief-key", "iron-keep")).toMatchObject({
+			rejected: true,
+		});
+		registry.close();
+		await rm(file, { force: true });
+	});
+
+	test("keeps a claimed name across a reopen of the same database", async () => {
+		const file = `${tmpdir()}/supervillain-registry-${randomUUID()}.db`;
+		const first = openRoomRegistry({ path: file });
+		await first.claim("gm-key", "iron-keep");
+		const owner = first.ownerOf("iron-keep");
+		first.close();
+		const second = openRoomRegistry({ path: file });
+		expect(second.ownerOf("iron-keep")).toBe(owner);
+		second.close();
+		await rm(file, { force: true });
 	});
 });

@@ -8,14 +8,7 @@ import type {
 import {
 	connectRoomStore,
 	isValidRoomName,
-	registerRoom,
-	serveRoomRegistry,
 	serveRoomStore,
-} from "../src/index.js";
-import type {
-	RegistrationOutcome,
-	RoomRegistration,
-	RoomRegistry,
 } from "../src/index.js";
 import {
 	createMemoryTransportPair,
@@ -23,24 +16,6 @@ import {
 	expect,
 	test,
 } from "./harness.js";
-
-class TestRegistry implements RoomRegistry {
-	readonly registrations: { owner: string; registration: RoomRegistration }[] =
-		[];
-	outcome: RegistrationOutcome = {
-		accepted: true,
-		sshHost: "supervillain.test",
-		sshPort: 22,
-	};
-
-	async register(
-		owner: string,
-		registration: RoomRegistration
-	): Promise<RegistrationOutcome> {
-		this.registrations.push({ owner, registration });
-		return this.outcome;
-	}
-}
 
 class RecordingRoomStore implements RoomStore {
 	readonly submissions: RoomCommand[] = [];
@@ -61,7 +36,7 @@ class RecordingRoomStore implements RoomStore {
 	}
 }
 
-describe("room registration protocol", () => {
+describe("room names", () => {
 	test("validates room names", () => {
 		expect(isValidRoomName("iron-keep")).toBe(true);
 		expect(isValidRoomName("a")).toBe(true);
@@ -70,68 +45,6 @@ describe("room registration protocol", () => {
 		expect(isValidRoomName("Upper")).toBe(false);
 		expect(isValidRoomName("")).toBe(false);
 		expect(isValidRoomName("x".repeat(33))).toBe(false);
-	});
-
-	test("registers a room and returns the gateway's identity in the receipt", async () => {
-		const { dialer, listener } = createMemoryTransportPair(
-			"gm-key",
-			"gateway-key"
-		);
-		const registry = new TestRegistry();
-		const registryServer = serveRoomRegistry(listener, registry);
-		const receipt = await registerRoom(dialer, {
-			address: "ws://gm-host.test:9000",
-			name: "iron-keep",
-		});
-		expect(receipt).toEqual({
-			gatewayId: "gateway-key",
-			sshHost: "supervillain.test",
-			sshPort: 22,
-		});
-		expect(registry.registrations).toEqual([
-			{
-				owner: "gm-key",
-				registration: { address: "ws://gm-host.test:9000", name: "iron-keep" },
-			},
-		]);
-		await registryServer.close();
-	});
-
-	test("rejects an invalid name at the wire without consulting the registry", async () => {
-		const { dialer, listener } = createMemoryTransportPair(
-			"gm-key",
-			"gateway-key"
-		);
-		const registry = new TestRegistry();
-		const registryServer = serveRoomRegistry(listener, registry);
-		await expect(
-			registerRoom(dialer, {
-				address: "ws://gm-host.test:9000",
-				name: "Iron Keep",
-			})
-		).rejects.toThrow("Room names are 1-32 lowercase letters");
-		expect(registry.registrations).toEqual([]);
-		await registryServer.close();
-	});
-
-	test("surfaces a registry rejection as a thrown error", async () => {
-		const { dialer, listener } = createMemoryTransportPair(
-			"gm-key",
-			"gateway-key"
-		);
-		const registry = new TestRegistry();
-		registry.outcome = {
-			message: "The name 'iron-keep' is already claimed by another key.",
-			rejected: true,
-		};
-		const registryServer = serveRoomRegistry(listener, registry);
-		await expect(
-			registerRoom(dialer, {
-				address: "ws://gm-host.test:9000",
-				name: "iron-keep",
-			})
-		).rejects.toThrow("already claimed by another key");
-		await registryServer.close();
 	});
 });
 

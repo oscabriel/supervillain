@@ -43,10 +43,11 @@ import { InProcessRoomStore, RoomHost } from "@supervillain/room-host";
 import {
 	connectRoomStore,
 	isValidRoomName,
-	registerRoom,
+	openHostPipe,
+	ROOM_NAME_RULE,
 	serveRoomStore,
 } from "@supervillain/room-wire";
-import type { RegistrationReceipt } from "@supervillain/room-wire";
+import type { HostPipe, HostPipeAttachment } from "@supervillain/room-wire";
 import { attachLocalTty } from "@supervillain/session";
 import { createLocalTtyRenderer, runTable } from "@supervillain/table";
 import {
@@ -60,6 +61,7 @@ const USAGE = `Usage:
   supervillain create <campaign-folder> [--game <id>] [--name <room> [--gateway <addr>]]
   supervillain join <room-ref>
   supervillain publish
+  supervillain key show
   supervillain character new <campaign-folder> <name> [--game <id>]
   supervillain character check <campaign-folder> [file] [--game <id>]
   supervillain character list <campaign-folder> [--game <id>]
@@ -68,7 +70,17 @@ const USAGE = `Usage:
   supervillain campaign info <campaign-folder>
 
   --name registers the room at a gateway so players can ssh in; the gateway
-  address comes from --gateway or SUPERVILLAIN_GATEWAY.`;
+  address comes from --gateway or SUPERVILLAIN_GATEWAY. The room name is held
+  by this machine's key, so hosting the same name from another machine needs
+  key linking, which is not built yet.`;
+
+/** Credentials live in per-machine config, never in the campaign folder — the
+ * folder moves between machines and backups; the key must not (ADR-0012). */
+const configFolder = (): string =>
+	path.join(
+		process.env.XDG_CONFIG_HOME ?? path.join(homedir(), ".config"),
+		"supervillain"
+	);
 
 const hostRegistry: HostRegistry = {
 	get: (gameId) => {
@@ -760,11 +772,7 @@ const create = async (args: readonly string[]): Promise<number> => {
 		console.error(`Unknown game '${gameId}'.`);
 		return 1;
 	}
-	const configRoot =
-		process.env.XDG_CONFIG_HOME ?? path.join(homedir(), ".config");
-	const identity = await loadOrCreateIdentity(
-		path.join(configRoot, "supervillain")
-	);
+	const identity = await loadOrCreateIdentity(configFolder());
 	const actor = identity.publicKeyHex;
 	const host = await RoomHost.open({
 		actor,
@@ -779,12 +787,11 @@ const create = async (args: readonly string[]): Promise<number> => {
 		secretKeyHex: identity.secretKeyHex,
 	});
 	const roomName = parsed.values.name;
-	let receipt: RegistrationReceipt | undefined;
+	let attachment: HostPipeAttachment | undefined;
+	let pipe: HostPipe | undefined;
 	if (typeof roomName === "string") {
 		if (!isValidRoomName(roomName)) {
-			console.error(
-				"Room names are 1-32 lowercase letters, digits, and hyphens."
-			);
+			console.error(ROOM_NAME_RULE);
 			await listener.close();
 			return 1;
 		}
@@ -799,35 +806,42 @@ const create = async (args: readonly string[]): Promise<number> => {
 			await listener.close();
 			return 1;
 		}
+		// The Host dials out and keeps dialing (ADR-0012): the gateway never
+		// reaches back for this machine, so no port here is ever opened to it.
+		pipe = openHostPipe({
+			dialer: openWsDialer({
+				secretKeyHex: identity.secretKeyHex,
+				url: gatewayAddress,
+			}),
+			rooms: [{ info: { gameId, label: roomLabel }, name: roomName, store }],
+		});
 		try {
-			receipt = await registerRoom(
-				openWsDialer({
-					secretKeyHex: identity.secretKeyHex,
-					url: gatewayAddress,
-				}),
-				{ address: listener.url, name: roomName }
-			);
+			attachment = await pipe.attached;
 		} catch (error) {
 			console.error(
 				error instanceof Error
 					? error.message
 					: "Could not register the room at the gateway."
 			);
+			await pipe.close();
 			await listener.close();
 			return 1;
 		}
 	}
 	const server = serveRoomStore(listener, store, {
 		info: { gameId, label: roomLabel },
-		trustedStampers: receipt === undefined ? undefined : [receipt.gatewayId],
 	});
 	await writeFile(path.join(campaignFolder, "door.txt"), `${listener.url}\n`);
 	const sshDoor =
-		receipt === undefined || typeof roomName !== "string"
+		attachment === undefined || typeof roomName !== "string"
 			? ""
-			: `  ssh ${receipt.sshPort === 22 ? "" : `-p ${receipt.sshPort} `}${roomName}@${receipt.sshHost}\n`;
+			: `  ssh ${attachment.sshPort === 22 ? "" : `-p ${attachment.sshPort} `}${roomName}@${attachment.sshHost}\n`;
+	const roamingNote =
+		attachment === undefined
+			? ""
+			: "\nthis name is held by this machine's key. hosting it from another machine\nneeds key linking, which is not built yet.\n";
 	process.stdout.write(
-		`your table is live. summon your players:\n\n  supervillain join ${listener.url}\n${sshDoor}\n`
+		`your table is live. summon your players:\n\n  supervillain join ${listener.url}\n${sshDoor}${roamingNote}\n`
 	);
 	await runIntake(campaignFolder, gameId, actor, store);
 	const session = attachLocalTty({ actor });
@@ -839,6 +853,7 @@ const create = async (args: readonly string[]): Promise<number> => {
 		session,
 		store,
 	});
+	await pipe?.close();
 	await server.close();
 	await listener.close();
 	return 0;
@@ -868,11 +883,7 @@ const join = async (args: readonly string[]): Promise<number> => {
 		console.error("join requires one room ref.");
 		return 1;
 	}
-	const configRoot =
-		process.env.XDG_CONFIG_HOME ?? path.join(homedir(), ".config");
-	const identity = await loadOrCreateIdentity(
-		path.join(configRoot, "supervillain")
-	);
+	const identity = await loadOrCreateIdentity(configFolder());
 	const actor = identity.publicKeyHex;
 	let store: Awaited<ReturnType<typeof connectRoomStore>>;
 	try {
@@ -920,6 +931,27 @@ const join = async (args: readonly string[]): Promise<number> => {
 	return 0;
 };
 
+/**
+ * The `key` noun. It shows the per-machine credential the Host proves itself
+ * with — linking and retiring keys wait on ADR-0005's key-equivalence graph,
+ * which has no implementation yet.
+ */
+const key = async (args: readonly string[]): Promise<number> => {
+	const [subcommand, ...rest] = args;
+	if (subcommand !== "show" || rest.length > 0) {
+		console.error("key requires show.");
+		return 1;
+	}
+	const folder = configFolder();
+	const identity = await loadOrCreateIdentity(folder);
+	console.log(`key:  ${identity.publicKeyHex}`);
+	console.log(`file: ${path.join(folder, "identity.json")}`);
+	console.log(
+		"this key belongs to this machine, not to the campaign folder. linking a\nsecond machine to the same identity is not built yet."
+	);
+	return 0;
+};
+
 const main = async (args: readonly string[]): Promise<number> => {
 	if (args.includes("--help") || args.includes("-h")) {
 		console.log(USAGE);
@@ -941,6 +973,9 @@ const main = async (args: readonly string[]): Promise<number> => {
 	}
 	if (verb === "join") {
 		return await join(rest);
+	}
+	if (verb === "key") {
+		return await key(rest);
 	}
 	if (verb === "map") {
 		return await map(rest);
