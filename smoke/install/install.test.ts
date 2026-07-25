@@ -49,7 +49,7 @@ test("installs a verified local fixture and rejects a corrupt checksum", async (
 		await chmod(binary, 0o755);
 		const triple =
 			globalThis.process.platform === "darwin"
-				? "macos-arm64"
+				? `macos-${globalThis.process.arch === "arm64" ? "arm64" : "x64"}`
 				: `linux-${globalThis.process.arch === "arm64" ? "arm64" : "x64"}`;
 		const archiveName = `supervillain-${triple}.tar.gz`;
 		const archive = path.join(fixture, archiveName);

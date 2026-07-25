@@ -70,6 +70,12 @@ const USAGE = `Usage:
   --name registers the room at a gateway so players can ssh in; the gateway
   address comes from --gateway or SUPERVILLAIN_GATEWAY.`;
 
+// Mirrors apps/cli/package.json's version. A compiled binary carries no
+// package.json to read at runtime, so this is the CI smoke build's minimum
+// liveness check (`supervillain --version`) for platforms where the fuller
+// release smoke can't run.
+const CLI_VERSION = "0.0.0";
+
 const hostRegistry: HostRegistry = {
 	get: (gameId) => {
 		if (gameId === "fake") {
@@ -923,6 +929,10 @@ const join = async (args: readonly string[]): Promise<number> => {
 const main = async (args: readonly string[]): Promise<number> => {
 	if (args.includes("--help") || args.includes("-h")) {
 		console.log(USAGE);
+		return 0;
+	}
+	if (args.includes("--version")) {
+		console.log(CLI_VERSION);
 		return 0;
 	}
 	const [verb, ...rest] = args;

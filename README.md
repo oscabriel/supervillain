@@ -16,6 +16,9 @@ Then `supervillain create` to host a table, and hand your players:
 ssh <room>@supervillain.app
 ```
 
+GM platforms: Linux (x64, arm64) and macOS (Apple Silicon and Intel);
+Windows GMs, use WSL2. Players just need an `ssh` client, on any OS.
+
 ## Decision record
 
 This repo carries its own decision history: the product definition, glossary,
