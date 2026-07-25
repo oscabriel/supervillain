@@ -29,7 +29,8 @@
 		"test:cli-live": "bun test apps/cli/test-live",
 		"test:room-host": "bun run --cwd packages/room-host test:bun && bun run --cwd packages/room-host test:node",
 		"test:transport-iroh": "bun run --cwd packages/transport-iroh test:bun && bun run --cwd packages/transport-iroh test:node",
-		"test:room-wire": "bun run --cwd packages/room-wire test:bun && bun run --cwd packages/room-wire test:node"
+		"test:room-wire": "bun run --cwd packages/room-wire test:bun && bun run --cwd packages/room-wire test:node",
+		"bench:table-idle-cpu": "bun packages/table/bench/idle-cpu.ts"
 	},
 	"devDependencies": {
 		"oxfmt": "^0.58.0",

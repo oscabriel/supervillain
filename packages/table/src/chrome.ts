@@ -1,7 +1,7 @@
 /* oxlint-disable promise/prefer-await-to-then -- panel dispatch is synchronously fire-and-forget and the pinned contract requires a rejection catch. */
 import {
 	BoxRenderable,
-	createCliRenderer,
+	CliRenderEvents,
 	InputRenderable,
 	InputRenderableEvents,
 	ScrollBoxRenderable,
@@ -89,20 +89,16 @@ const feedContent = (lines: readonly FeedLine[]): StyledText => {
 };
 
 export const runChrome = async (options: TableOptions): Promise<void> => {
-	const initialSize = options.session.size();
 	let finish: (() => void) | undefined;
-	// oxlint-disable-next-line promise/avoid-new -- OpenTUI exposes teardown through an onDestroy callback.
+	// oxlint-disable-next-line promise/avoid-new -- OpenTUI announces teardown through a destroy event.
 	const exited = new Promise<void>((resolve) => {
 		finish = resolve;
 	});
-	const renderer = await createCliRenderer({
-		exitOnCtrlC: true,
-		height: initialSize.rows,
-		onDestroy: () => finish?.(),
-		stdin: options.session.input,
-		stdout: options.session.output,
-		width: initialSize.columns,
-	});
+	// The renderer is the caller's: the CLI mints one over the local TTY, the
+	// Door hands over the one it owns for the session. The table only draws on it
+	// — it never starts a render loop of its own (ADR-0012).
+	const renderer = await options.createRenderer(options.session);
+	renderer.on(CliRenderEvents.DESTROY, () => finish?.());
 	const fold = createTableFold(
 		options.entry as ViewEntry<unknown, unknown, unknown>,
 		options.gameId,
@@ -309,7 +305,6 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	feedText.content = feedContent(lines);
 	renderSidebar();
 	input.focus();
-	renderer.start();
 
 	const iterator = options.store.stream(1)[Symbol.asyncIterator]();
 	void (async () => {
