@@ -58,6 +58,7 @@ export type {
 	GatewayPipeEvent,
 	HostPipeServer,
 	HostPipeServerOptions,
+	KeyGraph,
 	LiveRoom,
 	PipeRoomStore,
 	RoomOwnership,
@@ -70,8 +71,17 @@ export type {
 	HostPipeEvent,
 	HostPipeOptions,
 } from "./host-pipe.js";
-export { isValidRoomName, ROOM_NAME_RULE } from "./messages.js";
-export type { RegistrationOutcome, RoomInfo } from "./messages.js";
+export { openGatewayLink } from "./link.js";
+export type { GatewayLink, GatewayLinkOptions } from "./link.js";
+export { isValidRoomName, LINK_ROOM, ROOM_NAME_RULE } from "./messages.js";
+export type {
+	ActorLink,
+	LinkCodeOutcome,
+	LinkRedemptionOutcome,
+	LinkRequest,
+	RegistrationOutcome,
+	RoomInfo,
+} from "./messages.js";
 export {
 	DEFAULT_HEARTBEAT_INTERVAL_MS,
 	DEFAULT_HEARTBEAT_MISSES,

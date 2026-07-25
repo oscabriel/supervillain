@@ -1,4 +1,5 @@
 import {
+	CORE_ACTOR_LINKED,
 	CORE_CHARACTER_BOUND,
 	CORE_CHAT_POSTED,
 	CORE_DICE_ROLLED,
@@ -9,10 +10,12 @@ import {
 	CORE_TOKEN_MOVED,
 	CORE_TOKEN_PLACED,
 	CORE_TOKEN_REMOVED,
+	createActorLinks,
 	foldTokenMoved,
 	foldTokenPlaced,
 	foldTokenRemoved,
 	isRecord,
+	readActorLinkedPayload,
 	readMapLoadedPayload,
 } from "@supervillain/core";
 import type {
@@ -43,6 +46,10 @@ export interface TableFold<S> {
 	readonly apply: (envelope: Envelope) => FeedLine | null;
 	readonly state: () => Readonly<S>;
 	readonly actorLabel: (actor: string) => string;
+	/** Whether two actor strings name the same person, through the linking
+	 * events this log carries (ADR-0005). An adopted `guest:X` answers true
+	 * against the key that adopted it, with no line of the log rewritten. */
+	readonly sameActor: (left: string, right: string) => boolean;
 	readonly table: () => TableView;
 	/** The battle map the log has folded to, or `null` when none is loaded. */
 	readonly map: () => BattleMap | null;
@@ -124,9 +131,18 @@ export const createTableFold = <S, C, E>(
 		id: string;
 	}[] = [];
 	const table: TableView = { actor, gmSeatId: "gm", seats };
+	// This log's slice of the key-equivalence graph. It is what makes a
+	// historical `guest:X` line reachable after adoption: the envelope keeps
+	// its original actor forever, the union answers who that is now.
+	const links = createActorLinks();
+	const sameActor = (left: string, right: string): boolean =>
+		links.same(left, right);
+	const seatFor = (
+		candidateActor: string
+	): { actor: string; characterId: string | null; id: string } | undefined =>
+		seats.find((seat) => sameActor(seat.actor, candidateActor));
 	const actorLabel = (candidateActor: string): string =>
-		table.seats.find((seat) => seat.actor === candidateActor)?.id ??
-		candidateActor.slice(0, 8);
+		seatFor(candidateActor)?.id ?? candidateActor.slice(0, 8);
 
 	// A reader holds no pen: known-invalid events are skipped loudly, never
 	// fatally (ADR-0010). During the initial replay the warnings are held back
@@ -163,7 +179,7 @@ export const createTableFold = <S, C, E>(
 		if (seats.some(({ id }) => id === payload.seatId)) {
 			return loud(envelope, `seat '${payload.seatId}' is already claimed`);
 		}
-		if (seats.some((seat) => seat.actor === envelope.actor)) {
+		if (seatFor(envelope.actor) !== undefined) {
 			return loud(
 				envelope,
 				`${actorLabel(envelope.actor)} already holds a seat`
@@ -180,6 +196,23 @@ export const createTableFold = <S, C, E>(
 					text: `${payload.seatId} joined the table`,
 					token: "muted",
 				},
+			],
+		};
+	};
+
+	const applyActorLinked = (envelope: Envelope): FeedLine | null => {
+		const linked = readActorLinkedPayload(envelope.payload);
+		if (linked === null) {
+			return loud(envelope, "linking event names no actor");
+		}
+		// The label is read before the union so the line says which past self
+		// was absorbed, not the seat it just became.
+		const absorbed = actorLabel(linked);
+		links.link(envelope.actor, linked);
+		return {
+			runs: [
+				{ text: `${absorbed} is now `, token: "muted" },
+				{ text: actorLabel(envelope.actor), token: "accent" },
 			],
 		};
 	};
@@ -260,6 +293,10 @@ export const createTableFold = <S, C, E>(
 	return {
 		actorLabel,
 		apply(envelope) {
+			links.remember(envelope.actor);
+			if (envelope.type === CORE_ACTOR_LINKED) {
+				return applyActorLinked(envelope);
+			}
 			if (envelope.type === CORE_ROOM_CREATED) {
 				return applyRoomCreated(envelope);
 			}
@@ -312,6 +349,7 @@ export const createTableFold = <S, C, E>(
 			return replaySummaryLine(skips);
 		},
 		map: () => map,
+		sameActor,
 		skips: () => skips,
 		state: () => game,
 		table: () => table,

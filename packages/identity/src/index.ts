@@ -2,6 +2,8 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+export type { IdentityDirectory } from "./directory.js";
+
 export interface Identity {
 	readonly publicKeyHex: string;
 	readonly secretKeyHex: string;

@@ -5,6 +5,7 @@
 declare module "bun:sqlite" {
 	export interface Statement {
 		readonly get: (params?: Record<string, string | number>) => unknown;
+		readonly all: (params?: Record<string, string | number>) => unknown[];
 		readonly run: (params?: Record<string, string | number>) => void;
 	}
 

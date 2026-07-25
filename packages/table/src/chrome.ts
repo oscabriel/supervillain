@@ -83,9 +83,19 @@ const styledLine = (line: FeedLine): StyledText =>
 		}))
 	);
 
-export const formatSeatList = (table: TableView, actor: string): string =>
+/** `sameActor` is the log's link graph (ADR-0005), so the marker still finds
+ * your seat after a second machine's key was linked to your identity. */
+export const formatSeatList = (
+	table: TableView,
+	actor: string,
+	sameActor: (left: string, right: string) => boolean = (left, right) =>
+		left === right
+): string =>
 	table.seats
-		.map((seat) => `${seat.actor === actor ? "●" : "○"} ${seat.id}`)
+		.map(
+			(seat) =>
+				`${seat.actor !== null && sameActor(seat.actor, actor) ? "●" : "○"} ${seat.id}`
+		)
 		.join("\n");
 
 const CONTROL_CHARACTER = /\p{C}/u;
@@ -273,8 +283,13 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		focusTargets()[focusedPanelIndex];
 	const mapFocused = (): boolean => focusedTarget() === MAP_FOCUS;
 	const ownSeatId = (): string | null =>
-		fold.table().seats.find((seat) => seat.actor === options.session.actor)
-			?.id ?? null;
+		fold
+			.table()
+			.seats.find(
+				(seat) =>
+					seat.actor !== null &&
+					fold.sameActor(seat.actor, options.session.actor)
+			)?.id ?? null;
 	const interaction = (): MapInteraction | null => {
 		const map = fold.map();
 		return map === null
@@ -367,7 +382,11 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		table: fold.table(),
 	});
 	const renderSidebar = (): void => {
-		const seats = formatSeatList(fold.table(), options.session.actor);
+		const seats = formatSeatList(
+			fold.table(),
+			options.session.actor,
+			fold.sameActor
+		);
 		const focusedPanel = focusedTarget();
 		const panelLines = panels.flatMap((panel) =>
 			panel

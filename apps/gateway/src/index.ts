@@ -181,7 +181,7 @@ const runRoomTable = async (
 	connection: SshConnection,
 	stream: SshChannelStream,
 	store: PipeRoomStore,
-	identity: SessionIdentity
+	context: RoomEntryContext
 ): Promise<RoomEntryResult> => {
 	const info = await store.info();
 	const entry = gatewayRegistry.get(info.gameId);
@@ -191,9 +191,14 @@ const runRoomTable = async (
 	// The minting threshold: one `guest:` actor per SSH session, minted here at
 	// first room entry and reused across hops, with the upgrade box on the same
 	// edge — before the guest sits down (ADR-0008).
-	const assumed = identity.assume();
+	const assumed = context.identity.assume();
 	if (assumed.minted) {
-		stream.write(guestUpgradeBox());
+		// The adoption code is bound to this guest actor and lives seven days in
+		// the gateway's own store, so it survives a restart (ADR-0005/0013).
+		const minted = context.registry.mintAdoptionCode(assumed.actor);
+		stream.write(
+			guestUpgradeBox("accepted" in minted ? minted.code : undefined)
+		);
 		await awaitKeypress(stream);
 	}
 	const claim = await store.submit({
@@ -245,9 +250,13 @@ const enterRoom = async (
 			notice: noticeForMissingRoom(roomName, context.registry),
 		};
 	}
+	// The unknown-key-joins case (ADR-0005): before anyone claims a seat, let the
+	// room learn whether the graph already knows the person behind this key —
+	// the same derived query registration uses, and no queue either way.
+	await live.deliverLinks();
 	const store = live.openStore();
 	try {
-		return await runRoomTable(connection, stream, store, context.identity);
+		return await runRoomTable(connection, stream, store, context);
 	} finally {
 		await store.close();
 	}
@@ -455,6 +464,9 @@ export const startGateway = async (
 	// metadata only — lifecycle and room names, never a payload (NQ-11).
 	const pipes = serveHostPipes({
 		door: { sshHost: options.sshHost, sshPort: options.sshPort },
+		// The key-equivalence graph reaches the broker as an injected interface,
+		// never a driver: `room-wire` compiles and tests under Node too (NQ-12).
+		keys: registry,
 		listener,
 		onEvent: options.onEvent,
 		ownership: registry,

@@ -2,6 +2,7 @@ import { mkdir, open, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
+	CORE_ACTOR_LINKED,
 	CORE_CHARACTER_BOUND,
 	CORE_CHAT_POSTED,
 	CORE_DICE_ROLLED,
@@ -12,6 +13,7 @@ import {
 	CORE_TOKEN_MOVED,
 	CORE_TOKEN_PLACED,
 	CORE_TOKEN_REMOVED,
+	createActorLinks,
 	foldTokenMoved,
 	foldTokenPlaced,
 	foldTokenRemoved,
@@ -20,10 +22,13 @@ import {
 	isValidTokenId,
 	mapFilePath,
 	parseMapFile,
+	readActorLinkedPayload,
 	readMapLoadedPayload,
 	TOKEN_LABEL_MAX_LENGTH,
 } from "@supervillain/core";
 import type {
+	ActorLinkedPayload,
+	ActorLinks,
 	AuthorityEntry,
 	BattleMap,
 	CharacterBoundPayload,
@@ -174,6 +179,11 @@ export class RoomHost {
 	readonly #random: () => number;
 	readonly #envelopes: Envelope[] = [];
 	readonly #subscribers = new Set<Subscriber>();
+	/** This log's slice of the key-equivalence graph (ADR-0005): who is whom,
+	 * folded from `core.actor-linked` and consulted by every seat lookup, so
+	 * GM roaming falls out of idempotent seat claiming with no mechanism of
+	 * its own. */
+	readonly #links: ActorLinks = createActorLinks();
 	#authority: AuthorityEntry<unknown, unknown, unknown> | undefined;
 	#grammar: ReadonlySet<string> = new Set();
 	#gameId: string | undefined;
@@ -247,6 +257,17 @@ export class RoomHost {
 			table: this.#table,
 			tokens: this.#tokens,
 		};
+	}
+
+	/**
+	 * Every actor string this log mentions, first-seen first — including the
+	 * ones only a `core.actor-linked` payload names. This is the roster the
+	 * Host offers its gateway at registration, which is how a room learns about
+	 * linking that happened while it was offline without any queue existing
+	 * (ADR-0013).
+	 */
+	actors(): readonly string[] {
+		return this.#links.actors();
 	}
 
 	async submit(command: RoomCommand): Promise<RoomSubmission> {
@@ -380,8 +401,13 @@ export class RoomHost {
 		actor: string,
 		command: Record<string, unknown> & { readonly type: string }
 	): Promise<RoomSubmission> {
+		if (command.type === "core.link-actor") {
+			return await this.#submitLink(actor, command.linked);
+		}
 		if (command.type === "core.claim-seat") {
-			if (this.#table.seats.some((seat) => seat.actor === actor)) {
+			if (this.#seatFor(actor) !== undefined) {
+				// Idempotent by identity, not by key: a GM whose laptop key was
+				// linked to the desktop's gets the GM seat back, not a new one.
 				return { accepted: true, envelopes: [] };
 			}
 			const playerCount = this.#table.seats.filter(
@@ -399,7 +425,7 @@ export class RoomHost {
 			await this.#append([envelope]);
 			return { accepted: true, envelopes: [envelope] };
 		}
-		const actorSeat = this.#table.seats.find((seat) => seat.actor === actor);
+		const actorSeat = this.#seatFor(actor);
 		if (actorSeat === undefined) {
 			return {
 				message: "You do not hold a seat at this table.",
@@ -503,6 +529,41 @@ export class RoomHost {
 			seq: this.#envelopes.length + 1,
 			timestamp: this.#clock(),
 			type,
+		};
+		await this.#append([envelope]);
+		return { accepted: true, envelopes: [envelope] };
+	}
+
+	/** The seat this actor holds, resolved through the link graph so every key
+	 * of one identity finds the same seat. */
+	#seatFor(actor: string): SeatView | undefined {
+		return this.#table.seats.find(
+			(seat) => seat.actor !== null && this.#links.same(seat.actor, actor)
+		);
+	}
+
+	/**
+	 * Materializes one linking fact the gateway derived from its graph. It is
+	 * idempotent on purpose: nothing anywhere records that a room was told, so
+	 * being told twice must cost nothing (ADR-0013 — derive, never queue).
+	 */
+	async #submitLink(
+		actor: string,
+		requested: unknown
+	): Promise<RoomSubmission> {
+		const linked = typeof requested === "string" ? requested.trim() : "";
+		if (linked.length === 0) {
+			return { message: "A linking event names no actor.", rejected: true };
+		}
+		if (this.#links.same(actor, linked)) {
+			return { accepted: true, envelopes: [] };
+		}
+		const envelope: Envelope = {
+			actor,
+			payload: { linked } satisfies ActorLinkedPayload,
+			seq: this.#envelopes.length + 1,
+			timestamp: this.#clock(),
+			type: CORE_ACTOR_LINKED,
 		};
 		await this.#append([envelope]);
 		return { accepted: true, envelopes: [envelope] };
@@ -750,6 +811,19 @@ export class RoomHost {
 
 	// oxlint-disable-next-line eslint/complexity -- the writer fold's branches are the two-tier posture: one arm per recognized core type, then the halt on anything unknown (ADR-0010).
 	#fold(envelope: Envelope): void {
+		// Every envelope names its actor, so the roster the Host offers the
+		// gateway at registration is a by-product of the fold, never a table.
+		this.#links.remember(envelope.actor);
+		if (envelope.type === CORE_ACTOR_LINKED) {
+			const linked = readActorLinkedPayload(envelope.payload);
+			if (linked === null) {
+				throw new TypeError(
+					`Linking event at line ${envelope.seq} names no actor.`
+				);
+			}
+			this.#links.link(envelope.actor, linked);
+			return;
+		}
 		if (envelope.type === CORE_ROOM_CREATED) {
 			if (this.#gameId !== undefined) {
 				throw new Error(
@@ -777,7 +851,7 @@ export class RoomHost {
 					`Log claims seat '${payload.seatId}' more than once at line ${envelope.seq}.`
 				);
 			}
-			if (this.#table.seats.some((seat) => seat.actor === envelope.actor)) {
+			if (this.#seatFor(envelope.actor) !== undefined) {
 				throw new Error(
 					`Log gives actor '${envelope.actor}' more than one seat at line ${envelope.seq}.`
 				);

@@ -15,16 +15,25 @@ import {
 	UNSUPPORTED_VERSION_MESSAGE,
 } from "./frames.js";
 import {
+	ACTOR_ROSTER_REQUEST,
 	decodeJson,
 	encodeJson,
 	isValidRoomName,
+	parseActorRoster,
 	parseEnvelope,
+	parseLinkRequest,
 	parseRegistrationRequest,
 	parseRoomInfo,
 	parseRoomSubmission,
 	ROOM_NAME_RULE,
 } from "./messages.js";
-import type { RegistrationOutcome, RoomInfo } from "./messages.js";
+import type {
+	ActorLink,
+	LinkCodeOutcome,
+	LinkRedemptionOutcome,
+	RegistrationOutcome,
+	RoomInfo,
+} from "./messages.js";
 import { MultiplexPipe } from "./pipe.js";
 import type { PipeStream } from "./pipe.js";
 import { TransportListenerClosedError } from "./seam.js";
@@ -52,6 +61,41 @@ export interface RoomOwnership {
 	readonly claim: (hostKey: string, name: string) => Promise<ClaimOutcome>;
 }
 
+/**
+ * ADR-0005's key-equivalence graph, seen from the broker: the three questions
+ * the pipe asks of it, and nothing else. It is **injected, never imported** —
+ * the graph lives in the gateway's `bun:sqlite` store and this package compiles
+ * and tests under Node as well (NQ-12), so a driver may never appear here.
+ *
+ * `resolveActorLinks` is the whole of ADR-0013's derive-never-queue decision:
+ * a caller hands over the actors it knows about and gets back the links it is
+ * missing. Nothing is recorded about who was told what — no queue, no delivery
+ * bookkeeping, no acknowledgement — because the graph is already the complete
+ * truth and a queue would be a staler second copy of a computable fact.
+ */
+export interface KeyGraph {
+	readonly resolveActorLinks: (
+		actors: readonly string[]
+	) => Promise<readonly ActorLink[]>;
+	readonly mintDeviceCode: (key: string) => Promise<LinkCodeOutcome>;
+	readonly redeemLinkCode: (
+		code: string,
+		key: string
+	) => Promise<LinkRedemptionOutcome>;
+}
+
+const NO_KEY_GRAPH = "This gateway does not serve key linking.";
+
+/** The stand-in for a gateway built without a graph: it refuses honestly
+ * rather than pretending nothing was linked. */
+const unservedKeyGraph: KeyGraph = {
+	mintDeviceCode: () =>
+		Promise.resolve({ message: NO_KEY_GRAPH, rejected: true }),
+	redeemLinkCode: () =>
+		Promise.resolve({ message: NO_KEY_GRAPH, rejected: true }),
+	resolveActorLinks: () => Promise.resolve([]),
+};
+
 /** The live half: which pipe is currently carrying a claimed name. */
 export interface LiveRoom {
 	readonly name: string;
@@ -60,6 +104,14 @@ export interface LiveRoom {
 	readonly hostKey: string;
 	/** One session's view of the Room. Each caller closes its own. */
 	readonly openStore: () => PipeRoomStore;
+	/**
+	 * Re-derives this room's missing linking facts from the graph and stamps
+	 * them in. It is the unknown-key-joins case of ADR-0005 — "linked to anyone
+	 * in my log?" — answered by the same query registration uses, so a person
+	 * who adopted their guest actor last week is recognized before they claim a
+	 * seat. Resolves even when nothing could be asked; it never throws.
+	 */
+	readonly deliverLinks: () => Promise<void>;
 }
 
 /** Metadata only (ADR-0012, NQ-11): lifecycle, room names, error codes. */
@@ -68,11 +120,19 @@ export type GatewayPipeEvent =
 	| { readonly kind: "pipe-opened"; readonly hostKey: string }
 	| { readonly kind: "pipe-refused"; readonly reason: string }
 	| { readonly kind: "room-attached"; readonly room: string }
-	| { readonly kind: "room-offline"; readonly room: string };
+	| { readonly kind: "room-offline"; readonly room: string }
+	| {
+			readonly kind: "room-linked";
+			readonly room: string;
+			readonly links: number;
+	  };
 
 export interface HostPipeServerOptions {
 	readonly listener: TransportListener;
 	readonly ownership: RoomOwnership;
+	/** ADR-0005's graph. Omitted, the link channel refuses and no room is ever
+	 * told about linking. */
+	readonly keys?: KeyGraph;
 	/** What a registered Host is told to put in its summon line. */
 	readonly door: { readonly sshHost: string; readonly sshPort: number };
 	readonly heartbeatIntervalMs?: number;
@@ -88,7 +148,8 @@ export interface HostPipeServer {
 	readonly close: () => Promise<void>;
 }
 
-const NOT_SERVED = "Only the register channel is served by the gateway.";
+const NOT_SERVED =
+	"Only the register and link channels are served by the gateway.";
 
 const closeQuietly = async (connection: TransportConnection): Promise<void> => {
 	try {
@@ -199,11 +260,106 @@ class PipeStoreView implements PipeRoomStore {
 
 interface PipeRegistrar {
 	readonly attach: (name: string, ownerId: string) => void;
+	/** Asks the freshly attached room for its actor roster and stamps whatever
+	 * the graph says it is missing. */
+	readonly deliverLinks: (name: string) => void;
 	readonly detach: (pipe: MultiplexPipe) => void;
 	readonly ownership: RoomOwnership;
+	readonly keys: KeyGraph;
 	readonly door: { readonly sshHost: string; readonly sshPort: number };
 	readonly onEvent: (event: GatewayPipeEvent) => void;
 }
+
+/**
+ * The gateway's half of `key link`: a CLI holds a pipe with no rooms on it and
+ * opens one link stream per command. The connection's authenticated identity
+ * *is* the key being minted for or redeeming — nothing on the wire names a key,
+ * so nobody can link someone else's.
+ */
+const serveLinkRequest = async (
+	stream: PipeStream,
+	key: string,
+	keys: KeyGraph
+): Promise<void> => {
+	const request = parseLinkRequest(decodeJson(await stream.receive()));
+	const outcome: LinkCodeOutcome | LinkRedemptionOutcome =
+		"mint" in request
+			? await keys.mintDeviceCode(key)
+			: await keys.redeemLinkCode(request.redeem, key);
+	await stream.send(encodeJson(outcome));
+	stream.close();
+};
+
+const serveLink = async (
+	stream: PipeStream,
+	key: string,
+	keys: KeyGraph
+): Promise<void> => {
+	try {
+		await serveLinkRequest(stream, key, keys);
+	} catch {
+		stream.fail("Link request failed.");
+	}
+};
+
+/**
+ * ADR-0013's offline-room case, with no mechanism of its own: the room names
+ * its actors, the graph answers, and the answers arrive as gateway-stamped
+ * submissions — actor ≠ connection, which is exactly the trusted-stamper power
+ * ADR-0003 grants the gateway a Host registered with.
+ *
+ * Nothing here is retried, acknowledged, or recorded. The Host's own fold makes
+ * a repeated fact a no-op, so the next registration re-derives the same answer
+ * for free.
+ */
+const deliverDerivedLinks = async (
+	pipe: MultiplexPipe,
+	name: string,
+	registrar: Pick<PipeRegistrar, "keys" | "onEvent">
+): Promise<void> => {
+	const stream = pipe.open(name, "link");
+	let actors: readonly string[];
+	try {
+		await stream.send(encodeJson(ACTOR_ROSTER_REQUEST));
+		actors = parseActorRoster(decodeJson(await stream.receive()));
+	} finally {
+		stream.close();
+	}
+	if (actors.length === 0) {
+		return;
+	}
+	const links = await registrar.keys.resolveActorLinks(actors);
+	if (links.length === 0) {
+		return;
+	}
+	const store = new PipeStoreView(pipe, name);
+	try {
+		for (const link of links) {
+			// oxlint-disable-next-line eslint/no-await-in-loop -- one submit channel, one linking event at a time.
+			await store.submit({
+				actor: link.actor,
+				command: { linked: link.linked, type: "core.link-actor" },
+			});
+		}
+	} finally {
+		await store.close();
+	}
+	registrar.onEvent({ kind: "room-linked", links: links.length, room: name });
+};
+
+/** A Host that cannot answer the roster ask, or a graph that cannot be read,
+ * costs the room nothing: it stays attached and simply learns nothing today. */
+const deliverLinks = async (
+	pipe: MultiplexPipe,
+	name: string,
+	registrar: Pick<PipeRegistrar, "keys" | "onEvent">
+): Promise<void> => {
+	try {
+		await deliverDerivedLinks(pipe, name, registrar);
+	} catch {
+		// Metadata-only silence: nothing here is durable, so nothing is lost.
+	}
+};
 
 const handleRegister = async (
 	stream: PipeStream,
@@ -232,6 +388,7 @@ const handleRegister = async (
 	if ("accepted" in claim) {
 		registrar.attach(name, claim.ownerId);
 		registrar.onEvent({ kind: "room-attached", room: name });
+		registrar.deliverLinks(name);
 	}
 };
 
@@ -252,7 +409,7 @@ const register = async (
 const acceptPipe = async (
 	connection: TransportConnection,
 	options: HostPipeServerOptions,
-	registrar: Omit<PipeRegistrar, "attach"> & {
+	registrar: Omit<PipeRegistrar, "attach" | "deliverLinks"> & {
 		readonly attach: (
 			pipe: MultiplexPipe,
 			name: string,
@@ -289,6 +446,10 @@ const acceptPipe = async (
 			registrar.onEvent({ hostKey: connection.remoteId, kind: "pipe-closed" });
 		},
 		onStream: (stream) => {
+			if (stream.channel === "link") {
+				void serveLink(stream, connection.remoteId, registrar.keys);
+				return;
+			}
 			if (stream.channel !== "register") {
 				stream.fail(NOT_SERVED);
 				return;
@@ -296,6 +457,9 @@ const acceptPipe = async (
 			void register(stream, connection.remoteId, {
 				...registrar,
 				attach: (name, ownerId) => registrar.attach(pipe, name, ownerId),
+				deliverLinks: (name) => {
+					void deliverLinks(pipe, name, registrar);
+				},
 			});
 		},
 	});
@@ -333,10 +497,13 @@ export const serveHostPipes = (
 		}
 	};
 
+	const keys = options.keys ?? unservedKeyGraph;
+
 	const attach = (pipe: MultiplexPipe, name: string, ownerId: string): void => {
 		// The same identity always supersedes its own live registration: a
 		// crash-restart or a machine move re-points the name, it does not queue.
 		liveRooms.set(name, {
+			deliverLinks: () => deliverLinks(pipe, name, { keys, onEvent }),
 			hostKey: pipe.remoteId,
 			name,
 			openStore: () => new PipeStoreView(pipe, name),
@@ -349,6 +516,7 @@ export const serveHostPipes = (
 		attach,
 		detach,
 		door: options.door,
+		keys,
 		onEvent,
 		ownership: options.ownership,
 	};

@@ -43,6 +43,7 @@ import { InProcessRoomStore, RoomHost } from "@supervillain/room-host";
 import {
 	connectRoomStore,
 	isValidRoomName,
+	openGatewayLink,
 	openHostPipe,
 	ROOM_NAME_RULE,
 	serveRoomStore,
@@ -62,6 +63,7 @@ const USAGE = `Usage:
   supervillain join <room-ref>
   supervillain publish
   supervillain key show
+  supervillain key link [<code>] [--gateway <addr>]
   supervillain character new <campaign-folder> <name> [--game <id>]
   supervillain character check <campaign-folder> [file] [--game <id>]
   supervillain character list <campaign-folder> [--game <id>]
@@ -70,9 +72,9 @@ const USAGE = `Usage:
   supervillain campaign info <campaign-folder>
 
   --name registers the room at a gateway so players can ssh in; the gateway
-  address comes from --gateway or SUPERVILLAIN_GATEWAY. The room name is held
-  by this machine's key, so hosting the same name from another machine needs
-  key linking, which is not built yet.`;
+  address comes from --gateway or SUPERVILLAIN_GATEWAY. A room name is held by
+  an identity, so to host it from a second machine, run 'key link' on the
+  machine that already holds it and redeem the code on the new one.`;
 
 /** Credentials live in per-machine config, never in the campaign folder — the
  * folder moves between machines and backups; the key must not (ADR-0012). */
@@ -819,7 +821,17 @@ const create = async (args: readonly string[]): Promise<number> => {
 				secretKeyHex: identity.secretKeyHex,
 				url: gatewayAddress,
 			}),
-			rooms: [{ info: { gameId, label: roomLabel }, name: roomName, store }],
+			rooms: [
+				{
+					// The roster the gateway resolves against its graph at every
+					// registration — which is how this room learns about linking
+					// that happened while it was offline (ADR-0013).
+					actors: () => host.actors(),
+					info: { gameId, label: roomLabel },
+					name: roomName,
+					store,
+				},
+			],
 		});
 		try {
 			attachment = await pipe.attached;
@@ -845,7 +857,7 @@ const create = async (args: readonly string[]): Promise<number> => {
 	const roamingNote =
 		attachment === undefined
 			? ""
-			: "\nthis name is held by this machine's key. hosting it from another machine\nneeds key linking, which is not built yet.\n";
+			: "\nthis name is held by your identity. to host it from another machine, run\n'supervillain key link' here and redeem the code there.\n";
 	process.stdout.write(
 		`your table is live. summon your players:\n\n  supervillain join ${listener.url}\n${sshDoor}${roamingNote}\n`
 	);
@@ -937,25 +949,115 @@ const join = async (args: readonly string[]): Promise<number> => {
 	return 0;
 };
 
-/**
- * The `key` noun. It shows the per-machine credential the Host proves itself
- * with — linking and retiring keys wait on ADR-0005's key-equivalence graph,
- * which has no implementation yet.
- */
-const key = async (args: readonly string[]): Promise<number> => {
-	const [subcommand, ...rest] = args;
-	if (subcommand !== "show" || rest.length > 0) {
-		console.error("key requires show.");
-		return 1;
-	}
+const keyShow = async (): Promise<number> => {
 	const folder = configFolder();
 	const identity = await loadOrCreateIdentity(folder);
 	console.log(`key:  ${identity.publicKeyHex}`);
 	console.log(`file: ${path.join(folder, "identity.json")}`);
 	console.log(
-		"this key belongs to this machine, not to the campaign folder. linking a\nsecond machine to the same identity is not built yet."
+		"this key belongs to this machine, not to the campaign folder. to give a\nsecond machine the same identity, run 'supervillain key link' here."
 	);
 	return 0;
+};
+
+/**
+ * `key link` targets the **gateway**, which owns the key-equivalence graph
+ * (ADR-0013's correction to ADR-0005). It rides the same outbound pipe the Host
+ * dials — same dial, same authentication — with no rooms on it, so the
+ * connection's authenticated key is the one being linked and no request on the
+ * wire ever names somebody else's.
+ */
+const keyLink = async (args: readonly string[]): Promise<number> => {
+	let parsed: ReturnType<typeof parseArgs>;
+	try {
+		parsed = parseArgs({
+			allowPositionals: true,
+			args: [...args],
+			options: { gateway: { type: "string" } },
+		});
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	const positionals = parsed.positionals.filter(
+		(value): value is string => typeof value === "string"
+	);
+	if (positionals.length > 1) {
+		console.error("key link takes at most one code.");
+		return 1;
+	}
+	const gatewayAddress =
+		typeof parsed.values.gateway === "string"
+			? parsed.values.gateway
+			: (process.env.SUPERVILLAIN_GATEWAY ?? "");
+	if (gatewayAddress === "") {
+		console.error(
+			"key link needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY."
+		);
+		return 1;
+	}
+	const identity = await loadOrCreateIdentity(configFolder());
+	let link: Awaited<ReturnType<typeof openGatewayLink>>;
+	try {
+		link = await openGatewayLink({
+			dialer: openWsDialer({
+				secretKeyHex: identity.secretKeyHex,
+				url: gatewayAddress,
+			}),
+		});
+	} catch (error) {
+		console.error("Could not reach that gateway.");
+		if (!(error instanceof DialTimeoutError)) {
+			console.error(error instanceof Error ? error.message : String(error));
+		}
+		return 1;
+	}
+	try {
+		const [code] = positionals;
+		if (code === undefined) {
+			const minted = await link.mintDeviceCode();
+			if ("rejected" in minted) {
+				console.error(minted.message);
+				return 1;
+			}
+			console.log(`link code: ${minted.code}`);
+			console.log(`expires:   ${minted.expiresAt}`);
+			console.log(
+				`\non the other machine, run:\n\n  supervillain key link ${minted.code}`
+			);
+			return 0;
+		}
+		const redeemed = await link.redeem(code);
+		if ("rejected" in redeemed) {
+			console.error(redeemed.message);
+			return 1;
+		}
+		console.log(`linked: ${redeemed.linked}`);
+		console.log(
+			"this machine's key now answers for that identity. seats and rooms it\nholds are yours from here."
+		);
+		return 0;
+	} finally {
+		await link.close();
+	}
+};
+
+/**
+ * The `key` noun (the #28 pattern). `show` prints the per-machine credential
+ * the Host proves itself with; `link` mints a one-time code on an established
+ * machine and redeems either code kind on a new one (ADR-0005). Retiring a key
+ * is `key revoke`, which is not built yet.
+ */
+const key = async (args: readonly string[]): Promise<number> => {
+	const [subcommand, ...rest] = args;
+	if (subcommand === "show" && rest.length === 0) {
+		return await keyShow();
+	}
+	if (subcommand === "link") {
+		return await keyLink(rest);
+	}
+	console.error("key requires show or link.");
+	return 1;
 };
 
 const main = async (args: readonly string[]): Promise<number> => {

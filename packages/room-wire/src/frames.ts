@@ -27,10 +27,10 @@ export const SUPPORTED_PIPE_PROTOCOL_VERSIONS: readonly number[] = [
 export const MAX_FRAME_PAYLOAD_BYTES = 32 * 1024;
 
 /**
- * The logical channels. `register`, `info`, `submit`, and `stream` are served
- * today; `link` is ADR-0005's linking conduit, which rides this same pipe — it
- * is named here so the contract is whole, and refused at both ends until the
- * key-equivalence graph exists to serve it.
+ * The logical channels. `register`, `info`, `submit`, and `stream` carry a
+ * Room; `link` is ADR-0005's linking conduit and is the one channel both ends
+ * open — the gateway asks a freshly registered room for its actor roster, and a
+ * CLI running `key link` opens it on a pipe that carries no rooms at all.
  */
 export type PipeChannel = "info" | "link" | "register" | "stream" | "submit";
 
