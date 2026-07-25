@@ -67,9 +67,11 @@ module.exports = {
 		{
 			// The server half is the gateway's: ADR-0012 has the Host dialing out
 			// and the gateway listening, and the render side imports neither half.
-			// apps/cli is a named, temporary exception — the interim topology
-			// still has the Host serving over WS, and inverting it is #57. Remove
-			// apps/cli from this list the moment that lands.
+			// apps/cli is a named, temporary exception. #57 inverted the *gateway*
+			// direction — the Host now dials out and the gateway never dials back —
+			// but the CLI still listens for the direct `supervillain join <url>`
+			// door, which #63 replaces with SSH. Remove apps/cli from this list the
+			// moment that lands.
 			from: { pathNot: "^(apps/gateway|apps/cli)/" },
 			name: "transport-server-half-is-gateway-only",
 			severity: "error",

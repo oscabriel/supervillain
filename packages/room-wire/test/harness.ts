@@ -211,3 +211,24 @@ export const createMemoryTransportPair = (
 	const listener = new MemoryListener(serverId);
 	return { dialer: new MemoryDialer(clientId, listener), listener };
 };
+
+export interface MemoryTransportHub {
+	readonly listener: TransportListener & {
+		readonly dropConnections: () => Promise<void>;
+	};
+	readonly dialer: (
+		clientId: string
+	) => TransportDialer & { readonly dropConnections: () => Promise<void> };
+}
+
+/** Several dialers, each with its own identity, wired to one listener — the
+ * gateway shape: many Hosts, one door. */
+export const createMemoryTransportHub = (
+	serverId = "server-id"
+): MemoryTransportHub => {
+	const listener = new MemoryListener(serverId);
+	return {
+		dialer: (clientId: string) => new MemoryDialer(clientId, listener),
+		listener,
+	};
+};
