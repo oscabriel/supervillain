@@ -150,9 +150,21 @@ const authenticate = (ctx: AuthContext): SessionIdentity | undefined => {
 	return undefined;
 };
 
-const farewell = (stream: SshChannelStream, message: string): void => {
-	stream.write(`${message}\r\n`);
+/** Closes the channel with an explicit exit status. A client that never gets
+ * one calls the session a failure (ssh exits 255), so every ordinary goodbye —
+ * leaving the lobby, quitting the table — has to say 0 out loud. */
+const closeChannel = (stream: SshChannelStream, status: number): void => {
+	stream.exit?.(status);
 	stream.end();
+};
+
+const farewell = (
+	stream: SshChannelStream,
+	message: string,
+	status = 0
+): void => {
+	stream.write(`${message}\r\n`);
+	closeChannel(stream, status);
 };
 
 const awaitKeypress = (stream: SshChannelStream): Promise<void> =>
@@ -342,11 +354,11 @@ const serveShell = async (
 		context
 	);
 	if (arrival.kind === "entered") {
-		stream.end();
+		closeChannel(stream, 0);
 		return;
 	}
 	if (arrival.kind === "failed") {
-		farewell(stream, arrival.message);
+		farewell(stream, arrival.message, 1);
 		return;
 	}
 	let expiry: LobbyExpiry | undefined;
@@ -407,7 +419,7 @@ const handleConnection = (
 					const stream = acceptShell() as unknown as SshChannelStream;
 					const shellIdentity = identity;
 					if (shellIdentity === undefined) {
-						farewell(stream, "authentication left no identity.");
+						farewell(stream, "authentication left no identity.", 1);
 						return;
 					}
 					connection = attachSshChannel({ initialSize: size, stream });
@@ -425,7 +437,7 @@ const handleConnection = (
 						} catch {
 							// The floor beneath a TUI failure: one plain-text line, then
 							// the door closes (ADR-0008).
-							farewell(stream, "The table collapsed. Try again.");
+							farewell(stream, "The table collapsed. Try again.", 1);
 						} finally {
 							client.end();
 						}
