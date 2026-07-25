@@ -2,13 +2,13 @@ import { createCliRenderer } from "@opentui/core";
 import type { CliRenderer } from "@opentui/core";
 import type { TerminalConnection } from "@supervillain/session";
 
-/** How a surface gets the renderer it draws on. The caller supplies it: mint
- * one over the connection's streams, or hand over a renderer someone else
- * already owns (the Door's per-session renderer, once `@opentui/ssh` supplies
- * it). The surface never mints its own and never starts a render loop —
- * ADR-0012's "no ambient rendering" clause: the caller decides when, and
- * whether, a loop runs. Typed to `TerminalConnection` rather than `Session`
- * because the lobby draws before any actor exists (ADR-0008). */
+/** How a *surface* mints the one renderer it owns for a session (ADR-0016):
+ * the Door calls this once per SSH session, the CLI once per process, and each
+ * destroys what it minted when the session ends. Screens never call this —
+ * they borrow the surface's renderer through their options. Whether a render
+ * loop runs is the surface's decision too — ADR-0012's "no ambient rendering"
+ * clause. Typed to `TerminalConnection` rather than `Session` because the
+ * lobby draws before any actor exists (ADR-0008). */
 export type TableRendererFactory = (
 	connection: TerminalConnection
 ) => CliRenderer | Promise<CliRenderer>;

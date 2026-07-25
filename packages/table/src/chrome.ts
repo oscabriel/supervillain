@@ -175,16 +175,26 @@ const feedContent = (lines: readonly FeedLine[]): StyledText => {
 };
 
 export const runChrome = async (options: TableOptions): Promise<void> => {
+	// The renderer is the surface's: the CLI mints one over the local TTY, the
+	// Door lends the one it owns for the session (ADR-0016). The table only
+	// draws on it — it never starts a render loop of its own (ADR-0012) and
+	// never destroys it: it detaches its renderables and resolves.
+	const { renderer } = options;
+	let done = false;
 	let finish: (() => void) | undefined;
-	// oxlint-disable-next-line promise/avoid-new -- OpenTUI announces teardown through a destroy event.
+	// oxlint-disable-next-line promise/avoid-new -- a screen's exit is an event, not a promise-returning API.
 	const exited = new Promise<void>((resolve) => {
 		finish = resolve;
 	});
-	// The renderer is the caller's: the CLI mints one over the local TTY, the
-	// Door hands over the one it owns for the session. The table only draws on it
-	// — it never starts a render loop of its own (ADR-0012).
-	const renderer = await options.createRenderer(options.session);
-	renderer.on(CliRenderEvents.DESTROY, () => finish?.());
+	const settle = (): void => {
+		done = true;
+		finish?.();
+	};
+	// The backstop for exits the table does not decide: the surface tearing the
+	// session down (or Ctrl+C, which destroys the renderer) must still resolve
+	// this screen.
+	const onRendererDestroy = (): void => settle();
+	renderer.on(CliRenderEvents.DESTROY, onRendererDestroy);
 	const fold = createTableFold(
 		options.entry as ViewEntry<unknown, unknown, unknown>,
 		options.gameId,
@@ -401,11 +411,6 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		);
 		sidebarText.content = ["Seats", seats, "", ...panelLines].join("\n");
 	};
-	const teardown = (): void => {
-		if (!renderer.isDestroyed) {
-			renderer.destroy();
-		}
-	};
 	const showNotice = (message: string): void => {
 		idleStatusToken = "muted";
 		idleStatusContent = message;
@@ -456,7 +461,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		input.value = "";
 		const parsed = parseInput(value);
 		if (parsed.kind === "quit") {
-			teardown();
+			settle();
 			return;
 		}
 		if (parsed.kind === "unknown-command") {
@@ -516,7 +521,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 		renderMap();
 	};
-	renderer.keyInput.on("keypress", (key: KeyEvent) => {
+	const onKeypress = (key: KeyEvent): void => {
 		if (key.name === "tab") {
 			key.preventDefault();
 			key.stopPropagation();
@@ -562,12 +567,13 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		) {
 			renderSidebar();
 		}
-	});
+	};
+	renderer.keyInput.on("keypress", onKeypress);
 	const unsubscribeResize = options.session.onResize(({ columns, rows }) => {
 		renderer.resize(columns, rows);
 		renderMap();
 	});
-	const unsubscribeClose = options.session.onClose(teardown);
+	const unsubscribeClose = options.session.onClose(settle);
 	// The hold is the caller's honesty channel: a line to show while the table
 	// waits on something outside the terminal, and a promise that ends it.
 	const unsubscribeHold = options.hold?.onNotice((message) => {
@@ -575,7 +581,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		idleStatusContent = message;
 		renderStatus();
 	});
-	options.hold?.until.then(teardown, teardown);
+	options.hold?.until.then(settle, settle);
 	feedText.content = feedContent(lines);
 	renderSidebar();
 	renderMap();
@@ -583,9 +589,10 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 
 	const iterator = options.store.stream(1)[Symbol.asyncIterator]();
 	const showFeed = (line: FeedLine | null): void => {
-		// The stream can hand over one more envelope after teardown; drawing on a
-		// destroyed renderer throws out of the loop instead of ending it.
-		if (renderer.isDestroyed) {
+		// The stream can hand over one more envelope after this screen exited;
+		// drawing on a detached tree (or a renderer the surface already tore
+		// down) throws out of the loop instead of ending it.
+		if (done || renderer.isDestroyed) {
 			return;
 		}
 		if (line !== null) {
@@ -599,7 +606,8 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	void (async () => {
 		let replaying = true;
 		let pending: Promise<IteratorResult<Envelope>> | null = null;
-		while (!renderer.isDestroyed) {
+		// oxlint-disable-next-line eslint/no-unmodified-loop-condition -- `settle` flips `done` from the exit paths that run between this loop's awaits.
+		while (!done) {
 			pending ??= iterator.next();
 			if (replaying) {
 				// oxlint-disable-next-line eslint/no-await-in-loop -- the replay boundary is the first quiet gap in this stream, which only sequential waiting can see.
@@ -613,7 +621,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			// oxlint-disable-next-line eslint/no-await-in-loop -- each stream envelope must be consumed in order.
 			const next = await pending;
 			pending = null;
-			if (next.done || renderer.isDestroyed) {
+			if (next.done || done) {
 				break;
 			}
 			showFeed(fold.apply(next.value));
@@ -624,4 +632,10 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	unsubscribeClose();
 	unsubscribeHold?.();
 	void iterator.return?.();
+	renderer.keyInput.off("keypress", onKeypress);
+	renderer.off(CliRenderEvents.DESTROY, onRendererDestroy);
+	// Borrowed, not owned: detach this screen's renderables and hand the
+	// renderer back intact (ADR-0016). Destroy is idempotent, so a surface
+	// that already tore the renderer down costs nothing here.
+	root.destroyRecursively();
 };

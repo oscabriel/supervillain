@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import type { CliRenderer } from "@opentui/core";
 import type { GatewayRegistry } from "@supervillain/core";
 import {
 	apply as drawSteelApply,
@@ -285,6 +286,10 @@ const endAfterChannelClose = (
 	stream.once("close", done);
 };
 
+/** Clear and home — the canvas a plain-text interlude between two screens
+ * needs, now that one renderer's alt-screen spans the whole session. */
+const CLEAR_SCREEN = "\u001B[2J\u001B[H";
+
 const awaitKeypress = (stream: SshChannelStream): Promise<void> =>
 	// oxlint-disable-next-line promise/avoid-new -- a single keypress is an event, not a promise-returning API.
 	new Promise((resolve) => {
@@ -297,6 +302,9 @@ interface RoomEntryContext {
 	/** The live half — which Host pipe currently carries a name (ADR-0012). */
 	readonly pipes: HostPipeServer;
 	readonly identity: SessionIdentity;
+	/** The one renderer this session draws on, minted and destroyed by
+	 * `serveShell` and borrowed by every lobby and table round (ADR-0016). */
+	readonly renderer: CliRenderer;
 	/** The offline tripwire's counters (NQ-15). Counts only. */
 	readonly metrics: OfflineMetrics;
 	/** The protective caps this door enforces (NQ-10). */
@@ -334,6 +342,10 @@ const runRoomTable = async (
 		// The adoption code is bound to this guest actor and lives seven days in
 		// the gateway's own store, so it survives a restart (ADR-0005/0013).
 		const minted = context.registry.mintAdoptionCode(assumed.actor);
+		// The box is plain text between two screens on the session's one
+		// renderer (ADR-0016), so the previous screen's frame is still on the
+		// alt-screen beneath it — clear first or the box lands mid-frame.
+		stream.write(CLEAR_SCREEN);
 		stream.write(
 			guestUpgradeBox("accepted" in minted ? minted.code : undefined)
 		);
@@ -347,12 +359,13 @@ const runRoomTable = async (
 		return { kind: "failed", message: claim.message };
 	}
 	await runTable({
-		// One seat's renderer, drawn on demand: an ambient render loop here is
-		// a cost paid once per seat (ADR-0012, NQ-14).
-		createRenderer: createSessionRenderer,
 		entry,
 		gameId: info.gameId,
 		hold,
+		// The session's one renderer, borrowed for this round (ADR-0016) and
+		// drawn on demand: an ambient render loop here is a cost paid once per
+		// seat (ADR-0012, NQ-14).
+		renderer: context.renderer,
 		roomLabel: info.label,
 		session: sessionForActor(connection, assumed.actor),
 		store,
@@ -519,9 +532,9 @@ const lobbyRound = async (
 	try {
 		outcome = await runLobby({
 			connection,
-			createRenderer: createSessionRenderer,
 			keyed: options.context.identity.keyed,
 			notice,
+			renderer: options.context.renderer,
 			sshHost: options.sshHost,
 		});
 	} finally {
@@ -564,6 +577,69 @@ interface RoomServices {
 	readonly gracePollMs?: number;
 }
 
+/** Every lobby and table round of one session, on the session's one borrowed
+ * renderer. Returns what the door should say on the way out; the caller owns
+ * the renderer's teardown and the goodbye's delivery. */
+const shellRounds = async (
+	connection: SshConnection,
+	stream: SshChannelStream,
+	renderer: CliRenderer,
+	options: {
+		readonly roomName: string;
+		readonly rooms: RoomServices;
+		readonly identity: SessionIdentity;
+		readonly sshHost: string;
+		readonly limits: LobbyLimits;
+	}
+): Promise<{ readonly message?: string; readonly status: number }> => {
+	const context: RoomEntryContext = {
+		graceMs: options.rooms.graceMs,
+		gracePollMs: options.rooms.gracePollMs,
+		identity: options.identity,
+		limits: options.rooms.limits,
+		metrics: options.rooms.metrics,
+		pipes: options.rooms.pipes,
+		registry: options.rooms.registry,
+		renderer,
+	};
+	// A name that resolves to a live table goes straight to the table. The lobby
+	// is where you land when there is nothing to land in — which is also where
+	// bare `ssh <gateway>` lands, since an SSH client with no user sends the
+	// local account name and that is indistinguishable from a typed room name.
+	const arrival = await enterRoom(
+		connection,
+		stream,
+		options.roomName,
+		context
+	);
+	if (arrival.kind === "entered") {
+		return { status: 0 };
+	}
+	if (arrival.kind === "failed") {
+		return { message: arrival.message, status: 1 };
+	}
+	let expiry: LobbyExpiry | undefined;
+	const deadlines = createLobbyDeadlines({
+		limits: options.limits,
+		onExpire: (reason) => {
+			expiry = reason;
+			connection.close();
+		},
+	});
+	const round = {
+		context,
+		deadlines,
+		expired: (): LobbyExpiry | undefined => expiry,
+		sshHost: options.sshHost,
+	};
+	let step: LobbyStep = { kind: "again", notice: arrival.notice };
+	while (step.kind === "again") {
+		// oxlint-disable-next-line eslint/no-await-in-loop -- the lobby is a held session: one visit finishes before the next room entry starts.
+		step = await lobbyRound(connection, stream, step.notice, round);
+	}
+	return { message: step.message, status: 0 };
+};
+
 const serveShell = async (
 	connection: SshConnection,
 	stream: SshChannelStream,
@@ -586,53 +662,24 @@ const serveShell = async (
 		);
 		await awaitKeypress(stream);
 	}
-	const context: RoomEntryContext = {
-		graceMs: options.rooms.graceMs,
-		gracePollMs: options.rooms.gracePollMs,
-		identity: options.identity,
-		limits: options.rooms.limits,
-		metrics: options.rooms.metrics,
-		pipes: options.rooms.pipes,
-		registry: options.rooms.registry,
-	};
-	// A name that resolves to a live table goes straight to the table. The lobby
-	// is where you land when there is nothing to land in — which is also where
-	// bare `ssh <gateway>` lands, since an SSH client with no user sends the
-	// local account name and that is indistinguishable from a typed room name.
-	const arrival = await enterRoom(
-		connection,
-		stream,
-		options.roomName,
-		context
-	);
-	if (arrival.kind === "entered") {
-		closeChannel(stream, 0);
-		return;
+	// The surface's half of ADR-0016: one renderer per session, minted here,
+	// borrowed by every lobby and table round, destroyed here — before the
+	// goodbye, so the farewell lands on the restored screen, not the
+	// alt-screen the destroy is about to tear down.
+	const renderer = await createSessionRenderer(connection);
+	let goodbye: { readonly message?: string; readonly status: number };
+	try {
+		goodbye = await shellRounds(connection, stream, renderer, options);
+	} finally {
+		if (!renderer.isDestroyed) {
+			renderer.destroy();
+		}
 	}
-	if (arrival.kind === "failed") {
-		farewell(stream, arrival.message, 1);
-		return;
+	if (goodbye.message === undefined) {
+		closeChannel(stream, goodbye.status);
+	} else {
+		farewell(stream, goodbye.message, goodbye.status);
 	}
-	let expiry: LobbyExpiry | undefined;
-	const deadlines = createLobbyDeadlines({
-		limits: options.limits,
-		onExpire: (reason) => {
-			expiry = reason;
-			connection.close();
-		},
-	});
-	const round = {
-		context,
-		deadlines,
-		expired: (): LobbyExpiry | undefined => expiry,
-		sshHost: options.sshHost,
-	};
-	let step: LobbyStep = { kind: "again", notice: arrival.notice };
-	while (step.kind === "again") {
-		// oxlint-disable-next-line eslint/no-await-in-loop -- the lobby is a held session: one visit finishes before the next room entry starts.
-		step = await lobbyRound(connection, stream, step.notice, round);
-	}
-	farewell(stream, step.message);
 };
 
 const handleConnection = (

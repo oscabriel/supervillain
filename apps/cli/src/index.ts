@@ -966,14 +966,23 @@ const create = async (args: readonly string[]): Promise<number> => {
 	);
 	await runIntake(campaignFolder, gameId, actor, store);
 	const session = attachLocalTty({ actor });
-	await runTable({
-		createRenderer: createLocalTtyRenderer,
-		entry,
-		gameId,
-		roomLabel,
-		session,
-		store,
-	});
+	// The surface's half of ADR-0016: this process owns the local TTY, so it
+	// mints the one renderer, lends it to the table, and destroys it after.
+	const renderer = await createLocalTtyRenderer(session);
+	try {
+		await runTable({
+			entry,
+			gameId,
+			renderer,
+			roomLabel,
+			session,
+			store,
+		});
+	} finally {
+		if (!renderer.isDestroyed) {
+			renderer.destroy();
+		}
+	}
 	await pipe?.close();
 	await server.close();
 	await listener.close();

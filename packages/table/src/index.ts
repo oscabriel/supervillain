@@ -1,8 +1,8 @@
+import type { CliRenderer } from "@opentui/core";
 import type { RoomStore, ViewEntry } from "@supervillain/core";
 import type { Session } from "@supervillain/session";
 
 import { runChrome } from "./chrome.js";
-import type { TableRendererFactory } from "./renderer.js";
 
 /**
  * What holds a table open, and what ends it from outside the terminal. The
@@ -25,9 +25,10 @@ export interface TableOptions {
 	readonly entry: ViewEntry<unknown, unknown, unknown>;
 	readonly roomLabel: string;
 	readonly gameId: string;
-	/** Supplies the renderer this table draws on — and with it the decision of
-	 * whether a render loop runs at all. */
-	readonly createRenderer: TableRendererFactory;
+	/** The surface's renderer, borrowed for this table (ADR-0016). The table
+	 * adds its renderables, detaches them on the way out, and never destroys
+	 * the renderer — its lifetime is the surface's. */
+	readonly renderer: CliRenderer;
 	/** An outside signal that may notice at, and close, this table. */
 	readonly hold?: TableHold;
 }

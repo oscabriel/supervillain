@@ -118,10 +118,10 @@ const mountTable = async (
 	hold?: TableHold
 ): Promise<{ readonly exited: Promise<void> }> => {
 	const exited = runChrome({
-		createRenderer: () => setup.renderer,
 		entry,
 		gameId: "fake",
 		hold,
+		renderer: setup.renderer,
 		roomLabel: "the table",
 		session: probe.session,
 		store,
@@ -216,10 +216,14 @@ describe("table renderer injection", () => {
 		end?.();
 		await exited;
 
-		expect(setup.renderer.isDestroyed).toBe(true);
+		// The hold ended the screen, not the renderer: the surface owns that
+		// lifetime (ADR-0016), and the next screen finds the root clean.
+		expect(setup.renderer.isDestroyed).toBe(false);
+		expect(setup.renderer.root.getChildren()).toHaveLength(0);
+		setup.renderer.destroy();
 	});
 
-	test("tears the renderer down when the session closes", async () => {
+	test("resolves when the session closes and leaves the renderer alive", async () => {
 		const setup = await createTestRenderer({ height: 12, width: 60 });
 		const probe = fakeSession();
 		const store = fakeStore();
@@ -228,6 +232,8 @@ describe("table renderer injection", () => {
 		probe.session.close();
 		await exited;
 
-		expect(setup.renderer.isDestroyed).toBe(true);
+		expect(setup.renderer.isDestroyed).toBe(false);
+		expect(setup.renderer.root.getChildren()).toHaveLength(0);
+		setup.renderer.destroy();
 	});
 });

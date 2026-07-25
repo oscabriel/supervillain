@@ -131,9 +131,9 @@ const mount = async (
 	store: RoomStore
 ): Promise<{ readonly exited: Promise<void> }> => {
 	const exited = runChrome({
-		createRenderer: () => setup.renderer,
 		entry,
 		gameId: "fake",
+		renderer: setup.renderer,
 		roomLabel: "the table",
 		session: fakeSession({} as NodeJS.WriteStream, { columns: 60, rows: 24 }),
 		store,
