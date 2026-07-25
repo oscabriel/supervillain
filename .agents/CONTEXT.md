@@ -1,6 +1,6 @@
 # supervillain
 
-Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms over SSH and iroh; per-game modules (Draw Steel first) plug in behind a fixed seam. This glossary is the ubiquitous language — definitions distilled from the wayfinder decisions.
+Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms over SSH; per-game modules (Draw Steel first) plug in behind a fixed seam. This glossary is the ubiquitous language — definitions distilled from the wayfinder decisions.
 
 ## The table
 
@@ -12,9 +12,11 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **GM**: The person with authority over a room; every supported game has one. The GM's machine hosts the room by default. _Avoid_: mastermind (rejected theming), dungeon master, admin
 
-**Door**: A way for a player to reach a room. v0 ships two: `ssh <room>@supervillain.app` through the gateway, and direct `supervillain join` over iroh. Both are the same RoomStore-client seam. _Avoid_: entry point (reserved for game-module facets), login method
+**Door**: A way for a player to reach a room. v0 ships one: `ssh <room>@supervillain.app` through the gateway; `supervillain join` is its thin CLI front (an ordinary SSH session with the CLI-managed key) _(correction 2026-07-24, [#54](https://github.com/oscabriel/supervillain/issues/54), ADR-0012: the direct-iroh second door is deleted; a native local-render join is trigger-gated future work)_. _Avoid_: entry point (reserved for game-module facets), login method
 
 **Campaign folder**: A folder of plain, hand-editable files on the GM's disk — the JSONL event log plus sidecar character files. The canonical durable data; portability is moving the folder. _Avoid_: save file, database, workspace
+
+**Agent surface**: The property that the campaign folder's plain files are directly operable by any coding agent the user points at them — by construction, not by feature. Agents edit under the GM's hand-edit contract (between sessions, validated by `content`/core validators); the log is read-only to everything but the host; replay never reads files, so agent edits can't corrupt history. Never paywalled — paid AI means features we operate. _Avoid_: AI integration, agent API (there is no separate API — the file is the API)
 
 **Guest**: A keyless player identity. Guest progress is adopted on upgrade by appending a linking event — historical attribution stays immutable while progress becomes reachable. _Avoid_: anonymous user, temp account
 
@@ -30,13 +32,13 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 ## Identity
 
-**Key-as-account**: The identity model: an ed25519 public key is the account everywhere — SSH key fingerprint for players, iroh NodeId for GM/CLI, passkey for the future browser. No signup. _Avoid_: user account, profile, registration
+**Key-as-account**: The identity model: an ed25519 public key is the account everywhere — SSH key fingerprint for players, a linked per-machine host key for the GM's hosting machine, passkey for the future browser. No signup; identity is the equivalence class of linked keys, and the backend's internal per-class id is never user-facing _(correction 2026-07-24, [#54](https://github.com/oscabriel/supervillain/issues/54), ADR-0012: NodeId died with iroh; the pillar survives verbatim — key-as-**address** is the lost half and copy must never imply it)_. _Avoid_: user account, profile, registration
 
 **Key linking**: Binding a second key to the same identity via a one-time code (v1). GM roaming falls out of it. _Avoid_: device sync, multi-login
 
 **Capability URL**: An unguessable share link that _is_ the permission for a published web artifact; revocable by the owner. The web access model at launch — no web accounts. _Avoid_: share token, public link, permalink
 
-**Trusted stamper**: A connection identity a room host allows to submit commands on behalf of other actors — in v0, exactly the gateway the GM registered with. Everyone else remains bound to connection-equals-actor (ADR-0002/0004). _Avoid_: proxy auth, impersonation, service account
+**Trusted stamper**: A connection identity a room host allows to submit commands on behalf of other actors — in v0, exactly the gateway the GM registered with. Everyone else remains bound to connection-equals-actor (ADR-0001/0004). _Avoid_: proxy auth, impersonation, service account
 
 ## Events & authority
 
@@ -57,6 +59,8 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 **Rejection**: `decide`'s refusal result. The module supplies the message; core chrome renders it as ephemeral feedback to the issuing client — the loop closes in core. _Avoid_: error, exception, validation failure
 
 **Replay**: Refolding the log to reproduce state, byte-identical. Replay never reads files or content — everything computed (dice, derived stat blocks) already lives in payloads. _Avoid_: rehydration, state recovery
+
+**Fold posture**: The pinned contract for events a fold can't cleanly apply (ADR-0010). Two tiers, keyed on type recognition: **unknown** (unrecognized type — silent skip, forward compat) vs **known-invalid** (recognized type, violated payload shape or fold invariant). Writers halt, readers tolerate: the host refuses to open on either tier; render folds never halt — unknown skips silently, known-invalid skips loudly (a warning FeedLine with seq/type/reason). Shapes a released host ever wrote stay valid forever via upgrade-on-read. _Avoid_: error handling, validation policy, fault tolerance
 
 ## Game modules
 
@@ -80,9 +84,11 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 ## Infrastructure
 
-**Gateway**: The stateless doorway on our servers: SSH session adapter, name→NodeId registry, iroh proxy. It folds `apply` over streamed events to feed views; it never imports `decide` and never holds the campaign folder. _Avoid_: server, host (reserved), relay (an iroh concept)
+**Gateway**: The stateless doorway on our servers: SSH session adapter, the name registry (name→owner identity, durable; name→live pipe, memory), and the broker the Host dials out to (one shared per-Room fold, per-session views). It folds `apply` over streamed events to feed views; it never imports `decide` and never holds the campaign folder. "Stateless" means **no durable game state** — the registry, host key, and presentation prefs are durable; game-derived state is memory-only and game content never enters logs or telemetry _(correction 2026-07-22, [#44](https://github.com/oscabriel/supervillain/issues/44), ADR-0008)_ _(correction 2026-07-24, [#54](https://github.com/oscabriel/supervillain/issues/54), ADR-0012: iroh proxy → outbound broker; also runs self-hosted — the same MIT binary)_. _Avoid_: server, host (reserved), relay
 
-**RoomStore**: The seam with one interface and two adapters — in-process store (GM-hosted) or iroh client — keeping both hosting modes on one reducer and one codebase. _Avoid_: room database, state store
+**Lobby**: The gateway's first-contact TUI, served on bare `ssh supervillain.app` and as the chrome for unknown/offline-room arrivals: splash (pixel-glyph wordmark), interactive join, become-a-GM screen, settings. Pre-identity for guests — a `guest:` actor mints only at room entry. Never creates rooms; no game imports (ADR-0008). _Avoid_: storefront, landing page, menu (unqualified); "lobby" for a room (a room is a live session)
+
+**RoomStore**: The seam with one interface and two adapters — in-process store (GM-hosted) or broker client over `transport-ws` — keeping both hosting modes on one reducer and one codebase _(correction 2026-07-24, [#54](https://github.com/oscabriel/supervillain/issues/54), ADR-0012: the remote adapter was the iroh client; `room-wire` is transport-neutral, so a returning transport is another adapter)_. _Avoid_: room database, state store
 
 **Session**: The transport-neutral contract between a connected terminal and the table, with two genuine adapters from day one: the gateway's SSH adapter and the CLI's local-TTY attach. Never typed to ssh2. _Avoid_: connection, socket, room (a session attaches to a room)
 
@@ -90,7 +96,11 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Publish**: Snapshot push: `supervillain publish` copies an artifact's data out of the campaign folder to the web backend, minting a capability URL. Re-publish updates; revoke deletes. _Avoid_: share, upload, sync
 
-**Artifact**: A publishable snapshot of campaign data — character sheets, session logs, and battle maps (terrain-only) at launch. _Avoid_: document, export, page
+**Artifact**: A publishable snapshot of campaign data — character sheets, session logs, and battle maps (terrain-only) at launch. Keyed by (owner identity, type, name); its capability URL is stable across re-publishes and dies permanently on revoke. _Avoid_: document, export, page
+
+**Snapshot document**: The self-describing, core-owned, integer-versioned payload `supervillain publish` pushes — semantic sections/fields (sheets), FeedLine-style entries (logs), legend + grid (maps) — built by the CLI from its own game packages so web artifact pages import zero game code. The backend renders every version it ever accepted. _Avoid_: export format, render output, JSON blob
+
+**Card section**: The core-owned part of a snapshot document (title, description, a few label/value pairs, optional glyph + accent hint, grid for maps) that OG card generation renders — keeping unfurl images as game-blind as the pages. OG image URLs derive from the capability token and are revoked with it. _Avoid_: metadata, preview data
 
 ## Process
 

@@ -27,7 +27,7 @@ export interface ServeRoomStoreOptions {
 	readonly info: RoomInfo;
 	/** Connection identities (64 lowercase hex chars) allowed to submit
 	 * commands on behalf of actors other than themselves — the trusted
-	 * gateway stamping proxied players (ADR-0004). */
+	 * gateway stamping proxied players (ADR-0003). */
 	readonly trustedStampers?: readonly string[];
 }
 
@@ -595,7 +595,7 @@ export const connectRoomStore = async (
 	}
 };
 
-// --- room registration: how a GM-hosted room gets a name at the gateway (ADR-0004) ---
+// --- room registration: how a GM-hosted room gets a name at the gateway (ADR-0003) ---
 
 const ROOM_NAME = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/u;
 

@@ -3,6 +3,7 @@
 	"version": "0.0.0",
 	"private": true,
 	"description": "key-as-account primitives",
+	"license": "MIT",
 	"files": [
 		"dist"
 	],

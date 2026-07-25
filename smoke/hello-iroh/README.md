@@ -28,7 +28,7 @@ The workflow builds on native runners, rather than cross-compiling native addons
 | linux-arm64 | `ubuntu-24.04-arm` | `linux-arm64.ts` |
 | macos-arm64 | `macos-latest`     | `macos-arm64.ts` |
 
-macos-x64 is not in the matrix: `@number0/iroh@1.0.0` neither lists nor publishes a darwin-x64 native package (npm only has an old `@number0/iroh-darwin-x64@0.22.1-test1`, not a valid substitute for the pinned 1.0.0 API), and the triple was dropped from the v0 GM platform set — see `.agents/adr/0001-drop-macos-x64-from-v0-gm-platforms.md`. Do not substitute an older platform package for a missing same-version artifact.
+macos-x64 is not in the matrix: `@number0/iroh@1.0.0` neither lists nor publishes a darwin-x64 native package (npm only has an old `@number0/iroh-darwin-x64@0.22.1-test1`, not a valid substitute for the pinned 1.0.0 API), and the triple was dropped from the v0 GM platform set (that drop's ADR was deleted when iroh left the product — see `.agents/adr/0012-outbound-only-hybrid-drop-iroh-host-dials-out.md`; macos-x64 returns with the pivot). Do not substitute an older platform package for a missing same-version artifact.
 
 ## Adoption by `packages/transport-iroh`
 

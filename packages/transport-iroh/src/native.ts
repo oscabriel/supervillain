@@ -34,6 +34,6 @@ export const loadIrohNative = (): IrohNative => {
 	}
 
 	throw new Error(
-		`Unsupported iroh platform ${process.platform}-${process.arch}; ADR-0001 supports linux-x64, linux-arm64, and macos-arm64`
+		`Unsupported iroh platform ${process.platform}-${process.arch}; iroh builds exist for linux-x64, linux-arm64, and macos-arm64 only`
 	);
 };

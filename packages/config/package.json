@@ -3,6 +3,7 @@
 	"version": "0.0.0",
 	"private": true,
 	"description": "shared strict TypeScript configuration",
+	"license": "MIT",
 	"files": [
 		"dist",
 		"tsconfig.base.json"

@@ -1,0 +1,60 @@
+{
+	"package": "@supervillain/draw-steel",
+	"convention": "ADR-0011 packaged-data provenance (.agents/adr/0011-packaged-data-provenance-convention.md)",
+	"entries": [
+		{
+			"kind": "game-data",
+			"data": [
+				{ "value": "Human", "note": "ancestry name (template default)" },
+				{ "value": "Tactician", "note": "class name (template default)" },
+				{ "value": "Focus", "note": "heroic resource name (template default)" },
+				{ "value": "Sword and Board", "note": "kit name (template default)" },
+				{ "value": "Might", "note": "characteristic display name" },
+				{ "value": "Agility", "note": "characteristic display name" },
+				{ "value": "Reason", "note": "characteristic display name" },
+				{ "value": "Intuition", "note": "characteristic display name" },
+				{ "value": "Presence", "note": "characteristic display name" },
+				{ "value": "tier 1", "note": "power roll tier label" },
+				{ "value": "tier 2", "note": "power roll tier label" },
+				{ "value": "tier 3", "note": "power roll tier label" },
+				{
+					"value": "stamina: 21",
+					"note": "Tactician template starting stamina"
+				},
+				{
+					"value": "recoveries: 8",
+					"note": "Tactician template starting recoveries"
+				}
+			],
+			"work": "Draw Steel: Heroes",
+			"version": "unspecified (work-level citation per ADR-0011)",
+			"author": "MCDM Productions, LLC",
+			"license": {
+				"name": "DRAW STEEL Creator License",
+				"url": "https://mcdm.gg/DS-license"
+			},
+			"sourceUrl": "https://www.mcdmproductions.com/draw-steel-creator-license",
+			"accessed": "2026-07-22",
+			"notes": "Source work attested in-session for #48 (2026-07-22). Enumerated-document boundary per .agents/wayfinder/assets/draw-steel-license.md."
+		},
+		{
+			"kind": "license-text",
+			"data": [
+				{
+					"value": "supervillain is an independent product published under the DRAW STEEL Creator License and is not affiliated with MCDM Productions, LLC. DRAW STEEL © 2026 MCDM Productions, LLC.",
+					"note": "mandatory independence notice, verbatim"
+				}
+			],
+			"work": "DRAW STEEL Creator License",
+			"version": "Last Edit: June 9, 2026",
+			"author": "MCDM Productions, LLC",
+			"license": {
+				"name": "DRAW STEEL Creator License",
+				"url": "https://mcdm.gg/DS-license"
+			},
+			"sourceUrl": "https://www.mcdmproductions.com/draw-steel-creator-license",
+			"accessed": "2026-07-11",
+			"notes": "License-mandated verbatim text; cited to the license itself, not an enumerated document."
+		}
+	]
+}
