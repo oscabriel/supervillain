@@ -15,6 +15,7 @@
 		"compile:linux-x64": "bun build --compile apps/cli/src/compile/linux-x64.ts --outfile dist-bin/supervillain",
 		"compile:linux-arm64": "bun build --compile apps/cli/src/compile/linux-arm64.ts --outfile dist-bin/supervillain",
 		"compile:macos-arm64": "bun build --compile apps/cli/src/compile/macos-arm64.ts --outfile dist-bin/supervillain",
+		"compile:macos-x64": "bun build --compile apps/cli/src/compile/macos-x64.ts --outfile dist-bin/supervillain",
 		"check": "ultracite check",
 		"fix": "ultracite fix",
 		"depcruise": "packages/config/node_modules/.bin/depcruise --config packages/config/dependency-cruiser.cjs apps packages --output-type err-long",

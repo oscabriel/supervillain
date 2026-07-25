@@ -50,6 +50,13 @@ afterEach(async () => {
 });
 
 describe("supervillain noun commands", () => {
+	test("--version prints the CLI version and exits 0", async () => {
+		const result = await runCli(["--version"]);
+		expect(result.code).toBe(0);
+		expect(result.error).toBe("");
+		expect(result.output).toMatch(/^\d+\.\d+\.\d+\n$/u);
+	});
+
 	test("creates, validates, and never overwrites a character file", async () => {
 		const campaign = await makeCampaign();
 		const created = await runCli(["character", "new", campaign, "Coda Prime!"]);
