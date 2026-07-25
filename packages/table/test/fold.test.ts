@@ -125,6 +125,77 @@ describe("createTableFold", () => {
 		expect(fold.apply(envelope("core.future", {}))).toBeNull();
 	});
 
+	test("folds the map from the log alone and lets the last load win", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		expect(fold.map()).toBeNull();
+		expect(
+			fold.apply(
+				envelope(
+					"core.map-loaded",
+					{
+						legend: { "#": "wall", ".": "floor" },
+						name: "Hall",
+						rows: ["#.#"],
+					},
+					"actor-key-long",
+					2
+				)
+			)
+		).toEqual({ runs: [{ text: "map loaded · Hall", token: "muted" }] });
+		expect(fold.map()).toEqual({
+			legend: { "#": "wall", ".": "floor" },
+			name: "Hall",
+			rows: ["#.#"],
+		});
+		fold.apply(
+			envelope(
+				"core.map-loaded",
+				{ legend: { o: "floor" }, name: "Bog", rows: ["oo", "oo"] },
+				"actor-key-long",
+				3
+			)
+		);
+		expect(fold.map()).toEqual({
+			legend: { o: "floor" },
+			name: "Bog",
+			rows: ["oo", "oo"],
+		});
+		expect(
+			fold.apply(envelope("core.map-cleared", {}, "actor-key-long", 4))
+		).toEqual({ runs: [{ text: "map cleared", token: "muted" }] });
+		expect(fold.map()).toBeNull();
+	});
+
+	test("skips a known-invalid map payload loudly without halting", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		expect(
+			fold.apply(
+				envelope(
+					"core.map-loaded",
+					{ legend: { ".": "floor" }, name: "Hall", rows: ["..", "."] },
+					"actor-key-long",
+					7
+				)
+			)
+		).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #7 (core.map-loaded): map payload is not a valid map",
+					token: "danger",
+				},
+			],
+		});
+		expect(fold.map()).toBeNull();
+		expect(
+			fold.apply(envelope("core.chat-posted", { text: "still here" }, "a", 8))
+		).toEqual({
+			runs: [
+				{ text: "a: ", token: "accent" },
+				{ text: "still here", token: "primary" },
+			],
+		});
+	});
+
 	test("applies game envelopes before rendering and shortens unknown actors", () => {
 		const fold = createTableFold(entry, "game", "viewer-key");
 		expect(

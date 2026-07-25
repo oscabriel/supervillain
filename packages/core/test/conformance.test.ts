@@ -1,5 +1,4 @@
-import { describe, expect, test } from "bun:test";
-/* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; the runner is the runtime claim. */
+/* oxlint-disable vitest/prefer-importing-vitest-globals -- dual-lane suite: the harness picks the runner. */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,6 +9,7 @@ import type { FakeEvent, FakeState } from "../../games/fake/src/model.js";
 import { view } from "../../games/fake/src/view.js";
 import { RoomHost } from "../../room-host/src/index.js";
 import type { Envelope, HostRegistry, TableView } from "../src/index.js";
+import { describe, expect, test } from "./harness.js";
 
 const table: TableView = {
 	actor: "actor-guest",

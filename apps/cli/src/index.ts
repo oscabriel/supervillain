@@ -5,8 +5,15 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
-import { isRecord } from "@supervillain/core";
+import {
+	isRecord,
+	MAP_DIRECTORY,
+	MAP_FILE_EXTENSION,
+	parseMapFile,
+	validateMapFile,
+} from "@supervillain/core";
 import type {
+	BattleMap,
 	GameContent,
 	GatewayRegistry,
 	HostRegistry,
@@ -51,6 +58,8 @@ const USAGE = `Usage:
   supervillain character new <campaign-folder> <name> [--game <id>]
   supervillain character check <campaign-folder> [file] [--game <id>]
   supervillain character list <campaign-folder> [--game <id>]
+  supervillain map check <campaign-folder> [file]
+  supervillain map list <campaign-folder>
   supervillain campaign info <campaign-folder>
 
   --name registers the room at a gateway so players can ssh in; the gateway
@@ -424,6 +433,198 @@ const character = async (args: readonly string[]): Promise<number> => {
 	}
 };
 
+interface MapFileResult {
+	readonly fileName: string;
+	readonly map?: BattleMap;
+	readonly messages: readonly string[];
+	readonly ok: boolean;
+}
+
+const mapFileNames = async (
+	campaignFolder: string
+): Promise<readonly string[]> => {
+	const directory = path.join(campaignFolder, MAP_DIRECTORY);
+	let entries: Dirent<string>[];
+	try {
+		entries = await readdir(directory, { withFileTypes: true });
+	} catch (error) {
+		if (isNodeError(error) && error.code === "ENOENT") {
+			return [];
+		}
+		throw error;
+	}
+	return entries
+		.filter(
+			(entry) => entry.isFile() && entry.name.endsWith(MAP_FILE_EXTENSION)
+		)
+		.map((entry) => entry.name)
+		.toSorted();
+};
+
+const readMapBytes = async (filePath: string): Promise<Uint8Array | string> => {
+	try {
+		return await readFile(filePath);
+	} catch (error) {
+		if (isNodeError(error) && error.code === "ENOENT") {
+			return "file not found.";
+		}
+		return error instanceof Error ? error.message : String(error);
+	}
+};
+
+const checkMapFile = async (
+	filePath: string,
+	fileName: string
+): Promise<MapFileResult> => {
+	const bytes = await readMapBytes(filePath);
+	if (typeof bytes === "string") {
+		return { fileName, messages: [bytes], ok: false };
+	}
+	const result = validateMapFile(bytes);
+	return result.ok
+		? { fileName, messages: ["ok"], ok: true }
+		: {
+				fileName,
+				messages: result.errors.map((error) => error.message),
+				ok: false,
+			};
+};
+
+const describeMapFile = async (
+	filePath: string,
+	fileName: string
+): Promise<MapFileResult> => {
+	const bytes = await readMapBytes(filePath);
+	if (typeof bytes === "string") {
+		return { fileName, messages: [bytes], ok: false };
+	}
+	const parsed = parseMapFile(bytes);
+	return parsed.ok
+		? { fileName, map: parsed.map, messages: ["ok"], ok: true }
+		: {
+				fileName,
+				messages: parsed.errors.map((error) => error.message),
+				ok: false,
+			};
+};
+
+const resolveMapFile = async (
+	campaignFolder: string,
+	file: string
+): Promise<string> => {
+	try {
+		await access(file);
+		return file;
+	} catch (error) {
+		if (!isNodeError(error) || error.code !== "ENOENT") {
+			throw error;
+		}
+	}
+	const fileName = file.endsWith(MAP_FILE_EXTENSION)
+		? file
+		: `${file}${MAP_FILE_EXTENSION}`;
+	return path.join(campaignFolder, MAP_DIRECTORY, fileName);
+};
+
+const mapCheck = async (
+	campaignFolder: string,
+	file: string | undefined
+): Promise<number> => {
+	let results: readonly MapFileResult[];
+	if (file === undefined) {
+		const fileNames = await mapFileNames(campaignFolder);
+		if (fileNames.length === 0) {
+			console.log("no map files.");
+			return 0;
+		}
+		results = await Promise.all(
+			fileNames.map((fileName) =>
+				checkMapFile(
+					path.join(campaignFolder, MAP_DIRECTORY, fileName),
+					fileName
+				)
+			)
+		);
+	} else {
+		const filePath = await resolveMapFile(campaignFolder, file);
+		results = [await checkMapFile(filePath, path.basename(filePath))];
+	}
+	for (const result of results) {
+		for (const message of result.messages) {
+			console.log(`${result.fileName}: ${message}`);
+		}
+	}
+	return results.every((result) => result.ok) ? 0 : 1;
+};
+
+const mapList = async (campaignFolder: string): Promise<number> => {
+	const fileNames = await mapFileNames(campaignFolder);
+	if (fileNames.length === 0) {
+		console.log("no map files.");
+		return 0;
+	}
+	const results = await Promise.all(
+		fileNames.map((fileName) =>
+			describeMapFile(
+				path.join(campaignFolder, MAP_DIRECTORY, fileName),
+				fileName
+			)
+		)
+	);
+	for (const result of results) {
+		if (result.map === undefined) {
+			console.log(`invalid — ${result.fileName}`);
+			continue;
+		}
+		const width = [...(result.map.rows[0] ?? "")].length;
+		console.log(
+			`${result.map.name} — ${result.fileName} (${width}×${result.map.rows.length})`
+		);
+	}
+	return 0;
+};
+
+const map = async (args: readonly string[]): Promise<number> => {
+	let parsed: ReturnType<typeof parseArgs>;
+	try {
+		parsed = parseArgs({
+			allowPositionals: true,
+			args: [...args],
+			options: {},
+		});
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	const positionals = parsed.positionals.filter(
+		(value): value is string => typeof value === "string"
+	);
+	const [subcommand, campaignFolder, file] = positionals;
+	try {
+		if (subcommand === "check") {
+			if (campaignFolder === undefined || positionals.length > 3) {
+				console.error(
+					"map check requires a campaign folder and optional file."
+				);
+				return 1;
+			}
+			return await mapCheck(campaignFolder, file);
+		}
+		if (subcommand === "list") {
+			if (campaignFolder === undefined || positionals.length !== 2) {
+				console.error("map list requires a campaign folder.");
+				return 1;
+			}
+			return await mapList(campaignFolder);
+		}
+		console.error("map requires check or list.");
+		return 1;
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+};
+
 const campaignInfo = async (campaignFolder: string): Promise<number> => {
 	const roomLog = await readRoomLog(campaignFolder);
 	if (roomLog === null) {
@@ -733,6 +934,9 @@ const main = async (args: readonly string[]): Promise<number> => {
 	}
 	if (verb === "join") {
 		return await join(rest);
+	}
+	if (verb === "map") {
+		return await map(rest);
 	}
 	if (verb === "publish") {
 		console.error("publish arrives with a later release.");

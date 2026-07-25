@@ -18,7 +18,7 @@
 		"check": "ultracite check",
 		"fix": "ultracite fix",
 		"depcruise": "packages/config/node_modules/.bin/depcruise --config packages/config/dependency-cruiser.cjs apps packages --output-type err-long",
-		"test:conformance": "bun test packages/core/test",
+		"test:conformance": "bun run --cwd packages/core test:bun && bun run --cwd packages/core test:node",
 		"test:draw-steel": "bun test packages/games/draw-steel/test",
 		"test:identity": "bun test packages/identity/test",
 		"test:session": "bun test packages/session/test",
