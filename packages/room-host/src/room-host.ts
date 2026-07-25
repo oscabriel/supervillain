@@ -80,7 +80,9 @@ const splitEvent = (
 
 const joinEvent = (envelope: Envelope): unknown => {
 	if (typeof envelope.payload !== "object" || envelope.payload === null) {
-		throw new Error(`Event '${envelope.type}' payload must be an object.`);
+		throw new Error(
+			`Event '${envelope.type}' at line ${envelope.seq} must carry an object payload.`
+		);
 	}
 	return { type: envelope.type, ...envelope.payload };
 };
@@ -89,6 +91,14 @@ const isNodeError = (
 	error: unknown
 ): error is Error & { readonly code: string } =>
 	error instanceof Error && "code" in error && typeof error.code === "string";
+
+/** The authority fold halts on both tiers (ADR-0010): a single writer must
+ * never append on top of state it only partially understood. `seq` is the
+ * JSONL line number, so the message points at the exact offending line. */
+const tooOld = (envelope: Envelope): Error =>
+	new Error(
+		`Log contains unknown event type '${envelope.type}' at line ${envelope.seq} — this host is too old.`
+	);
 
 export class RoomHost {
 	readonly #logPath: string;
@@ -99,6 +109,7 @@ export class RoomHost {
 	readonly #envelopes: Envelope[] = [];
 	readonly #subscribers = new Set<Subscriber>();
 	#authority: AuthorityEntry<unknown, unknown, unknown> | undefined;
+	#grammar: ReadonlySet<string> = new Set();
 	#gameId: string | undefined;
 	#game: unknown;
 	#writeTail: Promise<void> = Promise.resolve();
@@ -232,6 +243,7 @@ export class RoomHost {
 		}
 		this.#gameId = gameId;
 		this.#authority = authority;
+		this.#grammar = new Set(authority.grammar.eventTypes);
 		this.#game = authority.model.init();
 	}
 
@@ -269,6 +281,13 @@ export class RoomHost {
 			const { type, payload } = splitEvent(event);
 			if (type.startsWith("core.")) {
 				throw new Error(`Game '${this.#gameId}' emitted core event '${type}'.`);
+			}
+			// Caught before the write: an event outside the module's own declared
+			// grammar would halt every later replay of this log (ADR-0010).
+			if (!this.#grammar.has(type)) {
+				throw new Error(
+					`Game '${this.#gameId}' emitted event '${type}', which is outside its declared event grammar.`
+				);
 			}
 			envelopes.push({
 				actor,
@@ -431,14 +450,19 @@ export class RoomHost {
 		}
 	}
 
+	// oxlint-disable-next-line eslint/complexity -- the writer fold's branches are the two-tier posture: one arm per recognized core type, then the halt on anything unknown (ADR-0010).
 	#fold(envelope: Envelope): void {
 		if (envelope.type === CORE_ROOM_CREATED) {
 			if (this.#gameId !== undefined) {
-				throw new Error("Log creates the room more than once.");
+				throw new Error(
+					`Log creates the room more than once at line ${envelope.seq}.`
+				);
 			}
 			const payload = envelope.payload as Partial<RoomCreatedPayload>;
 			if (typeof payload.gameId !== "string") {
-				throw new TypeError("Room creation event has no game id.");
+				throw new TypeError(
+					`Room creation event at line ${envelope.seq} has no game id.`
+				);
 			}
 			this.#bind(payload.gameId);
 			return;
@@ -446,14 +470,18 @@ export class RoomHost {
 		if (envelope.type === CORE_SEAT_CLAIMED) {
 			const payload = envelope.payload as Partial<SeatClaimedPayload>;
 			if (typeof payload.seatId !== "string") {
-				throw new TypeError("Seat claim event has no seat id.");
+				throw new TypeError(
+					`Seat claim event at line ${envelope.seq} has no seat id.`
+				);
 			}
 			if (this.#table.seats.some((seat) => seat.id === payload.seatId)) {
-				throw new Error(`Log claims seat '${payload.seatId}' more than once.`);
+				throw new Error(
+					`Log claims seat '${payload.seatId}' more than once at line ${envelope.seq}.`
+				);
 			}
 			if (this.#table.seats.some((seat) => seat.actor === envelope.actor)) {
 				throw new Error(
-					`Log gives actor '${envelope.actor}' more than one seat.`
+					`Log gives actor '${envelope.actor}' more than one seat at line ${envelope.seq}.`
 				);
 			}
 			(
@@ -476,18 +504,30 @@ export class RoomHost {
 			);
 			if (seat === undefined) {
 				throw new Error(
-					`Log binds a character to unknown seat '${payload.seatId}'.`
+					`Log binds a character to unknown seat '${payload.seatId}' at line ${envelope.seq}.`
 				);
 			}
 			(seat as { characterId: string | null }).characterId =
 				payload.characterId;
 			return;
 		}
-		if (envelope.type.startsWith("core.")) {
+		if (
+			envelope.type === CORE_CHAT_POSTED ||
+			envelope.type === CORE_DICE_ROLLED
+		) {
+			// Recognized, and folds to no host state — the table renders them.
 			return;
 		}
+		if (envelope.type.startsWith("core.")) {
+			throw tooOld(envelope);
+		}
 		if (this.#authority === undefined || this.#gameId === undefined) {
-			throw new Error("Game event appears before room creation.");
+			throw new Error(
+				`Game event at line ${envelope.seq} appears before room creation.`
+			);
+		}
+		if (!this.#grammar.has(envelope.type)) {
+			throw tooOld(envelope);
 		}
 		const apply = this.#authority.model.apply as (
 			state: unknown,

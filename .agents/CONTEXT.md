@@ -62,6 +62,8 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Fold posture**: The pinned contract for events a fold can't cleanly apply (ADR-0010). Two tiers, keyed on type recognition: **unknown** (unrecognized type — silent skip, forward compat) vs **known-invalid** (recognized type, violated payload shape or fold invariant). Writers halt, readers tolerate: the host refuses to open on either tier; render folds never halt — unknown skips silently, known-invalid skips loudly (a warning FeedLine with seq/type/reason). Shapes a released host ever wrote stay valid forever via upgrade-on-read. _Avoid_: error handling, validation policy, fault tolerance
 
+**Event grammar**: A game module's declared list of every event type its fold recognizes, legacy shapes included — the mechanism the writer fold asks to tell _unknown_ from _known-invalid_ on module events (ADR-0010, implemented in [#53](https://github.com/oscabriel/supervillain/issues/53)). It rides on the module's authority entry beside `model` and `authority`; a declaration, not a derivation, so the module's own conformance test is what holds it to `apply`. _Avoid_: event schema, event registry, type whitelist
+
 ## Game modules
 
 **Game module**: A TypeScript package satisfying the core's seam interface — statically imported, compile-time registered. Code, not a plugin: no rules DSL, no dynamic loading. _Avoid_: plugin, extension, game pack

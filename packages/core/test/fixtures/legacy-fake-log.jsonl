@@ -1,0 +1,5 @@
+{"actor":"actor-gm","payload":{"gameId":"fake"},"seq":1,"timestamp":"2026-01-01T00:00:00.000Z","type":"core.room-created"}
+{"actor":"actor-gm","payload":{"seatId":"gm"},"seq":2,"timestamp":"2026-01-01T00:00:01.000Z","type":"core.seat-claimed"}
+{"actor":"actor-gm","payload":{"seatId":"gm"},"seq":3,"timestamp":"2026-01-01T00:00:02.000Z","type":"fake.seat-observed"}
+{"actor":"actor-gm","payload":{"visits":1},"seq":4,"timestamp":"2026-01-01T00:00:03.000Z","type":"fake.visit-counted"}
+{"actor":"actor-gm","payload":{"characterId":"hero","seatId":"gm"},"seq":5,"timestamp":"2026-01-01T00:00:04.000Z","type":"fake.seat-observed"}
