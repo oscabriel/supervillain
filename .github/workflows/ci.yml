@@ -55,9 +55,12 @@ jobs:
           node-version: 24
       - run: bun install --frozen-lockfile
       - run: bun run build
-      - name: Run live direct-door CLI test
+      # The join door end to end: a `create`d Host, a real gateway, and
+      # `supervillain join <name>` arriving over ssh (ADR-0012, NQ-7). Linux
+      # only because it needs an ssh client and a `script`-backed pty.
+      - name: Run the live join-through-gateway test
         if: runner.os == 'Linux'
-        run: bun run test:cli-live
+        run: bun run test:join-live
       - name: Run dual-lane suites with one retry
         run: |
           bun run test:room-host && bun run test:transport-ws && bun run test:room-wire || {

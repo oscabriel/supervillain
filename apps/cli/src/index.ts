@@ -1,6 +1,14 @@
 #!/usr/bin/env bun
+import { spawn } from "node:child_process";
 import type { Dirent } from "node:fs";
-import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+	access,
+	chmod,
+	mkdir,
+	readdir,
+	readFile,
+	writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -38,10 +46,12 @@ import {
 	init as fakeInit,
 } from "@supervillain/fake/model";
 import { view as fakeView } from "@supervillain/fake/view";
-import { loadOrCreateIdentity } from "@supervillain/identity";
+import {
+	loadOrCreateIdentity,
+	openSshPrivateKey,
+} from "@supervillain/identity";
 import { InProcessRoomStore, RoomHost } from "@supervillain/room-host";
 import {
-	connectRoomStore,
 	isValidRoomName,
 	openGatewayLink,
 	openHostPipe,
@@ -51,16 +61,12 @@ import {
 import type { HostPipe, HostPipeAttachment } from "@supervillain/room-wire";
 import { attachLocalTty } from "@supervillain/session";
 import { createLocalTtyRenderer, runTable } from "@supervillain/table";
-import {
-	DialTimeoutError,
-	openWsDialer,
-	SelfDialError,
-} from "@supervillain/transport-ws";
+import { DialTimeoutError, openWsDialer } from "@supervillain/transport-ws";
 import { startWsListener } from "@supervillain/transport-ws/server";
 
 const USAGE = `Usage:
   supervillain create <campaign-folder> [--game <id>] [--name <room> [--gateway <addr>]]
-  supervillain join <room-ref>
+  supervillain join <room> [--gateway <url>] [--ssh-port <port>]
   supervillain publish
   supervillain key show
   supervillain key link [<code>] [--gateway <addr>]
@@ -74,7 +80,13 @@ const USAGE = `Usage:
   --name registers the room at a gateway so players can ssh in; the gateway
   address comes from --gateway or SUPERVILLAIN_GATEWAY. A room name is held by
   an identity, so to host it from a second machine, run 'key link' on the
-  machine that already holds it and redeem the code on the new one.`;
+  machine that already holds it and redeem the code on the new one.
+
+  join opens an ordinary ssh session to that same gateway with this machine's
+  key, and the gateway resolves the room name. It is a convenience wrapper
+  over 'ssh <room>@<gateway>' — nothing more. Joining a room you host yourself
+  is just another session at your own table: your key already holds the GM
+  seat, so you sit back down in it.`;
 
 /** Credentials live in per-machine config, never in the campaign folder — the
  * folder moves between machines and backups; the key must not (ADR-0012). */
@@ -89,6 +101,10 @@ const configFolder = (): string =>
 // liveness check (`supervillain --version`) for platforms where the fuller
 // release smoke can't run.
 const CLI_VERSION = "0.0.0";
+
+/** The SSH default. A hosted gateway answers on it; a self-hosted one usually
+ * does not, which is what --ssh-port is for. */
+const DEFAULT_SSH_PORT = 22;
 
 const hostRegistry: HostRegistry = {
 	get: (gameId) => {
@@ -744,6 +760,31 @@ const runIntake = async (
 	}
 };
 
+/**
+ * What `create` tells the GM once the table is up. There are two honest
+ * answers and the split is ADR-0012's three postures: a registered room has a
+ * door players can reach; a table with no gateway is local to this machine and
+ * says so, because `join` no longer dials anything (NQ-7).
+ */
+const summonNotice = (options: {
+	readonly attachment: HostPipeAttachment | undefined;
+	readonly gatewayAddress: string | undefined;
+	readonly roomName: string | undefined;
+}): string => {
+	const { attachment, gatewayAddress, roomName } = options;
+	if (attachment === undefined || roomName === undefined) {
+		return "your table is live. this machine is the Host.\n\nno room is registered, so this table is local to this machine. pass\n--name <room> --gateway <url> to open a door for players.\n\n";
+	}
+	const atDefaultPort = attachment.sshPort === DEFAULT_SSH_PORT;
+	const portFlag = atDefaultPort ? "" : `-p ${attachment.sshPort} `;
+	const gatewayFlag =
+		gatewayAddress === undefined ? "" : ` --gateway ${gatewayAddress}`;
+	// The pipe URL's port is not the door's, so a non-default door has to be
+	// spelled out for the player too.
+	const sshPortFlag = atDefaultPort ? "" : ` --ssh-port ${attachment.sshPort}`;
+	return `your table is live. summon your players:\n\n  ssh ${portFlag}${roomName}@${attachment.sshHost}\n  supervillain join ${roomName}${gatewayFlag}${sshPortFlag}\n\nthis name is held by your identity. to host it from another machine, run\n'supervillain key link' here and redeem the code there.\n\n`;
+};
+
 const create = async (args: readonly string[]): Promise<number> => {
 	let parsed: ReturnType<typeof parseArgs>;
 	try {
@@ -797,13 +838,14 @@ const create = async (args: readonly string[]): Promise<number> => {
 	const roomName = parsed.values.name;
 	let attachment: HostPipeAttachment | undefined;
 	let pipe: HostPipe | undefined;
+	let gatewayAddress: string | undefined;
 	if (typeof roomName === "string") {
 		if (!isValidRoomName(roomName)) {
 			console.error(ROOM_NAME_RULE);
 			await listener.close();
 			return 1;
 		}
-		const gatewayAddress =
+		gatewayAddress =
 			typeof parsed.values.gateway === "string"
 				? parsed.values.gateway
 				: process.env.SUPERVILLAIN_GATEWAY;
@@ -850,16 +892,12 @@ const create = async (args: readonly string[]): Promise<number> => {
 		info: { gameId, label: roomLabel },
 	});
 	await writeFile(path.join(campaignFolder, "door.txt"), `${listener.url}\n`);
-	const sshDoor =
-		attachment === undefined || typeof roomName !== "string"
-			? ""
-			: `  ssh ${attachment.sshPort === 22 ? "" : `-p ${attachment.sshPort} `}${roomName}@${attachment.sshHost}\n`;
-	const roamingNote =
-		attachment === undefined
-			? ""
-			: "\nthis name is held by your identity. to host it from another machine, run\n'supervillain key link' here and redeem the code there.\n";
 	process.stdout.write(
-		`your table is live. summon your players:\n\n  supervillain join ${listener.url}\n${sshDoor}${roamingNote}\n`
+		summonNotice({
+			attachment,
+			gatewayAddress,
+			roomName: typeof roomName === "string" ? roomName : undefined,
+		})
 	);
 	await runIntake(campaignFolder, gameId, actor, store);
 	const session = attachLocalTty({ actor });
@@ -877,13 +915,102 @@ const create = async (args: readonly string[]): Promise<number> => {
 	return 0;
 };
 
+/**
+ * The gateway's SSH hostname, read out of the same URL `create --gateway`
+ * dials. Only the host travels: the URL's port is the Host pipe's, never the
+ * door's.
+ */
+const gatewaySshHost = (address: string): string | undefined => {
+	let url: URL;
+	try {
+		url = new URL(address);
+	} catch {
+		return undefined;
+	}
+	// URL keeps IPv6 literals bracketed; ssh wants them bare.
+	const host = url.hostname.replaceAll(/^\[|\]$/gu, "");
+	return host.length === 0 ? undefined : host;
+};
+
+const sshPortFrom = (value: string | undefined): number | undefined => {
+	if (value === undefined) {
+		return DEFAULT_SSH_PORT;
+	}
+	const port = Number(value);
+	return Number.isInteger(port) && port > 0 && port <= 65_535
+		? port
+		: undefined;
+};
+
+/** Hands the terminal to `ssh` and reports how it came back. */
+const runSsh = (args: readonly string[]): Promise<number> =>
+	// oxlint-disable-next-line promise/avoid-new -- child_process is event-shaped.
+	new Promise<number>((resolve, reject) => {
+		const child = spawn("ssh", [...args], { stdio: "inherit" });
+		child.once("error", reject);
+		child.once("exit", (code, signal) =>
+			resolve(signal === null ? (code ?? 1) : 1)
+		);
+	});
+
+interface JoinTarget {
+	readonly host: string;
+	readonly port: number;
+	readonly roomName: string;
+}
+
+/** The command line a player could have typed themselves — printed whenever
+ * the CLI cannot run it for them. `join` adds convenience, not capability
+ * (ADR-0012, NQ-7), so the bare form is never a secret. */
+const bareSshLine = (target: JoinTarget): string =>
+	`  ssh ${target.port === DEFAULT_SSH_PORT ? "" : `-p ${target.port} `}${target.roomName}@${target.host}`;
+
+const resolveJoinTarget = (
+	roomName: string,
+	values: { readonly gateway?: string; readonly sshPort?: string }
+): JoinTarget | undefined => {
+	if (!isValidRoomName(roomName)) {
+		console.error(ROOM_NAME_RULE);
+		return undefined;
+	}
+	const gatewayAddress = values.gateway ?? process.env.SUPERVILLAIN_GATEWAY;
+	if (gatewayAddress === undefined) {
+		console.error(
+			"join needs a gateway: pass --gateway <url> or set SUPERVILLAIN_GATEWAY."
+		);
+		return undefined;
+	}
+	const host = gatewaySshHost(gatewayAddress);
+	if (host === undefined) {
+		console.error(`'${gatewayAddress}' is not a gateway URL.`);
+		return undefined;
+	}
+	const port = sshPortFrom(values.sshPort);
+	if (port === undefined) {
+		console.error("--ssh-port must be a port number between 1 and 65535.");
+		return undefined;
+	}
+	return { host, port, roomName };
+};
+
+/**
+ * `join` is a thin front door: an ordinary SSH session to the configured
+ * gateway, carrying this machine's key, with the room name as the SSH user
+ * (ADR-0012, NQ-7). No room is dialed and no client protocol ships — an
+ * unknown or offline name is answered by the gateway's own lobby copy, not by
+ * a connection error here.
+ */
 const join = async (args: readonly string[]): Promise<number> => {
 	let parsed: ReturnType<typeof parseArgs>;
 	try {
 		parsed = parseArgs({
 			allowPositionals: true,
 			args: [...args],
-			options: { help: { short: "h", type: "boolean" } },
+			options: {
+				gateway: { type: "string" },
+				help: { short: "h", type: "boolean" },
+				"ssh-port": { type: "string" },
+			},
 		});
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : String(error));
@@ -896,57 +1023,57 @@ const join = async (args: readonly string[]): Promise<number> => {
 	const positionals = parsed.positionals.filter(
 		(value): value is string => typeof value === "string"
 	);
-	const [roomRef] = positionals;
-	if (roomRef === undefined || positionals.length !== 1) {
-		console.error("join requires one room ref.");
+	const [roomName] = positionals;
+	if (roomName === undefined || positionals.length !== 1) {
+		console.error("join requires one room name.");
 		return 1;
 	}
-	const identity = await loadOrCreateIdentity(configFolder());
-	const actor = identity.publicKeyHex;
-	let store: Awaited<ReturnType<typeof connectRoomStore>>;
+	const target = resolveJoinTarget(roomName, {
+		gateway:
+			typeof parsed.values.gateway === "string"
+				? parsed.values.gateway
+				: undefined,
+		sshPort:
+			typeof parsed.values["ssh-port"] === "string"
+				? parsed.values["ssh-port"]
+				: undefined,
+	});
+	if (target === undefined) {
+		return 1;
+	}
+	const folder = configFolder();
+	const identity = await loadOrCreateIdentity(folder);
+	// The key the Host pipe signs with, re-encoded for an ordinary ssh client.
+	// It stays beside identity.json in per-machine config and never touches the
+	// user's ~/.ssh — the CLI manages its own key, so it manages its own
+	// host-key trust store too.
+	const keyFile = path.join(folder, "id_ed25519");
+	await writeFile(keyFile, openSshPrivateKey(identity), { mode: 0o600 });
+	await chmod(keyFile, 0o600);
+	const sshArgs = [
+		"-i",
+		keyFile,
+		"-o",
+		"IdentitiesOnly=yes",
+		"-o",
+		// Quoted because ssh tokenizes an -o value on whitespace, and a home
+		// directory is allowed to contain a space.
+		`UserKnownHostsFile="${path.join(folder, "known_hosts")}"`,
+		...(target.port === DEFAULT_SSH_PORT ? [] : ["-p", String(target.port)]),
+		`${target.roomName}@${target.host}`,
+	];
 	try {
-		store = await connectRoomStore(
-			openWsDialer({ secretKeyHex: identity.secretKeyHex, url: roomRef })
-		);
+		return await runSsh(sshArgs);
 	} catch (error) {
-		if (error instanceof SelfDialError) {
+		if (isNodeError(error) && error.code === "ENOENT") {
 			console.error(
-				"that's your own table — you're already hosting it. to sit as a player, use the ssh door."
+				`join needs an ssh client on PATH. once you have one:\n\n${bareSshLine(target)}\n`
 			);
-		} else {
-			console.error("Could not reach that room. Is the GM's table live?");
-			if (!(error instanceof DialTimeoutError)) {
-				console.error(error instanceof Error ? error.message : String(error));
-			}
+			return 1;
 		}
+		console.error(error instanceof Error ? error.message : String(error));
 		return 1;
 	}
-	const info = await store.info();
-	const entry = gatewayRegistry.get(info.gameId);
-	if (entry === undefined) {
-		console.error(`Unknown game '${info.gameId}'.`);
-		await store.close();
-		return 1;
-	}
-	const claim = await store.submit({
-		actor,
-		command: { type: "core.claim-seat" },
-	});
-	if ("rejected" in claim) {
-		console.error(claim.message);
-		await store.close();
-		return 1;
-	}
-	await runTable({
-		createRenderer: createLocalTtyRenderer,
-		entry,
-		gameId: info.gameId,
-		roomLabel: info.label,
-		session: attachLocalTty({ actor }),
-		store,
-	});
-	await store.close();
-	return 0;
 };
 
 const keyShow = async (): Promise<number> => {

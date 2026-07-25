@@ -8,6 +8,10 @@ import type {
  * contract stays untyped to ssh2 and tests use plain duplex fakes. */
 export interface SshChannelStream extends NodeJS.ReadWriteStream {
 	isTTY?: boolean;
+	/** The channel's exit status, when the channel is a real ssh2 one. Without
+	 * it an ordinary `ssh` client reports 255 for a perfectly clean goodbye,
+	 * which `supervillain join` would then hand back as its own exit code. */
+	exit?: (status: number) => void;
 }
 
 export interface SshConnectionOptions {

@@ -39,9 +39,6 @@ jobs:
           codesign --verify --strict dist-bin/supervillain
       - name: Smoke runtime-free binary outside checkout
         run: sh smoke/release-smoke.sh "$PWD/dist-bin/supervillain"
-      - name: Run live direct-door pair against compiled binary
-        if: runner.os == 'Linux'
-        run: SUPERVILLAIN_CLI="$PWD/dist-bin/supervillain" bun run test:cli-live
       - name: Package binary
         run: tar -czf supervillain-${{ matrix.triple }}.tar.gz -C dist-bin supervillain
       - uses: actions/upload-artifact@v4

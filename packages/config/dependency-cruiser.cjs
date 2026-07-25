@@ -69,9 +69,11 @@ module.exports = {
 			// and the gateway listening, and the render side imports neither half.
 			// apps/cli is a named, temporary exception. #57 inverted the *gateway*
 			// direction — the Host now dials out and the gateway never dials back —
-			// but the CLI still listens for the direct `supervillain join <url>`
-			// door, which #63 replaces with SSH. Remove apps/cli from this list the
-			// moment that lands.
+			// and #63 replaced `supervillain join <url>` with an ordinary SSH
+			// session, so nothing dials the CLI's listener any more. The listener
+			// itself outlived that change only because #63 declared `create` out of
+			// scope; deleting it (and `door.txt` with it) is its own decision, and
+			// this exception goes with it.
 			from: { pathNot: "^(apps/gateway|apps/cli)/" },
 			name: "transport-server-half-is-gateway-only",
 			severity: "error",
