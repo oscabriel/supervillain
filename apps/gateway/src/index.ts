@@ -216,23 +216,33 @@ const runRoomTable = async (
 	return { kind: "entered" };
 };
 
+/** Which inline notice a name that has no live pipe deserves. The two halves of
+ * registration answer two different questions (ADR-0012, NQ-4): the durable
+ * half says whether anyone owns the name at all, the live half says whether a
+ * Host pipe is carrying it right now. That split is exactly ADR-0008's
+ * unknown-versus-offline distinction, and neither is ever a disconnect.
+ *
+ * ADR-0008 accepts knowingly that distinct copy discloses which names exist:
+ * rate limiting mitigates it and names were never capability secrets. */
+export const noticeForMissingRoom = (
+	roomName: string,
+	registry: Pick<GatewayRoomRegistry, "isClaimed">
+): LobbyNotice =>
+	registry.isClaimed(roomName)
+		? { kind: "offline-room", roomName }
+		: { kind: "unknown-room", roomName };
+
 const enterRoom = async (
 	connection: SshConnection,
 	stream: SshChannelStream,
 	roomName: string,
 	context: RoomEntryContext
 ): Promise<RoomEntryResult> => {
-	// The two halves of registration answer two different questions (ADR-0012,
-	// NQ-4): the durable half says whether anyone owns the name at all, the live
-	// half says whether a Host pipe is carrying it right now. That split is
-	// exactly ADR-0008's unknown-versus-offline distinction.
 	const live = context.pipes.live(roomName);
 	if (live === undefined) {
 		return {
 			kind: "notice",
-			notice: context.registry.isClaimed(roomName)
-				? { kind: "offline-room", roomName }
-				: { kind: "unknown-room", roomName },
+			notice: noticeForMissingRoom(roomName, context.registry),
 		};
 	}
 	const store = live.openStore();
