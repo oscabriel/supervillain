@@ -39,6 +39,8 @@ jobs:
           codesign --verify --strict dist-bin/supervillain
       - name: Smoke runtime-free binary outside checkout
         run: sh smoke/release-smoke.sh "$PWD/dist-bin/supervillain"
+      - name: Smoke the gateway role out of the same binary
+        run: sh smoke/gateway-smoke.sh "$PWD/dist-bin/supervillain"
       - name: Run live direct-door pair against compiled binary
         if: runner.os == 'Linux'
         run: SUPERVILLAIN_CLI="$PWD/dist-bin/supervillain" bun run test:cli-live

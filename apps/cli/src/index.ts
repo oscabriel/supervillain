@@ -57,6 +57,8 @@ import {
 } from "@supervillain/transport-ws";
 import { startWsListener } from "@supervillain/transport-ws/server";
 
+import { runGatewayRole } from "./gateway-role.js";
+
 const USAGE = `Usage:
   supervillain create <campaign-folder> [--game <id>] [--name <room> [--gateway <addr>]]
   supervillain join <room-ref>
@@ -68,6 +70,11 @@ const USAGE = `Usage:
   supervillain map check <campaign-folder> [file]
   supervillain map list <campaign-folder>
   supervillain campaign info <campaign-folder>
+
+Operator role (this same binary is the self-hosted gateway — ADR-0014):
+  supervillain gateway serve [--state <dir>] [--ssh-host <name>]
+                             [--ssh-port <port>] [--bind <host>]
+                             [--broker-port <port>] [--broker-url <url>]
 
   --name registers the room at a gateway so players can ssh in; the gateway
   address comes from --gateway or SUPERVILLAIN_GATEWAY. The room name is held
@@ -958,7 +965,31 @@ const key = async (args: readonly string[]): Promise<number> => {
 	return 0;
 };
 
+/**
+ * The `gateway` role selector — deliberately **not** a fourth verb. The pinned
+ * verb set (`create` / `join` / `publish`) is the table surface: what a person
+ * at a table does. Serving a gateway is an operator act, and ADR-0012 requires
+ * it to come out of this same artifact, so it joins `key`/`character`/`map`/
+ * `campaign` on the management side of the CLI (ADR-0014).
+ */
+const gateway = async (args: readonly string[]): Promise<number> => {
+	const [subcommand, ...rest] = args;
+	if (subcommand === "--help" || subcommand === "-h") {
+		return await runGatewayRole(["--help"]);
+	}
+	if (subcommand !== "serve") {
+		console.error("gateway requires serve.");
+		return 1;
+	}
+	return await runGatewayRole(rest);
+};
+
 const main = async (args: readonly string[]): Promise<number> => {
+	// `gateway serve --help` is the gateway role's own help, not the CLI's:
+	// its option list is long and lives with the role (ADR-0014).
+	if (args[0] === "gateway") {
+		return await gateway(args.slice(1));
+	}
 	if (args.includes("--help") || args.includes("-h")) {
 		console.log(USAGE);
 		return 0;

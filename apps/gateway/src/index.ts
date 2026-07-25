@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -46,8 +46,21 @@ import {
 import type { LobbyDeadlines, LobbyExpiry, LobbyLimits } from "./hardening.js";
 import { openRoomRegistry } from "./registry.js";
 import type { GatewayRoomRegistry } from "./registry.js";
+import { GATEWAY_ROLE_USAGE, parseGatewayRoleArgs } from "./role.js";
 import { attachSshChannel, sessionForActor } from "./ssh-session.js";
 import type { SshChannelStream, SshConnection } from "./ssh-session.js";
+
+export {
+	GATEWAY_ROLE_USAGE,
+	parseGatewayRoleArgs,
+	type GatewayRoleEnvironment,
+	type GatewayRoleOptions,
+	type GatewayRoleParse,
+} from "./role.js";
+export {
+	OPERATED_GATEWAY_STATE_DIR,
+	resolveGatewayStateDir,
+} from "./state-dir.js";
 
 const AUTH_METHODS: AuthenticationType[] = [
 	"publickey",
@@ -507,31 +520,56 @@ export const startGateway = async (
 	};
 };
 
-const main = async (): Promise<void> => {
-	const stateRoot =
-		process.env.XDG_STATE_HOME ?? path.join(homedir(), ".local", "state");
-	const brokerPort = process.env.SUPERVILLAIN_GATEWAY_BROKER_PORT;
-	const gateway = await startGateway({
-		bindHost: process.env.SUPERVILLAIN_GATEWAY_BIND,
-		brokerPort: brokerPort === undefined ? undefined : Number(brokerPort),
-		brokerUrl: process.env.SUPERVILLAIN_GATEWAY_BROKER_URL,
-		sshHost: process.env.SUPERVILLAIN_GATEWAY_SSH_HOST ?? "127.0.0.1",
-		sshPort: Number(process.env.SUPERVILLAIN_GATEWAY_SSH_PORT ?? 2222),
-		stateDir:
-			process.env.SUPERVILLAIN_GATEWAY_STATE ??
-			path.join(stateRoot, "supervillain-gateway"),
+/** Resolves the first time the operator asks the gateway to stop. An
+ * always-on box is stopped by a service manager (SIGTERM) at least as often as
+ * by a human at a terminal (SIGINT), so both are the same event here. */
+const untilShutdown = (): Promise<void> =>
+	// oxlint-disable-next-line promise/avoid-new -- a process signal is an event, not a promise-returning API.
+	new Promise<void>((resolve) => {
+		const stop = (): void => {
+			process.off("SIGINT", stop);
+			process.off("SIGTERM", stop);
+			resolve();
+		};
+		process.once("SIGINT", stop);
+		process.once("SIGTERM", stop);
 	});
+
+/**
+ * The gateway **role**, run out of the one compiled binary (ADR-0014). This is
+ * what `supervillain gateway serve` reaches, and it is the whole self-hosted
+ * posture: the SSH door, the broker Hosts dial out to, and the gateway's own
+ * store. No web surface, no publishing — those are hosted-only at v1
+ * (ADR-0013).
+ */
+export const serveGateway = async (
+	args: readonly string[]
+): Promise<number> => {
+	const parsed = parseGatewayRoleArgs(args, {
+		env: process.env,
+		homeDir: homedir(),
+	});
+	if (parsed.kind === "help") {
+		console.log(GATEWAY_ROLE_USAGE);
+		return 0;
+	}
+	if (parsed.kind === "error") {
+		console.error(parsed.message);
+		console.error(GATEWAY_ROLE_USAGE);
+		return 1;
+	}
+	// A clean box has no state directory yet; the gateway makes its own rather
+	// than demanding a provisioning step (ADR-0014's clean-box criterion).
+	await mkdir(parsed.options.stateDir, { mode: 0o700, recursive: true });
+	const gateway = await startGateway(parsed.options);
 	process.stdout.write(
-		`the gate is open.\n\n  ssh port: ${gateway.sshPort}\n  gateway address (for supervillain create --gateway):\n\n  ${gateway.url}\n\n`
+		`the gate is open.\n\n  ssh port: ${gateway.sshPort}\n  state:    ${parsed.options.stateDir}\n  gateway address (for supervillain create --gateway):\n\n  ${gateway.url}\n\n`
 	);
-	process.once("SIGINT", () => {
-		void (async (): Promise<void> => {
-			await gateway.close();
-			process.exit(0);
-		})();
-	});
+	await untilShutdown();
+	await gateway.close();
+	return 0;
 };
 
 if (import.meta.main) {
-	await main();
+	process.exitCode = await serveGateway(process.argv.slice(2));
 }
