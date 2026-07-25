@@ -9,6 +9,7 @@ import type { Envelope, RoomStore, ViewEntry } from "@supervillain/core";
 import type { Session, TerminalSize } from "@supervillain/session";
 
 import { runChrome } from "../src/chrome.js";
+import type { TableHold } from "../src/index.js";
 
 const ACTOR = "actor-key";
 
@@ -113,12 +114,14 @@ const chatEnvelope = (text: string): Envelope => ({
 const mountTable = async (
 	setup: TestRendererSetup,
 	probe: SessionProbe,
-	store: RoomStore
+	store: RoomStore,
+	hold?: TableHold
 ): Promise<{ readonly exited: Promise<void> }> => {
 	const exited = runChrome({
 		createRenderer: () => setup.renderer,
 		entry,
 		gameId: "fake",
+		hold,
 		roomLabel: "the table",
 		session: probe.session,
 		store,
@@ -184,6 +187,36 @@ describe("table renderer injection", () => {
 
 		setup.renderer.destroy();
 		await exited;
+	});
+
+	test("shows the hold's notice and hands the terminal back when it ends", async () => {
+		const setup = await createTestRenderer({ height: 12, width: 60 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		let notify: ((message: string) => void) | undefined;
+		let end: (() => void) | undefined;
+		// oxlint-disable-next-line promise/avoid-new -- the hold's end is an event this test fires by hand.
+		const ends = new Promise<void>((resolve) => {
+			end = resolve;
+		});
+		const hold: TableHold = {
+			onNotice(listener) {
+				notify = listener;
+				return () => {
+					notify = undefined;
+				};
+			},
+			until: ends,
+		};
+		const { exited } = await mountTable(setup, probe, store.store, hold);
+
+		notify?.("The host went offline. Your seat is held while it reconnects.");
+		await setup.waitForFrame((frame) => frame.includes("host went offline"));
+
+		end?.();
+		await exited;
+
+		expect(setup.renderer.isDestroyed).toBe(true);
 	});
 
 	test("tears the renderer down when the session closes", async () => {

@@ -59,7 +59,6 @@ export type {
 	HostPipeServer,
 	HostPipeServerOptions,
 	LiveRoom,
-	PipeRoomStore,
 	RoomOwnership,
 } from "./gateway-pipe.js";
 export { HostPipeRefusedError, openHostPipe } from "./host-pipe.js";
@@ -70,8 +69,17 @@ export type {
 	HostPipeEvent,
 	HostPipeOptions,
 } from "./host-pipe.js";
-export { isValidRoomName, ROOM_NAME_RULE } from "./messages.js";
-export type { RegistrationOutcome, RoomInfo } from "./messages.js";
+export {
+	encodeSubmitRequest,
+	isValidRoomName,
+	parseSubmitRequest,
+	ROOM_NAME_RULE,
+} from "./messages.js";
+export type {
+	RegistrationOutcome,
+	RoomInfo,
+	SubmitRequest,
+} from "./messages.js";
 export {
 	DEFAULT_HEARTBEAT_INTERVAL_MS,
 	DEFAULT_HEARTBEAT_MISSES,
@@ -79,12 +87,29 @@ export {
 	PipeStreamClosedError,
 } from "./pipe.js";
 export type { PipeStream } from "./pipe.js";
+export { createRoomFold, DEFAULT_SESSION_BUDGET } from "./room-fold.js";
+export type {
+	PipeRoomStore,
+	RoomFold,
+	RoomFoldEvent,
+	RoomFoldOptions,
+	RoomFoldSource,
+	RoomSubmitChannel,
+	RoomView,
+} from "./room-fold.js";
 export { TransportListenerClosedError } from "./seam.js";
 export type {
 	TransportConnection,
 	TransportDialer,
 	TransportListener,
 } from "./seam.js";
+export {
+	createSubmissionMemory,
+	DEFAULT_SUBMISSION_MEMORY,
+	mintSubmissionId,
+	SubmissionUncertainError,
+} from "./submissions.js";
+export type { SubmissionMemory } from "./submissions.js";
 
 const CLOSED_ERROR = "Remote RoomStore is closed.";
 

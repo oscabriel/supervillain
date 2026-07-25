@@ -17,14 +17,16 @@ import {
 	decodeJson,
 	encodeJson,
 	parseRegistrationOutcome,
-	parseRoomCommand,
 	parseStreamCredit,
 	parseStreamOpen,
+	parseSubmitRequest,
 } from "./messages.js";
 import type { RoomInfo } from "./messages.js";
 import { MultiplexPipe } from "./pipe.js";
 import type { PipeStream } from "./pipe.js";
 import type { TransportConnection, TransportDialer } from "./seam.js";
+import { createSubmissionMemory } from "./submissions.js";
+import type { SubmissionMemory } from "./submissions.js";
 
 /** One Room this Host offers over the pipe. */
 export interface HostedRoom {
@@ -67,6 +69,9 @@ export interface HostPipeOptions {
 	readonly reconnectDelayMs?: (attempt: number) => number;
 	readonly heartbeatIntervalMs?: number;
 	readonly heartbeatMisses?: number;
+	/** Answered submission ids one Room remembers, for the replay dedupe.
+	 * Defaults to the memory's own pinned size. */
+	readonly submissionMemory?: number;
 	readonly onEvent?: (event: HostPipeEvent) => void;
 }
 
@@ -97,16 +102,28 @@ const serveInfo = async (
  * The peer on this pipe is the gateway this Host chose to dial and
  * challenge-signature authenticated, so it is the trusted stamper of ADR-0003:
  * the actors it names are the players it admitted at its own door.
+ *
+ * The Host is also where the submission-id dedupe is enforced (ADR-0012,
+ * NQ-6), because the Host is the only writer: a replayed id is answered from
+ * memory and never reaches `submit` twice, so a command lands exactly once or
+ * not at all.
  */
 const serveSubmit = async (
 	stream: PipeStream,
-	room: HostedRoom
+	room: HostedRoom,
+	memory: SubmissionMemory
 ): Promise<void> => {
 	for (;;) {
 		// oxlint-disable-next-line eslint/no-await-in-loop -- submit is a sequential request/response channel.
-		const command = parseRoomCommand(decodeJson(await stream.receive()));
+		const request = parseSubmitRequest(decodeJson(await stream.receive()));
+		const { submissionId } = request;
+		const remembered =
+			submissionId === undefined ? undefined : memory.recall(submissionId);
 		// oxlint-disable-next-line eslint/no-await-in-loop -- each response follows one submitted command.
-		const submission = await room.store.submit(command);
+		const submission = remembered ?? (await room.store.submit(request.command));
+		if (submissionId !== undefined && remembered === undefined) {
+			memory.remember(submissionId, submission);
+		}
 		// oxlint-disable-next-line eslint/no-await-in-loop -- responses leave in the order their commands arrived.
 		await stream.send(encodeJson(submission));
 	}
@@ -138,10 +155,12 @@ const serveStream = async (
 
 const serveRoomStream = async (
 	stream: PipeStream,
-	rooms: ReadonlyMap<string, HostedRoom>
+	rooms: ReadonlyMap<string, HostedRoom>,
+	memories: ReadonlyMap<string, SubmissionMemory>
 ): Promise<void> => {
 	const room = rooms.get(stream.room);
-	if (room === undefined) {
+	const memory = memories.get(stream.room);
+	if (room === undefined || memory === undefined) {
 		stream.fail(`No room named '${stream.room}' is hosted here.`);
 		return;
 	}
@@ -150,7 +169,7 @@ const serveRoomStream = async (
 		return;
 	}
 	if (stream.channel === "submit") {
-		await serveSubmit(stream, room);
+		await serveSubmit(stream, room, memory);
 		return;
 	}
 	if (stream.channel === "stream") {
@@ -165,10 +184,11 @@ const serveRoomStream = async (
 /** A malformed request or a dropped pipe ends that exchange only. */
 const serve = async (
 	stream: PipeStream,
-	rooms: ReadonlyMap<string, HostedRoom>
+	rooms: ReadonlyMap<string, HostedRoom>,
+	memories: ReadonlyMap<string, SubmissionMemory>
 ): Promise<void> => {
 	try {
-		await serveRoomStream(stream, rooms);
+		await serveRoomStream(stream, rooms, memories);
 	} catch {
 		stream.close();
 	}
@@ -225,6 +245,15 @@ const describe = (reason: unknown): string => {
  */
 export const openHostPipe = (options: HostPipeOptions): HostPipe => {
 	const rooms = new Map(options.rooms.map((room) => [room.name, room]));
+	// One memory per Room, minted here rather than per pipe: the resend that
+	// dedupe exists to make safe is precisely the one that follows a dropped
+	// pipe, so the memory has to outlive the pipe (ADR-0012, NQ-6).
+	const memories = new Map(
+		options.rooms.map((room) => [
+			room.name,
+			createSubmissionMemory(options.submissionMemory),
+		])
+	);
 	const reconnectDelayMs = options.reconnectDelayMs ?? defaultReconnectDelay;
 	const attached = Promise.withResolvers<HostPipeAttachment>();
 	const onEvent = options.onEvent ?? ((): void => undefined);
@@ -248,7 +277,7 @@ export const openHostPipe = (options: HostPipeOptions): HostPipe => {
 			initiator: true,
 			onClosed: (reason) => ended.resolve(reason),
 			onStream: (stream) => {
-				void serve(stream, rooms);
+				void serve(stream, rooms, memories);
 			},
 		});
 		current = pipe;

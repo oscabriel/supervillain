@@ -338,9 +338,15 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			tokens: fold.tokens(),
 		});
 	};
-	const showConnectionLost = (): void => {
+	/** A submit that never came back. Two honest answers, never one: a command
+	 * that could not be written did not land, while a command whose answer was
+	 * lost may have. Neither is ever resubmitted for you (ADR-0001). */
+	const showConnectionLost = (error: unknown): void => {
 		idleStatusToken = "danger";
-		idleStatusContent = "Connection lost. The command was not delivered.";
+		idleStatusContent =
+			error instanceof Error && error.name === "SubmissionUncertainError"
+				? "Connection lost. Whether the command landed is unknown — check the feed before sending it again."
+				: "Connection lost. The command was not delivered.";
 		renderStatus();
 	};
 	const showSubmission = (result: RoomSubmission): void => {
@@ -394,8 +400,8 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 					command,
 				})
 			);
-		} catch {
-			showConnectionLost();
+		} catch (error) {
+			showConnectionLost(error);
 		}
 	};
 	/** The one place the map cursor moves — arrow keys and mouse click alike.
@@ -543,6 +549,14 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		renderMap();
 	});
 	const unsubscribeClose = options.session.onClose(teardown);
+	// The hold is the caller's honesty channel: a line to show while the table
+	// waits on something outside the terminal, and a promise that ends it.
+	const unsubscribeHold = options.hold?.onNotice((message) => {
+		idleStatusToken = "danger";
+		idleStatusContent = message;
+		renderStatus();
+	});
+	options.hold?.until.then(teardown, teardown);
 	feedText.content = feedContent(lines);
 	renderSidebar();
 	renderMap();
@@ -589,5 +603,6 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	await exited;
 	unsubscribeResize();
 	unsubscribeClose();
+	unsubscribeHold?.();
 	void iterator.return?.();
 };

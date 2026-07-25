@@ -1,10 +1,13 @@
-/* oxlint-disable eslint/max-classes-per-file -- the accepted pipe and the per-session store it hands out are one mechanism. */
 /**
  * The gateway's half of the pipe (ADR-0012). It listens; it never dials a Host.
  * Registration splits in two here: the durable half (`name → owner`) belongs to
  * the gateway's store behind {@link RoomOwnership}, and the live half
  * (`name → current pipe`) is memory only — the routing truth, and never durable
  * (ADR-0013's never-durable mirror).
+ *
+ * Each live name carries one {@link RoomFold}: one upstream feed per Room, and
+ * one view per session over it (NQ-5). This file owns the plumbing between the
+ * fold and the frames; the fold owns the isolation.
  */
 import type { Envelope, RoomCommand, RoomSubmission } from "@supervillain/core";
 
@@ -17,6 +20,7 @@ import {
 import {
 	decodeJson,
 	encodeJson,
+	encodeSubmitRequest,
 	isValidRoomName,
 	parseEnvelope,
 	parseRegistrationRequest,
@@ -24,19 +28,19 @@ import {
 	parseRoomSubmission,
 	ROOM_NAME_RULE,
 } from "./messages.js";
-import type { RegistrationOutcome, RoomInfo } from "./messages.js";
-import { MultiplexPipe } from "./pipe.js";
+import type { RegistrationOutcome, SubmitRequest } from "./messages.js";
+import { MultiplexPipe, PipeStreamClosedError } from "./pipe.js";
 import type { PipeStream } from "./pipe.js";
+import { createRoomFold } from "./room-fold.js";
+import type {
+	RoomFold,
+	RoomFoldSource,
+	RoomSubmitChannel,
+	RoomView,
+} from "./room-fold.js";
 import { TransportListenerClosedError } from "./seam.js";
 import type { TransportConnection, TransportListener } from "./seam.js";
-
-/** A RoomStore reached across a pipe, plus the room's identity card. */
-export interface PipeRoomStore {
-	readonly submit: (command: RoomCommand) => Promise<RoomSubmission>;
-	readonly stream: (fromSeq: number) => AsyncIterable<Envelope>;
-	readonly info: () => Promise<RoomInfo>;
-	readonly close: () => Promise<void>;
-}
+import { SubmissionUncertainError } from "./submissions.js";
 
 export type ClaimOutcome =
 	| { readonly accepted: true; readonly ownerId: string }
@@ -58,8 +62,11 @@ export interface LiveRoom {
 	readonly ownerId: string;
 	/** The Host key on the far end of the live pipe. */
 	readonly hostKey: string;
-	/** One session's view of the Room. Each caller closes its own. */
-	readonly openStore: () => PipeRoomStore;
+	/** One session's view of the Room's shared fold. Each caller closes its
+	 * own; falling behind costs that view alone. */
+	readonly openStore: () => RoomView;
+	/** Sessions currently viewing this Room. Counts only (NQ-11). */
+	readonly views: () => number;
 }
 
 /** Metadata only (ADR-0012, NQ-11): lifecycle, room names, error codes. */
@@ -68,7 +75,8 @@ export type GatewayPipeEvent =
 	| { readonly kind: "pipe-opened"; readonly hostKey: string }
 	| { readonly kind: "pipe-refused"; readonly reason: string }
 	| { readonly kind: "room-attached"; readonly room: string }
-	| { readonly kind: "room-offline"; readonly room: string };
+	| { readonly kind: "room-offline"; readonly room: string }
+	| { readonly kind: "view-dropped"; readonly room: string };
 
 export interface HostPipeServerOptions {
 	readonly listener: TransportListener;
@@ -77,6 +85,8 @@ export interface HostPipeServerOptions {
 	readonly door: { readonly sshHost: string; readonly sshPort: number };
 	readonly heartbeatIntervalMs?: number;
 	readonly heartbeatMisses?: number;
+	/** Envelopes one session may fall behind before its view is dropped. */
+	readonly sessionBudget?: number;
 	readonly onEvent?: (event: GatewayPipeEvent) => void;
 }
 
@@ -98,104 +108,122 @@ const closeQuietly = async (connection: TransportConnection): Promise<void> => {
 	}
 };
 
-class PipeStoreView implements PipeRoomStore {
-	readonly #pipe: MultiplexPipe;
-	readonly #room: string;
-	readonly #streams = new Set<PipeStream>();
-	#submitStream: PipeStream | undefined;
-	#tail: Promise<unknown> = Promise.resolve();
-	#closed = false;
-
-	constructor(pipe: MultiplexPipe, room: string) {
-		this.#pipe = pipe;
-		this.#room = room;
+/**
+ * The Room's one upstream feed, read by the fold and by nobody else. Credit by
+ * credit, so the Host is never asked for more than the gateway has taken.
+ *
+ * @yields {Envelope} every event the Host serves, in Log order.
+ */
+const streamRoom = async function* streamRoom(
+	pipe: MultiplexPipe,
+	room: string,
+	fromSeq: number
+): AsyncGenerator<Envelope> {
+	const stream = pipe.open(room, "stream");
+	try {
+		await stream.send(encodeJson({ fromSeq }));
+		for (;;) {
+			// oxlint-disable-next-line eslint/no-await-in-loop -- each credit grants exactly one Envelope.
+			await stream.send(encodeJson({ next: true }));
+			// oxlint-disable-next-line eslint/no-await-in-loop -- envelopes arrive in Log order, one per credit.
+			const envelope = parseEnvelope(decodeJson(await stream.receive()));
+			yield envelope;
+		}
+	} catch {
+		// A dead pipe ends the feed; the Room is offline, and nothing here
+		// re-dials on the fold's behalf.
+	} finally {
+		stream.close();
 	}
+};
 
-	submit(command: RoomCommand): Promise<RoomSubmission> {
-		const previous = this.#tail;
-		const turn = Promise.withResolvers<boolean>();
-		this.#tail = turn.promise;
-		return (async (): Promise<RoomSubmission> => {
-			try {
-				await previous;
-				return await this.#exchange(command);
-			} finally {
-				turn.resolve(true);
+const write = async (
+	stream: PipeStream,
+	request: SubmitRequest
+): Promise<void> => {
+	await stream.send(encodeSubmitRequest(request));
+};
+
+/**
+ * One session's submit channel. The single resend it allows is the narrow one
+ * ADR-0001 always allowed — a write that failed on a stream this channel was
+ * reusing, which the peer had already dropped — and it carries the same
+ * submission id, so the Host's dedupe answers instead of appending twice. A
+ * lost *answer* is never resent: it surfaces as
+ * {@link SubmissionUncertainError} for a person to decide about.
+ */
+const openSubmitChannel = (
+	pipe: MultiplexPipe,
+	room: string
+): RoomSubmitChannel => {
+	let current: PipeStream | undefined;
+	let closed = false;
+
+	const discard = (dead: PipeStream): void => {
+		if (current === dead) {
+			current = undefined;
+		}
+		dead.close();
+	};
+
+	const answer = async (stream: PipeStream): Promise<RoomSubmission> => {
+		try {
+			return parseRoomSubmission(decodeJson(await stream.receive()));
+		} catch (error) {
+			discard(stream);
+			throw new SubmissionUncertainError({ cause: error });
+		}
+	};
+
+	return {
+		close() {
+			closed = true;
+			if (current !== undefined) {
+				discard(current);
 			}
-		})();
-	}
+		},
+		async send(command: RoomCommand, submissionId: string) {
+			if (closed) {
+				throw new PipeStreamClosedError("Room view is closed.");
+			}
+			const request: SubmitRequest = { command, submissionId };
+			const reused = current !== undefined;
+			const stream = (current ??= pipe.open(room, "submit"));
+			try {
+				await write(stream, request);
+			} catch (error) {
+				discard(stream);
+				if (!reused) {
+					throw error;
+				}
+				const retry = (current = pipe.open(room, "submit"));
+				try {
+					await write(retry, request);
+				} catch (retryError) {
+					discard(retry);
+					throw retryError;
+				}
+				return await answer(retry);
+			}
+			return await answer(stream);
+		},
+	};
+};
 
-	stream(fromSeq: number): AsyncIterable<Envelope> {
-		return this.#stream(fromSeq);
-	}
-
-	async info(): Promise<RoomInfo> {
-		const stream = this.#open("info");
+const roomSource = (pipe: MultiplexPipe, room: string): RoomFoldSource => ({
+	close: () => Promise.resolve(),
+	async info() {
+		const stream = pipe.open(room, "info");
 		try {
 			await stream.send(encodeJson({}));
 			return parseRoomInfo(decodeJson(await stream.receive()));
 		} finally {
-			this.#discard(stream);
-		}
-	}
-
-	close(): Promise<void> {
-		this.#closed = true;
-		for (const stream of this.#streams) {
 			stream.close();
 		}
-		this.#streams.clear();
-		this.#submitStream = undefined;
-		return Promise.resolve();
-	}
-
-	async *#stream(fromSeq: number): AsyncGenerator<Envelope> {
-		const stream = this.#open("stream");
-		try {
-			await stream.send(encodeJson({ fromSeq }));
-			for (;;) {
-				// oxlint-disable-next-line eslint/no-await-in-loop -- each credit grants exactly one Envelope.
-				await stream.send(encodeJson({ next: true }));
-				// oxlint-disable-next-line eslint/no-await-in-loop -- envelopes arrive in Log order, one per credit.
-				const envelope = parseEnvelope(decodeJson(await stream.receive()));
-				yield envelope;
-			}
-		} catch {
-			// A dead pipe ends the feed; the Room is offline, and nothing here
-			// re-dials on the session's behalf.
-		} finally {
-			this.#discard(stream);
-		}
-	}
-
-	async #exchange(command: RoomCommand): Promise<RoomSubmission> {
-		if (this.#closed) {
-			throw new Error("Room store view is closed.");
-		}
-		const stream = (this.#submitStream ??= this.#open("submit"));
-		try {
-			await stream.send(encodeJson(command));
-			return parseRoomSubmission(decodeJson(await stream.receive()));
-		} catch (error) {
-			this.#discard(stream);
-			throw error;
-		}
-	}
-
-	#open(channel: "info" | "stream" | "submit"): PipeStream {
-		const stream = this.#pipe.open(this.#room, channel);
-		this.#streams.add(stream);
-		return stream;
-	}
-
-	#discard(stream: PipeStream): void {
-		this.#streams.delete(stream);
-		if (this.#submitStream === stream) {
-			this.#submitStream = undefined;
-		}
-		stream.close();
-	}
-}
+	},
+	openSubmit: () => openSubmitChannel(pipe, room),
+	stream: (fromSeq) => streamRoom(pipe, room, fromSeq),
+});
 
 interface PipeRegistrar {
 	readonly attach: (name: string, ownerId: string) => void;
@@ -314,21 +342,21 @@ export const serveHostPipes = (
 	const onEvent = options.onEvent ?? ((): void => undefined);
 	const liveRooms = new Map<
 		string,
-		LiveRoom & { readonly pipe: MultiplexPipe }
+		LiveRoom & { readonly pipe: MultiplexPipe; readonly fold: RoomFold }
 	>();
 	const pipes = new Set<MultiplexPipe>();
 	let closing = false;
 
+	const drop = (name: string, room: { readonly fold: RoomFold }): void => {
+		liveRooms.delete(name);
+		void room.fold.close();
+	};
+
 	const detach = (pipe: MultiplexPipe): void => {
 		pipes.delete(pipe);
-		const detached: string[] = [];
-		for (const [name, room] of liveRooms) {
-			if (room.pipe === pipe) {
-				detached.push(name);
-			}
-		}
-		for (const name of detached) {
-			liveRooms.delete(name);
+		const detached = [...liveRooms].filter(([, room]) => room.pipe === pipe);
+		for (const [name, room] of detached) {
+			drop(name, room);
 			onEvent({ kind: "room-offline", room: name });
 		}
 	};
@@ -336,12 +364,27 @@ export const serveHostPipes = (
 	const attach = (pipe: MultiplexPipe, name: string, ownerId: string): void => {
 		// The same identity always supersedes its own live registration: a
 		// crash-restart or a machine move re-points the name, it does not queue.
+		const previous = liveRooms.get(name);
+		if (previous !== undefined) {
+			drop(name, previous);
+		}
+		const fold = createRoomFold({
+			onEvent: (event) => {
+				if (event.kind === "view-dropped") {
+					onEvent({ kind: "view-dropped", room: name });
+				}
+			},
+			sessionBudget: options.sessionBudget,
+			source: roomSource(pipe, name),
+		});
 		liveRooms.set(name, {
+			fold,
 			hostKey: pipe.remoteId,
 			name,
-			openStore: () => new PipeStoreView(pipe, name),
+			openStore: () => fold.openView(),
 			ownerId,
 			pipe,
+			views: () => fold.views(),
 		});
 	};
 
@@ -396,6 +439,9 @@ export const serveHostPipes = (
 				await acceptLoop;
 				await Promise.all([...pipes].map((pipe) => pipe.close()));
 				pipes.clear();
+				await Promise.all(
+					[...liveRooms.values()].map((room) => room.fold.close())
+				);
 				liveRooms.clear();
 			})();
 			return closePromise;
