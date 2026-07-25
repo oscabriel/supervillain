@@ -9,10 +9,19 @@ import {
 	CORE_MAP_LOADED,
 	CORE_ROOM_CREATED,
 	CORE_SEAT_CLAIMED,
+	CORE_TOKEN_MOVED,
+	CORE_TOKEN_PLACED,
+	CORE_TOKEN_REMOVED,
+	foldTokenMoved,
+	foldTokenPlaced,
+	foldTokenRemoved,
 	isValidMapName,
+	isValidTokenGlyph,
+	isValidTokenId,
 	mapFilePath,
 	parseMapFile,
 	readMapLoadedPayload,
+	TOKEN_LABEL_MAX_LENGTH,
 } from "@supervillain/core";
 import type {
 	AuthorityEntry,
@@ -24,6 +33,7 @@ import type {
 	HostRegistry,
 	MapClearedPayload,
 	MapLoadedPayload,
+	MapToken,
 	NamespacedType,
 	Rejection,
 	RoomCommand,
@@ -32,6 +42,10 @@ import type {
 	SeatClaimedPayload,
 	SeatView,
 	TableView,
+	TokenFold,
+	TokenMovedPayload,
+	TokenPlacedPayload,
+	TokenRemovedPayload,
 	ValidationIssue,
 } from "@supervillain/core";
 
@@ -40,6 +54,12 @@ import { Latch } from "./latch.js";
 const LOG_FILE = "events.jsonl";
 const DICE_NOTATION =
 	/^(?<count>\d*)d(?<sides>\d+)(?:(?<sign>[+-])(?<modifier>\d+))?$/iu;
+
+const TOKEN_COMMANDS: ReadonlySet<string> = new Set([
+	"core.place-token",
+	"core.move-token",
+	"core.remove-token",
+]);
 
 export interface RoomHostOptions {
 	readonly campaignFolder: string;
@@ -55,6 +75,7 @@ export interface RoomSnapshot {
 	readonly game: unknown;
 	readonly table: TableView;
 	readonly map: BattleMap | null;
+	readonly tokens: readonly MapToken[];
 	readonly seq: number;
 }
 
@@ -104,6 +125,32 @@ const isNodeError = (
 ): error is Error & { readonly code: string } =>
 	error instanceof Error && "code" in error && typeof error.code === "string";
 
+/** Drafts the move or removal a token command names. Both carry only an id and
+ * a destination, so neither needs the room's state to take shape. */
+const draftTokenChange = (
+	command: Record<string, unknown> & { readonly type: string }
+):
+	| Rejection
+	| {
+			readonly type: NamespacedType;
+			readonly payload: TokenMovedPayload | TokenRemovedPayload;
+	  } => {
+	const { id } = command;
+	if (typeof id !== "string" || !isValidTokenId(id)) {
+		return { message: "That is not a token id.", rejected: true };
+	}
+	return command.type === "core.remove-token"
+		? { payload: { id }, type: CORE_TOKEN_REMOVED }
+		: {
+				payload: { id, x: Number(command.x), y: Number(command.y) },
+				type: CORE_TOKEN_MOVED,
+			};
+};
+
+/** Turns a fold's lower-case refusal reason into a player-facing sentence. */
+const capitalize = (reason: string): string =>
+	`${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`;
+
 const describeIssues = (errors: readonly ValidationIssue[]): string => {
 	const [first, ...rest] = errors;
 	const message = first?.message ?? "Map file is invalid.";
@@ -132,6 +179,10 @@ export class RoomHost {
 	#gameId: string | undefined;
 	#game: unknown;
 	#map: BattleMap | null = null;
+	#tokens: readonly MapToken[] = [];
+	/** Monotonic across the whole log, so a minted token id is never reused
+	 * after a removal and replay derives the same ids every time. */
+	#tokensPlaced = 0;
 	#writeTail: Promise<void> = Promise.resolve();
 
 	private constructor(options: RoomHostOptions) {
@@ -194,6 +245,7 @@ export class RoomHost {
 			map: this.#map,
 			seq: this.#envelopes.length,
 			table: this.#table,
+			tokens: this.#tokens,
 		};
 	}
 
@@ -356,6 +408,9 @@ export class RoomHost {
 		}
 		if (command.type === "core.load-map" || command.type === "core.clear-map") {
 			return await this.#submitMap(actor, actorSeat, command);
+		}
+		if (TOKEN_COMMANDS.has(command.type)) {
+			return await this.#submitToken(actor, actorSeat, command);
 		}
 		if (command.type === "core.bind-character") {
 			const characterId =
@@ -525,6 +580,152 @@ export class RoomHost {
 		return { accepted: true, envelopes: [envelope] };
 	}
 
+	/**
+	 * The one token authority check, against the log-derived seat map: the GM
+	 * does everything, and a player may only *move* a token bound to their own
+	 * seat (ADR-0006). `#tokens` is folded from this room's own log, so the
+	 * binding a player is measured against is the one everyone else can see.
+	 */
+	#tokenAuthority(
+		actorSeat: SeatView,
+		command: Record<string, unknown> & { readonly type: string }
+	): Rejection | null {
+		if (actorSeat.id === this.#table.gmSeatId) {
+			return null;
+		}
+		if (command.type !== "core.move-token") {
+			return {
+				message: "Only the GM can place or remove tokens.",
+				rejected: true,
+			};
+		}
+		const token = this.#tokens.find((candidate) => candidate.id === command.id);
+		if (token === undefined) {
+			return { message: `No token '${String(command.id)}'.`, rejected: true };
+		}
+		if (token.seatId !== actorSeat.id) {
+			return {
+				message: `Token '${token.id}' is not bound to your seat.`,
+				rejected: true,
+			};
+		}
+		return null;
+	}
+
+	async #submitToken(
+		actor: string,
+		actorSeat: SeatView,
+		command: Record<string, unknown> & { readonly type: string }
+	): Promise<RoomSubmission> {
+		const refusal = this.#tokenAuthority(actorSeat, command);
+		if (refusal !== null) {
+			return refusal;
+		}
+		if (this.#map === null) {
+			return { message: "No battle map is loaded.", rejected: true };
+		}
+		const drafted =
+			command.type === "core.place-token"
+				? this.#draftPlaced(command)
+				: draftTokenChange(command);
+		if ("rejected" in drafted) {
+			return drafted;
+		}
+		// Dry-run the writer fold before the write: the host must never append an
+		// event its own replay would refuse to apply (ADR-0010).
+		const folded = this.#foldToken(drafted.type, drafted.payload);
+		if (!folded.ok) {
+			return { message: capitalize(folded.reason), rejected: true };
+		}
+		const envelope: Envelope = {
+			actor,
+			payload: drafted.payload,
+			seq: this.#envelopes.length + 1,
+			timestamp: this.#clock(),
+			type: drafted.type,
+		};
+		await this.#append([envelope]);
+		return { accepted: true, envelopes: [envelope] };
+	}
+
+	#draftPlaced(
+		command: Record<string, unknown>
+	):
+		| Rejection
+		| { readonly type: NamespacedType; readonly payload: TokenPlacedPayload } {
+		const glyph = typeof command.glyph === "string" ? command.glyph : "";
+		if (!isValidTokenGlyph(glyph)) {
+			return {
+				message: "A token glyph is exactly one printable character.",
+				rejected: true,
+			};
+		}
+		const label = typeof command.label === "string" ? command.label.trim() : "";
+		if (label.length > TOKEN_LABEL_MAX_LENGTH) {
+			return {
+				message: `A token label is at most ${TOKEN_LABEL_MAX_LENGTH} characters.`,
+				rejected: true,
+			};
+		}
+		const id = command.id === undefined ? this.#mintTokenId() : command.id;
+		if (typeof id !== "string" || !isValidTokenId(id)) {
+			return {
+				message:
+					"Token ids are 1-60 letters, digits, hyphens, and underscores.",
+				rejected: true,
+			};
+		}
+		const seatId = typeof command.seatId === "string" ? command.seatId : null;
+		if (
+			command.seatId !== undefined &&
+			command.seatId !== null &&
+			typeof command.seatId !== "string"
+		) {
+			return { message: "That is not a seat id.", rejected: true };
+		}
+		if (
+			seatId !== null &&
+			!this.#table.seats.some((seat) => seat.id === seatId)
+		) {
+			return {
+				message: `No seat '${seatId}' is at this table.`,
+				rejected: true,
+			};
+		}
+		return {
+			payload: {
+				glyph,
+				id,
+				label,
+				seatId,
+				x: Number(command.x),
+				y: Number(command.y),
+			},
+			type: CORE_TOKEN_PLACED,
+		};
+	}
+
+	/** The next unused `token-<n>`. The counter only ever climbs, and an id a
+	 * caller named by hand is stepped over rather than silently replaced. */
+	#mintTokenId(): string {
+		let next = this.#tokensPlaced + 1;
+		while (this.#tokens.some((token) => token.id === `token-${next}`)) {
+			next += 1;
+		}
+		return `token-${next}`;
+	}
+
+	/** One fold step over the token set, shared by the dry run and `#fold`. */
+	#foldToken(type: NamespacedType, payload: unknown): TokenFold {
+		if (type === CORE_TOKEN_PLACED) {
+			return foldTokenPlaced(this.#map, this.#tokens, payload);
+		}
+		if (type === CORE_TOKEN_MOVED) {
+			return foldTokenMoved(this.#map, this.#tokens, payload);
+		}
+		return foldTokenRemoved(this.#tokens, payload);
+	}
+
 	async #append(envelopes: readonly Envelope[]): Promise<void> {
 		if (envelopes.length === 0) {
 			return;
@@ -616,10 +817,31 @@ export class RoomHost {
 				);
 			}
 			this.#map = map;
+			// A token's position means nothing on a different grid, so the surface
+			// a load lands on is bare — last-loaded wins (ADR-0006).
+			this.#tokens = [];
 			return;
 		}
 		if (envelope.type === CORE_MAP_CLEARED) {
 			this.#map = null;
+			this.#tokens = [];
+			return;
+		}
+		if (
+			envelope.type === CORE_TOKEN_PLACED ||
+			envelope.type === CORE_TOKEN_MOVED ||
+			envelope.type === CORE_TOKEN_REMOVED
+		) {
+			const folded = this.#foldToken(envelope.type, envelope.payload);
+			if (!folded.ok) {
+				throw new Error(
+					`Log moves a token at line ${envelope.seq} it cannot apply: ${folded.reason}.`
+				);
+			}
+			if (envelope.type === CORE_TOKEN_PLACED) {
+				this.#tokensPlaced += 1;
+			}
+			this.#tokens = folded.tokens;
 			return;
 		}
 		if (

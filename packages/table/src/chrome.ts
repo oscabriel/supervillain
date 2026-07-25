@@ -10,6 +10,7 @@ import {
 } from "@opentui/core";
 import type { KeyEvent, TextChunk } from "@opentui/core";
 import type {
+	CoreCommand,
 	Envelope,
 	FeedLine,
 	GamePanel,
@@ -23,7 +24,55 @@ import type {
 import { createTableFold } from "./fold.js";
 import type { TableOptions } from "./index.js";
 import { parseInput } from "./input.js";
+import type { ParsedInput } from "./input.js";
+import { mapCommandFor, mapKeyAction } from "./map-interaction.js";
+import type { MapInteraction } from "./map-interaction.js";
+import {
+	MAP_VIEWPORT_MAX_ROWS,
+	MapSurfaceRenderable,
+	mapRegionSize,
+} from "./map-region.js";
+import { mapStatusLine, mapTitleLine } from "./map.js";
+import type { MapCursor } from "./map.js";
 import { resolveThemeToken } from "./theme.js";
+
+const SIDEBAR_WIDTH = 28;
+
+/** The map region's own focus stop, ahead of the module panels: chrome's
+ * region is chrome's, and a module panel can never claim it. */
+const MAP_FOCUS = "map";
+
+type FocusTarget = typeof MAP_FOCUS | GamePanel<unknown, unknown>;
+
+/** The map commands the typed line can produce — the rest are chat and dice. */
+type MapParsedInput = Extract<
+	ParsedInput,
+	{
+		kind:
+			| "clear-map"
+			| "load-map"
+			| "place-token"
+			| "reglyph-token"
+			| "remove-token";
+	}
+>;
+
+const MAP_INPUT_KINDS: ReadonlySet<ParsedInput["kind"]> = new Set([
+	"clear-map",
+	"load-map",
+	"place-token",
+	"reglyph-token",
+	"remove-token",
+]);
+
+/** Whether a parsed line is one of the map's. */
+export const isMapInput = (parsed: ParsedInput): parsed is MapParsedInput =>
+	MAP_INPUT_KINDS.has(parsed.kind);
+
+/** The click handler a table wears until its cursor state exists. */
+const ignoreClick = (): void => {
+	// Deliberately nothing: no capability may depend on the mouse.
+};
 
 const styledLine = (line: FeedLine): StyledText =>
 	new StyledText(
@@ -147,6 +196,10 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		flexDirection: "row",
 		flexGrow: 1,
 	});
+	const center = new BoxRenderable(renderer, {
+		flexDirection: "column",
+		flexGrow: 1,
+	});
 	const feed = new ScrollBoxRenderable(renderer, {
 		flexGrow: 1,
 		rootOptions: { flexGrow: 1 },
@@ -155,7 +208,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	feed.add(feedText);
 	const sidebar = new BoxRenderable(renderer, {
 		flexDirection: "column",
-		width: 28,
+		width: SIDEBAR_WIDTH,
 	});
 	const sidebarText = new TextRenderable(renderer, {
 		content: "",
@@ -170,11 +223,34 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	const input = new InputRenderable(renderer, {
 		cursorColor: resolveThemeToken("accent"),
 		maxLength: 1100,
-		placeholder: "Message or /roll NdS+M",
+		placeholder: "Message, /roll NdS+M, /map load <name>, /token place <glyph>",
 		placeholderColor: resolveThemeToken("muted"),
 		textColor: resolveThemeToken("primary"),
 	});
-	main.add(feed);
+	// The battle map is core chrome's own region — not a layout slot. Slots
+	// place *module* panels, and `LayoutSlot` keeps its single member precisely
+	// so a module can never claim this surface (ADR-0006).
+	const mapRegion = new BoxRenderable(renderer, {
+		flexDirection: "column",
+		flexShrink: 0,
+		visible: false,
+	});
+	const mapTitle = new TextRenderable(renderer, { content: "", height: 1 });
+	const mapStatus = new TextRenderable(renderer, { content: "", height: 1 });
+	// The click handler is wired once the cursor state below exists; until then
+	// a click is simply ignored, which is exactly what click promises anyway.
+	let onMapClick: (cell: MapCursor) => void = ignoreClick;
+	const mapSurface = new MapSurfaceRenderable(
+		renderer,
+		{ height: 1, width: 1 },
+		(cell) => onMapClick(cell)
+	);
+	mapRegion.add(mapTitle);
+	mapRegion.add(mapSurface);
+	mapRegion.add(mapStatus);
+	center.add(mapRegion);
+	center.add(feed);
+	main.add(center);
 	main.add(sidebar);
 	root.add(header);
 	root.add(main);
@@ -185,13 +261,82 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	let focusedPanelIndex = -1;
 	let idleStatusContent = "";
 	let idleStatusToken: "danger" | "muted" = "muted";
+	let cursor: MapCursor = { x: 0, y: 0 };
+	let selectedTokenId: string | null = null;
+	let lastMapName: string | null = null;
 	const interactivePanels = panels.filter((panel) => panel.onKey !== undefined);
+	/** The focus ring: chrome's map region first when one is loaded, then the
+	 * module's interactive panels, then back to the input line. */
+	const focusTargets = (): readonly FocusTarget[] =>
+		fold.map() === null ? interactivePanels : [MAP_FOCUS, ...interactivePanels];
+	const focusedTarget = (): FocusTarget | undefined =>
+		focusTargets()[focusedPanelIndex];
+	const mapFocused = (): boolean => focusedTarget() === MAP_FOCUS;
+	const ownSeatId = (): string | null =>
+		fold.table().seats.find((seat) => seat.actor === options.session.actor)
+			?.id ?? null;
+	const interaction = (): MapInteraction | null => {
+		const map = fold.map();
+		return map === null
+			? null
+			: { cursor, map, selectedTokenId, tokens: fold.tokens() };
+	};
 	const renderStatus = (): void => {
-		const focused = interactivePanels[focusedPanelIndex];
-		status.fg = resolveThemeToken(focused ? "muted" : idleStatusToken);
-		status.content = focused
-			? `panel: ${focused.id} — Esc to return`
-			: idleStatusContent;
+		const focused = focusedTarget();
+		status.fg = resolveThemeToken(
+			focused === undefined ? idleStatusToken : "muted"
+		);
+		if (focused === MAP_FOCUS) {
+			status.content =
+				"map: arrows/hjkl move · Enter picks up and drops · x removes · Esc returns";
+			return;
+		}
+		status.content =
+			focused === undefined
+				? idleStatusContent
+				: `panel: ${focused.id} — Esc to return`;
+	};
+	/** Redraws the region from the folded map and the local cursor. The whole
+	 * surface is one cell grid, so this is the only place map pixels are set. */
+	const renderMap = (): void => {
+		const map = fold.map();
+		if (map === null) {
+			mapRegion.visible = false;
+			lastMapName = null;
+			selectedTokenId = null;
+			return;
+		}
+		if (map.name !== lastMapName) {
+			lastMapName = map.name;
+			cursor = { x: 0, y: 0 };
+			selectedTokenId = null;
+		}
+		const size = mapRegionSize(map, {
+			height: MAP_VIEWPORT_MAX_ROWS,
+			width: Math.max(1, renderer.terminalWidth - SIDEBAR_WIDTH),
+		});
+		mapSurface.width = size.width;
+		mapSurface.height = size.height;
+		// The title and status lines ride above and below the grid; naming the
+		// region's height keeps the feed from being laid out over it.
+		mapRegion.height = size.height + 2;
+		mapRegion.visible = true;
+		mapTitle.content = styledLine(mapTitleLine(map));
+		mapStatus.content = styledLine(
+			mapStatusLine({
+				cursor: mapFocused() ? cursor : null,
+				map,
+				selectedTokenId,
+				tokens: fold.tokens(),
+			})
+		);
+		mapSurface.update({
+			cursor: mapFocused() ? cursor : null,
+			map,
+			ownSeatId: ownSeatId(),
+			selectedTokenId,
+			tokens: fold.tokens(),
+		});
 	};
 	const showConnectionLost = (): void => {
 		idleStatusToken = "danger";
@@ -223,7 +368,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	});
 	const renderSidebar = (): void => {
 		const seats = formatSeatList(fold.table(), options.session.actor);
-		const focusedPanel = interactivePanels[focusedPanelIndex];
+		const focusedPanel = focusedTarget();
 		const panelLines = panels.flatMap((panel) =>
 			panel
 				.render(panelInput(panel === focusedPanel))
@@ -235,6 +380,46 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		if (!renderer.isDestroyed) {
 			renderer.destroy();
 		}
+	};
+	const showNotice = (message: string): void => {
+		idleStatusToken = "muted";
+		idleStatusContent = message;
+		renderStatus();
+	};
+	const dispatchCore = async (command: CoreCommand): Promise<void> => {
+		try {
+			showSubmission(
+				await options.store.submit({
+					actor: options.session.actor,
+					command,
+				})
+			);
+		} catch {
+			showConnectionLost();
+		}
+	};
+	/** The one place the map cursor moves — arrow keys and mouse click alike.
+	 * Click is progressive enhancement: it reaches nothing keys cannot. */
+	const moveCursorTo = (cell: MapCursor): void => {
+		cursor = cell;
+		if (!mapFocused()) {
+			const index = focusTargets().indexOf(MAP_FOCUS);
+			if (index !== -1) {
+				focusedPanelIndex = index;
+				input.blur();
+			}
+		}
+		renderStatus();
+		renderMap();
+	};
+	onMapClick = moveCursorTo;
+	const submitMapInput = async (parsed: MapParsedInput): Promise<void> => {
+		const result = mapCommandFor(parsed, interaction());
+		if ("message" in result) {
+			showNotice(result.message);
+			return;
+		}
+		await dispatchCore(result.command);
 	};
 	const submitInput = async (value: unknown): Promise<void> => {
 		if (typeof value !== "string") {
@@ -250,27 +435,25 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			return;
 		}
 		if (parsed.kind === "unknown-command") {
-			idleStatusToken = "muted";
-			idleStatusContent = `Unknown command '${parsed.command}'.`;
-			renderStatus();
+			showNotice(`Unknown command '${parsed.command}'.`);
+			return;
+		}
+		if (parsed.kind === "usage") {
+			showNotice(parsed.message);
 			return;
 		}
 		if (parsed.kind === "empty") {
 			return;
 		}
-		const command =
+		if (isMapInput(parsed)) {
+			await submitMapInput(parsed);
+			return;
+		}
+		await dispatchCore(
 			parsed.kind === "chat"
 				? { text: parsed.text, type: "core.chat" }
-				: { notation: parsed.notation, type: "core.roll" };
-		try {
-			const result = await options.store.submit({
-				actor: options.session.actor,
-				command,
-			});
-			showSubmission(result);
-		} catch {
-			showConnectionLost();
-		}
+				: { notation: parsed.notation, type: "core.roll" }
+		);
 	};
 	input.on(InputRenderableEvents.ENTER, (value: unknown) => {
 		void submitInput(value);
@@ -280,11 +463,33 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		focusedPanelIndex = -1;
 		input.focus();
 		renderStatus();
+		renderMap();
 		rerenderOnPanelFocusTransition(
 			previousPanelIndex,
 			focusedPanelIndex,
 			renderSidebar
 		);
+	};
+	/** Applies one map action. Every branch is reachable by keyboard alone. */
+	const applyMapAction = (state: MapInteraction, key: PanelKey): void => {
+		const action = mapKeyAction(state, key);
+		if (action === null) {
+			return;
+		}
+		if (action.kind === "cursor") {
+			({ cursor } = action);
+		} else if (action.kind === "select") {
+			selectedTokenId = action.tokenId;
+		} else if (action.kind === "unfocus") {
+			focusInput();
+			return;
+		} else if (action.kind === "notice") {
+			showNotice(action.message);
+		} else {
+			selectedTokenId = null;
+			void dispatchCore(action.command).then(renderMap, renderMap);
+		}
+		renderMap();
 	};
 	renderer.keyInput.on("keypress", (key: KeyEvent) => {
 		if (key.name === "tab") {
@@ -293,7 +498,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			const previousPanelIndex = focusedPanelIndex;
 			focusedPanelIndex = nextPanelFocus(
 				focusedPanelIndex,
-				interactivePanels.length
+				focusTargets().length
 			);
 			if (focusedPanelIndex === -1) {
 				input.focus();
@@ -301,6 +506,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 				input.blur();
 			}
 			renderStatus();
+			renderMap();
 			rerenderOnPanelFocusTransition(
 				previousPanelIndex,
 				focusedPanelIndex,
@@ -313,34 +519,49 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 		key.preventDefault();
 		key.stopPropagation();
+		const focused = focusedTarget();
+		if (focused === MAP_FOCUS) {
+			const state = interaction();
+			if (state !== null) {
+				applyMapAction(state, adaptPanelKey(key));
+			}
+			return;
+		}
 		if (key.name === "escape") {
 			focusInput();
 			return;
 		}
-		const panel = interactivePanels[focusedPanelIndex];
 		if (
-			panel !== undefined &&
-			forwardPanelKey(adaptPanelKey(key), panel, panelInput(true))
+			focused !== undefined &&
+			forwardPanelKey(adaptPanelKey(key), focused, panelInput(true))
 		) {
 			renderSidebar();
 		}
 	});
-	const unsubscribeResize = options.session.onResize(({ columns, rows }) =>
-		renderer.resize(columns, rows)
-	);
+	const unsubscribeResize = options.session.onResize(({ columns, rows }) => {
+		renderer.resize(columns, rows);
+		renderMap();
+	});
 	const unsubscribeClose = options.session.onClose(teardown);
 	feedText.content = feedContent(lines);
 	renderSidebar();
+	renderMap();
 	input.focus();
 
 	const iterator = options.store.stream(1)[Symbol.asyncIterator]();
 	const showFeed = (line: FeedLine | null): void => {
+		// The stream can hand over one more envelope after teardown; drawing on a
+		// destroyed renderer throws out of the loop instead of ending it.
+		if (renderer.isDestroyed) {
+			return;
+		}
 		if (line !== null) {
 			lines.push(line);
 		}
 		feedText.content = feedContent(lines);
 		feed.scrollTo({ x: 0, y: Number.MAX_SAFE_INTEGER });
 		renderSidebar();
+		renderMap();
 	};
 	void (async () => {
 		let replaying = true;

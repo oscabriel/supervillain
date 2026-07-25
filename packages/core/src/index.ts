@@ -1,21 +1,44 @@
 import type { MapLegend } from "./map.js";
 import type { ContentValidator } from "./validation.js";
 
-export type { BattleMap, MapLegend, MapParseResult, MapTile } from "./map.js";
+export type {
+	BattleMap,
+	MapLegend,
+	MapParseResult,
+	MapTile,
+	MapToken,
+	TokenFold,
+} from "./map.js";
 export {
 	DEFAULT_MAP_LEGEND,
+	foldTokenMoved,
+	foldTokenPlaced,
+	foldTokenRemoved,
+	isInsideMap,
 	isValidMapName,
+	isValidTokenGlyph,
+	isValidTokenId,
 	MAP_DIRECTORY,
 	MAP_FILE_EXTENSION,
 	MAP_MAX_HEIGHT,
 	MAP_MAX_LEGEND_ENTRIES,
+	MAP_MAX_TOKENS,
 	MAP_MAX_WIDTH,
 	MAP_NAME_MAX_LENGTH,
 	MAP_SEPARATOR,
 	MAP_TILES,
+	mapDimensions,
 	mapFilePath,
+	mapGlyphAt,
+	mapTileAt,
 	parseMapFile,
 	readMapLoadedPayload,
+	readTokenMovedPayload,
+	readTokenPlacedPayload,
+	readTokenRemovedPayload,
+	TOKEN_ID_MAX_LENGTH,
+	TOKEN_LABEL_MAX_LENGTH,
+	tokenAt,
 	validateMapFile,
 } from "./map.js";
 export type {
@@ -34,9 +57,12 @@ export const CORE_CHAT_POSTED = "core.chat-posted";
 export const CORE_DICE_ROLLED = "core.dice-rolled";
 export const CORE_MAP_LOADED = "core.map-loaded";
 export const CORE_MAP_CLEARED = "core.map-cleared";
+export const CORE_TOKEN_PLACED = "core.token-placed";
+export const CORE_TOKEN_MOVED = "core.token-moved";
+export const CORE_TOKEN_REMOVED = "core.token-removed";
 
-/* The five constants above are the core event vocabulary. Each fold has one
- * arm per type and treats any other `core.*` type as unknown (ADR-0010). */
+/* The constants above are the core event vocabulary. Each fold has one arm per
+ * type and treats any other `core.*` type as unknown (ADR-0010). */
 
 export interface RoomCreatedPayload {
 	readonly gameId: string;
@@ -71,6 +97,27 @@ export interface MapLoadedPayload {
 
 export type MapClearedPayload = Readonly<Record<string, never>>;
 
+/** The whole token: placing onto an id already on the surface replaces it,
+ * which is how a re-glyph rides the pinned three-event vocabulary. */
+export interface TokenPlacedPayload {
+	readonly id: string;
+	readonly glyph: string;
+	readonly label: string;
+	readonly seatId: string | null;
+	readonly x: number;
+	readonly y: number;
+}
+
+export interface TokenMovedPayload {
+	readonly id: string;
+	readonly x: number;
+	readonly y: number;
+}
+
+export interface TokenRemovedPayload {
+	readonly id: string;
+}
+
 /** Commands the core decides itself — never routed to a game authority. */
 export type CoreCommand =
 	| { readonly type: "core.chat"; readonly text: string }
@@ -81,7 +128,25 @@ export type CoreCommand =
 			readonly characterId: string | null;
 	  }
 	| { readonly type: "core.load-map"; readonly name: string }
-	| { readonly type: "core.clear-map" };
+	| { readonly type: "core.clear-map" }
+	| {
+			/** Omitting `id` mints a fresh token; naming one that is already on
+			 * the surface replaces it — the re-glyph path. */
+			readonly type: "core.place-token";
+			readonly id?: string;
+			readonly glyph: string;
+			readonly label?: string;
+			readonly seatId?: string | null;
+			readonly x: number;
+			readonly y: number;
+	  }
+	| {
+			readonly type: "core.move-token";
+			readonly id: string;
+			readonly x: number;
+			readonly y: number;
+	  }
+	| { readonly type: "core.remove-token"; readonly id: string };
 
 export interface Envelope<
 	TType extends NamespacedType = NamespacedType,
