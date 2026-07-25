@@ -55,7 +55,7 @@ attempt=0
 gateway_url=
 while [ "$attempt" -lt 600 ]; do
 	# The banner prints a pairing code — the wss:// URL with the self-signed
-	# certificate's fingerprint on the end (ADR-0015) — and that whole string is
+	# certificate's fingerprint on the end (ADR-0014) — and that whole string is
 	# what `create --gateway` needs, fingerprint included.
 	gateway_url=$(sed -n 's|.*\(wss\{0,1\}://[^ ]*\).*|\1|p' "$log" | head -1)
 	if [ -n "$gateway_url" ]; then

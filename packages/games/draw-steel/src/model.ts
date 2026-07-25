@@ -207,7 +207,7 @@ export const eventTypes = [
 	"ds.surges-changed",
 	"ds.victory-gained",
 	"ds.power-rolled",
-] as const;
+] as const satisfies readonly DsEvent["type"][];
 
 const emptyEncounter = (): DsEncounter => ({
 	active: false,

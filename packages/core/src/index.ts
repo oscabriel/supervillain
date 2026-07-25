@@ -65,8 +65,8 @@ export const CORE_TOKEN_MOVED = "core.token-moved";
 export const CORE_TOKEN_REMOVED = "core.token-removed";
 export const CORE_ACTOR_LINKED = "core.actor-linked";
 
-/* The constants above are the core event vocabulary. Each fold has one arm per
- * type and treats any other `core.*` type as unknown (ADR-0010). */
+/* The eleven constants above are the core event vocabulary. Each fold has one
+ * arm per type and treats any other `core.*` type as unknown (ADR-0010). */
 
 export interface RoomCreatedPayload {
 	readonly gameId: string;
