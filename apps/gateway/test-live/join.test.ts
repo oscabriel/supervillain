@@ -289,9 +289,15 @@ describe("supervillain join through a live gateway", () => {
 			player.stdin.write("q");
 			await sleep(500);
 		}
+		const exitCode = await player.exited;
+		if (exitCode !== 0) {
+			// Diagnostic dump: what the player's terminal saw, verbatim.
+			console.error(`player exited ${exitCode}; transcript follows:`);
+			console.error(JSON.stringify(await readIfExists(transcript)));
+		}
 		// No dial error, no disconnect: the lobby said it, and the door closed
 		// cleanly (ADR-0008, ADR-0012).
-		expect(await player.exited).toBe(0);
+		expect(exitCode).toBe(0);
 		const screen = await readFile(transcript, "utf-8");
 		expect(screen).toContain("no table named 'ghost-keep' is registered here.");
 		expect(screen).toContain("the gate closes behind you.");
