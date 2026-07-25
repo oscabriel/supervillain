@@ -13,7 +13,7 @@
 		{ "path": "../../packages/identity" },
 		{ "path": "../../packages/room-host" },
 		{ "path": "../../packages/room-wire" },
-		{ "path": "../../packages/transport-iroh" },
+		{ "path": "../../packages/transport-ws" },
 		{ "path": "../../packages/session" },
 		{ "path": "../../packages/table" }
 	]

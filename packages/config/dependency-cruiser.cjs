@@ -43,7 +43,7 @@ module.exports = {
 		},
 		{
 			from: {
-				path: "^packages/(core|room-host|room-wire|transport-iroh|session|identity)/|^packages/games/[^/]+/src/(model|authority|content)\\.ts$",
+				path: "^packages/(core|room-host|room-wire|transport-ws|session|identity)/|^packages/games/[^/]+/src/(model|authority|content)\\.ts$",
 			},
 			name: "node-compat-is-platform-free",
 			severity: "error",
@@ -54,6 +54,28 @@ module.exports = {
 			name: "room-wire-never-imports-room-host",
 			severity: "error",
 			to: { path: "^packages/room-host/" },
+		},
+		{
+			// room-wire owns the transport seam and implements it for nobody
+			// (ADR-0012, NQ-13). The arrow only ever points the other way: an
+			// adapter imports the seam, never the reverse.
+			from: { path: "^packages/room-wire/" },
+			name: "room-wire-imports-no-transport",
+			severity: "error",
+			to: { path: "^(@supervillain/transport-|packages/transport-)" },
+		},
+		{
+			// The server half is the gateway's: ADR-0012 has the Host dialing out
+			// and the gateway listening, and the render side imports neither half.
+			// apps/cli is a named, temporary exception — the interim topology
+			// still has the Host serving over WS, and inverting it is #57. Remove
+			// apps/cli from this list the moment that lands.
+			from: { pathNot: "^(apps/gateway|apps/cli)/" },
+			name: "transport-server-half-is-gateway-only",
+			severity: "error",
+			to: {
+				path: "^(@supervillain/transport-[a-z]+/server$|packages/transport-[a-z]+/src/server\\.ts$)",
+			},
 		},
 		{
 			// apps/gateway is the only thing touching the GATEWAY's store — not

@@ -6,11 +6,12 @@ import type {
 	RoomStore,
 	RoomSubmission,
 } from "@supervillain/core";
+import { TransportListenerClosedError } from "@supervillain/room-wire";
 import type {
-	TransportAddress,
 	TransportConnection,
-	TransportEndpoint,
-} from "@supervillain/transport-iroh";
+	TransportDialer,
+	TransportListener,
+} from "@supervillain/room-wire";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -197,7 +198,7 @@ const handleConnection = async (
 			}
 		}
 	} catch {
-		// Closing an endpoint or either side of a connection ends its serving loop.
+		// Closing a listener or either side of a connection ends its serving loop.
 	} finally {
 		await closeQuietly(connection);
 	}
@@ -212,11 +213,10 @@ const removeHandlerWhenSettled = async (
 };
 
 const isClosedAccept = (error: unknown): boolean =>
-	error instanceof Error &&
-	error.message === "Transport endpoint closed while accepting";
+	error instanceof TransportListenerClosedError;
 
 export const serveRoomStore = (
-	endpoint: TransportEndpoint,
+	listener: TransportListener,
 	store: RoomStore
 ): { readonly close: () => Promise<void> } => {
 	const handlers = new Set<Promise<void>>();
@@ -227,7 +227,7 @@ export const serveRoomStore = (
 		for (;;) {
 			try {
 				// oxlint-disable-next-line eslint/no-await-in-loop -- accepting connections continuously is the loop's purpose
-				const connection = await endpoint.accept();
+				const connection = await listener.accept();
 				const handler = handleConnection(connection, store);
 				handlers.add(handler);
 				void removeHandlerWhenSettled(handlers, handler);
@@ -244,7 +244,7 @@ export const serveRoomStore = (
 	const close = (): Promise<void> => {
 		closePromise ??= (async (): Promise<void> => {
 			closing = true;
-			await endpoint.close();
+			await listener.close();
 			await acceptLoop;
 			if (acceptFailure !== undefined) {
 				throw new Error("RoomStore server accept loop failed.", {
@@ -258,9 +258,8 @@ export const serveRoomStore = (
 	return { close };
 };
 
-class IrohRemoteRoomStore implements RemoteRoomStore {
-	readonly #address: TransportAddress;
-	readonly #dialer: TransportEndpoint;
+class TransportRemoteRoomStore implements RemoteRoomStore {
+	readonly #dialer: TransportDialer;
 	readonly #submitConnection: TransportConnection;
 	readonly #streamConnections = new Set<TransportConnection>();
 	readonly #pendingStreamConnections = new Set<Promise<TransportConnection>>();
@@ -268,12 +267,7 @@ class IrohRemoteRoomStore implements RemoteRoomStore {
 	#closePromise: Promise<void> | undefined;
 	#submitTail: Promise<unknown> = Promise.resolve();
 
-	constructor(
-		dialer: TransportEndpoint,
-		address: TransportAddress,
-		submitConnection: TransportConnection
-	) {
-		this.#address = address;
+	constructor(dialer: TransportDialer, submitConnection: TransportConnection) {
 		this.#dialer = dialer;
 		this.#submitConnection = submitConnection;
 	}
@@ -353,7 +347,7 @@ class IrohRemoteRoomStore implements RemoteRoomStore {
 	}
 
 	async #dialStream(fromSeq: number): Promise<TransportConnection> {
-		const connection = await this.#dialer.dial(this.#address);
+		const connection = await this.#dialer.dial();
 		try {
 			await connection.send(encodeJson({ channel: "stream", fromSeq }));
 			return connection;
@@ -365,13 +359,12 @@ class IrohRemoteRoomStore implements RemoteRoomStore {
 }
 
 export const connectRoomStore = async (
-	dialer: TransportEndpoint,
-	address: TransportAddress
+	dialer: TransportDialer
 ): Promise<RemoteRoomStore> => {
-	const submitConnection = await dialer.dial(address);
+	const submitConnection = await dialer.dial();
 	try {
 		await submitConnection.send(encodeJson({ channel: "submit" }));
-		return new IrohRemoteRoomStore(dialer, address, submitConnection);
+		return new TransportRemoteRoomStore(dialer, submitConnection);
 	} catch (error) {
 		await closeQuietly(submitConnection);
 		throw error;

@@ -22,7 +22,7 @@
 		"@supervillain/room-wire": "workspace:*",
 		"@supervillain/session": "workspace:*",
 		"@supervillain/table": "workspace:*",
-		"@supervillain/transport-iroh": "workspace:*",
+		"@supervillain/transport-ws": "workspace:*",
 		"ssh2": "^1.17.0"
 	},
 	"devDependencies": {

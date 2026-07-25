@@ -8,11 +8,20 @@ import type {
 	RoomStore,
 	RoomSubmission,
 } from "@supervillain/core";
+
+import { TransportListenerClosedError } from "./seam.js";
 import type {
-	TransportAddress,
 	TransportConnection,
-	TransportEndpoint,
-} from "@supervillain/transport-iroh";
+	TransportDialer,
+	TransportListener,
+} from "./seam.js";
+
+export { TransportListenerClosedError } from "./seam.js";
+export type {
+	TransportConnection,
+	TransportDialer,
+	TransportListener,
+} from "./seam.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -261,11 +270,10 @@ const removeHandlerWhenSettled = async (
 };
 
 const isClosedAccept = (error: unknown): boolean =>
-	error instanceof Error &&
-	error.message === "Transport endpoint closed while accepting";
+	error instanceof TransportListenerClosedError;
 
 const serveConnections = (
-	endpoint: TransportEndpoint,
+	listener: TransportListener,
 	handle: (connection: TransportConnection) => Promise<void>,
 	failureMessage: string
 ): { readonly close: () => Promise<void> } => {
@@ -276,7 +284,7 @@ const serveConnections = (
 		for (;;) {
 			try {
 				// oxlint-disable-next-line eslint/no-await-in-loop -- accepting continuously is the serving loop's purpose.
-				const connection = await endpoint.accept();
+				const connection = await listener.accept();
 				const handler = handle(connection);
 				handlers.add(handler);
 				void removeHandlerWhenSettled(handlers, handler);
@@ -293,7 +301,7 @@ const serveConnections = (
 		close: () => {
 			closePromise ??= (async (): Promise<void> => {
 				closing = true;
-				await endpoint.close();
+				await listener.close();
 				await acceptLoop;
 				await Promise.allSettled(handlers);
 				if (acceptFailure !== undefined) {
@@ -307,12 +315,12 @@ const serveConnections = (
 
 /** Serves a RoomStore over the transport seam. Accepts until closed. */
 export const serveRoomStore = (
-	endpoint: TransportEndpoint,
+	listener: TransportListener,
 	store: RoomStore,
 	options: ServeRoomStoreOptions
 ): { readonly close: () => Promise<void> } =>
 	serveConnections(
-		endpoint,
+		listener,
 		(connection) => handleConnection(connection, store, options),
 		"RoomStore server accept loop failed."
 	);
@@ -332,8 +340,7 @@ const submitFailure = (
 ): unknown => (context?.timedOut === true ? context.error : error);
 
 class TransportRemoteRoomStore implements RemoteRoomStore {
-	readonly #address: TransportAddress;
-	readonly #dialer: TransportEndpoint;
+	readonly #dialer: TransportDialer;
 	readonly #reconnectDelayMs: (attempt: number) => number;
 	readonly #submitTimeoutMs: number | undefined;
 	readonly #connections = new Set<TransportConnection>();
@@ -345,13 +352,11 @@ class TransportRemoteRoomStore implements RemoteRoomStore {
 	#submitTail: Promise<unknown> = Promise.resolve();
 
 	constructor(
-		dialer: TransportEndpoint,
-		address: TransportAddress,
+		dialer: TransportDialer,
 		submitConnection: TransportConnection,
 		options: RemoteRoomStoreOptions
 	) {
 		this.#dialer = dialer;
-		this.#address = address;
 		this.#submitConnection = submitConnection;
 		this.#connections.add(submitConnection);
 		this.#reconnectDelayMs = options.reconnectDelayMs ?? defaultReconnectDelay;
@@ -548,7 +553,7 @@ class TransportRemoteRoomStore implements RemoteRoomStore {
 
 	async #dial(hello: Hello): Promise<TransportConnection> {
 		this.#assertOpen();
-		const pending = this.#dialer.dial(this.#address);
+		const pending = this.#dialer.dial();
 		this.#pendingConnections.add(pending);
 		let connection: TransportConnection;
 		try {
@@ -581,14 +586,13 @@ class TransportRemoteRoomStore implements RemoteRoomStore {
 /** Dials a served RoomStore. The submit connection is dialed eagerly so an
  * unreachable host fails here, not on first use. */
 export const connectRoomStore = async (
-	dialer: TransportEndpoint,
-	address: TransportAddress,
+	dialer: TransportDialer,
 	options: RemoteRoomStoreOptions = {}
 ): Promise<RemoteRoomStore> => {
-	const connection = await dialer.dial(address);
+	const connection = await dialer.dial();
 	try {
 		await connection.send(encodeJson({ channel: "submit" }));
-		return new TransportRemoteRoomStore(dialer, address, connection, options);
+		return new TransportRemoteRoomStore(dialer, connection, options);
 	} catch (error) {
 		await closeQuietly(connection);
 		throw error;
@@ -604,7 +608,8 @@ export const isValidRoomName = (name: string): boolean => ROOM_NAME.test(name);
 
 export interface RoomRegistration {
 	readonly name: string;
-	/** The host endpoint's serialized transport address. */
+	/** Where the gateway dials to reach this room's Host. Opaque to the wire
+	 * protocol: only the transport adapter on either end reads its form. */
 	readonly address: string;
 }
 
@@ -680,11 +685,11 @@ const handleRegistryConnection = async (
 
 /** Serves a RoomRegistry over the transport seam — the gateway's serving half. */
 export const serveRoomRegistry = (
-	endpoint: TransportEndpoint,
+	listener: TransportListener,
 	registry: RoomRegistry
 ): { readonly close: () => Promise<void> } =>
 	serveConnections(
-		endpoint,
+		listener,
 		(connection) => handleRegistryConnection(connection, registry),
 		"Room registry accept loop failed."
 	);
@@ -700,11 +705,10 @@ export interface RegistrationReceipt {
 /** Registers a room name with a gateway. Throws on rejection — a room that
  * asked for a name should not open with silence where its door was meant to be. */
 export const registerRoom = async (
-	dialer: TransportEndpoint,
-	gatewayAddress: TransportAddress,
+	gateway: TransportDialer,
 	registration: RoomRegistration
 ): Promise<RegistrationReceipt> => {
-	const connection = await dialer.dial(gatewayAddress);
+	const connection = await gateway.dial();
 	try {
 		await connection.send(encodeJson({ channel: "register", ...registration }));
 		const outcome = parseRegistrationOutcome(

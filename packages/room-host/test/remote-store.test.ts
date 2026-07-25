@@ -5,26 +5,20 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import type { Envelope, HostRegistry } from "@supervillain/core";
-import { openIrohEndpoint } from "@supervillain/transport-iroh";
-import type {
-	IrohEndpointOptions,
-	TransportEndpoint,
-} from "@supervillain/transport-iroh";
 
 import { decide } from "../../games/fake/src/authority.js";
 import { apply, init } from "../../games/fake/src/model.js";
 import { InProcessRoomStore, RoomHost } from "../src/index.js";
 import { describe, expect, test } from "./harness.js";
+import { createMemoryTransportPair } from "./memory-transport.js";
 import { connectRoomStore, serveRoomStore } from "./remote.js";
 
 type RemoteStore = Awaited<ReturnType<typeof connectRoomStore>>;
 type ServerHandle = ReturnType<typeof serveRoomStore>;
 
 interface RemoteFixture {
-	readonly dialer: TransportEndpoint;
 	readonly remote: RemoteStore;
 	readonly server: ServerHandle;
-	readonly servingEndpoint: TransportEndpoint;
 }
 
 const registry: HostRegistry = {
@@ -64,10 +58,7 @@ const withCampaign = async (
 	}
 };
 
-const openFixture = async (
-	campaignFolder: string,
-	options: IrohEndpointOptions
-): Promise<RemoteFixture> => {
+const openFixture = async (campaignFolder: string): Promise<RemoteFixture> => {
 	const host = await RoomHost.open({
 		actor: "actor-gm",
 		campaignFolder,
@@ -75,21 +66,12 @@ const openFixture = async (
 		gameId: "fake",
 		registry,
 	});
-	const servingEndpoint = await openIrohEndpoint(options);
-	let dialer: TransportEndpoint;
+	const { dialer, listener } = createMemoryTransportPair();
+	const server = serveRoomStore(listener, new InProcessRoomStore(host));
 	try {
-		dialer = await openIrohEndpoint(options);
-	} catch (error) {
-		await servingEndpoint.close();
-		throw error;
-	}
-	const server = serveRoomStore(servingEndpoint, new InProcessRoomStore(host));
-	try {
-		const remote = await connectRoomStore(dialer, servingEndpoint.address);
-		return { dialer, remote, server, servingEndpoint };
+		return { remote: await connectRoomStore(dialer), server };
 	} catch (error) {
 		await server.close();
-		await dialer.close();
 		throw error;
 	}
 };
@@ -97,8 +79,6 @@ const openFixture = async (
 const closeFixture = async (fixture: RemoteFixture): Promise<void> => {
 	await fixture.remote.close();
 	await fixture.server.close();
-	await fixture.dialer.close();
-	await fixture.servingEndpoint.close();
 };
 
 const nextEnvelope = async (
@@ -127,10 +107,10 @@ const visit = {
 	command: { seatId: "gm", type: "fake.visit" },
 } as const;
 
-describe("remote RoomStore over iroh", () => {
-	test("connects a second peer to a live host over a direct route", async () => {
+describe("remote RoomStore over the transport seam", () => {
+	test("connects a second peer to a live host", async () => {
 		await withCampaign(async (campaignFolder) => {
-			const fixture = await openFixture(campaignFolder, { routing: "direct" });
+			const fixture = await openFixture(campaignFolder);
 			try {
 				await fixture.remote.submit({
 					actor: "actor-guest",
@@ -170,31 +150,9 @@ describe("remote RoomStore over iroh", () => {
 		});
 	}, 30_000);
 
-	test("connects the live host through a forced relay", async () => {
-		await withCampaign(async (campaignFolder) => {
-			const fixture = await openFixture(campaignFolder, { routing: "relay" });
-			try {
-				expect(await fixture.remote.submit(visit)).toMatchObject({
-					accepted: true,
-				});
-				const iterator = fixture.remote.stream(1)[Symbol.asyncIterator]();
-				try {
-					expect(await nextEnvelope(iterator)).toMatchObject({
-						seq: 1,
-						type: "core.room-created",
-					});
-				} finally {
-					await iterator.return?.();
-				}
-			} finally {
-				await closeFixture(fixture);
-			}
-		});
-	}, 60_000);
-
 	test("reconnects a stream for catch-up and then follows live Envelopes", async () => {
 		await withCampaign(async (campaignFolder) => {
-			const fixture = await openFixture(campaignFolder, { routing: "direct" });
+			const fixture = await openFixture(campaignFolder);
 			try {
 				const initial = fixture.remote.stream(1)[Symbol.asyncIterator]();
 				try {
@@ -235,7 +193,7 @@ describe("remote RoomStore over iroh", () => {
 
 	test("closes while a live stream read is pending", async () => {
 		await withCampaign(async (campaignFolder) => {
-			const fixture = await openFixture(campaignFolder, { routing: "direct" });
+			const fixture = await openFixture(campaignFolder);
 			const iterator = fixture.remote.stream(1)[Symbol.asyncIterator]();
 			try {
 				expect(await nextEnvelope(iterator)).toMatchObject({ seq: 1 });
@@ -252,9 +210,9 @@ describe("remote RoomStore over iroh", () => {
 		});
 	}, 30_000);
 
-	test("shuts the remote store, server, and endpoints down idempotently", async () => {
+	test("shuts the remote store and server down idempotently", async () => {
 		await withCampaign(async (campaignFolder) => {
-			const fixture = await openFixture(campaignFolder, { routing: "direct" });
+			const fixture = await openFixture(campaignFolder);
 			try {
 				expect(await fixture.remote.submit(visit)).toMatchObject({
 					accepted: true,

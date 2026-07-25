@@ -17,7 +17,12 @@ import type {
 	RoomRegistration,
 	RoomRegistry,
 } from "../src/index.js";
-import { createMemoryEndpointPair, describe, expect, test } from "./harness.js";
+import {
+	createMemoryTransportPair,
+	describe,
+	expect,
+	test,
+} from "./harness.js";
 
 class TestRegistry implements RoomRegistry {
 	readonly registrations: { owner: string; registration: RoomRegistration }[] =
@@ -68,14 +73,14 @@ describe("room registration protocol", () => {
 	});
 
 	test("registers a room and returns the gateway's identity in the receipt", async () => {
-		const { client, server } = createMemoryEndpointPair(
+		const { dialer, listener } = createMemoryTransportPair(
 			"gm-key",
 			"gateway-key"
 		);
 		const registry = new TestRegistry();
-		const registryServer = serveRoomRegistry(server, registry);
-		const receipt = await registerRoom(client, server.address, {
-			address: "memory:gm-host",
+		const registryServer = serveRoomRegistry(listener, registry);
+		const receipt = await registerRoom(dialer, {
+			address: "ws://gm-host.test:9000",
 			name: "iron-keep",
 		});
 		expect(receipt).toEqual({
@@ -86,22 +91,22 @@ describe("room registration protocol", () => {
 		expect(registry.registrations).toEqual([
 			{
 				owner: "gm-key",
-				registration: { address: "memory:gm-host", name: "iron-keep" },
+				registration: { address: "ws://gm-host.test:9000", name: "iron-keep" },
 			},
 		]);
 		await registryServer.close();
 	});
 
 	test("rejects an invalid name at the wire without consulting the registry", async () => {
-		const { client, server } = createMemoryEndpointPair(
+		const { dialer, listener } = createMemoryTransportPair(
 			"gm-key",
 			"gateway-key"
 		);
 		const registry = new TestRegistry();
-		const registryServer = serveRoomRegistry(server, registry);
+		const registryServer = serveRoomRegistry(listener, registry);
 		await expect(
-			registerRoom(client, server.address, {
-				address: "memory:gm-host",
+			registerRoom(dialer, {
+				address: "ws://gm-host.test:9000",
 				name: "Iron Keep",
 			})
 		).rejects.toThrow("Room names are 1-32 lowercase letters");
@@ -110,7 +115,7 @@ describe("room registration protocol", () => {
 	});
 
 	test("surfaces a registry rejection as a thrown error", async () => {
-		const { client, server } = createMemoryEndpointPair(
+		const { dialer, listener } = createMemoryTransportPair(
 			"gm-key",
 			"gateway-key"
 		);
@@ -119,10 +124,10 @@ describe("room registration protocol", () => {
 			message: "The name 'iron-keep' is already claimed by another key.",
 			rejected: true,
 		};
-		const registryServer = serveRoomRegistry(server, registry);
+		const registryServer = serveRoomRegistry(listener, registry);
 		await expect(
-			registerRoom(client, server.address, {
-				address: "memory:gm-host",
+			registerRoom(dialer, {
+				address: "ws://gm-host.test:9000",
 				name: "iron-keep",
 			})
 		).rejects.toThrow("already claimed by another key");
@@ -132,16 +137,16 @@ describe("room registration protocol", () => {
 
 describe("trusted stampers", () => {
 	test("lets a trusted connection submit on behalf of other actors", async () => {
-		const { client, server } = createMemoryEndpointPair(
+		const { dialer, listener } = createMemoryTransportPair(
 			"gateway-key",
 			"host-key"
 		);
 		const store = new RecordingRoomStore();
-		const roomServer = serveRoomStore(server, store, {
+		const roomServer = serveRoomStore(listener, store, {
 			info: { gameId: "fake", label: "table" },
 			trustedStampers: ["gateway-key"],
 		});
-		const remote = await connectRoomStore(client, server.address);
+		const remote = await connectRoomStore(dialer);
 		const stamped = await remote.submit({
 			actor: "guest:abc123def456",
 			command: { type: "core.claim-seat" },
@@ -155,16 +160,16 @@ describe("trusted stampers", () => {
 	});
 
 	test("still rejects mismatched actors from untrusted connections", async () => {
-		const { client, server } = createMemoryEndpointPair(
+		const { dialer, listener } = createMemoryTransportPair(
 			"player-key",
 			"host-key"
 		);
 		const store = new RecordingRoomStore();
-		const roomServer = serveRoomStore(server, store, {
+		const roomServer = serveRoomStore(listener, store, {
 			info: { gameId: "fake", label: "table" },
 			trustedStampers: ["gateway-key"],
 		});
-		const remote = await connectRoomStore(client, server.address);
+		const remote = await connectRoomStore(dialer);
 		const rejected = await remote.submit({
 			actor: "someone-else",
 			command: { type: "core.claim-seat" },

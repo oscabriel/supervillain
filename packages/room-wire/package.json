@@ -19,8 +19,7 @@
 		"test:node": "vitest run"
 	},
 	"dependencies": {
-		"@supervillain/core": "workspace:*",
-		"@supervillain/transport-iroh": "workspace:*"
+		"@supervillain/core": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^24.0.0",
