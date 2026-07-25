@@ -16,6 +16,7 @@ import {
 import {
 	decodeJson,
 	encodeJson,
+	parseActorRosterRequest,
 	parseRegistrationOutcome,
 	parseStreamCredit,
 	parseStreamOpen,
@@ -33,6 +34,16 @@ export interface HostedRoom {
 	readonly name: string;
 	readonly info: RoomInfo;
 	readonly store: RoomStore;
+	/**
+	 * Every actor this room's log mentions, read fresh each time the gateway
+	 * asks. It is the room's whole half of ADR-0005 linking: the gateway
+	 * resolves the roster against its graph and stamps back what is missing, so
+	 * no queue of pending linkings exists on either side (ADR-0013).
+	 *
+	 * Omitted, the room simply declines to be told — nothing breaks, and
+	 * nothing links.
+	 */
+	readonly actors?: () => readonly string[];
 }
 
 /** What the gateway told this Host when it accepted the registration. */
@@ -129,6 +140,18 @@ const serveSubmit = async (
 	}
 };
 
+/** The room's half of ADR-0005 linking: hand the gateway the actor list its
+ * graph needs, and let it stamp back what this log is missing. The list is
+ * derived from the log on the spot — the Host keeps no linking bookkeeping. */
+const serveLink = async (
+	stream: PipeStream,
+	room: HostedRoom
+): Promise<void> => {
+	parseActorRosterRequest(decodeJson(await stream.receive()));
+	await stream.send(encodeJson({ actors: room.actors?.() ?? [] }));
+	stream.close();
+};
+
 const serveStream = async (
 	stream: PipeStream,
 	room: HostedRoom
@@ -176,8 +199,11 @@ const serveRoomStream = async (
 		await serveStream(stream, room);
 		return;
 	}
-	// `register` is the Host's to open, not to answer, and `link` waits on the
-	// key-equivalence graph (ADR-0005), which does not exist yet.
+	if (stream.channel === "link") {
+		await serveLink(stream, room);
+		return;
+	}
+	// `register` is the Host's to open, not to answer.
 	stream.fail(`Channel '${stream.channel}' is not served by this Host.`);
 };
 
@@ -202,7 +228,11 @@ const closeQuietly = async (connection: TransportConnection): Promise<void> => {
 	}
 };
 
-const handshake = async (connection: TransportConnection): Promise<void> => {
+/** The two-message version negotiation every pipe opens with. Exported inside
+ * the package so the link client dials the same contract, not a lookalike. */
+export const handshake = async (
+	connection: TransportConnection
+): Promise<void> => {
 	await connection.send(
 		encodePipeHello({ versions: SUPPORTED_PIPE_PROTOCOL_VERSIONS })
 	);

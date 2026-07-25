@@ -58,6 +58,7 @@ export type {
 	GatewayPipeEvent,
 	HostPipeServer,
 	HostPipeServerOptions,
+	KeyGraph,
 	LiveRoom,
 	RoomOwnership,
 } from "./gateway-pipe.js";
@@ -69,13 +70,20 @@ export type {
 	HostPipeEvent,
 	HostPipeOptions,
 } from "./host-pipe.js";
+export { openGatewayLink } from "./link.js";
+export type { GatewayLink, GatewayLinkOptions } from "./link.js";
 export {
 	encodeSubmitRequest,
 	isValidRoomName,
+	LINK_ROOM,
 	parseSubmitRequest,
 	ROOM_NAME_RULE,
 } from "./messages.js";
 export type {
+	ActorLink,
+	LinkCodeOutcome,
+	LinkRedemptionOutcome,
+	LinkRequest,
 	RegistrationOutcome,
 	RoomInfo,
 	SubmitRequest,

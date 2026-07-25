@@ -57,6 +57,39 @@ describe("supervillain noun commands", () => {
 		expect(result.output).toMatch(/^\d+\.\d+\.\d+\n$/u);
 	});
 
+	test("key link needs a gateway, and takes at most one code", async () => {
+		const config = await makeCampaign();
+		const cli = path.resolve(import.meta.dir, "../dist/index.js");
+		const run = async (
+			args: readonly string[]
+		): Promise<{ readonly code: number; readonly error: string }> => {
+			const childProcess = Bun.spawn(["bun", cli, ...args], {
+				env: {
+					...process.env,
+					SUPERVILLAIN_GATEWAY: "",
+					XDG_CONFIG_HOME: config,
+				},
+				stderr: "pipe",
+				stdout: "pipe",
+			});
+			const error = new Response(childProcess.stderr).text();
+			return { code: await childProcess.exited, error: await error };
+		};
+		expect(await run(["key", "link"])).toEqual({
+			code: 1,
+			error:
+				"key link needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY.\n",
+		});
+		expect(await run(["key", "link", "ONE", "TWO"])).toEqual({
+			code: 1,
+			error: "key link takes at most one code.\n",
+		});
+		expect(await run(["key", "sever"])).toEqual({
+			code: 1,
+			error: "key requires show or link.\n",
+		});
+	});
+
 	test("creates, validates, and never overwrites a character file", async () => {
 		const campaign = await makeCampaign();
 		const created = await runCli(["character", "new", campaign, "Coda Prime!"]);

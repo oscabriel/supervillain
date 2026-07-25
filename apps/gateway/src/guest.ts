@@ -9,23 +9,47 @@ export const mintGuestActor = (): string =>
 export const isGuestActor = (actor: string): boolean =>
 	actor.startsWith("guest:");
 
-/** The can't-miss upgrade box, shown to guests at the minting threshold —
- * before they sit down (ADR-0003, placement re-pinned by ADR-0008). */
-export const guestUpgradeBox = (): string =>
-	[
+const BOX_WIDTH = 50;
+
+const boxLine = (text: string): string => `  │${text.padEnd(BOX_WIDTH, " ")}│`;
+
+/**
+ * The can't-miss upgrade box, shown to guests at the minting threshold —
+ * before they sit down (ADR-0003, placement re-pinned by ADR-0008).
+ *
+ * `adoptionCode` is ADR-0005's guest adoption handle: minted during the live
+ * session, because only the gateway knows a session is `guest:X` and guests
+ * have no reconnect continuity. It lives seven days, so there is no
+ * install-the-CLI-right-now pressure — and redemption takes exactly one line of
+ * instruction, since `key link` accepts either code kind.
+ */
+export const guestUpgradeBox = (adoptionCode?: string): string => {
+	const adoption =
+		adoptionCode === undefined
+			? [
+					boxLine("  to be remembered, bring an ed25519 key:"),
+					boxLine(""),
+					boxLine("      ssh-keygen -t ed25519"),
+				]
+			: [
+					boxLine("  to keep tonight's history, install the CLI"),
+					boxLine("  and claim this session within 7 days:"),
+					boxLine(""),
+					boxLine(`      supervillain key link ${adoptionCode}`),
+				];
+	return [
 		"",
-		"  ┌──────────────────────────────────────────────────┐",
-		"  │  you arrive without a key.                       │",
-		"  │  your seat is temporary; your deeds, forgotten.  │",
-		"  │                                                  │",
-		"  │  to be remembered, bring an ed25519 key:         │",
-		"  │                                                  │",
-		"  │      ssh-keygen -t ed25519                       │",
-		"  │                                                  │",
-		"  │  press any key to sit down anyway.               │",
-		"  └──────────────────────────────────────────────────┘",
+		`  ┌${"─".repeat(BOX_WIDTH)}┐`,
+		boxLine("  you arrive without a key."),
+		boxLine("  your seat is temporary; your deeds, forgotten."),
+		boxLine(""),
+		...adoption,
+		boxLine(""),
+		boxLine("  press any key to sit down anyway."),
+		`  └${"─".repeat(BOX_WIDTH)}┘`,
 		"",
 	].join("\r\n");
+};
 
 export interface AssumedActor {
 	readonly actor: string;

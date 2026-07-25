@@ -1,6 +1,9 @@
 import type { MapLegend } from "./map.js";
+import { isRecord } from "./validation.js";
 import type { ContentValidator } from "./validation.js";
 
+export type { ActorLinks } from "./actors.js";
+export { createActorLinks } from "./actors.js";
 export type {
 	BattleMap,
 	MapLegend,
@@ -60,6 +63,7 @@ export const CORE_MAP_CLEARED = "core.map-cleared";
 export const CORE_TOKEN_PLACED = "core.token-placed";
 export const CORE_TOKEN_MOVED = "core.token-moved";
 export const CORE_TOKEN_REMOVED = "core.token-removed";
+export const CORE_ACTOR_LINKED = "core.actor-linked";
 
 /* The constants above are the core event vocabulary. Each fold has one arm per
  * type and treats any other `core.*` type as unknown (ADR-0010). */
@@ -118,6 +122,26 @@ export interface TokenRemovedPayload {
 	readonly id: string;
 }
 
+/**
+ * Two actors are one person (ADR-0005). The envelope's actor is the redeeming
+ * key; `linked` is the actor it absorbed — a second machine's `<64hex>` key or
+ * an adopted `guest:X`. One event type serves device linking and guest adoption
+ * alike, and the fold unions the two strings rather than rewriting history.
+ */
+export interface ActorLinkedPayload {
+	readonly linked: string;
+}
+
+/** The absorbed actor a `core.actor-linked` payload names, or `null` when the
+ * payload is not one — known-invalid, in ADR-0010's sense. */
+export const readActorLinkedPayload = (payload: unknown): string | null => {
+	if (!isRecord(payload) || typeof payload.linked !== "string") {
+		return null;
+	}
+	const linked = payload.linked.trim();
+	return linked.length === 0 ? null : linked;
+};
+
 /** Commands the core decides itself — never routed to a game authority. */
 export type CoreCommand =
 	| { readonly type: "core.chat"; readonly text: string }
@@ -146,7 +170,14 @@ export type CoreCommand =
 			readonly x: number;
 			readonly y: number;
 	  }
-	| { readonly type: "core.remove-token"; readonly id: string };
+	| { readonly type: "core.remove-token"; readonly id: string }
+	| {
+			/** Materializes a linking fact the gateway resolved from the graph.
+			 * The submitting connection names an actor other than itself, so only
+			 * a trusted stamper may send it (ADR-0003/0005). */
+			readonly type: "core.link-actor";
+			readonly linked: string;
+	  };
 
 export interface Envelope<
 	TType extends NamespacedType = NamespacedType,

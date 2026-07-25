@@ -151,6 +151,120 @@ export const parseRegistrationRequest = (value: unknown): string => {
 	return value.name;
 };
 
+// --- the link channel: ADR-0005's linking conduit, riding the same pipe ---
+
+/**
+ * The room tag every link exchange that belongs to no room carries. A CLI
+ * running `supervillain key link` holds a pipe with no rooms on it at all, and
+ * `-` can never collide with a room name (a name may not start or end with a
+ * hyphen).
+ */
+export const LINK_ROOM = "-";
+
+/** One linking fact: `actor` and `linked` are the same person. The gateway
+ * derives these from its graph; a room materializes them as events. */
+export interface ActorLink {
+	readonly actor: string;
+	readonly linked: string;
+}
+
+/** The gateway's ask, opened toward a Host right after registration: name every
+ * actor your log knows. The answer is transient — the gateway resolves it
+ * against the graph and stores none of it (ADR-0013). */
+export const ACTOR_ROSTER_REQUEST = { actors: true } as const;
+
+export const parseActorRosterRequest = (value: unknown): void => {
+	if (!isRecord(value) || value.actors !== true) {
+		throw new TypeError("Actor roster request is invalid.");
+	}
+};
+
+export const parseActorRoster = (value: unknown): readonly string[] => {
+	if (
+		!isRecord(value) ||
+		!Array.isArray(value.actors) ||
+		value.actors.some((one) => typeof one !== "string")
+	) {
+		throw new TypeError("Actor roster is invalid.");
+	}
+	return value.actors as readonly string[];
+};
+
+/** What a CLI asks of the gateway on the link channel. Redemption accepts
+ * either code kind — the gateway knows what a code maps to (ADR-0005). */
+export type LinkRequest =
+	| { readonly mint: "device" }
+	| { readonly redeem: string };
+
+export const parseLinkRequest = (value: unknown): LinkRequest => {
+	if (isRecord(value)) {
+		if (value.mint === "device") {
+			return { mint: "device" };
+		}
+		if (typeof value.redeem === "string" && value.redeem.length > 0) {
+			return { redeem: value.redeem };
+		}
+	}
+	throw new TypeError("Link request is invalid.");
+};
+
+export type LinkCodeOutcome =
+	| {
+			readonly accepted: true;
+			readonly code: string;
+			/** ISO-8601, so the CLI can say how long the code lives. */
+			readonly expiresAt: string;
+	  }
+	| { readonly rejected: true; readonly message: string };
+
+export const parseLinkCodeOutcome = (value: unknown): LinkCodeOutcome => {
+	if (isRecord(value)) {
+		if (
+			value.accepted === true &&
+			typeof value.code === "string" &&
+			typeof value.expiresAt === "string"
+		) {
+			return { accepted: true, code: value.code, expiresAt: value.expiresAt };
+		}
+		if (value.rejected === true && typeof value.message === "string") {
+			return { message: value.message, rejected: true };
+		}
+	}
+	throw new TypeError("Link code outcome is invalid.");
+};
+
+export type LinkRedemptionOutcome =
+	| {
+			readonly accepted: true;
+			/** The actor the redeeming key absorbed — the other machine's key, or
+			 * the adopted `guest:X`. */
+			readonly linked: string;
+			readonly identityId: string;
+	  }
+	| { readonly rejected: true; readonly message: string };
+
+export const parseLinkRedemptionOutcome = (
+	value: unknown
+): LinkRedemptionOutcome => {
+	if (isRecord(value)) {
+		if (
+			value.accepted === true &&
+			typeof value.linked === "string" &&
+			typeof value.identityId === "string"
+		) {
+			return {
+				accepted: true,
+				identityId: value.identityId,
+				linked: value.linked,
+			};
+		}
+		if (value.rejected === true && typeof value.message === "string") {
+			return { message: value.message, rejected: true };
+		}
+	}
+	throw new TypeError("Link redemption outcome is invalid.");
+};
+
 export const parseRegistrationOutcome = (
 	value: unknown
 ): RegistrationOutcome => {
