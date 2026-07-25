@@ -36,6 +36,8 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Key linking**: Binding a second key to the same identity via a one-time code (v1). GM roaming falls out of it. _Avoid_: device sync, multi-login
 
+**Key revocation**: Retiring a key — a **state on the key, not a deletion**. The key leaves its equivalence class for authentication only: it can no longer host, join, link, or revoke, while the identity keeps its other keys, its rooms, and every line the retired key wrote. The state is a column in the gateway store, so refusal is a local read that works with our servers unreachable (ADR-0012 NQ-3, located by ADR-0013). Rotation is "link new, retire old"; `supervillain key revoke` is the retire, run from a machine you still control. It takes effect **immediately** — live pipes and terminals on that key are dropped, not merely refused at their next login ([#59](https://github.com/oscabriel/supervillain/issues/59)). _Avoid_: delete key, unlink, deactivate, ban
+
 **Pairing code**: The one pasteable string that onboards a Host to a gateway — the gateway's `wss://` URL carrying its certificate fingerprint in a `#fp=sha256:…` fragment (ADR-0014). Only a gateway with no CA behind it publishes one; a hosted gateway's address is a bare URL. The first connection pins the fingerprint in per-machine config; a gateway that later serves a different certificate is refused, never prompted. Distinct from **key linking**'s one-time code, which binds a key to an identity. _Avoid_: invite code, join token, gateway secret
 
 **Capability URL**: An unguessable share link that _is_ the permission for a published web artifact; revocable by the owner. The web access model at launch — no web accounts. _Avoid_: share token, public link, permalink

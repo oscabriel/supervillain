@@ -49,6 +49,13 @@ import { createOfflineMetrics } from "./offline-metrics.js";
 import type { OfflineCounts, OfflineMetrics } from "./offline-metrics.js";
 import { openRoomRegistry } from "./registry.js";
 import type { GatewayRoomRegistry } from "./registry.js";
+import {
+	createKeyedSessions,
+	doorRefusal,
+	keyedActorOf,
+	REVOKED_SESSION_MESSAGE,
+} from "./revocation.js";
+import type { KeyedSessions } from "./revocation.js";
 import { GATEWAY_ROLE_USAGE, parseGatewayRoleArgs } from "./role.js";
 import { holdRoom } from "./room-hold.js";
 import { attachSshChannel, sessionForActor } from "./ssh-session.js";
@@ -78,6 +85,14 @@ export {
 	OPERATED_GATEWAY_STATE_DIR,
 	resolveGatewayStateDir,
 } from "./state-dir.js";
+export {
+	createKeyedSessions,
+	doorRefusal,
+	keyedActorOf,
+	REVOKED_DOOR_MESSAGE,
+	REVOKED_SESSION_MESSAGE,
+} from "./revocation.js";
+export type { KeyedSessions } from "./revocation.js";
 
 const AUTH_METHODS: AuthenticationType[] = [
 	"publickey",
@@ -454,6 +469,9 @@ interface RoomServices {
 	readonly registry: GatewayRoomRegistry;
 	readonly pipes: HostPipeServer;
 	readonly metrics: OfflineMetrics;
+	/** The live keyed terminals, so a key retired right now takes the sessions
+	 * it is holding with it rather than waiting for the next login. */
+	readonly sessions: KeyedSessions;
 	readonly graceMs?: number;
 	readonly gracePollMs?: number;
 }
@@ -555,8 +573,26 @@ const handleConnection = (
 						farewell(stream, "authentication left no identity.", 1);
 						return;
 					}
+					// The door's half of the revoked-key refusal (ADR-0012, NQ-3). It
+					// lands here rather than at the auth callback because rejecting the
+					// publickey method would drop the visitor into the keyless guest
+					// path — a retired key would become a guest instead of being told
+					// anything.
+					const refusal = doorRefusal(shellIdentity, options.rooms.registry);
+					if (refusal !== undefined) {
+						farewell(stream, refusal, 1);
+						client.end();
+						return;
+					}
+					const keyed = keyedActorOf(shellIdentity);
 					connection = attachSshChannel({ initialSize: size, stream });
 					const shellConnection = connection;
+					const release =
+						keyed === undefined
+							? undefined
+							: options.rooms.sessions.hold(keyed, () => {
+									farewell(stream, REVOKED_SESSION_MESSAGE, 1);
+								});
 					void (async (): Promise<void> => {
 						try {
 							await serveShell(shellConnection, stream, {
@@ -571,6 +607,7 @@ const handleConnection = (
 							// the door closes (ADR-0008).
 							farewell(stream, "The table collapsed. Try again.", 1);
 						} finally {
+							release?.();
 							client.end();
 						}
 					})();
@@ -606,6 +643,16 @@ export const startGateway = async (
 	const registry = openRoomRegistry({
 		path: path.join(options.stateDir, "registry.db"),
 	});
+	const sessions = createKeyedSessions();
+	/** Revocation is immediate on every surface, not just the one it was asked
+	 * on: the pipe half closes the retired key's pipes, and this closes the
+	 * terminals it is sitting at. */
+	const onPipeEvent = (event: GatewayPipeEvent): void => {
+		if (event.kind === "key-revoked") {
+			sessions.drop(event.key);
+		}
+		options.onEvent?.(event);
+	};
 	// The Host dials in; the gateway never dials a Host (ADR-0012). Logging is
 	// metadata only — lifecycle and room names, never a payload (NQ-11).
 	const pipes = serveHostPipes({
@@ -614,7 +661,7 @@ export const startGateway = async (
 		// never a driver: `room-wire` compiles and tests under Node too (NQ-12).
 		keys: registry,
 		listener,
-		onEvent: options.onEvent,
+		onEvent: onPipeEvent,
 		ownership: registry,
 		sessionBudget: options.sessionBudget,
 	});
@@ -640,6 +687,7 @@ export const startGateway = async (
 					metrics,
 					pipes,
 					registry,
+					sessions,
 				},
 				sshHost: options.sshHost,
 			});

@@ -190,11 +190,20 @@ export const parseActorRoster = (value: unknown): readonly string[] => {
 	return value.actors as readonly string[];
 };
 
-/** What a CLI asks of the gateway on the link channel. Redemption accepts
- * either code kind — the gateway knows what a code maps to (ADR-0005). */
+/**
+ * What a CLI asks of the gateway on the link channel. Redemption accepts
+ * either code kind — the gateway knows what a code maps to (ADR-0005).
+ *
+ * `revoke` is the retire half of rotation (ADR-0012, NQ-3). It is the one
+ * request on this channel that *does* name a key, and it has to: you revoke the
+ * machine you no longer control from the machine you still do. The named key is
+ * checked against the connection's own identity at the graph, so naming one is
+ * not the same as being allowed to retire it.
+ */
 export type LinkRequest =
 	| { readonly mint: "device" }
-	| { readonly redeem: string };
+	| { readonly redeem: string }
+	| { readonly revoke: string };
 
 export const parseLinkRequest = (value: unknown): LinkRequest => {
 	if (isRecord(value)) {
@@ -203,6 +212,9 @@ export const parseLinkRequest = (value: unknown): LinkRequest => {
 		}
 		if (typeof value.redeem === "string" && value.redeem.length > 0) {
 			return { redeem: value.redeem };
+		}
+		if (typeof value.revoke === "string" && value.revoke.length > 0) {
+			return { revoke: value.revoke };
 		}
 	}
 	throw new TypeError("Link request is invalid.");
@@ -263,6 +275,46 @@ export const parseLinkRedemptionOutcome = (
 		}
 	}
 	throw new TypeError("Link redemption outcome is invalid.");
+};
+
+/**
+ * What retiring a key ended as. Revocation is a **state on the key, not a
+ * deletion**: the identity keeps the row, its other keys, and its rooms — only
+ * authentication stops answering for it (ADR-0012, NQ-3).
+ */
+export type RevocationOutcome =
+	| {
+			readonly accepted: true;
+			/** The key that is now retired. */
+			readonly revoked: string;
+			/** The identity it stays part of, so history remains legible. */
+			readonly identityId: string;
+			/** The identity's keys that still authenticate, first-linked first. */
+			readonly remaining: readonly string[];
+	  }
+	| { readonly rejected: true; readonly message: string };
+
+export const parseRevocationOutcome = (value: unknown): RevocationOutcome => {
+	if (isRecord(value)) {
+		if (
+			value.accepted === true &&
+			typeof value.revoked === "string" &&
+			typeof value.identityId === "string" &&
+			Array.isArray(value.remaining) &&
+			value.remaining.every((one) => typeof one === "string")
+		) {
+			return {
+				accepted: true,
+				identityId: value.identityId,
+				remaining: value.remaining as readonly string[],
+				revoked: value.revoked,
+			};
+		}
+		if (value.rejected === true && typeof value.message === "string") {
+			return { message: value.message, rejected: true };
+		}
+	}
+	throw new TypeError("Revocation outcome is invalid.");
 };
 
 export const parseRegistrationOutcome = (

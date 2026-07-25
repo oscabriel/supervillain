@@ -114,6 +114,135 @@ describe("openRoomRegistry", () => {
 		await rm(file, { force: true });
 	});
 
+	test("retires a key without disturbing its identity's other keys or rooms", async () => {
+		const registry = openTestRegistry();
+		const identity = registry.resolveIdentity("gm-key");
+		await registry.claim("gm-key", "iron-keep");
+		const code = await registry.mintDeviceCode("gm-key");
+		if ("rejected" in code) {
+			throw new Error(code.message);
+		}
+		const linked = await registry.redeemLinkCode(code.code, "homelab-key");
+		expect(linked).toMatchObject({ accepted: true });
+
+		expect(await registry.revokeKey("homelab-key", "gm-key")).toEqual({
+			accepted: true,
+			identityId: identity,
+			remaining: ["gm-key"],
+			revoked: "homelab-key",
+		});
+		expect(registry.isRevoked("homelab-key")).toBe(true);
+		// The other key still answers, the room is still owned by the identity,
+		// and the retired key is still in the class for attribution.
+		expect(registry.isRevoked("gm-key")).toBe(false);
+		expect(registry.ownerOf("iron-keep")).toBe(identity);
+		expect(registry.actorsOf(identity)).toContain("homelab-key");
+		expect(registry.liveActorsOf(identity)).toEqual(["gm-key"]);
+		expect(registry.identityOf("homelab-key")).toBe(identity);
+		registry.close();
+	});
+
+	test("tells apart every way a revocation can fail", async () => {
+		const registry = openTestRegistry();
+		const identity = registry.resolveIdentity("gm-key");
+		const code = await registry.mintDeviceCode("gm-key");
+		if ("rejected" in code) {
+			throw new Error(code.message);
+		}
+		await registry.redeemLinkCode(code.code, "homelab-key");
+		const stranger = registry.resolveIdentity("stranger-key");
+		expect(stranger).not.toBe(identity);
+
+		expect(await registry.revokeKey("gm-key", "gm-key")).toEqual({
+			message:
+				"That is the key you are using. Revoke a key from a machine you still control.",
+			rejected: true,
+		});
+		expect(await registry.revokeKey("never-seen", "gm-key")).toEqual({
+			message:
+				"This gateway has never seen that key. Check it with 'supervillain key show' on the machine you are retiring.",
+			rejected: true,
+		});
+		expect(await registry.revokeKey("stranger-key", "gm-key")).toEqual({
+			message: "That key is not one of yours.",
+			rejected: true,
+		});
+		// A guest actor is in the graph but is not a credential; retiring it
+		// would promise a safety property it cannot deliver.
+		const guest = registry.mintAdoptionCode("guest:abc123def456");
+		if ("rejected" in guest) {
+			throw new Error(guest.message);
+		}
+		await registry.redeemLinkCode(guest.code, "gm-key");
+		expect(await registry.revokeKey("guest:abc123def456", "gm-key")).toEqual({
+			message:
+				"That is a guest actor, not a key. Nothing can authenticate as it, so there is nothing to retire.",
+			rejected: true,
+		});
+		expect(await registry.revokeKey("homelab-key", "gm-key")).toMatchObject({
+			accepted: true,
+		});
+		expect(await registry.revokeKey("homelab-key", "gm-key")).toEqual({
+			message: "That key is already retired.",
+			rejected: true,
+		});
+		// Nothing was retired by the refusals.
+		expect(registry.isRevoked("gm-key")).toBe(false);
+		expect(registry.isRevoked("stranger-key")).toBe(false);
+		registry.close();
+	});
+
+	test("a retired key may not revoke, nor be re-linked into the graph", async () => {
+		const registry = openTestRegistry();
+		const first = await registry.mintDeviceCode("gm-key");
+		if ("rejected" in first) {
+			throw new Error(first.message);
+		}
+		await registry.redeemLinkCode(first.code, "homelab-key");
+		await registry.revokeKey("homelab-key", "gm-key");
+
+		// A retired key cannot mint, cannot redeem a fresh code, and cannot turn
+		// around and retire the key that retired it.
+		const second = await registry.mintDeviceCode("gm-key");
+		if ("rejected" in second) {
+			throw new Error(second.message);
+		}
+		expect(await registry.redeemLinkCode(second.code, "homelab-key")).toEqual({
+			message: "This key has been retired.",
+			rejected: true,
+		});
+		expect(await registry.mintDeviceCode("homelab-key")).toEqual({
+			message: "This key has been retired.",
+			rejected: true,
+		});
+		expect(await registry.revokeKey("gm-key", "homelab-key")).toEqual({
+			message: "The key you are revoking with has itself been retired.",
+			rejected: true,
+		});
+		expect(registry.isRevoked("homelab-key")).toBe(true);
+		expect(registry.isRevoked("gm-key")).toBe(false);
+		registry.close();
+	});
+
+	test("keeps a retirement across a reopen of the same database", async () => {
+		const file = `${tmpdir()}/supervillain-revoked-${randomUUID()}.db`;
+		const first = openRoomRegistry({ path: file });
+		const code = await first.mintDeviceCode("gm-key");
+		if ("rejected" in code) {
+			throw new Error(code.message);
+		}
+		await first.redeemLinkCode(code.code, "homelab-key");
+		expect(await first.revokeKey("homelab-key", "gm-key")).toMatchObject({
+			accepted: true,
+		});
+		first.close();
+		const second = openRoomRegistry({ path: file });
+		// A retired key must never quietly become adoptable again.
+		expect(second.isRevoked("homelab-key")).toBe(true);
+		second.close();
+		await rm(file, { force: true });
+	});
+
 	test("keeps a claimed name across a reopen of the same database", async () => {
 		const file = `${tmpdir()}/supervillain-registry-${randomUUID()}.db`;
 		const first = openRoomRegistry({ path: file });

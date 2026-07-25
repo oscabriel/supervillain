@@ -8,9 +8,11 @@ import type {
 	KeyGraph,
 	LinkCodeOutcome,
 	LinkRedemptionOutcome,
+	RevocationOutcome,
 	RoomOwnership,
 } from "@supervillain/room-wire";
 
+import { isGuestActor } from "./guest.js";
 import { migrate } from "./migrate.js";
 
 /**
@@ -57,7 +59,9 @@ const MIGRATIONS: readonly string[] = [
 	"DROP TABLE rooms",
 	"ALTER TABLE rooms_owned RENAME TO rooms",
 	// Revocation is a column, not a service call: refusal stays a local read
-	// with our servers unreachable (ADR-0013). #59 sets it; this only reads it.
+	// with our servers unreachable (ADR-0013). It is a **state on the key, not a
+	// deletion** — the row stays, so history stays legible and a retired key can
+	// never quietly become adoptable again (#59).
 	"ALTER TABLE identity_keys ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0",
 	// `identity_keys.key` holds an *actor* string, not strictly a key: an
 	// adopted `guest:X` is one row here too, which is what lets one
@@ -138,8 +142,11 @@ export interface GatewayRoomRegistry
 	 * identity as the desktop's, and the name does not change owner.
 	 */
 	readonly resolveIdentity: (key: string) => string;
-	/** Every actor of an identity, first-linked first. */
+	/** Every actor of an identity, first-linked first — retired keys included,
+	 * because attribution still has to reach the lines they wrote. */
 	readonly actorsOf: (identityId: string) => readonly string[];
+	/** The subset that still authenticates: `actorsOf` minus the retired keys. */
+	readonly liveActorsOf: (identityId: string) => readonly string[];
 	/**
 	 * Mints an adoption code for a live guest session. The gateway mints it
 	 * itself — ADR-0005 routed this through the backend and ADR-0013 removed
@@ -187,6 +194,22 @@ const TANGLED =
 	"This key already holds an identity of its own. Link a fresh key, or move that identity's rooms first.";
 
 /**
+ * The four ways `key revoke` says no. Each names a different fact, because a GM
+ * who retired a key and then presented it — or typed the wrong key entirely —
+ * deserves to be told which of the two happened (#59, ADR-0012 NQ-3).
+ */
+const REVOKE_FROM_RETIRED =
+	"The key you are revoking with has itself been retired.";
+const REVOKE_SELF =
+	"That is the key you are using. Revoke a key from a machine you still control.";
+const REVOKE_UNKNOWN =
+	"This gateway has never seen that key. Check it with 'supervillain key show' on the machine you are retiring.";
+const REVOKE_NOT_YOURS = "That key is not one of yours.";
+const REVOKE_ALREADY = "That key is already retired.";
+const REVOKE_GUEST =
+	"That is a guest actor, not a key. Nothing can authenticate as it, so there is nothing to retire.";
+
+/**
  * The gateway's durable half of registration (ADR-0012, NQ-4): `name → owner`,
  * surviving disconnects. The live half — `name → current pipe` — is memory only
  * and lives in `serveHostPipes`; nothing about a live connection is written
@@ -214,6 +237,18 @@ export const openRoomRegistry = (
 	const selectKeysOf = db.query(
 		`SELECT key FROM identity_keys WHERE identity_id = $identityId
 		 ORDER BY created_at, key`
+	);
+	// The authenticating half of an equivalence class. `actorsOf` deliberately
+	// keeps returning every actor including the retired ones: revocation removes
+	// a key from its class *for authentication purposes* only, and attribution
+	// still has to reach the lines it wrote (#59).
+	const selectLiveKeysOf = db.query(
+		`SELECT key FROM identity_keys
+		 WHERE identity_id = $identityId AND revoked = 0
+		 ORDER BY created_at, key`
+	);
+	const markRevoked = db.query(
+		"UPDATE identity_keys SET revoked = 1 WHERE key = $key"
 	);
 	const countRoomsOf = db.query(
 		"SELECT COUNT(*) AS count FROM rooms WHERE owner_id = $identityId"
@@ -268,6 +303,58 @@ export const openRoomRegistry = (
 
 	const actorsOf = (identityId: string): readonly string[] =>
 		(selectKeysOf.all({ identityId }) as KeyRow[]).map((row) => row.key);
+
+	const liveActorsOf = (identityId: string): readonly string[] =>
+		(selectLiveKeysOf.all({ identityId }) as KeyRow[]).map((row) => row.key);
+
+	/**
+	 * The retire half of rotation (ADR-0012, NQ-3). Two rules, both narrow on
+	 * purpose:
+	 *
+	 * - you may only retire a key of **your own** identity, because the graph is
+	 *   the only thing that says two keys are one person, and
+	 * - you may not retire the key you are holding — the whole point is to do
+	 *   this from a machine you still control, and a self-revoke on the last key
+	 *   would lock an identity out of its own rooms with nothing left to undo it
+	 *   with.
+	 *
+	 * Nothing is deleted: the row keeps its identity, so the class's other keys
+	 * and the identity's room-ownership rows (which hang off owner identity, not
+	 * key) are untouched.
+	 */
+	const revoke = (target: string, byKey: string): RevocationOutcome => {
+		if (isRevoked(byKey)) {
+			return { message: REVOKE_FROM_RETIRED, rejected: true };
+		}
+		const key = target.trim();
+		if (key === byKey) {
+			return { message: REVOKE_SELF, rejected: true };
+		}
+		// `identity_keys` holds adopted `guest:X` actors too, and one of those is
+		// not a credential — nothing can ever present it. Retiring one would only
+		// hide a line of history behind a word that promises a safety property it
+		// is not delivering, so this refuses rather than pretend.
+		if (isGuestActor(key)) {
+			return { message: REVOKE_GUEST, rejected: true };
+		}
+		const identityId = identityOf(key);
+		if (identityId === undefined) {
+			return { message: REVOKE_UNKNOWN, rejected: true };
+		}
+		if (identityId !== identityOf(byKey)) {
+			return { message: REVOKE_NOT_YOURS, rejected: true };
+		}
+		if (isRevoked(key)) {
+			return { message: REVOKE_ALREADY, rejected: true };
+		}
+		markRevoked.run({ key });
+		return {
+			accepted: true,
+			identityId,
+			remaining: liveActorsOf(identityId),
+			revoked: key,
+		};
+	};
 
 	const resolveIdentity = (key: string): string => {
 		const existing = identityOf(key);
@@ -429,6 +516,7 @@ export const openRoomRegistry = (
 		identityOf,
 		isClaimed: (name: string): boolean => ownerOf(name) !== undefined,
 		isRevoked,
+		liveActorsOf,
 		mintAdoptionCode: (guestActor: string): LinkCodeOutcome =>
 			mintCode(
 				"adoption",
@@ -458,5 +546,7 @@ export const openRoomRegistry = (
 		): Promise<readonly ActorLink[]> =>
 			Promise.resolve(resolveActorLinks(actors)),
 		resolveIdentity,
+		revokeKey: (target: string, byKey: string): Promise<RevocationOutcome> =>
+			Promise.resolve(db.transaction(() => revoke(target, byKey))()),
 	};
 };
