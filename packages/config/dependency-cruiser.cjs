@@ -56,10 +56,27 @@ module.exports = {
 			to: { path: "^packages/room-host/" },
 		},
 		{
+			// apps/gateway is the only thing touching the GATEWAY's store — not
+			// "the only thing touching a DB", which stopped being true when
+			// ADR-0013 gave the web backend its own store. apps/web must not
+			// reach the gateway's store either; it reads identity through the
+			// interface instead.
 			from: { pathNot: "^apps/gateway/" },
 			name: "bun-sqlite-only-in-gateway",
 			severity: "error",
 			to: { path: "^bun:sqlite$" },
+		},
+		{
+			// apps/web is the only thing touching the BACKEND's store. Drizzle's
+			// driver entrypoints reach a sqlite binding from inside node_modules,
+			// so `doNotFollow: node_modules` lets them sail past the rule above —
+			// this names the entrypoints directly to close that gap (ADR-0013).
+			from: { pathNot: "^apps/web/" },
+			name: "backend-store-drivers-only-in-web",
+			severity: "error",
+			to: {
+				path: "^(drizzle-orm/(bun-sqlite|better-sqlite3|libsql|sqlite-proxy)|better-sqlite3$|node:sqlite$)",
+			},
 		},
 	],
 	options: {
