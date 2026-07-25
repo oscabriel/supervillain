@@ -19,9 +19,10 @@ import { serveHostPipes } from "@supervillain/room-wire";
 import type {
 	GatewayPipeEvent,
 	HostPipeServer,
-	PipeRoomStore,
+	RoomView,
 } from "@supervillain/room-wire";
 import { createSessionRenderer, runTable } from "@supervillain/table";
+import type { TableHold } from "@supervillain/table";
 import { runLobby } from "@supervillain/table/lobby";
 import type { LobbyNotice, LobbyOutcome } from "@supervillain/table/lobby";
 import { startWsListener } from "@supervillain/transport-ws/server";
@@ -44,8 +45,11 @@ import {
 	LOBBY_EXPIRY_MESSAGE,
 } from "./hardening.js";
 import type { LobbyDeadlines, LobbyExpiry, LobbyLimits } from "./hardening.js";
+import { createOfflineMetrics } from "./offline-metrics.js";
+import type { OfflineCounts, OfflineMetrics } from "./offline-metrics.js";
 import { openRoomRegistry } from "./registry.js";
 import type { GatewayRoomRegistry } from "./registry.js";
+import { holdRoom } from "./room-hold.js";
 import { attachSshChannel, sessionForActor } from "./ssh-session.js";
 import type { SshChannelStream, SshConnection } from "./ssh-session.js";
 
@@ -88,12 +92,20 @@ export interface GatewayOptions {
 	 * lobby is an unauthenticated held session, so these are on from day one
 	 * (ADR-0008). Defaults are floors against squatting, not capacity policy. */
 	readonly lobbyLimits?: LobbyLimits;
+	/** Envelopes one session may fall behind before its view is dropped — the
+	 * per-session budget that keeps a slow reader from stalling its Room. */
+	readonly sessionBudget?: number;
+	/** How long a seated player is held when their Host goes offline. */
+	readonly graceWindowMs?: number;
+	readonly gracePollMs?: number;
 }
 
 export interface RunningGateway {
 	/** The gateway's transport URL — what `create --gateway` dials. */
 	readonly url: string;
 	readonly sshPort: number;
+	/** The offline tripwire's running counts (ADR-0012, NQ-15). */
+	readonly offline: () => OfflineCounts;
 	readonly close: () => Promise<void>;
 }
 
@@ -167,6 +179,11 @@ interface RoomEntryContext {
 	/** The live half — which Host pipe currently carries a name (ADR-0012). */
 	readonly pipes: HostPipeServer;
 	readonly identity: SessionIdentity;
+	/** The offline tripwire's counters (NQ-15). Counts only. */
+	readonly metrics: OfflineMetrics;
+	/** How long a seat is held when its Host goes offline. */
+	readonly graceMs?: number;
+	readonly gracePollMs?: number;
 }
 
 /** How one attempt at sitting down ended. `notice` is the lobby's business —
@@ -180,8 +197,9 @@ type RoomEntryResult =
 const runRoomTable = async (
 	connection: SshConnection,
 	stream: SshChannelStream,
-	store: PipeRoomStore,
-	identity: SessionIdentity
+	store: RoomView,
+	identity: SessionIdentity,
+	hold: TableHold
 ): Promise<RoomEntryResult> => {
 	const info = await store.info();
 	const entry = gatewayRegistry.get(info.gameId);
@@ -209,6 +227,7 @@ const runRoomTable = async (
 		createRenderer: createSessionRenderer,
 		entry,
 		gameId: info.gameId,
+		hold,
 		roomLabel: info.label,
 		session: sessionForActor(connection, assumed.actor),
 		store,
@@ -232,24 +251,81 @@ export const noticeForMissingRoom = (
 		? { kind: "offline-room", roomName }
 		: { kind: "unknown-room", roomName };
 
+/** What a seat is told when the fold drops it for falling too far behind. */
+export const SEAT_BEHIND_MESSAGE =
+	"this terminal fell too far behind to keep up. Reconnect to sit down again.";
+
+/**
+ * One attempt at sitting down, and the grace window that follows a Host dying
+ * under it (ADR-0012). A drop is not a disconnect: the seat holds with an
+ * honest notice while the Host redials, and the loop re-seats the player on the
+ * new pipe if it makes it back inside the window. If it does not, the session
+ * lands in the lobby's offline chrome — never on a closed door.
+ */
 const enterRoom = async (
 	connection: SshConnection,
 	stream: SshChannelStream,
 	roomName: string,
 	context: RoomEntryContext
 ): Promise<RoomEntryResult> => {
-	const live = context.pipes.live(roomName);
-	if (live === undefined) {
-		return {
-			kind: "notice",
-			notice: noticeForMissingRoom(roomName, context.registry),
-		};
-	}
-	const store = live.openStore();
-	try {
-		return await runRoomTable(connection, stream, store, context.identity);
-	} finally {
-		await store.close();
+	let attempt = 0;
+	// oxlint-disable-next-line eslint/no-unreachable-loop -- a Host that returns inside the grace window continues this loop onto its new fold.
+	for (;;) {
+		const live = context.pipes.live(roomName);
+		if (attempt === 0 && context.registry.isClaimed(roomName)) {
+			// The tripwire's denominator counts attempts at names that exist; a
+			// re-seat after a Host returned is the same join, not a new one.
+			context.metrics.recordJoinAttempt(live !== undefined);
+		}
+		attempt += 1;
+		if (live === undefined) {
+			return {
+				kind: "notice",
+				notice: noticeForMissingRoom(roomName, context.registry),
+			};
+		}
+		const store = live.openStore();
+		const hold = holdRoom({
+			attached: live,
+			dropped: store.dropped,
+			graceMs: context.graceMs,
+			live: () => context.pipes.live(roomName),
+			onGraceExpiry: () => context.metrics.recordGraceExpiry(),
+			onHostDrop: () => context.metrics.recordHostDrop(),
+			pollMs: context.gracePollMs,
+		});
+		let result: RoomEntryResult;
+		try {
+			// oxlint-disable-next-line eslint/no-await-in-loop -- one seat at a time: the next attempt only exists because this one ended.
+			result = await runRoomTable(
+				connection,
+				stream,
+				store,
+				context.identity,
+				hold
+			);
+		} finally {
+			hold.stop();
+			// oxlint-disable-next-line eslint/no-await-in-loop -- the view is released before the next one opens.
+			await store.close();
+		}
+		if (result.kind !== "entered") {
+			return result;
+		}
+		const end = hold.end();
+		if (end === "host-returned") {
+			continue;
+		}
+		if (end === "grace-expired") {
+			return { kind: "notice", notice: { kind: "offline-room", roomName } };
+		}
+		if (end === "dropped") {
+			// The fold dropped this seat for falling behind its budget. The lobby's
+			// notice vocabulary is ADR-0008's and says nothing about backpressure,
+			// so this takes the pinned floor: one honest plain-text line.
+			return { kind: "failed", message: SEAT_BEHIND_MESSAGE };
+		}
+		return result;
 	}
 };
 
@@ -314,22 +390,34 @@ const lobbyRound = async (
 	};
 };
 
+/** Everything a session needs that is the gateway's rather than the visitor's:
+ * both halves of registration, the tripwire's counters, and the grace numbers. */
+interface RoomServices {
+	readonly registry: GatewayRoomRegistry;
+	readonly pipes: HostPipeServer;
+	readonly metrics: OfflineMetrics;
+	readonly graceMs?: number;
+	readonly gracePollMs?: number;
+}
+
 const serveShell = async (
 	connection: SshConnection,
 	stream: SshChannelStream,
 	options: {
 		readonly roomName: string;
-		readonly registry: GatewayRoomRegistry;
-		readonly pipes: HostPipeServer;
+		readonly rooms: RoomServices;
 		readonly identity: SessionIdentity;
 		readonly sshHost: string;
 		readonly limits: LobbyLimits;
 	}
 ): Promise<void> => {
 	const context: RoomEntryContext = {
+		graceMs: options.rooms.graceMs,
+		gracePollMs: options.rooms.gracePollMs,
 		identity: options.identity,
-		pipes: options.pipes,
-		registry: options.registry,
+		metrics: options.rooms.metrics,
+		pipes: options.rooms.pipes,
+		registry: options.rooms.registry,
 	};
 	// A name that resolves to a live table goes straight to the table. The lobby
 	// is where you land when there is nothing to land in — which is also where
@@ -374,8 +462,7 @@ const serveShell = async (
 const handleConnection = (
 	client: Connection,
 	options: {
-		readonly registry: GatewayRoomRegistry;
-		readonly pipes: HostPipeServer;
+		readonly rooms: RoomServices;
 		readonly sshHost: string;
 		readonly limits: LobbyLimits;
 	}
@@ -417,9 +504,8 @@ const handleConnection = (
 							await serveShell(shellConnection, stream, {
 								identity: shellIdentity,
 								limits: options.limits,
-								pipes: options.pipes,
-								registry: options.registry,
 								roomName,
+								rooms: options.rooms,
 								sshHost: options.sshHost,
 							});
 						} catch {
@@ -458,7 +544,9 @@ export const startGateway = async (
 		listener,
 		onEvent: options.onEvent,
 		ownership: registry,
+		sessionBudget: options.sessionBudget,
 	});
+	const metrics = createOfflineMetrics();
 	const hostKey = await loadOrCreateHostKey(options.stateDir);
 	const limits = options.lobbyLimits ?? DEFAULT_LOBBY_LIMITS;
 	const rateLimiter = createConnectionRateLimiter({ limits });
@@ -474,8 +562,13 @@ export const startGateway = async (
 			}
 			handleConnection(client, {
 				limits,
-				pipes,
-				registry,
+				rooms: {
+					graceMs: options.graceWindowMs,
+					gracePollMs: options.gracePollMs,
+					metrics,
+					pipes,
+					registry,
+				},
 				sshHost: options.sshHost,
 			});
 		}
@@ -502,6 +595,7 @@ export const startGateway = async (
 			})();
 			return closePromise;
 		},
+		offline: () => metrics.counts(),
 		sshPort: options.sshPort,
 		url: listener.url,
 	};

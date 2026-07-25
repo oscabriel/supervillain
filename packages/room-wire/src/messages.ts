@@ -36,6 +36,31 @@ export const parseRoomCommand = (value: unknown): RoomCommand => {
 	return { actor: value.actor, command: value.command };
 };
 
+/**
+ * One submitted command plus the id that makes it idempotent (ADR-0012, NQ-6).
+ * The id is optional on the wire: the direct RoomStore protocol predates it and
+ * a sender that mints none simply gets no dedupe.
+ */
+export interface SubmitRequest {
+	readonly command: RoomCommand;
+	readonly submissionId?: string;
+}
+
+export const encodeSubmitRequest = (request: SubmitRequest): Uint8Array =>
+	encodeJson(
+		request.submissionId === undefined
+			? request.command
+			: { ...request.command, id: request.submissionId }
+	);
+
+export const parseSubmitRequest = (value: unknown): SubmitRequest => {
+	const command = parseRoomCommand(value);
+	const id = isRecord(value) ? value.id : undefined;
+	return typeof id === "string" && id.length > 0
+		? { command, submissionId: id }
+		: { command };
+};
+
 export const parseEnvelope = (value: unknown): Envelope => {
 	if (
 		!isRecord(value) ||
