@@ -67,6 +67,7 @@ export interface LobbyOptions extends LobbyChromeContext {
 }
 
 const NOTICE_TOKEN = {
+	"full-room": "muted",
 	"offline-room": "muted",
 	"unknown-room": "danger",
 } as const;

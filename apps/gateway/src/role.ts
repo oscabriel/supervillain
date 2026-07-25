@@ -44,7 +44,31 @@ TLS is set by environment only, since it is a posture rather than a per-run
 choice (ADR-0014): SUPERVILLAIN_GATEWAY_TLS is one of self-signed (the
 default — mint a certificate, no CA and no domain needed),
 terminated-upstream, or files (with SUPERVILLAIN_GATEWAY_TLS_CERT and
-SUPERVILLAIN_GATEWAY_TLS_KEY).`;
+SUPERVILLAIN_GATEWAY_TLS_KEY).
+
+Protective caps, also environment only — cost ceiling and abuse protection,
+never monetization (ADR-0012). The defaults come from the R9 capacity
+benchmark on one box; your box is not that box, so they are yours to turn:
+
+  SUPERVILLAIN_GATEWAY_ROOMS_PER_IDENTITY   rooms one identity may have
+                                            attached at once
+  SUPERVILLAIN_GATEWAY_SESSIONS_PER_ROOM    sessions one Room may carry; the
+                                            next arrival is refused at the
+                                            lobby, and no live table is ever
+                                            degraded to admit it
+  SUPERVILLAIN_GATEWAY_SESSION_BUDGET       envelopes one session may fall
+                                            behind before its own view is
+                                            dropped
+  SUPERVILLAIN_GATEWAY_PTY_COLUMNS          rendered terminal ceiling; a
+  SUPERVILLAIN_GATEWAY_PTY_ROWS             bigger window gets the capped
+                                            picture and an honest notice
+  SUPERVILLAIN_GATEWAY_LOBBY_IDLE_MS        lobby idle timeout
+  SUPERVILLAIN_GATEWAY_LOBBY_MAX_MS         hard ceiling on one lobby hold
+  SUPERVILLAIN_GATEWAY_LOBBY_CONNECTIONS_PER_WINDOW
+  SUPERVILLAIN_GATEWAY_LOBBY_WINDOW_MS      the per-IP connection window
+
+Every one of them is a whole number of 1 or more; anything else is refused on
+start rather than silently ignored.`;
 
 /** Structurally the subset of `GatewayOptions` an operator can set from the
  * command line. Declared here rather than imported so the parser stays free of
