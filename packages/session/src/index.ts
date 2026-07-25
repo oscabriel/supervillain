@@ -3,16 +3,24 @@ export interface TerminalSize {
 	readonly rows: number;
 }
 
-/** A connected terminal attached to the table. Transport-neutral: the CLI's
- * local TTY today, the gateway's SSH channel at v0 — never typed to ssh2. */
-export interface Session {
-	readonly actor: string;
+/** A connected terminal, with no identity attached. Transport-neutral: the
+ * CLI's local TTY today, the gateway's SSH channel at v0 — never typed to
+ * ssh2. The lobby holds one of these and nothing more: ADR-0008 makes guests
+ * pre-identity, so a bare-ssh visitor has a terminal long before an actor
+ * exists to stamp anything with. */
+export interface TerminalConnection {
 	readonly input: NodeJS.ReadStream;
 	readonly output: NodeJS.WriteStream;
 	readonly size: () => TerminalSize;
 	readonly onResize: (listener: (size: TerminalSize) => void) => () => void;
 	readonly onClose: (listener: () => void) => () => void;
 	readonly close: () => void;
+}
+
+/** A connected terminal attached to the table — a connection that has an actor
+ * to stamp envelopes with. */
+export interface Session extends TerminalConnection {
+	readonly actor: string;
 }
 
 export interface LocalTtyOptions {
