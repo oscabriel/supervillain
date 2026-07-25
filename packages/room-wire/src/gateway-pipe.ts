@@ -36,6 +36,7 @@ import type {
 	LinkCodeOutcome,
 	LinkRedemptionOutcome,
 	RegistrationOutcome,
+	RevocationOutcome,
 	SubmitRequest,
 } from "./messages.js";
 import { MultiplexPipe, PipeStreamClosedError } from "./pipe.js";
@@ -66,16 +67,21 @@ export interface RoomOwnership {
 }
 
 /**
- * ADR-0005's key-equivalence graph, seen from the broker: the three questions
- * the pipe asks of it, and nothing else. It is **injected, never imported** —
- * the graph lives in the gateway's `bun:sqlite` store and this package compiles
- * and tests under Node as well (NQ-12), so a driver may never appear here.
+ * ADR-0005's key-equivalence graph, seen from the broker: the questions the
+ * pipe asks of it, and nothing else. It is **injected, never imported** — the
+ * graph lives in the gateway's `bun:sqlite` store and this package compiles and
+ * tests under Node as well (NQ-12), so a driver may never appear here.
  *
  * `resolveActorLinks` is the whole of ADR-0013's derive-never-queue decision:
  * a caller hands over the actors it knows about and gets back the links it is
  * missing. Nothing is recorded about who was told what — no queue, no delivery
  * bookkeeping, no acknowledgement — because the graph is already the complete
  * truth and a queue would be a staler second copy of a computable fact.
+ *
+ * `isRevoked` is **synchronous on purpose** (ADR-0013): the pipe asks it on the
+ * authentication path, and the answer must arrive with no network, no backend
+ * process, and our servers unreachable. That is the whole reason revoked state
+ * is a column in the gateway's own store rather than a call to a backend.
  */
 export interface KeyGraph {
 	readonly resolveActorLinks: (
@@ -86,19 +92,40 @@ export interface KeyGraph {
 		code: string,
 		key: string
 	) => Promise<LinkRedemptionOutcome>;
+	/** Whether this key has been retired (ADR-0012, NQ-3). An unknown key is not
+	 * revoked — it is merely unknown, and the two are told apart out loud. */
+	readonly isRevoked: (key: string) => boolean;
+	/** Retires `target` on behalf of the authenticated `byKey`. The graph decides
+	 * whether that pairing is allowed; this seam only carries the answer. */
+	readonly revokeKey: (
+		target: string,
+		byKey: string
+	) => Promise<RevocationOutcome>;
 }
 
 const NO_KEY_GRAPH = "This gateway does not serve key linking.";
 
 /** The stand-in for a gateway built without a graph: it refuses honestly
- * rather than pretending nothing was linked. */
+ * rather than pretending nothing was linked. Nothing is revoked at such a
+ * gateway either — there is no graph to hold the state. */
 const unservedKeyGraph: KeyGraph = {
+	isRevoked: () => false,
 	mintDeviceCode: () =>
 		Promise.resolve({ message: NO_KEY_GRAPH, rejected: true }),
 	redeemLinkCode: () =>
 		Promise.resolve({ message: NO_KEY_GRAPH, rejected: true }),
 	resolveActorLinks: () => Promise.resolve([]),
+	revokeKey: () => Promise.resolve({ message: NO_KEY_GRAPH, rejected: true }),
 };
+
+/**
+ * What a retired key is told when it dials the pipe. Distinct from every "no
+ * such name" and "that name is another identity's" refusal on this channel: a
+ * GM who retired a key and then presented it deserves to be told which of the
+ * two happened (ADR-0012, NQ-3).
+ */
+export const REVOKED_HOST_KEY_MESSAGE =
+	"This key has been retired and can no longer host. Link this machine again with 'supervillain key link' to host from it.";
 
 /** The live half: which pipe is currently carrying a claimed name. */
 export interface LiveRoom {
@@ -133,7 +160,10 @@ export type GatewayPipeEvent =
 			readonly kind: "room-linked";
 			readonly room: string;
 			readonly links: number;
-	  };
+	  }
+	/** A key was retired just now. The gateway's other surfaces listen for this
+	 * to drop whatever that key is still holding open. */
+	| { readonly kind: "key-revoked"; readonly key: string };
 
 export interface HostPipeServerOptions {
 	readonly listener: TransportListener;
@@ -294,6 +324,9 @@ interface PipeRegistrar {
 	readonly detach: (pipe: MultiplexPipe) => void;
 	readonly ownership: RoomOwnership;
 	readonly keys: KeyGraph;
+	/** Called once a key has actually been retired, so the live half can drop
+	 * whatever that key is still holding. */
+	readonly onRevoked: (key: string) => void;
 	readonly door: { readonly sshHost: string; readonly sshPort: number };
 	readonly onEvent: (event: GatewayPipeEvent) => void;
 }
@@ -301,19 +334,33 @@ interface PipeRegistrar {
 /**
  * The gateway's half of `key link`: a CLI holds a pipe with no rooms on it and
  * opens one link stream per command. The connection's authenticated identity
- * *is* the key being minted for or redeeming — nothing on the wire names a key,
+ * *is* the key minting or redeeming — a mint or a redemption never names a key,
  * so nobody can link someone else's.
+ *
+ * `revoke` is the exception that proves it: retiring a key means naming one you
+ * are no longer at, so the request carries a target. The graph checks that
+ * target against the connection's own identity, which is why the check cannot
+ * live here.
  */
 const serveLinkRequest = async (
 	stream: PipeStream,
 	key: string,
-	keys: KeyGraph
+	registrar: Pick<PipeRegistrar, "keys" | "onRevoked">
 ): Promise<void> => {
 	const request = parseLinkRequest(decodeJson(await stream.receive()));
+	if ("revoke" in request) {
+		const outcome = await registrar.keys.revokeKey(request.revoke, key);
+		await stream.send(encodeJson(outcome));
+		stream.close();
+		if ("accepted" in outcome) {
+			registrar.onRevoked(outcome.revoked);
+		}
+		return;
+	}
 	const outcome: LinkCodeOutcome | LinkRedemptionOutcome =
 		"mint" in request
-			? await keys.mintDeviceCode(key)
-			: await keys.redeemLinkCode(request.redeem, key);
+			? await registrar.keys.mintDeviceCode(key)
+			: await registrar.keys.redeemLinkCode(request.redeem, key);
 	await stream.send(encodeJson(outcome));
 	stream.close();
 };
@@ -321,10 +368,10 @@ const serveLinkRequest = async (
 const serveLink = async (
 	stream: PipeStream,
 	key: string,
-	keys: KeyGraph
+	registrar: Pick<PipeRegistrar, "keys" | "onRevoked">
 ): Promise<void> => {
 	try {
-		await serveLinkRequest(stream, key, keys);
+		await serveLinkRequest(stream, key, registrar);
 	} catch {
 		stream.fail("Link request failed.");
 	}
@@ -400,6 +447,24 @@ const handleRegister = async (
 	registrar: PipeRegistrar
 ): Promise<void> => {
 	const name = parseRegistrationRequest(decodeJson(await stream.receive()));
+	// The revoked-key refusal on the Host pipe (ADR-0012, NQ-3), read locally
+	// off the graph before anything is claimed or renewed. It is deliberately
+	// *not* the "already claimed by another key" line: the two are different
+	// facts and a GM is owed the right one.
+	if (registrar.keys.isRevoked(hostKey)) {
+		await stream.send(
+			encodeJson({
+				message: REVOKED_HOST_KEY_MESSAGE,
+				rejected: true,
+			} as const)
+		);
+		stream.close();
+		registrar.onEvent({
+			kind: "pipe-refused",
+			reason: REVOKED_HOST_KEY_MESSAGE,
+		});
+		return;
+	}
 	if (!isValidRoomName(name)) {
 		await stream.send(
 			encodeJson({ message: ROOM_NAME_RULE, rejected: true } as const)
@@ -480,7 +545,7 @@ const acceptPipe = async (
 		},
 		onStream: (stream) => {
 			if (stream.channel === "link") {
-				void serveLink(stream, connection.remoteId, registrar.keys);
+				void serveLink(stream, connection.remoteId, registrar);
 				return;
 			}
 			if (stream.channel !== "register") {
@@ -560,12 +625,32 @@ export const serveHostPipes = (
 		});
 	};
 
+	/**
+	 * Revocation takes effect **immediately**, not at next authentication
+	 * (ADR-0012's "the gateway must refuse them", read honestly): the pipe a
+	 * retired key is holding right now is closed, and its rooms go offline with
+	 * it. The alternative — letting a live pipe run until it happens to redial —
+	 * would leave a compromised always-on box hosting for as long as it stayed
+	 * connected, which is the exact event NQ-3 graduated revocation for.
+	 *
+	 * The redial that follows is refused at registration, so the box stops for
+	 * good rather than looping.
+	 */
+	const onRevoked = (key: string): void => {
+		const retired = [...pipes].filter((pipe) => pipe.remoteId === key);
+		for (const pipe of retired) {
+			void pipe.close();
+		}
+		onEvent({ key, kind: "key-revoked" });
+	};
+
 	const registrar = {
 		attach,
 		detach,
 		door: options.door,
 		keys,
 		onEvent,
+		onRevoked,
 		ownership: options.ownership,
 	};
 

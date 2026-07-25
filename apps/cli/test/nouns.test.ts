@@ -86,7 +86,41 @@ describe("supervillain noun commands", () => {
 		});
 		expect(await run(["key", "sever"])).toEqual({
 			code: 1,
-			error: "key requires show or link.\n",
+			error: "key requires show, link, or revoke.\n",
+		});
+	});
+
+	test("key revoke needs a gateway, and exactly one key", async () => {
+		const config = await makeCampaign();
+		const cli = path.resolve(import.meta.dir, "../dist/index.js");
+		const run = async (
+			args: readonly string[]
+		): Promise<{ readonly code: number; readonly error: string }> => {
+			const childProcess = Bun.spawn(["bun", cli, ...args], {
+				env: {
+					...process.env,
+					SUPERVILLAIN_GATEWAY: "",
+					XDG_CONFIG_HOME: config,
+				},
+				stderr: "pipe",
+				stdout: "pipe",
+			});
+			const error = new Response(childProcess.stderr).text();
+			return { code: await childProcess.exited, error: await error };
+		};
+		// The key to retire is never guessed: naming it is the whole request.
+		expect(await run(["key", "revoke"])).toEqual({
+			code: 1,
+			error: "key revoke takes exactly one key.\n",
+		});
+		expect(await run(["key", "revoke", "ONE", "TWO"])).toEqual({
+			code: 1,
+			error: "key revoke takes exactly one key.\n",
+		});
+		expect(await run(["key", "revoke", "abc123"])).toEqual({
+			code: 1,
+			error:
+				"key revoke needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY.\n",
 		});
 	});
 

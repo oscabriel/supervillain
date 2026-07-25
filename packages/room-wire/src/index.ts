@@ -52,7 +52,7 @@ export type {
 	PipeHandshakeOutcome,
 	PipeHello,
 } from "./frames.js";
-export { serveHostPipes } from "./gateway-pipe.js";
+export { REVOKED_HOST_KEY_MESSAGE, serveHostPipes } from "./gateway-pipe.js";
 export type {
 	ClaimOutcome,
 	GatewayPipeEvent,
@@ -85,6 +85,7 @@ export type {
 	LinkRedemptionOutcome,
 	LinkRequest,
 	RegistrationOutcome,
+	RevocationOutcome,
 	RoomInfo,
 	SubmitRequest,
 } from "./messages.js";

@@ -78,6 +78,7 @@ const USAGE = `Usage:
   supervillain publish
   supervillain key show
   supervillain key link [<code>] [--gateway <addr>]
+  supervillain key revoke <key> [--gateway <addr>]
   supervillain character new <campaign-folder> <name> [--game <id>]
   supervillain character check <campaign-folder> [file] [--game <id>]
   supervillain character list <campaign-folder> [--game <id>]
@@ -97,7 +98,9 @@ Operator role (this same binary is the self-hosted gateway — ADR-0015):
   certificate on this machine; a gateway that later serves a different one is
   refused rather than trusted. A room name is held by an identity, so to host
   it from a second machine, run 'key link' on the machine that already holds
-  it and redeem the code on the new one.
+  it and redeem the code on the new one. Retire a machine you no longer
+  control with 'key revoke <key>' from one you do — it stops hosting and
+  joining at once, and the rooms stay with your identity.
 
   join opens an ordinary ssh session to that same gateway with this machine's
   key, and the gateway resolves the room name. It is a convenience wrapper
@@ -1149,6 +1152,37 @@ const keyShow = async (): Promise<number> => {
 	return 0;
 };
 
+/** Both key verbs take the same `--gateway`, falling back to the environment.
+ * An empty answer is a refusal, not a guess: the graph lives at one gateway and
+ * picking one for the operator would pick their identity for them. */
+const keyGatewayAddress = (
+	values: ReturnType<typeof parseArgs>["values"]
+): string =>
+	typeof values.gateway === "string"
+		? values.gateway
+		: (process.env.SUPERVILLAIN_GATEWAY ?? "");
+
+/** The one dial both key verbs ride: the Host pipe with no rooms on it. */
+const openKeyConduit = async (
+	gatewayAddress: string
+): Promise<Awaited<ReturnType<typeof openGatewayLink>> | undefined> => {
+	const identity = await loadOrCreateIdentity(configFolder());
+	try {
+		return await openGatewayLink({
+			dialer: openWsDialer({
+				secretKeyHex: identity.secretKeyHex,
+				url: gatewayAddress,
+			}),
+		});
+	} catch (error) {
+		console.error("Could not reach that gateway.");
+		if (!(error instanceof DialTimeoutError)) {
+			console.error(error instanceof Error ? error.message : String(error));
+		}
+		return undefined;
+	}
+};
+
 /**
  * `key link` targets the **gateway**, which owns the key-equivalence graph
  * (ADR-0013's correction to ADR-0005). It rides the same outbound pipe the Host
@@ -1175,30 +1209,15 @@ const keyLink = async (args: readonly string[]): Promise<number> => {
 		console.error("key link takes at most one code.");
 		return 1;
 	}
-	const gatewayAddress =
-		typeof parsed.values.gateway === "string"
-			? parsed.values.gateway
-			: (process.env.SUPERVILLAIN_GATEWAY ?? "");
+	const gatewayAddress = keyGatewayAddress(parsed.values);
 	if (gatewayAddress === "") {
 		console.error(
 			"key link needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY."
 		);
 		return 1;
 	}
-	const identity = await loadOrCreateIdentity(configFolder());
-	let link: Awaited<ReturnType<typeof openGatewayLink>>;
-	try {
-		link = await openGatewayLink({
-			dialer: openWsDialer({
-				secretKeyHex: identity.secretKeyHex,
-				url: gatewayAddress,
-			}),
-		});
-	} catch (error) {
-		console.error("Could not reach that gateway.");
-		if (!(error instanceof DialTimeoutError)) {
-			console.error(error instanceof Error ? error.message : String(error));
-		}
+	const link = await openKeyConduit(gatewayAddress);
+	if (link === undefined) {
 		return 1;
 	}
 	try {
@@ -1232,10 +1251,71 @@ const keyLink = async (args: readonly string[]): Promise<number> => {
 };
 
 /**
+ * `key revoke` is the retire half of rotation (ADR-0012, NQ-3): rotation stays
+ * "link new, retire old", and this is the retire. It rides the same room-less
+ * pipe `key link` does, so the connection's authenticated key is the one asking
+ * — and the gateway only lets it retire a key of its own identity.
+ *
+ * Revocation takes effect **immediately**: the retired key's live pipes and
+ * terminals are dropped, not merely refused at their next login.
+ */
+const keyRevoke = async (args: readonly string[]): Promise<number> => {
+	let parsed: ReturnType<typeof parseArgs>;
+	try {
+		parsed = parseArgs({
+			allowPositionals: true,
+			args: [...args],
+			options: { gateway: { type: "string" } },
+		});
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	const positionals = parsed.positionals.filter(
+		(value): value is string => typeof value === "string"
+	);
+	const [target] = positionals;
+	if (target === undefined || positionals.length > 1) {
+		console.error("key revoke takes exactly one key.");
+		return 1;
+	}
+	const gatewayAddress = keyGatewayAddress(parsed.values);
+	if (gatewayAddress === "") {
+		console.error(
+			"key revoke needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY."
+		);
+		return 1;
+	}
+	const link = await openKeyConduit(gatewayAddress);
+	if (link === undefined) {
+		return 1;
+	}
+	try {
+		const outcome = await link.revoke(target);
+		if ("rejected" in outcome) {
+			console.error(outcome.message);
+			return 1;
+		}
+		console.log(`retired: ${outcome.revoked}`);
+		console.log(
+			"that key can no longer host, join, or link at this gateway. its lines in\nany room's log stay where they are — this retires the key, not the history."
+		);
+		// The gateway refuses to retire the key you are asking with, so this list
+		// always has at least this machine on it.
+		console.log(
+			`\nstill yours:\n${outcome.remaining.map((one) => `  ${one}`).join("\n")}`
+		);
+		return 0;
+	} finally {
+		await link.close();
+	}
+};
+
+/**
  * The `key` noun (the #28 pattern). `show` prints the per-machine credential
  * the Host proves itself with; `link` mints a one-time code on an established
- * machine and redeems either code kind on a new one (ADR-0005). Retiring a key
- * is `key revoke`, which is not built yet.
+ * machine and redeems either code kind on a new one (ADR-0005); `revoke`
+ * retires a key from a machine you still control (ADR-0012, NQ-3).
  */
 const key = async (args: readonly string[]): Promise<number> => {
 	const [subcommand, ...rest] = args;
@@ -1245,7 +1325,10 @@ const key = async (args: readonly string[]): Promise<number> => {
 	if (subcommand === "link") {
 		return await keyLink(rest);
 	}
-	console.error("key requires show or link.");
+	if (subcommand === "revoke") {
+		return await keyRevoke(rest);
+	}
+	console.error("key requires show, link, or revoke.");
 	return 1;
 };
 

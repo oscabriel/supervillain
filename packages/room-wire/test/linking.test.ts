@@ -6,7 +6,12 @@ import type {
 	RoomSubmission,
 } from "@supervillain/core";
 
-import { openGatewayLink, openHostPipe, serveHostPipes } from "../src/index.js";
+import {
+	openGatewayLink,
+	openHostPipe,
+	REVOKED_HOST_KEY_MESSAGE,
+	serveHostPipes,
+} from "../src/index.js";
 import type {
 	ActorLink,
 	ClaimOutcome,
@@ -14,6 +19,7 @@ import type {
 	KeyGraph,
 	LinkCodeOutcome,
 	LinkRedemptionOutcome,
+	RevocationOutcome,
 	RoomOwnership,
 } from "../src/index.js";
 import { createMemoryTransportHub, describe, expect, test } from "./harness.js";
@@ -63,7 +69,26 @@ class MemoryKeyGraph implements KeyGraph {
 	readonly identities = new Map<string, string>();
 	readonly codes = new Map<string, string>();
 	readonly rosters: (readonly string[])[] = [];
+	readonly revoked = new Set<string>();
 	minted = 0;
+
+	isRevoked(key: string): boolean {
+		return this.revoked.has(key);
+	}
+
+	async revokeKey(target: string, byKey: string): Promise<RevocationOutcome> {
+		const identityId = this.identities.get(target);
+		if (identityId === undefined || identityId !== this.identities.get(byKey)) {
+			return { message: "That key is not one of yours.", rejected: true };
+		}
+		this.revoked.add(target);
+		const remaining = [...this.identities]
+			.filter(
+				([actor, held]) => held === identityId && !this.revoked.has(actor)
+			)
+			.map(([actor]) => actor);
+		return { accepted: true, identityId, remaining, revoked: target };
+	}
 
 	async resolveActorLinks(
 		actors: readonly string[]
@@ -354,6 +379,115 @@ describe("the key link conduit", () => {
 			message: "This gateway does not serve key linking.",
 			rejected: true,
 		});
+		expect(await link.revoke(LAPTOP)).toEqual({
+			message: "This gateway does not serve key linking.",
+			rejected: true,
+		});
+		await link.close();
+		await server.close();
+	});
+});
+
+describe("revocation on the pipe", () => {
+	test("refuses a retired key's registration, and says which refusal it is", async () => {
+		const hub = createMemoryTransportHub("gateway-key");
+		const keys = new MemoryKeyGraph();
+		keys.identities.set(LAPTOP, "identity:one");
+		keys.revoked.add(LAPTOP);
+		const events: GatewayPipeEvent[] = [];
+		const server = serveHostPipes({
+			door: DOOR,
+			keys,
+			listener: hub.listener,
+			onEvent: (event) => events.push(event),
+			ownership: new MemoryOwnership(),
+		});
+		const host = openHostPipe({
+			dialer: hub.dialer(LAPTOP),
+			rooms: [
+				{
+					info: { gameId: "fake", label: "the table" },
+					name: "iron-keep",
+					store: new RecordingRoomStore(),
+				},
+			],
+		});
+		// Refused, not retried: a retired key will not become un-retired by
+		// dialing again, and the message is its own, not the name-is-taken one.
+		await expect(host.attached).rejects.toThrow(REVOKED_HOST_KEY_MESSAGE);
+		expect(events).toContainEqual({
+			kind: "pipe-refused",
+			reason: REVOKED_HOST_KEY_MESSAGE,
+		});
+		await host.close();
+		await server.close();
+	});
+
+	test("drops the retired key's live pipe the moment it is revoked", async () => {
+		const hub = createMemoryTransportHub("gateway-key");
+		const keys = new MemoryKeyGraph();
+		keys.identities.set(DESKTOP, "identity:one");
+		keys.identities.set(LAPTOP, "identity:one");
+		const events: GatewayPipeEvent[] = [];
+		const server = serveHostPipes({
+			door: DOOR,
+			keys,
+			listener: hub.listener,
+			onEvent: (event) => events.push(event),
+			ownership: new MemoryOwnership(),
+		});
+		// The compromised box is hosting right now.
+		const host = openHostPipe({
+			dialer: hub.dialer(LAPTOP),
+			reconnectDelayMs: () => 60_000,
+			rooms: [
+				{
+					info: { gameId: "fake", label: "the table" },
+					name: "iron-keep",
+					store: new RecordingRoomStore(),
+				},
+			],
+		});
+		await host.attached;
+		await settle();
+		expect(server.live("iron-keep")).toBeDefined();
+
+		// The GM retires it from the machine they still control.
+		const link = await openGatewayLink({ dialer: hub.dialer(DESKTOP) });
+		expect(await link.revoke(LAPTOP)).toEqual({
+			accepted: true,
+			identityId: "identity:one",
+			remaining: [DESKTOP],
+			revoked: LAPTOP,
+		});
+		await link.close();
+		await settle();
+
+		// Immediate, not at next authentication: the room is offline now.
+		expect(server.live("iron-keep")).toBeUndefined();
+		expect(events).toContainEqual({ key: LAPTOP, kind: "key-revoked" });
+		expect(events).toContainEqual({ kind: "room-offline", room: "iron-keep" });
+		await host.close();
+		await server.close();
+	});
+
+	test("refuses to retire a key of another identity", async () => {
+		const hub = createMemoryTransportHub("gateway-key");
+		const keys = new MemoryKeyGraph();
+		keys.identities.set(DESKTOP, "identity:one");
+		keys.identities.set(LAPTOP, "identity:two");
+		const server = serveHostPipes({
+			door: DOOR,
+			keys,
+			listener: hub.listener,
+			ownership: new MemoryOwnership(),
+		});
+		const link = await openGatewayLink({ dialer: hub.dialer(DESKTOP) });
+		expect(await link.revoke(LAPTOP)).toEqual({
+			message: "That key is not one of yours.",
+			rejected: true,
+		});
+		expect(keys.revoked.has(LAPTOP)).toBe(false);
 		await link.close();
 		await server.close();
 	});

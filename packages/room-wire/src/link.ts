@@ -15,8 +15,13 @@ import {
 	LINK_ROOM,
 	parseLinkCodeOutcome,
 	parseLinkRedemptionOutcome,
+	parseRevocationOutcome,
 } from "./messages.js";
-import type { LinkCodeOutcome, LinkRedemptionOutcome } from "./messages.js";
+import type {
+	LinkCodeOutcome,
+	LinkRedemptionOutcome,
+	RevocationOutcome,
+} from "./messages.js";
 import { MultiplexPipe } from "./pipe.js";
 import type { TransportConnection, TransportDialer } from "./seam.js";
 
@@ -32,6 +37,9 @@ export interface GatewayLink {
 	readonly mintDeviceCode: () => Promise<LinkCodeOutcome>;
 	/** Redeems a code of either kind — the gateway knows what a code maps to. */
 	readonly redeem: (code: string) => Promise<LinkRedemptionOutcome>;
+	/** Retires another key of this identity — the retire half of rotation
+	 * (ADR-0012, NQ-3). Run from a machine you still control. */
+	readonly revoke: (key: string) => Promise<RevocationOutcome>;
 	readonly close: () => Promise<void>;
 }
 
@@ -81,5 +89,6 @@ export const openGatewayLink = async (
 		mintDeviceCode: () =>
 			ask({ mint: "device" } as const, parseLinkCodeOutcome),
 		redeem: (code) => ask({ redeem: code }, parseLinkRedemptionOutcome),
+		revoke: (key) => ask({ revoke: key }, parseRevocationOutcome),
 	};
 };

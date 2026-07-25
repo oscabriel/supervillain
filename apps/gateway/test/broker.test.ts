@@ -12,7 +12,12 @@ import type {
 	RoomSubmission,
 } from "@supervillain/core";
 import { loadOrCreateIdentity } from "@supervillain/identity";
-import { openHostPipe, serveHostPipes } from "@supervillain/room-wire";
+import {
+	openGatewayLink,
+	openHostPipe,
+	REVOKED_HOST_KEY_MESSAGE,
+	serveHostPipes,
+} from "@supervillain/room-wire";
 import type { GatewayPipeEvent, HostPipeServer } from "@supervillain/room-wire";
 import { openWsDialer } from "@supervillain/transport-ws";
 import { startWsListener } from "@supervillain/transport-ws/server";
@@ -185,6 +190,103 @@ describe("the gateway holds game state in memory and nowhere else", () => {
 		expect(JSON.stringify(events)).not.toContain(GAME_CONTENT);
 		expect(written.join("")).not.toContain(GAME_CONTENT);
 
+		await rm(folder, { force: true, recursive: true });
+	});
+});
+
+describe("a key the GM retired", () => {
+	/* The broker suite's revoked-key leg (ADR-0012, NQ-12 lists it beside
+	 * challenge-signature auth). It runs against the real store, because the
+	 * whole claim of ADR-0013 is that this refusal is a **local read**: no
+	 * backend exists in this test, and none is asked. */
+	test("loses its live pipe at once and is refused when it dials back", async () => {
+		const folder = await mkdtemp(path.join(tmpdir(), "supervillain-revoke-"));
+		const events: GatewayPipeEvent[] = [];
+		const listener = await startWsListener({
+			secretKeyHex: await secretKeyIn(folder),
+		});
+		const registry = openRoomRegistry({
+			path: path.join(folder, "registry.db"),
+		});
+		const pipes = serveHostPipes({
+			door: DOOR,
+			keys: registry,
+			listener,
+			onEvent: (event) => events.push(event),
+			ownership: registry,
+		});
+		const deskSecret = await secretKeyIn(folder);
+		const homelabSecret = await secretKeyIn(folder);
+
+		// The homelab box hosts, and it is linked into the GM's identity.
+		const homelab = openHostPipe({
+			dialer: openWsDialer({ secretKeyHex: homelabSecret, url: listener.url }),
+			reconnectDelayMs: () => 60_000,
+			rooms: [
+				{
+					info: { gameId: "fake", label: "the keep" },
+					name: "keep",
+					store: new FakeRoomStore(),
+				},
+			],
+		});
+		const attachment = await homelab.attached;
+		await untilLive(pipes, "keep", true);
+		const homelabKey = pipes.live("keep")?.hostKey;
+		if (homelabKey === undefined) {
+			throw new Error("no live room");
+		}
+		expect(attachment.sshHost).toBe(DOOR.sshHost);
+
+		// The GM links their desk to the box's identity — the box already holds
+		// the room, so the fresh key is the one that joins.
+		const box = await openGatewayLink({
+			dialer: openWsDialer({ secretKeyHex: homelabSecret, url: listener.url }),
+		});
+		const code = await box.mintDeviceCode();
+		if ("rejected" in code) {
+			throw new Error(code.message);
+		}
+		await box.close();
+		const desk = await openGatewayLink({
+			dialer: openWsDialer({ secretKeyHex: deskSecret, url: listener.url }),
+		});
+		expect(await desk.redeem(code.code)).toMatchObject({ accepted: true });
+
+		// The box is compromised; the GM retires it from the desk.
+		const retired = await desk.revoke(homelabKey);
+		expect(retired).toMatchObject({ accepted: true, revoked: homelabKey });
+		await desk.close();
+
+		// Immediately, not at next login: the room is offline.
+		await untilLive(pipes, "keep", false);
+		expect(events).toContainEqual({ key: homelabKey, kind: "key-revoked" });
+		await homelab.close();
+
+		// And the redial is refused with the retired-key line, not the
+		// name-is-taken one.
+		const again = openHostPipe({
+			dialer: openWsDialer({ secretKeyHex: homelabSecret, url: listener.url }),
+			rooms: [
+				{
+					info: { gameId: "fake", label: "the keep" },
+					name: "keep",
+					store: new FakeRoomStore(),
+				},
+			],
+		});
+		await expect(again.attached).rejects.toThrow(REVOKED_HOST_KEY_MESSAGE);
+		await again.close();
+
+		// The identity kept its room and its other key.
+		const identity = registry.identityOf(homelabKey);
+		expect(identity).toBeDefined();
+		expect(registry.ownerOf("keep")).toBe(identity);
+		expect(registry.liveActorsOf(identity ?? "")).not.toContain(homelabKey);
+
+		await pipes.close();
+		await listener.close();
+		registry.close();
 		await rm(folder, { force: true, recursive: true });
 	});
 });
