@@ -6,14 +6,18 @@ import path from "node:path";
 import type { HostRegistry } from "@supervillain/core";
 
 import { decide } from "../../games/fake/src/authority.js";
-import { apply, init } from "../../games/fake/src/model.js";
+import { apply, eventTypes, init } from "../../games/fake/src/model.js";
 import { RoomHost } from "../src/index.js";
 import { describe, expect, test } from "./harness.js";
 
 const registry: HostRegistry = {
 	get: (id) =>
 		id === "fake"
-			? { authority: { decide }, model: { apply, init } }
+			? {
+					authority: { decide },
+					grammar: { eventTypes },
+					model: { apply, init },
+				}
 			: undefined,
 };
 

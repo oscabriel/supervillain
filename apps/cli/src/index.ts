@@ -26,12 +26,17 @@ import {
 } from "@supervillain/draw-steel/content";
 import {
 	apply as drawSteelApply,
+	eventTypes as drawSteelEventTypes,
 	init as drawSteelInit,
 } from "@supervillain/draw-steel/model";
 import { view as drawSteelView } from "@supervillain/draw-steel/view";
 import { decide as fakeDecide } from "@supervillain/fake/authority";
 import { content as fakeContent } from "@supervillain/fake/content";
-import { apply as fakeApply, init as fakeInit } from "@supervillain/fake/model";
+import {
+	apply as fakeApply,
+	eventTypes as fakeEventTypes,
+	init as fakeInit,
+} from "@supervillain/fake/model";
 import { view as fakeView } from "@supervillain/fake/view";
 import { loadOrCreateIdentity } from "@supervillain/identity";
 import { InProcessRoomStore, RoomHost } from "@supervillain/room-host";
@@ -70,12 +75,14 @@ const hostRegistry: HostRegistry = {
 		if (gameId === "fake") {
 			return {
 				authority: { decide: fakeDecide },
+				grammar: { eventTypes: fakeEventTypes },
 				model: { apply: fakeApply, init: fakeInit },
 			} as never;
 		}
 		return gameId === "draw-steel"
 			? ({
 					authority: { decide: drawSteelDecide },
+					grammar: { eventTypes: drawSteelEventTypes },
 					model: { apply: drawSteelApply, init: drawSteelInit },
 				} as never)
 			: undefined;

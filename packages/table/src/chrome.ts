@@ -10,6 +10,7 @@ import {
 } from "@opentui/core";
 import type { KeyEvent, TextChunk } from "@opentui/core";
 import type {
+	Envelope,
 	FeedLine,
 	GamePanel,
 	GamePanelInput,
@@ -72,6 +73,32 @@ export const forwardPanelKey = <S, C>(
 	panel: GamePanel<S, C>,
 	input: GamePanelInput<S, C>
 ): boolean => panel.onKey?.(key, input) ?? false;
+
+/** How long the stream must stay quiet before the table calls the initial
+ * replay finished and flushes its collapsed skip warning (ADR-0010). The
+ * RoomStore stream hands over the backlog then follows live, without marking
+ * the boundary, so quiet is the honest signal available here. Erring long
+ * would fold live skips into the replay summary; erring short only costs the
+ * collapse, never a warning. */
+const REPLAY_QUIET_MS = 250;
+
+/** Resolves true if the next envelope beats the quiet window, false if the
+ * stream falls quiet first. The timer is always cleared, so a long replay
+ * leaves nothing pending behind it. */
+const arrivesBeforeQuiet = async (next: Promise<unknown>): Promise<boolean> => {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			next.then(() => true),
+			// oxlint-disable-next-line promise/avoid-new -- a bare timer needs the constructor.
+			new Promise<boolean>((resolve) => {
+				timer = setTimeout(() => resolve(false), REPLAY_QUIET_MS);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+};
 
 export const initialFeedLines = (
 	notices: readonly FeedLine[] | undefined
@@ -307,20 +334,35 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	input.focus();
 
 	const iterator = options.store.stream(1)[Symbol.asyncIterator]();
+	const showFeed = (line: FeedLine | null): void => {
+		if (line !== null) {
+			lines.push(line);
+		}
+		feedText.content = feedContent(lines);
+		feed.scrollTo({ x: 0, y: Number.MAX_SAFE_INTEGER });
+		renderSidebar();
+	};
 	void (async () => {
+		let replaying = true;
+		let pending: Promise<IteratorResult<Envelope>> | null = null;
 		while (!renderer.isDestroyed) {
+			pending ??= iterator.next();
+			if (replaying) {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- the replay boundary is the first quiet gap in this stream, which only sequential waiting can see.
+				const arrived = await arrivesBeforeQuiet(pending);
+				if (!arrived) {
+					replaying = false;
+					showFeed(fold.endReplay());
+					continue;
+				}
+			}
 			// oxlint-disable-next-line eslint/no-await-in-loop -- each stream envelope must be consumed in order.
-			const next = await iterator.next();
+			const next = await pending;
+			pending = null;
 			if (next.done || renderer.isDestroyed) {
 				break;
 			}
-			const line = fold.apply(next.value);
-			if (line !== null) {
-				lines.push(line);
-			}
-			feedText.content = feedContent(lines);
-			feed.scrollTo({ x: 0, y: Number.MAX_SAFE_INTEGER });
-			renderSidebar();
+			showFeed(fold.apply(next.value));
 		}
 	})();
 	await exited;

@@ -12,16 +12,22 @@ interface Event {
 	type: "game.counted";
 	count: number;
 }
+// A module fold skips what its grammar does not recognize, silently — the
+// double has to do the same or the unknown tier cannot be observed here.
 const entry: ViewEntry<State, unknown, Event> = {
 	model: {
-		apply: (_state, event) => ({ count: event.count }),
+		apply: (state, event) =>
+			event.type === "game.counted" ? { count: event.count } : state,
 		init: () => ({ count: 0 }),
 	},
 	view: {
 		createPanels: () => [],
-		renderEvent: (event, state) => ({
-			runs: [{ text: `${event.type}:${state.count}`, token: "primary" }],
-		}),
+		renderEvent: (event, state) =>
+			event.type === "game.counted"
+				? {
+						runs: [{ text: `${event.type}:${state.count}`, token: "primary" }],
+					}
+				: null,
 	},
 };
 const envelope = (
@@ -66,6 +72,7 @@ describe("createTableFold", () => {
 
 	test("folds character bindings last-write-wins and skips unknown seats", () => {
 		const fold = createTableFold(entry, "game", "viewer-key");
+		fold.endReplay();
 		fold.apply(
 			envelope("core.seat-claimed", { seatId: "gm" }, "actor-key-long", 2)
 		);
@@ -93,12 +100,26 @@ describe("createTableFold", () => {
 			fold.apply(
 				envelope(
 					"core.character-bound",
-					{ characterId: "ignored", seatId: "missing" },
+					{ characterId: "ignored", seatId: "ramona" },
 					"actor-key-long",
-					5
+					42
 				)
 			)
-		).toBeNull();
+		).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #42 (core.character-bound): unknown seat 'ramona'",
+					token: "danger",
+				},
+			],
+		});
+		expect(fold.skips()).toEqual([
+			{
+				reason: "unknown seat 'ramona'",
+				seq: 42,
+				type: "core.character-bound",
+			},
+		]);
 	});
 
 	test("renders core room and dice envelopes", () => {
@@ -168,6 +189,9 @@ describe("createTableFold", () => {
 
 	test("skips a known-invalid map payload loudly without halting", () => {
 		const fold = createTableFold(entry, "game", "viewer-key");
+		// Past the replay window, so the skip speaks for itself instead of being
+		// held back for the collapsed summary (ADR-0010).
+		fold.endReplay();
 		expect(
 			fold.apply(
 				envelope(
@@ -203,5 +227,180 @@ describe("createTableFold", () => {
 		).toEqual({ runs: [{ text: "game.counted:3", token: "primary" }] });
 		expect(fold.state()).toEqual({ count: 3 });
 		expect(fold.actorLabel("1234567890")).toBe("12345678");
+	});
+
+	test("skips unknown types silently and never halts on them", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		fold.endReplay();
+		expect(
+			fold.apply(
+				envelope("core.written-by-a-newer-host", { name: "keep" }, "a", 7)
+			)
+		).toBeNull();
+		expect(
+			fold.apply(envelope("game.unheard-of", { count: 9 }, "a", 8))
+		).toBeNull();
+		expect(fold.skips()).toEqual([]);
+	});
+
+	test("skips malformed payloads on recognized core types loudly", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		fold.endReplay();
+		expect(
+			fold.apply(envelope("core.room-created", { gameId: 7 }, "a", 1))
+		).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #1 (core.room-created): no game id",
+					token: "danger",
+				},
+			],
+		});
+		expect(fold.apply(envelope("core.seat-claimed", {}, "a", 2))).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #2 (core.seat-claimed): no seat id",
+					token: "danger",
+				},
+			],
+		});
+		expect(
+			fold.apply(envelope("core.chat-posted", { text: 3 }, "a", 3))
+		).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #3 (core.chat-posted): no chat text",
+					token: "danger",
+				},
+			],
+		});
+		expect(
+			fold.apply(
+				envelope("core.dice-rolled", { notation: "2d6", rolls: "x" }, "a", 4)
+			)
+		).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #4 (core.dice-rolled): malformed dice roll",
+					token: "danger",
+				},
+			],
+		});
+		expect(
+			fold.apply(envelope("core.character-bound", { seatId: 1 }, "a", 5))
+		).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #5 (core.character-bound): malformed character binding",
+					token: "danger",
+				},
+			],
+		});
+		expect(fold.table().seats).toEqual([]);
+		expect(fold.skips()).toHaveLength(5);
+	});
+
+	test("skips duplicate seat claims loudly and keeps the first seat", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		fold.endReplay();
+		fold.apply(envelope("core.seat-claimed", { seatId: "gm" }, "actor-a", 1));
+		expect(
+			fold.apply(envelope("core.seat-claimed", { seatId: "gm" }, "actor-b", 2))
+		).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #2 (core.seat-claimed): seat 'gm' is already claimed",
+					token: "danger",
+				},
+			],
+		});
+		expect(
+			fold.apply(
+				envelope("core.seat-claimed", { seatId: "player-1" }, "actor-a", 3)
+			)
+		).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #3 (core.seat-claimed): gm already holds a seat",
+					token: "danger",
+				},
+			],
+		});
+		expect(fold.table().seats).toEqual([
+			{ actor: "actor-a", characterId: null, id: "gm" },
+		]);
+	});
+
+	test("skips a non-object game payload loudly", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		fold.endReplay();
+		expect(fold.apply(envelope("game.counted", "nope", "a", 11))).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #11 (game.counted): payload is not an object",
+					token: "danger",
+				},
+			],
+		});
+		expect(fold.state()).toEqual({ count: 0 });
+	});
+
+	test("collapses a replay burst into one summary and stays alive", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		for (const seq of [42, 43, 44]) {
+			expect(
+				fold.apply(
+					envelope(
+						"core.character-bound",
+						{ characterId: "x", seatId: "ramona" },
+						"a",
+						seq
+					)
+				)
+			).toBeNull();
+		}
+		expect(
+			fold.apply(envelope("core.chat-posted", { text: "still here" }, "a", 45))
+		).toEqual({
+			runs: [
+				{ text: "a: ", token: "accent" },
+				{ text: "still here", token: "primary" },
+			],
+		});
+		expect(fold.endReplay()).toEqual({
+			runs: [
+				{
+					text: "⚠ 3 events skipped during replay (first: #42 core.character-bound — unknown seat 'ramona')",
+					token: "danger",
+				},
+			],
+		});
+		expect(fold.endReplay()).toBeNull();
+	});
+
+	test("a lone replay skip keeps its own warning line", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		fold.apply(
+			envelope(
+				"core.character-bound",
+				{ characterId: null, seatId: "ramona" },
+				"a",
+				42
+			)
+		);
+		expect(fold.endReplay()).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #42 (core.character-bound): unknown seat 'ramona'",
+					token: "danger",
+				},
+			],
+		});
+	});
+
+	test("a clean replay produces no summary", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		fold.apply(envelope("core.room-created", { gameId: "game" }, "a", 1));
+		expect(fold.endReplay()).toBeNull();
 	});
 });

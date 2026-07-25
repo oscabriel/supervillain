@@ -35,6 +35,9 @@ export const CORE_DICE_ROLLED = "core.dice-rolled";
 export const CORE_MAP_LOADED = "core.map-loaded";
 export const CORE_MAP_CLEARED = "core.map-cleared";
 
+/* The five constants above are the core event vocabulary. Each fold has one
+ * arm per type and treats any other `core.*` type as unknown (ADR-0010). */
+
 export interface RoomCreatedPayload {
 	readonly gameId: string;
 }
@@ -185,9 +188,21 @@ export interface GameContent {
 	readonly validate: ContentValidator;
 }
 
+/** A module's declared event grammar: every event type its fold recognizes,
+ * legacy shapes included (they are recognized-and-valid forever, normalized by
+ * upgrade-on-read). The writer fold asks the grammar to tell *unknown* from
+ * *known-invalid* — a game event type outside this list makes the host refuse
+ * to open the log (ADR-0010). It is a declaration, not a derivation: a module
+ * that forgets to list a type it emits strands its own logs, so the module's
+ * own conformance test is where the list is held to `apply`. */
+export interface EventGrammar {
+	readonly eventTypes: readonly NamespacedType[];
+}
+
 export interface AuthorityEntry<S, C, E> {
 	readonly model: Pick<GameAuthority<S, C, E>, "init" | "apply">;
 	readonly authority: Pick<GameAuthority<S, C, E>, "decide">;
+	readonly grammar: EventGrammar;
 }
 
 export interface ViewEntry<S, C, E> {

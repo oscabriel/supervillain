@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { Envelope, HostRegistry } from "@supervillain/core";
 
 import { decide } from "../../games/fake/src/authority.js";
-import { apply, init } from "../../games/fake/src/model.js";
+import { apply, eventTypes, init } from "../../games/fake/src/model.js";
 import { InProcessRoomStore, RoomHost } from "../src/index.js";
 import { describe, expect, test } from "./harness.js";
 import { createMemoryTransportPair } from "./memory-transport.js";
@@ -24,7 +24,11 @@ interface RemoteFixture {
 const registry: HostRegistry = {
 	get(gameId) {
 		return gameId === "fake"
-			? { authority: { decide }, model: { apply, init } }
+			? {
+					authority: { decide },
+					grammar: { eventTypes },
+					model: { apply, init },
+				}
 			: undefined;
 	},
 };
