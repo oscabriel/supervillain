@@ -5,7 +5,7 @@ import {
 	InputRenderableEvents,
 	TextRenderable,
 } from "@opentui/core";
-import type { KeyEvent } from "@opentui/core";
+import type { CliRenderer, KeyEvent } from "@opentui/core";
 import type { TerminalConnection } from "@supervillain/session";
 
 import {
@@ -24,7 +24,6 @@ import type {
 	LobbyNotice,
 	LobbyState,
 } from "./lobby-screens.js";
-import type { TableRendererFactory } from "./renderer.js";
 import { resolveThemeToken } from "./theme.js";
 
 export type {
@@ -43,9 +42,9 @@ export {
 
 /* Sequencing (recorded per #67): this landed before #62 replaces the Door's
  * hand-rolled ssh2 wiring with `@opentui/ssh`. The lobby is deliberately free
- * of any ssh2 coupling — it takes a `TerminalConnection` and a renderer
- * factory and knows nothing else about the transport — so that port is
- * mechanical: swap what constructs the connection and the factory, not this
+ * of any ssh2 coupling — it takes a `TerminalConnection` and a borrowed
+ * renderer and knows nothing else about the transport — so that port is
+ * mechanical: swap what constructs the connection and the renderer, not this
  * file. */
 
 /** How one visit to the lobby ended. `join` hands a room name back to the
@@ -58,9 +57,10 @@ export type LobbyOutcome =
 export interface LobbyOptions extends LobbyChromeContext {
 	/** The terminal the lobby holds. No actor: a keyless visitor has none yet. */
 	readonly connection: TerminalConnection;
-	/** Supplies the renderer this surface draws on — and with it the decision of
-	 * whether a render loop runs at all. */
-	readonly createRenderer: TableRendererFactory;
+	/** The surface's renderer, borrowed for this visit (ADR-0016). The lobby
+	 * adds its renderables, detaches them on the way out, and never destroys
+	 * the renderer — its lifetime is the surface's. */
+	readonly renderer: CliRenderer;
 	/** The inline notice the lobby opens with, if the visitor asked for a room
 	 * that is unregistered or not live. */
 	readonly notice?: LobbyNotice;
@@ -75,18 +75,22 @@ const NOTICE_TOKEN = {
 /** Holds the lobby on the connection's terminal and resolves once the visitor
  * picks a room or leaves. One visit per call: the caller drives the loop, so a
  * guest can hop rooms on one minted actor (ADR-0008) without the lobby knowing
- * what a room is. The renderer is released before this resolves, so whatever
- * takes the terminal next can mint its own. */
+ * what a room is. The lobby's renderables are detached before this resolves,
+ * so the next screen finds the borrowed renderer clean (ADR-0016). */
 export const runLobby = async (
 	options: LobbyOptions
 ): Promise<LobbyOutcome> => {
+	const { renderer } = options;
 	let finish: (() => void) | undefined;
-	// oxlint-disable-next-line promise/avoid-new -- OpenTUI announces teardown through a destroy event.
+	// oxlint-disable-next-line promise/avoid-new -- a screen's exit is an event, not a promise-returning API.
 	const exited = new Promise<void>((resolve) => {
 		finish = resolve;
 	});
-	const renderer = await options.createRenderer(options.connection);
-	renderer.on(CliRenderEvents.DESTROY, () => finish?.());
+	// The backstop for exits the lobby does not decide: the surface tearing the
+	// session down (or Ctrl+C, which destroys the renderer) must still resolve
+	// this visit.
+	const onRendererDestroy = (): void => finish?.();
+	renderer.on(CliRenderEvents.DESTROY, onRendererDestroy);
 
 	let state: LobbyState = initialLobbyState(options.notice);
 	let outcome: LobbyOutcome = { kind: "leave" };
@@ -159,14 +163,9 @@ export const runLobby = async (
 		}
 	};
 
-	const teardown = (): void => {
-		if (!renderer.isDestroyed) {
-			renderer.destroy();
-		}
-	};
 	const leaveWith = (next: LobbyOutcome): void => {
 		outcome = next;
-		teardown();
+		finish?.();
 	};
 	const goTo = (screen: LobbyState["screen"]): void => {
 		state = { ...state, screen };
@@ -214,7 +213,7 @@ export const runLobby = async (
 		}
 	};
 
-	renderer.keyInput.on("keypress", (key: KeyEvent) => {
+	const onKeypress = (key: KeyEvent): void => {
 		if (key.name === "escape") {
 			key.preventDefault();
 			key.stopPropagation();
@@ -238,16 +237,25 @@ export const runLobby = async (
 			};
 			draw();
 		}
-	});
+	};
+	renderer.keyInput.on("keypress", onKeypress);
 
 	const unsubscribeResize = options.connection.onResize(({ columns, rows }) =>
 		renderer.resize(columns, rows)
 	);
-	const unsubscribeClose = options.connection.onClose(teardown);
+	const unsubscribeClose = options.connection.onClose(() =>
+		leaveWith({ kind: "leave" })
+	);
 	draw();
 
 	await exited;
 	unsubscribeResize();
 	unsubscribeClose();
+	renderer.keyInput.off("keypress", onKeypress);
+	renderer.off(CliRenderEvents.DESTROY, onRendererDestroy);
+	// Borrowed, not owned: detach this visit's renderables and hand the
+	// renderer back intact. Destroy is idempotent, so a surface that already
+	// tore the renderer down costs nothing here.
+	root.destroyRecursively();
 	return outcome;
 };

@@ -1,7 +1,7 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-lane suite. */
 import { describe, expect, test } from "bun:test";
 
-import { RendererControlState } from "@opentui/core";
+import { RendererControlState, TextRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { TestRendererSetup } from "@opentui/core/testing";
 import type { TerminalConnection, TerminalSize } from "@supervillain/session";
@@ -58,9 +58,9 @@ const mountLobby = async (
 ): Promise<{ readonly outcome: Promise<LobbyOutcome> }> => {
 	const outcome = runLobby({
 		connection: probe.connection,
-		createRenderer: () => setup.renderer,
 		keyed: false,
 		notice,
+		renderer: setup.renderer,
 		sshHost: "supervillain.app",
 	});
 	await setup.waitForFrame((frame) => frame.includes("join a room"));
@@ -138,7 +138,7 @@ describe("the lobby", () => {
 		await outcome;
 	});
 
-	test("hands a typed room name back to the caller and releases the renderer", async () => {
+	test("hands a typed room name back and returns the renderer intact", async () => {
 		const setup = await createTestRenderer({ height: 24, width: 80 });
 		const probe = fakeConnection();
 		const { outcome } = await mountLobby(setup, probe);
@@ -149,18 +149,45 @@ describe("the lobby", () => {
 		setup.mockInput.pressEnter();
 
 		expect(await outcome).toEqual({ kind: "join", roomName: "gloomhold" });
-		expect(setup.renderer.isDestroyed).toBe(true);
+		// Borrowed, not owned (ADR-0016): the visit detaches its renderables
+		// and leaves the surface's renderer standing for the next screen.
+		expect(setup.renderer.isDestroyed).toBe(false);
+		expect(setup.renderer.root.getChildren()).toHaveLength(0);
 		expect(probe.resizeListeners()).toBe(0);
 		expect(probe.closeListeners()).toBe(0);
+		setup.renderer.destroy();
 	});
 
-	test("a closed connection leaves the lobby", async () => {
+	test("a closed connection leaves the lobby with the renderer standing", async () => {
 		const setup = await createTestRenderer({ height: 24, width: 80 });
 		const probe = fakeConnection();
 		const { outcome } = await mountLobby(setup, probe);
 
 		probe.close();
 		expect(await outcome).toEqual({ kind: "leave" });
-		expect(setup.renderer.isDestroyed).toBe(true);
+		expect(setup.renderer.isDestroyed).toBe(false);
+		setup.renderer.destroy();
+	});
+
+	test("one renderer serves the lobby and then the table (ADR-0016)", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeConnection();
+		const { outcome } = await mountLobby(setup, probe);
+
+		setup.mockInput.pressEnter();
+		await setup.waitForFrame((frame) => frame.includes("type the name"));
+		await setup.mockInput.typeText("gloomhold");
+		setup.mockInput.pressEnter();
+		expect(await outcome).toEqual({ kind: "join", roomName: "gloomhold" });
+
+		// The same renderer now hosts the next screen, clean: nothing of the
+		// lobby survives on it.
+		const banner = new TextRenderable(setup.renderer, {
+			content: "the next screen",
+		});
+		setup.renderer.root.add(banner);
+		await setup.waitForFrame((frame) => frame.includes("the next screen"));
+		expect(setup.captureCharFrame()).not.toContain("join a room");
+		setup.renderer.destroy();
 	});
 });

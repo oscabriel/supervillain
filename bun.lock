@@ -37,6 +37,7 @@
       "name": "@supervillain/gateway",
       "version": "0.0.0",
       "dependencies": {
+        "@opentui/core": "0.4.3",
         "@supervillain/core": "workspace:*",
         "@supervillain/draw-steel": "workspace:*",
         "@supervillain/fake": "workspace:*",

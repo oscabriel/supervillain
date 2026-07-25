@@ -111,15 +111,16 @@ const main = async (): Promise<void> => {
 	const exits: Promise<void>[] = [];
 	for (let seat = 0; seat < seats; seat += 1) {
 		const session = benchSession(`bench-${seat}`);
+		// The bench is each seat's surface (ADR-0016): it mints the renderer,
+		// lends it to the chrome, and destroys it after the measurement.
+		// oxlint-disable-next-line eslint/no-await-in-loop -- seats are mounted sequentially by design.
+		const renderer = await createRenderer(session);
+		renderers.push(renderer);
 		exits.push(
 			runChrome({
-				createRenderer: async (forSession) => {
-					const renderer = await createRenderer(forSession);
-					renderers.push(renderer);
-					return renderer;
-				},
 				entry,
 				gameId: "bench",
+				renderer,
 				roomLabel: `bench ${seat}`,
 				session,
 				store: idleStore,
