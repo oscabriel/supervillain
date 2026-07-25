@@ -36,7 +36,7 @@ import {
 } from "@supervillain/room-wire";
 import type { RegistrationReceipt } from "@supervillain/room-wire";
 import { attachLocalTty } from "@supervillain/session";
-import { runTable } from "@supervillain/table";
+import { createLocalTtyRenderer, runTable } from "@supervillain/table";
 import {
 	DialTimeoutError,
 	openWsDialer,
@@ -623,7 +623,14 @@ const create = async (args: readonly string[]): Promise<number> => {
 	);
 	await runIntake(campaignFolder, gameId, actor, store);
 	const session = attachLocalTty({ actor });
-	await runTable({ entry, gameId, roomLabel, session, store });
+	await runTable({
+		createRenderer: createLocalTtyRenderer,
+		entry,
+		gameId,
+		roomLabel,
+		session,
+		store,
+	});
 	await server.close();
 	await listener.close();
 	return 0;
@@ -694,6 +701,7 @@ const join = async (args: readonly string[]): Promise<number> => {
 		return 1;
 	}
 	await runTable({
+		createRenderer: createLocalTtyRenderer,
 		entry,
 		gameId: info.gameId,
 		roomLabel: info.label,

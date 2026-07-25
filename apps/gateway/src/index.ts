@@ -16,7 +16,7 @@ import {
 	loadOrCreateIdentity,
 } from "@supervillain/identity";
 import { connectRoomStore, serveRoomRegistry } from "@supervillain/room-wire";
-import { runTable } from "@supervillain/table";
+import { createSessionRenderer, runTable } from "@supervillain/table";
 import { openWsDialer } from "@supervillain/transport-ws";
 import { startWsListener } from "@supervillain/transport-ws/server";
 import { Server, utils } from "ssh2";
@@ -177,6 +177,9 @@ const serveShell = async (
 			await awaitKeypress(stream);
 		}
 		await runTable({
+			// One seat's renderer, drawn on demand: an ambient render loop here is
+			// a cost paid once per seat (ADR-0012, NQ-14).
+			createRenderer: createSessionRenderer,
 			entry,
 			gameId: info.gameId,
 			roomLabel: info.label,
