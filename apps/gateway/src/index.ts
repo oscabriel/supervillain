@@ -19,6 +19,7 @@ import { serveHostPipes } from "@supervillain/room-wire";
 import type {
 	GatewayPipeEvent,
 	HostPipeServer,
+	LiveRoom,
 	RoomView,
 } from "@supervillain/room-wire";
 import { createSessionRenderer, runTable } from "@supervillain/table";
@@ -36,6 +37,14 @@ import type {
 	WindowChangeInfo,
 } from "ssh2";
 
+import {
+	capacityFromEnvironment,
+	clampPtySize,
+	DEFAULT_CAPACITY_LIMITS,
+	isOversizedPty,
+	oversizedTerminalNotice,
+} from "./capacity.js";
+import type { CapacityLimits, GatewayCapacity, PtySize } from "./capacity.js";
 import { guestIdentity, guestUpgradeBox, keyedIdentity } from "./guest.js";
 import type { SessionIdentity } from "./guest.js";
 import {
@@ -73,6 +82,18 @@ export type {
 	GatewayTlsOptions,
 	ResolvedGatewayTls,
 } from "./tls.js";
+
+export {
+	CAPACITY_ENVIRONMENT,
+	capacityFromEnvironment,
+	clampPtySize,
+	DEFAULT_CAPACITY_LIMITS,
+	DEFAULT_GATEWAY_CAPACITY,
+	isOversizedPty,
+	oversizedTerminalNotice,
+	PTY_LIBRARY_CEILING,
+} from "./capacity.js";
+export type { CapacityLimits, GatewayCapacity, PtySize } from "./capacity.js";
 
 export {
 	GATEWAY_ROLE_USAGE,
@@ -143,9 +164,11 @@ export interface GatewayOptions {
 	 * lobby is an unauthenticated held session, so these are on from day one
 	 * (ADR-0008). Defaults are floors against squatting, not capacity policy. */
 	readonly lobbyLimits?: LobbyLimits;
-	/** Envelopes one session may fall behind before its view is dropped — the
-	 * per-session budget that keeps a slow reader from stalling its Room. */
-	readonly sessionBudget?: number;
+	/** The protective caps of ADR-0012 (NQ-10) and the PTY cap (NQ-14): rooms
+	 * per identity, sessions per Room, the per-session output budget, and the
+	 * rendered terminal ceiling. Ops-tunable — `serveGateway` reads them from
+	 * the environment. Defaults are the R9 benchmark's chosen numbers. */
+	readonly capacity?: CapacityLimits;
 	/** How long a seated player is held when their Host goes offline. */
 	readonly graceWindowMs?: number;
 	readonly gracePollMs?: number;
@@ -250,6 +273,8 @@ interface RoomEntryContext {
 	readonly identity: SessionIdentity;
 	/** The offline tripwire's counters (NQ-15). Counts only. */
 	readonly metrics: OfflineMetrics;
+	/** The protective caps this door enforces (NQ-10). */
+	readonly limits: CapacityLimits;
 	/** How long a seat is held when its Host goes offline. */
 	readonly graceMs?: number;
 	readonly gracePollMs?: number;
@@ -325,6 +350,30 @@ export const noticeForMissingRoom = (
 		? { kind: "offline-room", roomName }
 		: { kind: "unknown-room", roomName };
 
+/**
+ * What one arrival is told, or `undefined` when it may sit down. Three honest
+ * answers and no fourth: the name is unknown, the name is registered but no
+ * pipe carries it, or the Room is carrying as many sessions as this gateway
+ * allows (ADR-0012, NQ-10).
+ *
+ * The capacity answer is decided *here*, before a view is opened, which is the
+ * whole "never degrade a live table" rule expressed as an order of operations:
+ * a refused arrival reads a count and touches nothing else.
+ */
+export const arrivalNotice = (
+	roomName: string,
+	live: Pick<LiveRoom, "views"> | undefined,
+	registry: Pick<GatewayRoomRegistry, "isClaimed">,
+	limits: Pick<CapacityLimits, "sessionsPerRoom">
+): LobbyNotice | undefined => {
+	if (live === undefined) {
+		return noticeForMissingRoom(roomName, registry);
+	}
+	return live.views() >= limits.sessionsPerRoom
+		? { kind: "full-room", roomName }
+		: undefined;
+};
+
 /** What a seat is told when the fold drops it for falling too far behind. */
 export const SEAT_BEHIND_MESSAGE =
 	"this terminal fell too far behind to keep up. Reconnect to sit down again.";
@@ -352,10 +401,19 @@ const enterRoom = async (
 			context.metrics.recordJoinAttempt(live !== undefined);
 		}
 		attempt += 1;
-		if (live === undefined) {
+		// Unknown, offline, or full — three honest notices and never a
+		// disconnect. Decided before a view is opened, so a refused arrival
+		// costs the Room's fold nothing at all (ADR-0012, NQ-10).
+		const refusal = arrivalNotice(
+			roomName,
+			live,
+			context.registry,
+			context.limits
+		);
+		if (refusal !== undefined || live === undefined) {
 			return {
 				kind: "notice",
-				notice: noticeForMissingRoom(roomName, context.registry),
+				notice: refusal ?? noticeForMissingRoom(roomName, context.registry),
 			};
 		}
 		// The unknown-key-joins case (ADR-0005): before anyone claims a seat, let
@@ -366,7 +424,10 @@ const enterRoom = async (
 		const store = live.openStore();
 		const hold = holdRoom({
 			attached: live,
-			dropped: store.dropped,
+			// Both halves of the per-session output budget end this seat the same
+			// way: a view that fell behind its envelope budget, and a client that
+			// stopped reading its socket. Either is one seat's problem alone.
+			dropped: Promise.race([store.dropped, connection.outputOverflowed]),
 			graceMs: context.graceMs,
 			live: () => context.pipes.live(roomName),
 			onGraceExpiry: () => context.metrics.recordGraceExpiry(),
@@ -472,6 +533,7 @@ interface RoomServices {
 	/** The live keyed terminals, so a key retired right now takes the sessions
 	 * it is holding with it rather than waiting for the next login. */
 	readonly sessions: KeyedSessions;
+	readonly limits: CapacityLimits;
 	readonly graceMs?: number;
 	readonly gracePollMs?: number;
 }
@@ -485,12 +547,24 @@ const serveShell = async (
 		readonly identity: SessionIdentity;
 		readonly sshHost: string;
 		readonly limits: LobbyLimits;
+		/** The terminal size the client asked for, when it was larger than this
+		 * gateway renders. Undefined for every ordinary window. */
+		readonly oversized?: PtySize;
 	}
 ): Promise<void> => {
+	if (options.oversized !== undefined) {
+		// Said before anything is drawn, because the alt-screen would swallow it
+		// afterwards: the capped render is honest about being capped (NQ-14).
+		stream.write(
+			oversizedTerminalNotice(options.oversized, options.rooms.limits.pty)
+		);
+		await awaitKeypress(stream);
+	}
 	const context: RoomEntryContext = {
 		graceMs: options.rooms.graceMs,
 		gracePollMs: options.rooms.gracePollMs,
 		identity: options.identity,
+		limits: options.rooms.limits,
 		metrics: options.rooms.metrics,
 		pipes: options.rooms.pipes,
 		registry: options.rooms.registry,
@@ -545,6 +619,10 @@ const handleConnection = (
 ): void => {
 	let identity: SessionIdentity | undefined;
 	let roomName = "";
+	// The production PTY cap (ADR-0012, NQ-14): a terminal larger than this is
+	// rendered at the cap, never refused, and told so once. Every cell above the
+	// cap is per-session gateway cost, which is the whole reason it exists.
+	const ptyCap = options.rooms.limits.pty;
 	client
 		.on("authentication", (ctx) => {
 			roomName = ctx.username;
@@ -554,15 +632,22 @@ const handleConnection = (
 			client.on("session", (acceptSession) => {
 				const session = acceptSession();
 				let size = { columns: 0, rows: 0 };
+				let oversized: PtySize | undefined;
 				let connection: SshConnection | undefined;
 				session.on("pty", (acceptPty, _rejectPty, info: PseudoTtyInfo) => {
-					size = { columns: info.cols, rows: info.rows };
+					const asked = { columns: info.cols, rows: info.rows };
+					if (isOversizedPty(asked, ptyCap)) {
+						oversized = asked;
+					}
+					size = clampPtySize(asked, ptyCap);
 					acceptPty?.();
 				});
 				session.on(
 					"window-change",
 					(acceptWc, _rejectWc, info: WindowChangeInfo) => {
-						connection?.resize({ columns: info.cols, rows: info.rows });
+						connection?.resize(
+							clampPtySize({ columns: info.cols, rows: info.rows }, ptyCap)
+						);
 						acceptWc?.();
 					}
 				);
@@ -585,7 +670,12 @@ const handleConnection = (
 						return;
 					}
 					const keyed = keyedActorOf(shellIdentity);
-					connection = attachSshChannel({ initialSize: size, stream });
+					connection = attachSshChannel({
+						initialSize: size,
+						outputBudgetBytes: options.rooms.limits.sessionOutputBytes,
+						outputStallMs: options.rooms.limits.sessionStallMs,
+						stream,
+					});
 					const shellConnection = connection;
 					const release =
 						keyed === undefined
@@ -598,6 +688,7 @@ const handleConnection = (
 							await serveShell(shellConnection, stream, {
 								identity: shellIdentity,
 								limits: options.limits,
+								oversized,
 								roomName,
 								rooms: options.rooms,
 								sshHost: options.sshHost,
@@ -640,6 +731,7 @@ export const startGateway = async (
 		secretKeyHex: identity.secretKeyHex,
 		tls: tls.listenerTls,
 	});
+	const capacity = options.capacity ?? DEFAULT_CAPACITY_LIMITS;
 	const registry = openRoomRegistry({
 		path: path.join(options.stateDir, "registry.db"),
 	});
@@ -663,7 +755,8 @@ export const startGateway = async (
 		listener,
 		onEvent: onPipeEvent,
 		ownership: registry,
-		sessionBudget: options.sessionBudget,
+		roomsPerIdentity: capacity.roomsPerIdentity,
+		sessionBudget: capacity.sessionBudget,
 	});
 	const metrics = createOfflineMetrics();
 	const hostKey = await loadOrCreateHostKey(options.stateDir);
@@ -684,6 +777,7 @@ export const startGateway = async (
 				rooms: {
 					graceMs: options.graceWindowMs,
 					gracePollMs: options.gracePollMs,
+					limits: capacity,
 					metrics,
 					pipes,
 					registry,
@@ -811,8 +905,13 @@ export const serveGateway = async (
 		return 1;
 	}
 	let tls: GatewayTlsOptions;
+	let capacity: GatewayCapacity;
 	try {
 		tls = tlsFromEnvironment();
+		// The caps are ops-tunable and read here, not compiled in (ADR-0012,
+		// NQ-10): a box with more headroom than the benchmark's raises them, and
+		// a smaller one lowers them, without a rebuild.
+		capacity = capacityFromEnvironment(process.env);
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : String(error));
 		return 1;
@@ -820,7 +919,12 @@ export const serveGateway = async (
 	// A clean box has no state directory yet; the gateway makes its own rather
 	// than demanding a provisioning step (ADR-0015's clean-box criterion).
 	await mkdir(parsed.options.stateDir, { mode: 0o700, recursive: true });
-	const gateway = await startGateway({ ...parsed.options, tls });
+	const gateway = await startGateway({
+		...parsed.options,
+		capacity: capacity.limits,
+		lobbyLimits: capacity.lobby,
+		tls,
+	});
 	process.stdout.write(gatewayBanner(gateway, parsed.options.stateDir));
 	await untilShutdown();
 	await gateway.close();

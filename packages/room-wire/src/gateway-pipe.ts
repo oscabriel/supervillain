@@ -155,6 +155,11 @@ export type GatewayPipeEvent =
 	| { readonly kind: "pipe-refused"; readonly reason: string }
 	| { readonly kind: "room-attached"; readonly room: string }
 	| { readonly kind: "room-offline"; readonly room: string }
+	| {
+			readonly kind: "room-refused";
+			readonly room: string;
+			readonly reason: string;
+	  }
 	| { readonly kind: "view-dropped"; readonly room: string }
 	| {
 			readonly kind: "room-linked";
@@ -177,6 +182,13 @@ export interface HostPipeServerOptions {
 	readonly heartbeatMisses?: number;
 	/** Envelopes one session may fall behind before its view is dropped. */
 	readonly sessionBudget?: number;
+	/**
+	 * Rooms one identity may have **attached at once** (ADR-0012, NQ-10). A
+	 * cost ceiling, not a claim on the name: durable ownership is untouched by
+	 * this, so a refused room stays yours and attaches the moment one of your
+	 * others detaches. Omitted, nothing is capped.
+	 */
+	readonly roomsPerIdentity?: number;
 	readonly onEvent?: (event: GatewayPipeEvent) => void;
 }
 
@@ -190,6 +202,12 @@ export interface HostPipeServer {
 
 const NOT_SERVED =
 	"Only the register and link channels are served by the gateway.";
+
+/** What a Host is told when its identity is already carrying as many rooms as
+ * this gateway holds at once. It says the number, it says the name is still
+ * theirs, and it names the free exit (ADR-0012, NQ-9/NQ-10). */
+export const roomsPerIdentityRefusal = (name: string, cap: number): string =>
+	`This gateway carries ${cap} rooms at a time per identity, and yours are all attached. '${name}' is still yours — close another room, or run your own gateway.`;
 
 const closeQuietly = async (connection: TransportConnection): Promise<void> => {
 	try {
@@ -318,6 +336,10 @@ const roomSource = (pipe: MultiplexPipe, room: string): RoomFoldSource => ({
 
 interface PipeRegistrar {
 	readonly attach: (name: string, ownerId: string) => void;
+	/** The refusal a concurrency cap produces, or undefined when this room may
+	 * attach. Asked after ownership is settled, because the cap counts an
+	 * *owner's* live rooms. */
+	readonly refuseAttach: (name: string, ownerId: string) => string | undefined;
 	/** Asks the freshly attached room for its actor roster and stamps whatever
 	 * the graph says it is missing. */
 	readonly deliverLinks: (name: string) => void;
@@ -441,6 +463,13 @@ const deliverLinks = async (
 	}
 };
 
+/** One honest no, in the shape the Host's registration parser expects. */
+const refuse = async (stream: PipeStream, message: string): Promise<void> => {
+	const outcome: RegistrationOutcome = { message, rejected: true };
+	await stream.send(encodeJson(outcome));
+	stream.close();
+};
+
 const handleRegister = async (
 	stream: PipeStream,
 	hostKey: string,
@@ -466,28 +495,33 @@ const handleRegister = async (
 		return;
 	}
 	if (!isValidRoomName(name)) {
-		await stream.send(
-			encodeJson({ message: ROOM_NAME_RULE, rejected: true } as const)
-		);
-		stream.close();
+		await refuse(stream, ROOM_NAME_RULE);
 		return;
 	}
 	const claim = await registrar.ownership.claim(hostKey, name);
-	const outcome: RegistrationOutcome =
-		"accepted" in claim
-			? {
-					accepted: true,
-					sshHost: registrar.door.sshHost,
-					sshPort: registrar.door.sshPort,
-				}
-			: { message: claim.message, rejected: true };
+	if ("rejected" in claim) {
+		await refuse(stream, claim.message);
+		return;
+	}
+	// Ownership first, capacity second: the durable claim answers "is this name
+	// yours", and the cap answers "will this box carry it right now". A refusal
+	// here leaves the claim standing (ADR-0012, NQ-10).
+	const capped = registrar.refuseAttach(name, claim.ownerId);
+	if (capped !== undefined) {
+		await refuse(stream, capped);
+		registrar.onEvent({ kind: "room-refused", reason: capped, room: name });
+		return;
+	}
+	const outcome: RegistrationOutcome = {
+		accepted: true,
+		sshHost: registrar.door.sshHost,
+		sshPort: registrar.door.sshPort,
+	};
 	await stream.send(encodeJson(outcome));
 	stream.close();
-	if ("accepted" in claim) {
-		registrar.attach(name, claim.ownerId);
-		registrar.onEvent({ kind: "room-attached", room: name });
-		registrar.deliverLinks(name);
-	}
+	registrar.attach(name, claim.ownerId);
+	registrar.onEvent({ kind: "room-attached", room: name });
+	registrar.deliverLinks(name);
 };
 
 /** Registration never throws upward: a malformed request costs that exchange
@@ -644,6 +678,23 @@ export const serveHostPipes = (
 		onEvent({ key, kind: "key-revoked" });
 	};
 
+	/** The concurrency cap, counted over live registrations. Re-registering a
+	 * name you already carry is never refused: it supersedes, so it costs the
+	 * identity nothing new. */
+	const refuseAttach = (name: string, ownerId: string): string | undefined => {
+		const cap = options.roomsPerIdentity;
+		if (cap === undefined) {
+			return undefined;
+		}
+		let attached = 0;
+		for (const [liveName, room] of liveRooms) {
+			if (room.ownerId === ownerId && liveName !== name) {
+				attached += 1;
+			}
+		}
+		return attached < cap ? undefined : roomsPerIdentityRefusal(name, cap);
+	};
+
 	const registrar = {
 		attach,
 		detach,
@@ -652,6 +703,7 @@ export const serveHostPipes = (
 		onEvent,
 		onRevoked,
 		ownership: options.ownership,
+		refuseAttach,
 	};
 
 	const admit = async (connection: TransportConnection): Promise<void> => {

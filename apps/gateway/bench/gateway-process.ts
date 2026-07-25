@@ -1,0 +1,108 @@
+#!/usr/bin/env bun
+/**
+ * The gateway under measurement, alone in its own process (ADR-0012, NQ-10).
+ * `capacity.ts` spawns it, reads the `ready` line for the addresses, and asks
+ * for a `sample` at each end of a measurement window.
+ *
+ * The caps are deliberately opened wide here: the harness measures what 100
+ * sessions *cost*, and a cap that refused the hundredth session would measure
+ * the cap instead. At-capacity behaviour is asserted in the gateway's tests,
+ * where it belongs.
+ *
+ *   bun apps/gateway/bench/gateway-process.ts --state <dir> --ssh-port <port>
+ */
+import { mkdir } from "node:fs/promises";
+import { parseArgs } from "node:util";
+
+import { DEFAULT_CAPACITY_LIMITS, startGateway } from "../src/index.js";
+import { encodeLine, takeLines } from "./protocol.js";
+import type { BenchReply } from "./protocol.js";
+
+const MICROSECONDS_PER_MILLISECOND = 1000;
+const RSS_POLL_MS = 200;
+/** Far above anything the matrix asks for: the harness measures cost, not the
+ * caps. */
+const UNCAPPED = 100_000;
+
+const say = (reply: BenchReply): void => {
+	process.stdout.write(encodeLine(reply));
+};
+
+const main = async (): Promise<void> => {
+	const { values } = parseArgs({
+		options: {
+			"ssh-port": { type: "string" },
+			state: { type: "string" },
+		},
+	});
+	const stateDir = values.state;
+	const sshPort = Number(values["ssh-port"]);
+	if (stateDir === undefined || !Number.isInteger(sshPort)) {
+		say({ kind: "failed", message: "--state and --ssh-port are required." });
+		process.exitCode = 1;
+		return;
+	}
+	await mkdir(stateDir, { recursive: true });
+	const gateway = await startGateway({
+		capacity: {
+			pty: { columns: 500, rows: 200 },
+			roomsPerIdentity: UNCAPPED,
+			// The two budgets keep their shipped defaults: the slow-reader
+			// workload is a probe of *those*, and opening them would measure a
+			// gateway nobody runs.
+			sessionBudget: DEFAULT_CAPACITY_LIMITS.sessionBudget,
+			sessionOutputBytes: DEFAULT_CAPACITY_LIMITS.sessionOutputBytes,
+			sessionsPerRoom: UNCAPPED,
+		},
+		// The harness drives sessions for minutes at a time and never types in
+		// the lobby; the squatting floors would close them out mid-window.
+		lobbyLimits: {
+			connectionsPerWindow: UNCAPPED,
+			idleMs: 60 * 60_000,
+			maxHoldMs: 60 * 60_000,
+			windowMs: 1000,
+		},
+		sshHost: "127.0.0.1",
+		sshPort,
+		stateDir,
+		// Plaintext on loopback: TLS is a per-byte cost the R9 matrix is not
+		// measuring, and #64 owns the certificate story.
+		tls: { mode: "terminated-upstream" },
+	});
+	let peakRssBytes = 0;
+	const rssTimer = setInterval(() => {
+		peakRssBytes = Math.max(peakRssBytes, process.memoryUsage.rss());
+	}, RSS_POLL_MS);
+	rssTimer.unref?.();
+	say({ kind: "ready", sshPort: gateway.sshPort, url: gateway.url });
+
+	let buffer = "";
+	const stop = async (): Promise<void> => {
+		clearInterval(rssTimer);
+		await gateway.close();
+		say({ kind: "stopped" });
+		process.exit(0);
+	};
+	process.stdin.on("data", (chunk: Buffer) => {
+		const taken = takeLines(buffer + chunk.toString("utf-8"));
+		buffer = taken.rest;
+		for (const line of taken.lines) {
+			if (line.includes("stop")) {
+				void stop();
+				return;
+			}
+			const used = process.cpuUsage();
+			const rssBytes = process.memoryUsage.rss();
+			peakRssBytes = Math.max(peakRssBytes, rssBytes);
+			say({
+				cpuMs: (used.user + used.system) / MICROSECONDS_PER_MILLISECOND,
+				kind: "sample",
+				peakRssBytes,
+				rssBytes,
+			});
+			peakRssBytes = rssBytes;
+		}
+	});
+};
+
+await main();

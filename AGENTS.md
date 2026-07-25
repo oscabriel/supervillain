@@ -11,6 +11,7 @@ All planning and reference docs live under `.agents/`:
   - **`assets/product-definition.md`** — the binding spec for the scaffold, milestone 1, and the v0 slice. Read it first; the detailed assets (seam spec, monorepo shape, licensing, iroh viability, prototype lessons) are linked from it.
   - `map.md` and `tickets/` — the decision history. Historical; don't edit. Assets may gain corrections.
 - **`.agents/adr/`** — architectural decision records for decisions made _after_ the definition phase (create lazily; the wayfinder tickets are the ADRs of the definition phase).
+- **`.agents/benchmarks/`** — the measurements that gate numbers. A cap, a size ceiling, or a public capacity claim that has no dated results doc here is a placeholder, not a decision (ADR-0012, NQ-10). Each doc records the run, the box it ran on, the numbers chosen from it, and the reopening triggers stated against those baselines.
 
 Do not re-derive or reopen the definition's decisions. If work surfaces a product decision the definition doesn't cover, that is a definition bug: surface it and patch the definition — never decide silently.
 

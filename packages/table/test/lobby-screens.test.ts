@@ -78,6 +78,17 @@ describe("inline notices", () => {
 		expect(noticeLines(undefined, context)).toEqual([]);
 	});
 
+	test("a full room says so honestly, and says nobody was disturbed for it", () => {
+		const full = noticeLines(
+			{ kind: "full-room", roomName: "Blood-Moon" },
+			context
+		).join("\n");
+		expect(full).toContain("Blood-Moon");
+		expect(full).toContain("nobody at that table was disturbed");
+		// The free exit is named wherever a cap is (ADR-0012, NQ-9/NQ-10).
+		expect(full).toContain("run your own gateway");
+	});
+
 	test("the offline beat is the only tagline on the notice", () => {
 		expect(
 			noticeLines({ kind: "offline-room", roomName: "x" }, context).join("\n")

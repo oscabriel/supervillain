@@ -11,11 +11,16 @@ export type LobbyMenuAction = "join" | "become-gm" | "settings" | "leave";
 
 /** Why the visitor is looking at the lobby instead of a table. The room name is
  * carried verbatim: ADR-0008 requires the typed name preserved in the notice.
- * The two kinds are deliberately distinct copy — the name-enumeration
+ * The kinds are deliberately distinct copy — the name-enumeration
  * disclosure is accepted knowingly (ADR-0008); names were never capability
- * secrets. */
+ * secrets.
+ *
+ * `full-room` is the at-capacity refusal ADR-0012 (NQ-10) requires: when a Room
+ * is carrying as many sessions as the gateway's cap allows, the *next* arrival
+ * is turned away here, honestly, and the seats already at that table are never
+ * degraded to make space. */
 export interface LobbyNotice {
-	readonly kind: "unknown-room" | "offline-room";
+	readonly kind: "unknown-room" | "offline-room" | "full-room";
 	readonly roomName: string;
 }
 
@@ -117,6 +122,13 @@ export const noticeLines = (
 	}
 	if (notice.kind === "unknown-room") {
 		return [`no table named '${notice.roomName}' is registered here.`];
+	}
+	if (notice.kind === "full-room") {
+		return [
+			`'${notice.roomName}' is live, but it is carrying as many terminals as`,
+			"this gateway will hold. nobody at that table was disturbed to tell you",
+			"so. try again in a minute — or run your own gateway, which is free.",
+		];
 	}
 	const beat = context.taglines === false ? [] : [`  ${OFFLINE_TAGLINE}`];
 	return [
