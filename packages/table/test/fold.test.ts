@@ -187,6 +187,95 @@ describe("createTableFold", () => {
 		expect(fold.map()).toBeNull();
 	});
 
+	test("folds tokens over the map without spending a feed line on them", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		fold.endReplay();
+		fold.apply(
+			envelope(
+				"core.map-loaded",
+				{ legend: { ".": "floor" }, name: "Hall", rows: ["...", "..."] },
+				"gm-key",
+				1
+			)
+		);
+		expect(
+			fold.apply(
+				envelope(
+					"core.token-placed",
+					{
+						glyph: "@",
+						id: "token-1",
+						label: "Kraan",
+						seatId: null,
+						x: 1,
+						y: 1,
+					},
+					"gm-key",
+					2
+				)
+			)
+		).toBeNull();
+		expect(fold.tokens()).toEqual([
+			{ glyph: "@", id: "token-1", label: "Kraan", seatId: null, x: 1, y: 1 },
+		]);
+		fold.apply(
+			envelope("core.token-moved", { id: "token-1", x: 2, y: 0 }, "gm-key", 3)
+		);
+		expect(fold.tokens()[0]).toMatchObject({ x: 2, y: 0 });
+		fold.apply(envelope("core.token-removed", { id: "token-1" }, "gm-key", 4));
+		expect(fold.tokens()).toEqual([]);
+	});
+
+	test("clears the surface when the map is cleared or replaced", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		fold.endReplay();
+		const load = (name: string, seq: number): void => {
+			fold.apply(
+				envelope(
+					"core.map-loaded",
+					{ legend: { ".": "floor" }, name, rows: ["...", "..."] },
+					"gm-key",
+					seq
+				)
+			);
+		};
+		const place = (seq: number): void => {
+			fold.apply(
+				envelope(
+					"core.token-placed",
+					{ glyph: "@", id: "token-1", label: "", seatId: null, x: 0, y: 0 },
+					"gm-key",
+					seq
+				)
+			);
+		};
+		load("Hall", 1);
+		place(2);
+		load("Bog", 3);
+		expect(fold.tokens()).toEqual([]);
+		place(4);
+		fold.apply(envelope("core.map-cleared", {}, "gm-key", 5));
+		expect(fold.tokens()).toEqual([]);
+	});
+
+	test("skips a known-invalid token event loudly without halting", () => {
+		const fold = createTableFold(entry, "game", "viewer-key");
+		fold.endReplay();
+		expect(
+			fold.apply(
+				envelope("core.token-moved", { id: "token-1", x: 0, y: 0 }, "a", 6)
+			)
+		).toEqual({
+			runs: [
+				{
+					text: "⚠ skipped event #6 (core.token-moved): no map is loaded",
+					token: "danger",
+				},
+			],
+		});
+		expect(fold.tokens()).toEqual([]);
+	});
+
 	test("skips a known-invalid map payload loudly without halting", () => {
 		const fold = createTableFold(entry, "game", "viewer-key");
 		// Past the replay window, so the skip speaks for itself instead of being

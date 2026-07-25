@@ -154,6 +154,7 @@ describe("RoomHost", () => {
 						},
 					],
 				},
+				tokens: [],
 			});
 		});
 	});
@@ -270,6 +271,7 @@ describe("RoomHost", () => {
 					gmSeatId: "gm",
 					seats: [{ actor: "actor-gm", characterId: null, id: "gm" }],
 				},
+				tokens: [],
 			});
 		});
 	});

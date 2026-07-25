@@ -6,6 +6,12 @@ import {
 	CORE_MAP_LOADED,
 	CORE_ROOM_CREATED,
 	CORE_SEAT_CLAIMED,
+	CORE_TOKEN_MOVED,
+	CORE_TOKEN_PLACED,
+	CORE_TOKEN_REMOVED,
+	foldTokenMoved,
+	foldTokenPlaced,
+	foldTokenRemoved,
 	isRecord,
 	readMapLoadedPayload,
 } from "@supervillain/core";
@@ -16,9 +22,11 @@ import type {
 	DiceRolledPayload,
 	Envelope,
 	FeedLine,
+	MapToken,
 	NamespacedType,
 	SeatClaimedPayload,
 	TableView,
+	TokenFold,
 	ViewEntry,
 } from "@supervillain/core";
 
@@ -38,6 +46,8 @@ export interface TableFold<S> {
 	readonly table: () => TableView;
 	/** The battle map the log has folded to, or `null` when none is loaded. */
 	readonly map: () => BattleMap | null;
+	/** The tokens standing on that map, in placement order. */
+	readonly tokens: () => readonly MapToken[];
 	/** Closes the initial replay window and returns the warning for the loud
 	 * skips it swallowed: the skip's own line for a single skip, one collapsed
 	 * summary for a burst, `null` when replay was clean. Idempotent — calling
@@ -105,6 +115,7 @@ export const createTableFold = <S, C, E>(
 ): TableFold<S> => {
 	let game = entry.model.init();
 	let map: BattleMap | null = null;
+	let tokens: readonly MapToken[] = [];
 	let replaying = true;
 	const skips: FoldSkip[] = [];
 	const seats: {
@@ -221,9 +232,29 @@ export const createTableFold = <S, C, E>(
 			return loud(envelope, "map payload is not a valid map");
 		}
 		map = loaded;
+		// A token's position means nothing on a different grid: the surface a
+		// load lands on is bare — last-loaded wins (ADR-0006).
+		tokens = [];
 		return {
 			runs: [{ text: `map loaded · ${loaded.name}`, token: "muted" }],
 		};
+	};
+
+	const applyToken = (envelope: Envelope): FeedLine | null => {
+		let folded: TokenFold;
+		if (envelope.type === CORE_TOKEN_PLACED) {
+			folded = foldTokenPlaced(map, tokens, envelope.payload);
+		} else if (envelope.type === CORE_TOKEN_MOVED) {
+			folded = foldTokenMoved(map, tokens, envelope.payload);
+		} else {
+			folded = foldTokenRemoved(tokens, envelope.payload);
+		}
+		if (!folded.ok) {
+			return loud(envelope, folded.reason);
+		}
+		({ tokens } = folded);
+		// The map region shows the move; the feed stays a conversation.
+		return null;
 	};
 
 	return {
@@ -249,7 +280,15 @@ export const createTableFold = <S, C, E>(
 			}
 			if (envelope.type === CORE_MAP_CLEARED) {
 				map = null;
+				tokens = [];
 				return { runs: [{ text: "map cleared", token: "muted" }] };
+			}
+			if (
+				envelope.type === CORE_TOKEN_PLACED ||
+				envelope.type === CORE_TOKEN_MOVED ||
+				envelope.type === CORE_TOKEN_REMOVED
+			) {
+				return applyToken(envelope);
 			}
 			// Unknown core type: a newer host taught this table nothing, so it
 			// quietly misses the event rather than spamming the feed.
@@ -276,5 +315,6 @@ export const createTableFold = <S, C, E>(
 		skips: () => skips,
 		state: () => game,
 		table: () => table,
+		tokens: () => tokens,
 	};
 };
