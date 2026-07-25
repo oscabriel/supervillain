@@ -1,6 +1,7 @@
 /* oxlint-disable promise/avoid-new -- the HTTP and WebSocket servers' listen and close are callback-shaped. */
 import { createServer } from "node:http";
 import type { Server } from "node:http";
+import { createServer as createTlsServer } from "node:https";
 
 import { TransportListenerClosedError } from "@supervillain/room-wire";
 import type {
@@ -12,11 +13,37 @@ import { WebSocketServer } from "ws";
 import { WsChannel } from "./channel.js";
 import type { WebSocketLike } from "./channel.js";
 import { MAX_MESSAGE_BYTES, WsTransportConnection } from "./connection.js";
+import { fingerprintOfPem } from "./fingerprint.js";
 import { authenticate } from "./handshake.js";
 import { loadSigningKey } from "./keys.js";
 
+export {
+	mintSelfSignedCertificate,
+	type MintOptions,
+	type SelfSignedCertificate,
+} from "./certificate.js";
+export {
+	FINGERPRINT_ALGORITHM,
+	FINGERPRINT_RULE,
+	fingerprintOfDer,
+	fingerprintOfPem,
+	formatPairingCode,
+	gatewayOrigin,
+	normalizeFingerprint,
+	parsePairingCode,
+} from "./fingerprint.js";
+export type { GatewayPairing } from "./fingerprint.js";
+
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5000;
 const DEFAULT_HOST = "127.0.0.1";
+
+/** The certificate this listener terminates TLS with. Present means the pipe is
+ * `wss:` in this process; absent means plaintext — which in production means
+ * something in front already terminated it (ADR-0014). */
+export interface WsListenerTls {
+	readonly certificatePem: string;
+	readonly privateKeyPem: string;
+}
 
 export interface WsListenerOptions {
 	/** 64 lowercase hex chars (ed25519 seed) — the identity this side proves. */
@@ -29,14 +56,19 @@ export interface WsListenerOptions {
 	readonly advertisedUrl?: string;
 	/** Maximum time in ms a peer may take to finish the handshake. Default: 5000ms. */
 	readonly handshakeTimeoutMs?: number;
+	/** Terminate TLS here. Omit only when TLS is terminated upstream. */
+	readonly tls?: WsListenerTls;
 }
 
 export interface WsListener extends TransportListener {
 	/** This listener's own identity — 64 lowercase hex chars. */
 	readonly localId: string;
-	/** The `ws:` URL peers dial to reach this listener. */
+	/** The `ws:` or `wss:` URL peers dial to reach this listener. */
 	readonly url: string;
 	readonly port: number;
+	/** The fingerprint of the certificate this listener terminates TLS with, if
+	 * it terminates TLS at all — the pinned half of a pairing code. */
+	readonly certificateFingerprint: string | undefined;
 }
 
 interface Deferred<T> {
@@ -91,7 +123,13 @@ export const startWsListener = async (
 		options.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
 	// The HTTP server is ours rather than the WebSocket server's own, because
 	// only its owner can force still-upgraded sockets shut on close.
-	const httpServer = createServer();
+	const httpServer: Server =
+		options.tls === undefined
+			? createServer()
+			: (createTlsServer({
+					cert: options.tls.certificatePem,
+					key: options.tls.privateKeyPem,
+				}) as unknown as Server);
 	const server = new WebSocketServer({
 		maxPayload: MAX_MESSAGE_BYTES,
 		server: httpServer,
@@ -156,6 +194,10 @@ export const startWsListener = async (
 
 	const port = boundPort(httpServer);
 	let closePromise: Promise<void> | undefined;
+	const certificateFingerprint =
+		options.tls === undefined
+			? undefined
+			: fingerprintOfPem(options.tls.certificatePem);
 	return {
 		accept: () => {
 			const next = accepted.shift();
@@ -169,6 +211,7 @@ export const startWsListener = async (
 			acceptors.push(acceptor);
 			return acceptor.promise;
 		},
+		certificateFingerprint,
 		close: () => {
 			closePromise ??= (async (): Promise<void> => {
 				closed = true;
@@ -197,6 +240,8 @@ export const startWsListener = async (
 		},
 		localId: key.publicKeyHex,
 		port,
-		url: options.advertisedUrl ?? `ws://${host}:${port}`,
+		url:
+			options.advertisedUrl ??
+			`${options.tls === undefined ? "ws" : "wss"}://${host}:${port}`,
 	};
 };

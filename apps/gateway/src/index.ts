@@ -48,11 +48,29 @@ import { openRoomRegistry } from "./registry.js";
 import type { GatewayRoomRegistry } from "./registry.js";
 import { attachSshChannel, sessionForActor } from "./ssh-session.js";
 import type { SshChannelStream, SshConnection } from "./ssh-session.js";
+import { pipePairingCode, resolveGatewayTls } from "./tls.js";
+import type { GatewayTlsOptions } from "./tls.js";
+
+export {
+	loadOrMintPipeCertificate,
+	pipePairingCode,
+	resolveGatewayTls,
+} from "./tls.js";
+export type {
+	GatewayTlsMode,
+	GatewayTlsOptions,
+	ResolvedGatewayTls,
+} from "./tls.js";
 
 const AUTH_METHODS: AuthenticationType[] = [
 	"publickey",
 	"keyboard-interactive",
 ];
+
+/** The one port a self-hosted operator forwards. A tunable default, not a
+ * protocol constant: 443 belongs to Caddy on the hosted box (#40), so the pipe
+ * takes the conventional alternate. */
+const DEFAULT_PIPE_PORT = 8443;
 
 const gatewayRegistry: GatewayRegistry = {
 	get: (gameId) => {
@@ -78,10 +96,15 @@ export interface GatewayOptions {
 	/** Hostname players are told to ssh to — the summon line, not the bind. */
 	readonly sshHost: string;
 	readonly bindHost?: string;
-	/** TCP port for the room-wire pipe; 0 takes an ephemeral port. Default: 0. */
+	/** TCP port for the room-wire pipe. Defaults to 8443 when this process is the
+	 * TLS edge — the one port a self-hosted operator forwards — and to an
+	 * ephemeral port when TLS is terminated upstream. */
 	readonly brokerPort?: number;
 	/** The pipe URL Hosts should dial, when it differs from the bind. */
 	readonly brokerUrl?: string;
+	/** Where the pipe's TLS ends (ADR-0014). Default: `self-signed`, so a gateway
+	 * started with no arguments never carries production traffic in the clear. */
+	readonly tls?: GatewayTlsOptions;
 	/** Connection-lifecycle exhaust. Metadata only (ADR-0012, NQ-11). */
 	readonly onEvent?: (event: GatewayPipeEvent) => void;
 	/** Lobby hardening: idle/max timeouts and the per-IP connection window. The
@@ -94,6 +117,12 @@ export interface RunningGateway {
 	/** The gateway's transport URL — what `create --gateway` dials. */
 	readonly url: string;
 	readonly sshPort: number;
+	/** The Host-onboarding pairing code: this gateway's URL, carrying its
+	 * certificate fingerprint when trust comes from a pin rather than a CA.
+	 * Undefined when the address Hosts reach this box at is not knowable here. */
+	readonly pairingCode: string | undefined;
+	/** The fingerprint a Host pins, for a gateway with no CA behind it. */
+	readonly certificateFingerprint: string | undefined;
 	readonly close: () => Promise<void>;
 }
 
@@ -442,11 +471,22 @@ export const startGateway = async (
 	options: GatewayOptions
 ): Promise<RunningGateway> => {
 	const identity = await loadOrCreateIdentity(options.stateDir);
+	const tls = await resolveGatewayTls(
+		options.stateDir,
+		options.tls ?? { mode: "self-signed" }
+	);
+	// The bind follows the TLS edge: a process that terminates its own TLS is the
+	// public edge and must be reachable through the forwarded port, while a
+	// process behind a proxy is reached over loopback and should be no wider
+	// (#40 holds the web backend to the same line).
+	const brokerBind =
+		options.bindHost ?? (tls.terminatesHere ? "0.0.0.0" : "127.0.0.1");
 	const listener = await startWsListener({
 		advertisedUrl: options.brokerUrl,
-		host: options.bindHost,
-		port: options.brokerPort,
+		host: brokerBind,
+		port: options.brokerPort ?? (tls.terminatesHere ? DEFAULT_PIPE_PORT : 0),
 		secretKeyHex: identity.secretKeyHex,
+		tls: tls.listenerTls,
 	});
 	const registry = openRoomRegistry({
 		path: path.join(options.stateDir, "registry.db"),
@@ -490,6 +530,7 @@ export const startGateway = async (
 	});
 	let closePromise: Promise<void> | undefined;
 	return {
+		certificateFingerprint: tls.fingerprint,
 		close: () => {
 			closePromise ??= (async (): Promise<void> => {
 				// oxlint-disable-next-line promise/avoid-new -- ssh2's close is callback-shaped.
@@ -502,9 +543,54 @@ export const startGateway = async (
 			})();
 			return closePromise;
 		},
+		pairingCode: pipePairingCode({
+			advertisedUrl: options.brokerUrl,
+			bindHost: brokerBind,
+			boundUrl: listener.url,
+			fingerprint: tls.fingerprint,
+		}),
 		sshPort: options.sshPort,
 		url: listener.url,
 	};
+};
+
+/** Reads `SUPERVILLAIN_GATEWAY_TLS`. Anything unrecognised is a refusal rather
+ * than a silent fall back to the default: the difference between the modes is
+ * whether production traffic is encrypted by this process, and guessing at it
+ * is not a thing an operator can audit. */
+const tlsFromEnvironment = (): GatewayTlsOptions => {
+	const mode = process.env.SUPERVILLAIN_GATEWAY_TLS ?? "self-signed";
+	if (mode === "self-signed" || mode === "terminated-upstream") {
+		return { mode };
+	}
+	if (mode === "files") {
+		const certificatePath = process.env.SUPERVILLAIN_GATEWAY_TLS_CERT;
+		const privateKeyPath = process.env.SUPERVILLAIN_GATEWAY_TLS_KEY;
+		if (certificatePath === undefined || privateKeyPath === undefined) {
+			throw new Error(
+				"SUPERVILLAIN_GATEWAY_TLS=files needs SUPERVILLAIN_GATEWAY_TLS_CERT and SUPERVILLAIN_GATEWAY_TLS_KEY."
+			);
+		}
+		return { certificatePath, mode, privateKeyPath };
+	}
+	throw new Error(
+		`SUPERVILLAIN_GATEWAY_TLS='${mode}' is not one of self-signed, terminated-upstream, files.`
+	);
+};
+
+/** What the operator reads on start. A pairing code when this process knows the
+ * address Hosts reach it at; otherwise the fingerprint plus the one variable
+ * that completes it — never a code naming a wildcard bind. */
+export const gatewayBanner = (gateway: RunningGateway): string => {
+	const door = `the gate is open.\n\n  ssh port: ${gateway.sshPort}\n`;
+	if (gateway.pairingCode !== undefined) {
+		return `${door}  host pairing code (for supervillain create --gateway):\n\n  ${gateway.pairingCode}\n\n`;
+	}
+	const fingerprint =
+		gateway.certificateFingerprint === undefined
+			? ""
+			: `  certificate fingerprint: sha256:${gateway.certificateFingerprint}\n`;
+	return `${door}  the pipe is listening on ${gateway.url}\n${fingerprint}\n  set SUPERVILLAIN_GATEWAY_BROKER_URL to the address your Hosts reach this\n  box at — your domain or dynamic-DNS name and the forwarded port — and a\n  pairing code is printed here instead.\n\n`;
 };
 
 const main = async (): Promise<void> => {
@@ -520,10 +606,9 @@ const main = async (): Promise<void> => {
 		stateDir:
 			process.env.SUPERVILLAIN_GATEWAY_STATE ??
 			path.join(stateRoot, "supervillain-gateway"),
+		tls: tlsFromEnvironment(),
 	});
-	process.stdout.write(
-		`the gate is open.\n\n  ssh port: ${gateway.sshPort}\n  gateway address (for supervillain create --gateway):\n\n  ${gateway.url}\n\n`
-	);
+	process.stdout.write(gatewayBanner(gateway));
 	process.once("SIGINT", () => {
 		void (async (): Promise<void> => {
 			await gateway.close();
