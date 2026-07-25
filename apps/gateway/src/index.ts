@@ -259,6 +259,32 @@ const farewell = (
 	closeChannel(stream, status);
 };
 
+/** How long a goodbye waits for the client's half of the channel close before
+ * the connection is torn down anyway. */
+const FAREWELL_GRACE_MS = 3000;
+
+/** Ends the client only once its channel finished closing. A DISCONNECT sent
+ * in the same tick as the farewell can reach the client before it processes
+ * the channel close, and ssh calls that a failure (255) — the exact clean
+ * goodbye the exit status was written out loud for. */
+const endAfterChannelClose = (
+	client: Connection,
+	stream: SshChannelStream
+): void => {
+	let ended = false;
+	const done = (): void => {
+		if (ended) {
+			return;
+		}
+		ended = true;
+		client.end();
+	};
+	// The grace timer stays armed after a close; `done` going inert makes the
+	// late firing a no-op, and unref keeps it from holding the process open.
+	setTimeout(done, FAREWELL_GRACE_MS).unref?.();
+	stream.once("close", done);
+};
+
 const awaitKeypress = (stream: SshChannelStream): Promise<void> =>
 	// oxlint-disable-next-line promise/avoid-new -- a single keypress is an event, not a promise-returning API.
 	new Promise((resolve) => {
@@ -666,7 +692,7 @@ const handleConnection = (
 					const refusal = doorRefusal(shellIdentity, options.rooms.registry);
 					if (refusal !== undefined) {
 						farewell(stream, refusal, 1);
-						client.end();
+						endAfterChannelClose(client, stream);
 						return;
 					}
 					const keyed = keyedActorOf(shellIdentity);
@@ -699,7 +725,7 @@ const handleConnection = (
 							farewell(stream, "The table collapsed. Try again.", 1);
 						} finally {
 							release?.();
-							client.end();
+							endAfterChannelClose(client, stream);
 						}
 					})();
 				});
