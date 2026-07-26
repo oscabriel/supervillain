@@ -10,8 +10,8 @@
  *   bun packages/table/bench/idle-cpu.ts --seats 25 --seconds 5
  *   bun packages/table/bench/idle-cpu.ts --seats 25 --seconds 5 --loop
  *
- * `--loop` mounts the local-TTY factory instead — the ambient render loop this
- * package ran for every seat before the fix — so the two runs are comparable.
+ * `--loop` mounts the historical local-TTY factory instead — the ambient
+ * render loop retained as a measurement control — so the runs are comparable.
  *
  * Measured 2026-07-25 on one dev box (Linux 7.1.3 CachyOS, Bun 1.3.13), total
  * process CPU across a 5 s quiet window:

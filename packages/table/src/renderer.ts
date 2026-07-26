@@ -15,8 +15,7 @@ export type TableRendererFactory = (
 
 /** Mints a renderer over the connection's own streams and leaves it idle:
  * frames are drawn on demand, one per change, with no render loop burning CPU
- * between them. The gateway's per-seat default — an ambient loop there is a
- * cost paid once per seat. */
+ * between them. The default for both local and gateway table surfaces. */
 export const createSessionRenderer: TableRendererFactory = (connection) => {
 	const size = connection.size();
 	return createCliRenderer({
@@ -28,9 +27,9 @@ export const createSessionRenderer: TableRendererFactory = (connection) => {
 	});
 };
 
-/** The local-TTY factory: a session renderer plus the continuous render loop the
- * CLI has always run. One process, one terminal, one loop — the caller that can
- * afford ambient rendering asking for it by name. */
+/** A session renderer plus a continuous render loop. Kept as the benchmark's
+ * ambient-loop control so on-demand rendering can be measured against the
+ * historical local-TTY behavior. Product surfaces use on-demand rendering. */
 export const createLocalTtyRenderer: TableRendererFactory = async (
 	connection
 ) => {
