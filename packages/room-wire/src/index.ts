@@ -109,6 +109,7 @@ export type {
 	RoomFoldSource,
 	RoomSubmitChannel,
 	RoomView,
+	RoomViewReservation,
 } from "./room-fold.js";
 export { TransportListenerClosedError, TransportTrustError } from "./seam.js";
 export type {

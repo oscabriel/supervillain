@@ -43,6 +43,13 @@ export interface RoomView extends PipeRoomStore {
 	readonly dropped: Promise<void>;
 }
 
+/** One capacity slot held before its view is opened. The reservation is
+ * one-shot: opening consumes it, and release is idempotent. */
+export interface RoomViewReservation {
+	readonly open: () => RoomView | undefined;
+	readonly release: () => void;
+}
+
 /** One session's own request/response channel to the Host. Opened per view, so
  * a slow answer delays that seat's next command and nobody else's. */
 export interface RoomSubmitChannel {
@@ -77,6 +84,9 @@ export interface RoomFoldOptions {
 
 export interface RoomFold {
 	readonly openView: () => RoomView;
+	/** Atomically holds one of `capacity` view slots. A failed attempt changes
+	 * nothing; a successful reservation must be opened or released. */
+	readonly reserveView: (capacity: number) => RoomViewReservation | undefined;
 	readonly views: () => number;
 	/** Envelopes this fold holds — in memory, and nowhere else. */
 	readonly length: () => number;
@@ -118,6 +128,7 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 	const onEvent = options.onEvent ?? ((): void => undefined);
 	const history: Envelope[] = [];
 	const readers = new Set<FoldReader>();
+	const reservations = new Set<{ held: boolean }>();
 	let openViews = 0;
 	let feedEnded = false;
 	let closed = false;
@@ -269,12 +280,42 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 		};
 	};
 
+	const reserveView = (capacity: number): RoomViewReservation | undefined => {
+		if (closed || openViews + reservations.size >= capacity) {
+			return undefined;
+		}
+		const state = { held: true };
+		reservations.add(state);
+		const release = (): void => {
+			if (!state.held) {
+				return;
+			}
+			state.held = false;
+			reservations.delete(state);
+		};
+		return {
+			open() {
+				if (!state.held || closed) {
+					release();
+					return;
+				}
+				release();
+				return openView();
+			},
+			release,
+		};
+	};
+
 	return {
 		close: async () => {
 			if (closed) {
 				return;
 			}
 			closed = true;
+			for (const reservation of reservations) {
+				reservation.held = false;
+			}
+			reservations.clear();
 			for (const reader of readers) {
 				wake(reader);
 			}
@@ -282,6 +323,7 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 		},
 		length: () => history.length,
 		openView,
+		reserveView,
 		views: () => openViews,
 	};
 };

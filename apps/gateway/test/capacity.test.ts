@@ -1,4 +1,4 @@
-/* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; the gateway is Bun-bound by bun:sqlite. */
+/* oxlint-disable vitest/prefer-importing-vitest-globals, promise/avoid-new -- Bun-only suite; the gateway is Bun-bound by bun:sqlite, and the quiet fold source intentionally parks forever. */
 /**
  * The protective caps (ADR-0012, NQ-10) and the production PTY cap (NQ-14).
  *
@@ -13,8 +13,11 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { createRoomFold } from "@supervillain/room-wire";
+import type { RoomView } from "@supervillain/room-wire";
+
 import {
-	arrivalNotice,
+	reserveArrival,
 	capacityFromEnvironment,
 	clampPtySize,
 	DEFAULT_CAPACITY_LIMITS,
@@ -28,6 +31,15 @@ const claimed = (
 ): { isClaimed: (n: string) => boolean } => ({
 	isClaimed: (name) => names.includes(name),
 });
+
+const quietStream = (): AsyncIterable<never> => ({
+	[Symbol.asyncIterator]: () => ({
+		next: () => new Promise<IteratorResult<never>>(() => {}),
+	}),
+});
+
+const isRoomView = (result: unknown): result is RoomView =>
+	typeof result === "object" && result !== null && "close" in result;
 
 describe("capacity from the environment", () => {
 	test("an empty environment is the benchmark's chosen defaults", () => {
@@ -113,45 +125,110 @@ describe("the PTY cap", () => {
 	});
 });
 
+describe("the sessions-per-Room bound", () => {
+	test("admits exactly one of many simultaneous arrivals racing for one slot", async () => {
+		const fold = createRoomFold({
+			source: {
+				close: () => Promise.resolve(),
+				info: () => Promise.resolve({ gameId: "fake", label: "the table" }),
+				openSubmit: () => ({
+					close: () => {},
+					send: () => Promise.resolve({ accepted: true, envelopes: [] }),
+				}),
+				stream: quietStream,
+			},
+		});
+		const seated = Array.from({ length: 31 }, () => fold.openView());
+		const live = {
+			deliverLinks: async () => {
+				await Promise.resolve();
+			},
+			reserveStore: fold.reserveView,
+		};
+		const starting = Promise.withResolvers<boolean>();
+		const attempts = Array.from({ length: 20 }, async () => {
+			await starting.promise;
+			const decision = reserveArrival("iron-keep", live, claimed("iron-keep"), {
+				sessionsPerRoom: 32,
+			});
+			if (decision.kind !== "admitted") {
+				return decision;
+			}
+			await live.deliverLinks();
+			return decision.reservation.open();
+		});
+		starting.resolve(true);
+		const results = await Promise.all(attempts);
+		const admitted = results.filter(isRoomView);
+		const refused = results.filter(
+			(result) => result !== undefined && "kind" in result
+		);
+
+		expect(admitted).toHaveLength(1);
+		expect(refused).toHaveLength(19);
+		for (const refusal of refused) {
+			expect(refusal).toEqual({
+				kind: "full-room",
+				roomName: "iron-keep",
+			});
+		}
+		expect(fold.views()).toBe(32);
+
+		await Promise.all(admitted.map((view) => view.close()));
+		await Promise.all(seated.map((view) => view.close()));
+		await fold.close();
+	});
+});
+
 describe("what one arrival is told", () => {
 	const limits = { sessionsPerRoom: 2 };
 
 	test("a name nobody claimed, and a claimed name with no live pipe", () => {
-		expect(arrivalNotice("ghost", undefined, claimed(), limits)).toEqual({
+		expect(reserveArrival("ghost", undefined, claimed(), limits)).toEqual({
 			kind: "unknown-room",
 			roomName: "ghost",
 		});
 		expect(
-			arrivalNotice("iron-keep", undefined, claimed("iron-keep"), limits)
+			reserveArrival("iron-keep", undefined, claimed("iron-keep"), limits)
 		).toEqual({ kind: "offline-room", roomName: "iron-keep" });
 	});
 
 	test("a live Room with room to spare admits the arrival", () => {
-		expect(
-			arrivalNotice(
-				"iron-keep",
-				{ views: () => 1 },
-				claimed("iron-keep"),
-				limits
-			)
-		).toBeUndefined();
+		let released = false;
+		const arrival = reserveArrival(
+			"iron-keep",
+			{
+				reserveStore: () => ({
+					// oxlint-disable-next-line unicorn/no-useless-undefined -- the fake reservation is released, never opened.
+					open: () => undefined,
+					release: () => {
+						released = true;
+					},
+				}),
+			},
+			claimed("iron-keep"),
+			limits
+		);
+		expect(arrival.kind).toBe("admitted");
+		if (arrival.kind === "admitted") {
+			arrival.reservation.release();
+		}
+		expect(released).toBe(true);
 	});
 
 	test("a full Room refuses at the lobby and never touches the live table", () => {
-		let reads = 0;
+		let attempts = 0;
 		const live = {
-			openStore: () => {
-				throw new Error("A refused arrival must not open a view.");
-			},
-			views: () => {
-				reads += 1;
-				return 2;
+			reserveStore: () => {
+				attempts += 1;
+				// oxlint-disable-next-line unicorn/no-useless-undefined -- this fake models a failed reservation.
+				return undefined;
 			},
 		};
 		expect(
-			arrivalNotice("iron-keep", live, claimed("iron-keep"), limits)
+			reserveArrival("iron-keep", live, claimed("iron-keep"), limits)
 		).toEqual({ kind: "full-room", roomName: "iron-keep" });
-		// One count read, and nothing else: no view opened, no seat disturbed.
-		expect(reads).toBe(1);
+		// One atomic attempt, and nothing else: no reservation, view, or fold entry.
+		expect(attempts).toBe(1);
 	});
 });

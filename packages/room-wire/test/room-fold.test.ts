@@ -149,6 +149,42 @@ describe("the per-Room fold", () => {
 		expect(probe.closed()).toBe(true);
 	});
 
+	test("reserves one remaining view atomically and releases abandoned reservations", async () => {
+		const probe = fakeSource();
+		const fold = createRoomFold({ source: probe.source });
+		const open = Array.from({ length: 31 }, () => fold.openView());
+
+		const attempts = Array.from({ length: 20 }, () => fold.reserveView(32));
+		const admitted = attempts.filter(
+			(reservation) => reservation !== undefined
+		);
+		expect(admitted).toHaveLength(1);
+		expect(fold.views()).toBe(31);
+		const last = admitted[0]?.open();
+		expect(last).toBeDefined();
+		expect(fold.views()).toBe(32);
+
+		await last?.close();
+		const abandoned = fold.reserveView(32);
+		expect(abandoned).toBeDefined();
+		abandoned?.release();
+		expect(fold.reserveView(32)).toBeDefined();
+
+		await Promise.all(open.map((view) => view.close()));
+		await fold.close();
+	});
+
+	test("invalidates an unconsumed reservation when the fold closes", async () => {
+		const probe = fakeSource();
+		const fold = createRoomFold({ source: probe.source });
+		const reservation = fold.reserveView(1);
+		expect(reservation).toBeDefined();
+
+		await fold.close();
+		expect(reservation?.open()).toBeUndefined();
+		expect(fold.views()).toBe(0);
+	});
+
 	test("hands a session that arrives late the history it missed", async () => {
 		const probe = fakeSource();
 		const fold = createRoomFold({ source: probe.source });

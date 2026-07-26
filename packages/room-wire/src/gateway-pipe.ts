@@ -47,6 +47,7 @@ import type {
 	RoomFoldSource,
 	RoomSubmitChannel,
 	RoomView,
+	RoomViewReservation,
 } from "./room-fold.js";
 import { TransportListenerClosedError } from "./seam.js";
 import type { TransportConnection, TransportListener } from "./seam.js";
@@ -136,6 +137,9 @@ export interface LiveRoom {
 	/** One session's view of the Room's shared fold. Each caller closes its
 	 * own; falling behind costs that view alone. */
 	readonly openStore: () => RoomView;
+	/** Atomically holds one of `capacity` session slots until the caller opens
+	 * or releases it. A failed reservation leaves the fold untouched. */
+	readonly reserveStore: (capacity: number) => RoomViewReservation | undefined;
 	/** Sessions currently viewing this Room. Counts only (NQ-11). */
 	readonly views: () => number;
 	/**
@@ -655,6 +659,7 @@ export const serveHostPipes = (
 			openStore: () => fold.openView(),
 			ownerId,
 			pipe,
+			reserveStore: (capacity) => fold.reserveView(capacity),
 			views: () => fold.views(),
 		});
 	};
