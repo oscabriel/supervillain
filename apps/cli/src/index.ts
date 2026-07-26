@@ -56,13 +56,11 @@ import {
 	openGatewayLink,
 	openHostPipe,
 	ROOM_NAME_RULE,
-	serveRoomStore,
 } from "@supervillain/room-wire";
 import type { HostPipe, HostPipeAttachment } from "@supervillain/room-wire";
 import { attachLocalTty } from "@supervillain/session";
 import { createLocalTtyRenderer, runTable } from "@supervillain/table";
 import { DialTimeoutError, openWsDialer } from "@supervillain/transport-ws";
-import { startWsListener } from "@supervillain/transport-ws/server";
 
 import { runGatewayRole } from "./gateway-role.js";
 import {
@@ -920,10 +918,6 @@ const create = async (args: readonly string[]): Promise<number> => {
 	});
 	const store = new InProcessRoomStore(host);
 	const roomLabel = path.basename(path.resolve(campaignFolder));
-	const listener = await startWsListener({
-		host: process.env.SUPERVILLAIN_HOST_BIND,
-		secretKeyHex: identity.secretKeyHex,
-	});
 	const roomName = parsed.values.name;
 	let attachment: HostPipeAttachment | undefined;
 	let pipe: HostPipe | undefined;
@@ -948,15 +942,10 @@ const create = async (args: readonly string[]): Promise<number> => {
 		});
 		if ("failed" in registration) {
 			console.error(registration.failed);
-			await listener.close();
 			return 1;
 		}
 		({ attachment, pipe } = registration);
 	}
-	const server = serveRoomStore(listener, store, {
-		info: { gameId, label: roomLabel },
-	});
-	await writeFile(path.join(campaignFolder, "door.txt"), `${listener.url}\n`);
 	process.stdout.write(
 		summonNotice({
 			attachment,
@@ -984,8 +973,6 @@ const create = async (args: readonly string[]): Promise<number> => {
 		}
 	}
 	await pipe?.close();
-	await server.close();
-	await listener.close();
 	return 0;
 };
 
