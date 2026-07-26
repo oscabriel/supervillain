@@ -64,10 +64,16 @@ import type {
 } from "@supervillain/room-wire";
 import { attachLocalTty } from "@supervillain/session";
 import { createSessionRenderer, runTable } from "@supervillain/table";
-import { DialTimeoutError, openWsDialer } from "@supervillain/transport-ws";
+import {
+	CertificateMismatchError,
+	DialTimeoutError,
+	openWsDialer,
+} from "@supervillain/transport-ws";
 
 import { runGatewayRole } from "./gateway-role.js";
 import {
+	forgetGateway,
+	pinFilePath,
 	pinGateway,
 	plaintextWarning,
 	resolveGatewayTarget,
@@ -92,6 +98,7 @@ Operator role (this same binary is the self-hosted gateway — ADR-0015):
   supervillain gateway serve [--state <dir>] [--ssh-host <name>]
                              [--ssh-port <port>] [--bind <host>]
                              [--broker-port <port>] [--broker-url <url>]
+  supervillain gateway forget <url-or-pairing-code>
 
   --name registers the room at a gateway so players can ssh in; the gateway
   address comes from --gateway or SUPERVILLAIN_GATEWAY. That address is a
@@ -896,6 +903,20 @@ type Registration =
 	| { readonly pipe: HostPipe; readonly attachment: HostPipeAttachment }
 	| { readonly failed: string };
 
+const gatewayDialRefusal = (error: CertificateMismatchError): string => {
+	const { url } = error;
+	const parsedUrl = new URL(url);
+	const { origin } = parsedUrl;
+	return [
+		error.message,
+		"",
+		"If you rebuilt that gateway yourself, forget the old decision and pair again:",
+		`  supervillain gateway forget ${origin}`,
+		"This removes its entry from:",
+		`  ${pinFilePath(configFolder())}`,
+	].join("\n");
+};
+
 /**
  * Claims the room name at the gateway and holds the pipe open. Trust is settled
  * before the dial (ADR-0014): the address may be a pairing code carrying the
@@ -945,12 +966,13 @@ const registerAtGateway = async (options: {
 	} catch (error) {
 		dialStatus.stop();
 		await pipe.close();
-		return {
-			failed:
-				error instanceof Error
-					? error.message
-					: "Could not register the room at the gateway.",
-		};
+		let failed = "Could not register the room at the gateway.";
+		if (error instanceof CertificateMismatchError) {
+			failed = gatewayDialRefusal(error);
+		} else if (error instanceof Error) {
+			failed = error.message;
+		}
+		return { failed };
 	}
 	dialStatus.stop();
 	if (target.pinOnSuccess && target.fingerprint !== undefined) {
@@ -1113,10 +1135,10 @@ interface JoinTarget {
 const bareSshLine = (target: JoinTarget): string =>
 	`  ssh ${target.port === DEFAULT_SSH_PORT ? "" : `-p ${target.port} `}${target.roomName}@${target.host}`;
 
-const resolveJoinTarget = (
+const resolveJoinTarget = async (
 	roomName: string,
 	values: { readonly gateway?: string; readonly sshPort?: string }
-): JoinTarget | undefined => {
+): Promise<JoinTarget | undefined> => {
 	if (!isValidRoomName(roomName)) {
 		console.error(ROOM_NAME_RULE);
 		return undefined;
@@ -1128,7 +1150,14 @@ const resolveJoinTarget = (
 		);
 		return undefined;
 	}
-	const host = gatewaySshHost(gatewayAddress);
+	let gatewayTarget: GatewayTarget;
+	try {
+		gatewayTarget = await resolveGatewayTarget(configFolder(), gatewayAddress);
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return undefined;
+	}
+	const host = gatewaySshHost(gatewayTarget.url);
 	if (host === undefined) {
 		console.error(`'${gatewayAddress}' is not a gateway URL.`);
 		return undefined;
@@ -1176,7 +1205,7 @@ const join = async (args: readonly string[]): Promise<number> => {
 		console.error("join requires one room name.");
 		return 1;
 	}
-	const target = resolveJoinTarget(roomName, {
+	const target = await resolveJoinTarget(roomName, {
 		gateway:
 			typeof parsed.values.gateway === "string"
 				? parsed.values.gateway
@@ -1245,21 +1274,45 @@ const keyGatewayAddress = (
 		? values.gateway
 		: (process.env.SUPERVILLAIN_GATEWAY ?? "");
 
-/** The one dial both key verbs ride: the Host pipe with no rooms on it. */
+/** The one dial both key verbs ride: the Host pipe with no rooms on it. Trust
+ * resolution and first-use pinning are the same path room registration uses. */
 const openKeyConduit = async (
 	gatewayAddress: string
 ): Promise<Awaited<ReturnType<typeof openGatewayLink>> | undefined> => {
+	let target: GatewayTarget;
+	try {
+		target = await resolveGatewayTarget(configFolder(), gatewayAddress);
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return undefined;
+	}
+	const plaintext = plaintextWarning(target.url);
+	if (plaintext !== undefined) {
+		console.error(plaintext);
+	}
 	const identity = await loadOrCreateIdentity(configFolder());
 	try {
-		return await openGatewayLink({
+		const link = await openGatewayLink({
 			dialer: openWsDialer({
+				certificateFingerprint: target.fingerprint,
 				secretKeyHex: identity.secretKeyHex,
-				url: gatewayAddress,
+				url: target.url,
 			}),
 		});
+		if (target.pinOnSuccess && target.fingerprint !== undefined) {
+			try {
+				await pinGateway(configFolder(), target.origin, target.fingerprint);
+			} catch (error) {
+				await link.close();
+				throw error;
+			}
+		}
+		return link;
 	} catch (error) {
 		console.error("Could not reach that gateway.");
-		if (!(error instanceof DialTimeoutError)) {
+		if (error instanceof CertificateMismatchError) {
+			console.error(gatewayDialRefusal(error));
+		} else if (!(error instanceof DialTimeoutError)) {
 			console.error(error instanceof Error ? error.message : String(error));
 		}
 		return undefined;
@@ -1422,13 +1475,40 @@ const key = async (args: readonly string[]): Promise<number> => {
  * it to come out of this same artifact, so it joins `key`/`character`/`map`/
  * `campaign` on the management side of the CLI (ADR-0015).
  */
+const gatewayForget = async (args: readonly string[]): Promise<number> => {
+	const [address] = args;
+	if (address === undefined || args.length !== 1) {
+		console.error("gateway forget takes exactly one URL or pairing code.");
+		return 1;
+	}
+	let forgotten: Awaited<ReturnType<typeof forgetGateway>>;
+	try {
+		forgotten = await forgetGateway(configFolder(), address);
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	const { host } = new URL(address);
+	if (forgotten === undefined) {
+		console.error(`nothing pinned for ${host}.`);
+		return 1;
+	}
+	console.log(`forgot:      ${host}`);
+	console.log(`fingerprint: sha256:${forgotten.fingerprint}`);
+	console.log("pair with that gateway again to trust its current certificate.");
+	return 0;
+};
+
 const gateway = async (args: readonly string[]): Promise<number> => {
 	const [subcommand, ...rest] = args;
 	if (subcommand === "--help" || subcommand === "-h") {
 		return await runGatewayRole(["--help"]);
 	}
+	if (subcommand === "forget") {
+		return await gatewayForget(rest);
+	}
 	if (subcommand !== "serve") {
-		console.error("gateway requires serve.");
+		console.error("gateway requires serve or forget.");
 		return 1;
 	}
 	return await runGatewayRole(rest);

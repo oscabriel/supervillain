@@ -7,6 +7,7 @@ import path from "node:path";
 import { InvalidPairingCodeError } from "@supervillain/transport-ws";
 
 import {
+	forgetGateway,
 	PinnedGatewayChangedError,
 	pinFilePath,
 	pinGateway,
@@ -111,6 +112,25 @@ describe("resolving a gateway address", () => {
 		await expect(
 			resolveGatewayTarget(folder, "wss://box.example#token=hunter2")
 		).rejects.toBeInstanceOf(InvalidPairingCodeError);
+	});
+
+	test("forgets a pin by URL or changed pairing code and permits re-pairing", async () => {
+		const folder = await configFolder();
+		const target = await resolveGatewayTarget(folder, CODE);
+		if (target.fingerprint === undefined) {
+			throw new Error("the pairing-code fixture must carry a fingerprint");
+		}
+		await pinGateway(folder, target.origin, target.fingerprint);
+
+		expect(
+			await forgetGateway(folder, `wss://box.example:8443#fp=sha256:${OTHER}`)
+		).toMatchObject({ fingerprint: FINGERPRINT, origin: target.origin });
+		expect(await readGatewayPins(folder)).toEqual({});
+		expect(await forgetGateway(folder, target.url)).toBeUndefined();
+		expect(await resolveGatewayTarget(folder, CODE)).toMatchObject({
+			fingerprint: FINGERPRINT,
+			pinOnSuccess: true,
+		});
 	});
 
 	test("writes the pin store readable only by its owner", async () => {
