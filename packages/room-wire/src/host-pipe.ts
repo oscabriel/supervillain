@@ -61,7 +61,12 @@ export interface HostPipeAttachment {
 export type HostPipeEvent =
 	| { readonly kind: "attached"; readonly rooms: readonly string[] }
 	| { readonly kind: "detached"; readonly reason: string }
-	| { readonly kind: "dialing"; readonly attempt: number }
+	| {
+			readonly kind: "dialing";
+			readonly attempt: number;
+			/** The preceding attempt's failure, absent on a fresh dial cycle. */
+			readonly lastError?: string;
+	  }
 	| { readonly kind: "refused"; readonly reason: string };
 
 /** The gateway said no in a way redialling cannot fix: an unsupported protocol
@@ -336,16 +341,22 @@ export const openHostPipe = (options: HostPipeOptions): HostPipe => {
 
 	const run = async (): Promise<void> => {
 		let attempt = 0;
+		let lastError: string | undefined;
 		for (;;) {
 			if (stopped) {
 				return;
 			}
 			attempt += 1;
-			onEvent({ attempt, kind: "dialing" });
+			onEvent(
+				lastError === undefined
+					? { attempt, kind: "dialing" }
+					: { attempt, kind: "dialing", lastError }
+			);
 			try {
 				// oxlint-disable-next-line eslint/no-await-in-loop -- one live pipe at a time is the whole design.
 				await attach();
 				attempt = 0;
+				lastError = undefined;
 			} catch (error) {
 				// Two errors stop the redial loop rather than feeding it. A refusal
 				// is the gateway's answer and will not change on retry; a trust
@@ -367,6 +378,7 @@ export const openHostPipe = (options: HostPipeOptions): HostPipe => {
 				if (stopped) {
 					return;
 				}
+				lastError = describe(error);
 				// oxlint-disable-next-line eslint/no-await-in-loop -- backoff happens once per failed attempt.
 				await delay(reconnectDelayMs(attempt));
 			}

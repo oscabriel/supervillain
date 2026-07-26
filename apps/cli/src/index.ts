@@ -57,7 +57,11 @@ import {
 	openHostPipe,
 	ROOM_NAME_RULE,
 } from "@supervillain/room-wire";
-import type { HostPipe, HostPipeAttachment } from "@supervillain/room-wire";
+import type {
+	HostPipe,
+	HostPipeAttachment,
+	HostPipeEvent,
+} from "@supervillain/room-wire";
 import { attachLocalTty } from "@supervillain/session";
 import { createSessionRenderer, runTable } from "@supervillain/table";
 import { DialTimeoutError, openWsDialer } from "@supervillain/transport-ws";
@@ -805,6 +809,85 @@ const summonNotice = (options: {
 
 type HostRoom = Parameters<typeof openHostPipe>[0]["rooms"][number];
 
+const DIALING_NOTICE_DELAY_MS = 1000;
+const DIALING_STATUS_ATTEMPTS = 3;
+const STILL_TRYING_DELAY_MS = 30_000;
+
+const summarizeDialError = (message: string): string => {
+	if (/connection refused|ECONNREFUSED/iu.test(message)) {
+		return "connection refused";
+	}
+	if (/timed out|ETIMEDOUT/iu.test(message)) {
+		return "timed out";
+	}
+	return message.split("\n", 1)[0]?.trim() || "connection failed";
+};
+
+/** Human-facing progress for interactive `create`. The pipe remains the sole
+ * source of retry facts; this layer only throttles and phrases those events. */
+const watchGatewayDial = (
+	hostname: string
+): {
+	readonly onEvent: (event: HostPipeEvent) => void;
+	readonly stop: () => void;
+} => {
+	let attempt = 0;
+	let lastError: string | undefined;
+	let lastReportedAttempt = 0;
+	let lastReportedError: string | undefined;
+	let noticeShown = false;
+	let stopped = false;
+
+	const reportCurrentStatus = (): void => {
+		if (lastError === undefined) {
+			return;
+		}
+		const summary = summarizeDialError(lastError);
+		console.error(`attempt ${attempt} — ${summary}`);
+		lastReportedAttempt = attempt;
+		lastReportedError = summary;
+	};
+	const noticeTimer = setTimeout(() => {
+		if (stopped) {
+			return;
+		}
+		noticeShown = true;
+		console.error(`dialing ${hostname}…`);
+		reportCurrentStatus();
+	}, DIALING_NOTICE_DELAY_MS);
+	const stillTryingTimer = setTimeout(() => {
+		if (!stopped) {
+			console.error("still trying — Ctrl+C to stop");
+		}
+	}, STILL_TRYING_DELAY_MS);
+
+	return {
+		onEvent: (event): void => {
+			if (event.kind !== "dialing") {
+				return;
+			}
+			const { attempt: currentAttempt, lastError: currentLastError } = event;
+			attempt = currentAttempt;
+			lastError = currentLastError;
+			if (!noticeShown || lastError === undefined) {
+				return;
+			}
+			const summary = summarizeDialError(lastError);
+			const errorChanged = summary !== lastReportedError;
+			const enoughAttemptsPassed =
+				attempt - lastReportedAttempt >= DIALING_STATUS_ATTEMPTS;
+			if (errorChanged || enoughAttemptsPassed) {
+				reportCurrentStatus();
+			}
+		},
+		stop: (): void => {
+			stopped = true;
+			clearTimeout(noticeTimer);
+			clearTimeout(stillTryingTimer);
+		},
+	};
+};
+
 /** The live pipe, or the one line explaining why there isn't one. Registration
  * fails for reasons a human fixes — a bad room name, a missing gateway, a
  * gateway whose certificate is not the pinned one — so every path out of here
@@ -846,18 +929,21 @@ const registerAtGateway = async (options: {
 	}
 	// The Host dials out and keeps dialing (ADR-0012): the gateway never
 	// reaches back for this machine, so no port here is ever opened to it.
+	const dialStatus = watchGatewayDial(new URL(target.url).hostname);
 	const pipe = openHostPipe({
 		dialer: openWsDialer({
 			certificateFingerprint: target.fingerprint,
 			secretKeyHex: options.secretKeyHex,
 			url: target.url,
 		}),
+		onEvent: dialStatus.onEvent,
 		rooms: [options.room],
 	});
 	let attachment: HostPipeAttachment;
 	try {
 		attachment = await pipe.attached;
 	} catch (error) {
+		dialStatus.stop();
 		await pipe.close();
 		return {
 			failed:
@@ -866,6 +952,7 @@ const registerAtGateway = async (options: {
 					: "Could not register the room at the gateway.",
 		};
 	}
+	dialStatus.stop();
 	if (target.pinOnSuccess && target.fingerprint !== undefined) {
 		await pinGateway(configFolder(), target.origin, target.fingerprint);
 	}

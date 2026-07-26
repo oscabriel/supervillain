@@ -6,7 +6,11 @@ import type {
 } from "@supervillain/core";
 
 import { openHostPipe, TransportTrustError } from "../src/index.js";
-import type { TransportConnection, TransportDialer } from "../src/index.js";
+import type {
+	HostPipeEvent,
+	TransportConnection,
+	TransportDialer,
+} from "../src/index.js";
 import { describe, expect, test } from "./harness.js";
 
 class SilentRoomStore implements RoomStore {
@@ -53,8 +57,9 @@ describe("the Host pipe's redial loop", () => {
 		await pipe.close();
 	});
 
-	test("keeps redialing an unreachable gateway", async () => {
+	test("keeps redialing an unreachable gateway and reports the last failure", async () => {
 		const dials = { count: 0 };
+		const events: HostPipeEvent[] = [];
 		const pipe = openHostPipe({
 			dialer: {
 				dial: (): Promise<TransportConnection> => {
@@ -62,6 +67,7 @@ describe("the Host pipe's redial loop", () => {
 					return Promise.reject(new Error("connection refused"));
 				},
 			},
+			onEvent: (event) => events.push(event),
 			reconnectDelayMs: () => 1,
 			rooms: [room],
 		});
@@ -72,6 +78,10 @@ describe("the Host pipe's redial loop", () => {
 			});
 		}
 		expect(dials.count).toBeGreaterThan(1);
+		expect(events.slice(0, 2)).toEqual([
+			{ attempt: 1, kind: "dialing" },
+			{ attempt: 2, kind: "dialing", lastError: "connection refused" },
+		]);
 		await pipe.close();
 		await expect(pipe.attached).rejects.toThrow();
 	});
