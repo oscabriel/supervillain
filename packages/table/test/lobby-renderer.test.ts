@@ -158,6 +158,26 @@ describe("the lobby", () => {
 		setup.renderer.destroy();
 	});
 
+	test("an outside deadline releases the lobby without closing the connection", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeConnection();
+		const deadline = Promise.withResolvers<boolean>();
+		const outcome = runLobby({
+			connection: probe.connection,
+			keyed: false,
+			renderer: setup.renderer,
+			sshHost: "supervillain.app",
+			until: deadline.promise,
+		});
+		await setup.waitForFrame((frame) => frame.includes("join a room"));
+
+		deadline.resolve(true);
+		expect(await outcome).toEqual({ kind: "leave" });
+		expect(setup.renderer.isDestroyed).toBe(false);
+		expect(probe.closeListeners()).toBe(0);
+		setup.renderer.destroy();
+	});
+
 	test("a closed connection leaves the lobby with the renderer standing", async () => {
 		const setup = await createTestRenderer({ height: 24, width: 80 });
 		const probe = fakeConnection();

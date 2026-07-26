@@ -16,7 +16,6 @@ import {
 	moveMenuIndex,
 	noticeLines,
 	screenBodyLines,
-	toggleRenderTier,
 	WORDMARK_TEXT,
 } from "./lobby-screens.js";
 import type {
@@ -30,7 +29,6 @@ export type {
 	LobbyChromeContext,
 	LobbyMenuAction,
 	LobbyNotice,
-	LobbySettings,
 	LobbyState,
 } from "./lobby-screens.js";
 export {
@@ -64,13 +62,18 @@ export interface LobbyOptions extends LobbyChromeContext {
 	/** The inline notice the lobby opens with, if the visitor asked for a room
 	 * that is unregistered or not live. */
 	readonly notice?: LobbyNotice;
+	/** An outside deadline that asks this visit to release the borrowed renderer
+	 * without closing the underlying terminal. */
+	readonly until?: Promise<unknown>;
 }
 
-const NOTICE_TOKEN = {
-	"full-room": "muted",
-	"offline-room": "muted",
-	"unknown-room": "danger",
-} as const;
+const NOTICE_TOKEN: Readonly<Record<LobbyNotice["kind"], "danger" | "muted">> =
+	{
+		"dropped-behind": "danger",
+		"full-room": "muted",
+		"offline-room": "muted",
+		"unknown-room": "danger",
+	};
 
 /** Holds the lobby on the connection's terminal and resolves once the visitor
  * picks a room or leaves. One visit per call: the caller drives the loop, so a
@@ -91,6 +94,13 @@ export const runLobby = async (
 	// this visit.
 	const onRendererDestroy = (): void => finish?.();
 	renderer.on(CliRenderEvents.DESTROY, onRendererDestroy);
+	const leaveOnUntil = async (until: Promise<unknown>): Promise<void> => {
+		await until;
+		finish?.();
+	};
+	if (options.until !== undefined) {
+		void leaveOnUntil(options.until);
+	}
 
 	let state: LobbyState = initialLobbyState(options.notice);
 	let outcome: LobbyOutcome = { kind: "leave" };
@@ -228,14 +238,6 @@ export const runLobby = async (
 		key.stopPropagation();
 		if (state.screen === "splash") {
 			handleSplashKey(key.name);
-			return;
-		}
-		if (key.name === "t" && state.screen === "settings") {
-			state = {
-				...state,
-				settings: { renderTier: toggleRenderTier(state.settings.renderTier) },
-			};
-			draw();
 		}
 	};
 	renderer.keyInput.on("keypress", onKeypress);

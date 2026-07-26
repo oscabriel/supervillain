@@ -20,22 +20,18 @@ export type LobbyMenuAction = "join" | "become-gm" | "settings" | "leave";
  * is turned away here, honestly, and the seats already at that table are never
  * degraded to make space. */
 export interface LobbyNotice {
-	readonly kind: "unknown-room" | "offline-room" | "full-room";
+	readonly kind:
+		| "unknown-room"
+		| "offline-room"
+		| "full-room"
+		| "dropped-behind";
 	readonly roomName: string;
-}
-
-/** Session-local presentation preferences. ADR-0008 stages the durable,
- * identity-keyed preferences table at v1 (it needs ADR-0005's identity
- * resolution); at v0 these live and die with the SSH session. */
-export interface LobbySettings {
-	readonly renderTier: "pixel-glyph" | "text";
 }
 
 export interface LobbyState {
 	readonly screen: LobbyScreenId;
 	readonly menuIndex: number;
 	readonly notice: LobbyNotice | undefined;
-	readonly settings: LobbySettings;
 }
 
 export interface LobbyChromeContext {
@@ -86,7 +82,7 @@ export const LOBBY_TITLES: Readonly<Record<LobbyScreenId, string>> = {
 export const LOBBY_HINTS: Readonly<Record<LobbyScreenId, string>> = {
 	"become-gm": "esc to go back",
 	join: "enter to join · esc to go back",
-	settings: "t to switch render tier · esc to go back",
+	settings: "esc to go back",
 	splash: "up/down to move · enter to choose · ctrl-c to leave",
 };
 
@@ -94,7 +90,6 @@ export const initialLobbyState = (notice?: LobbyNotice): LobbyState => ({
 	menuIndex: 0,
 	notice,
 	screen: "splash",
-	settings: { renderTier: "text" },
 });
 
 /** Wraps within the menu so a held arrow key never dead-ends. */
@@ -105,11 +100,6 @@ export const moveMenuIndex = (index: number, delta: number): number => {
 
 export const menuActionAt = (index: number): LobbyMenuAction =>
 	LOBBY_MENU[index]?.action ?? "join";
-
-/** The other render tier. A toggle, not a cycle — ADR-0007 pins exactly two. */
-export const toggleRenderTier = (
-	tier: LobbySettings["renderTier"]
-): LobbySettings["renderTier"] => (tier === "text" ? "pixel-glyph" : "text");
 
 /** The inline notice, rendered above the full lobby rather than in place of it
  * (ADR-0008: unknown and offline rooms are never a disconnect). */
@@ -128,6 +118,12 @@ export const noticeLines = (
 			`'${notice.roomName}' is live, but it is carrying as many terminals as`,
 			"this gateway will hold. nobody at that table was disturbed to tell you",
 			"so. try again in a minute — or run your own gateway, which is free.",
+		];
+	}
+	if (notice.kind === "dropped-behind") {
+		return [
+			`your terminal fell too far behind '${notice.roomName}' to keep up.`,
+			"you are back in the lobby; join again when the connection is ready.",
 		];
 	}
 	const beat = context.taglines === false ? [] : [`  ${OFFLINE_TAGLINE}`];
@@ -166,17 +162,8 @@ const becomeGmLines = (context: LobbyChromeContext): readonly string[] => [
 	"is the whole of portability.",
 ];
 
-const settingsLines = (
-	state: LobbyState,
-	context: LobbyChromeContext
-): readonly string[] => [
-	`  render tier   ${state.settings.renderTier}`,
-	`  identity      ${context.keyed ? "key recognized" : "no key — keyless guest"}`,
-	"",
-	"pixel-glyph rendering arrives with the glyph atlas; text is the",
-	"source format either way.",
-	"",
-	"these settings last for this session only.",
+const settingsLines = (context: LobbyChromeContext): readonly string[] => [
+	`  identity   ${context.keyed ? "key recognized" : "no key — keyless guest"}`,
 ];
 
 /** The body of one screen: everything between the wordmark and the hint line. */
@@ -191,7 +178,7 @@ export const screenBodyLines = (
 		return becomeGmLines(context);
 	}
 	if (state.screen === "settings") {
-		return settingsLines(state, context);
+		return settingsLines(context);
 	}
 	return splashLines(state, context);
 };

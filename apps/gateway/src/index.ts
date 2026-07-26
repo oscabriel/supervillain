@@ -60,6 +60,7 @@ import {
 import type { KeyedSessions } from "./revocation.js";
 import { GATEWAY_ROLE_USAGE, parseGatewayRoleArgs } from "./role.js";
 import { holdRoom } from "./room-hold.js";
+import type { RoomHoldEnd } from "./room-hold.js";
 import { attachDoorConnection, sessionForActor } from "./ssh-session.js";
 import { pipePairingCode, resolveGatewayTls } from "./tls.js";
 import type { GatewayTlsOptions } from "./tls.js";
@@ -368,9 +369,20 @@ export const reserveArrival = (
 		: { kind: "admitted", reservation };
 };
 
-/** What a seat is told when the fold drops it for falling too far behind. */
-export const SEAT_BEHIND_MESSAGE =
-	"this terminal fell too far behind to keep up. Reconnect to sit down again.";
+/** The lobby result of a table hold ending from outside the terminal. A Host
+ * return starts another room attempt, while expiry and a lag-budget drop hand
+ * the same session back to the lobby with an honest inline notice. */
+export const noticeForRoomHoldEnd = (
+	roomName: string,
+	end: RoomHoldEnd | undefined
+): LobbyNotice | undefined => {
+	if (end === "grace-expired") {
+		return { kind: "offline-room", roomName };
+	}
+	if (end === "dropped") {
+		return { kind: "dropped-behind", roomName };
+	}
+};
 
 /**
  * One attempt at sitting down, and the grace window that follows a Host dying
@@ -470,16 +482,8 @@ const enterRoom = async (
 		if (end === "host-returned") {
 			continue;
 		}
-		if (end === "grace-expired") {
-			return { kind: "notice", notice: { kind: "offline-room", roomName } };
-		}
-		if (end === "dropped") {
-			// The fold dropped this seat for falling behind its budget. The lobby's
-			// notice vocabulary is ADR-0008's and says nothing about backpressure,
-			// so this takes the pinned floor: one honest plain-text line.
-			return { kind: "failed", message: SEAT_BEHIND_MESSAGE };
-		}
-		return result;
+		const notice = noticeForRoomHoldEnd(roomName, end);
+		return notice === undefined ? result : { kind: "notice", notice };
 	}
 };
 
@@ -505,6 +509,7 @@ const lobbyRound = async (
 		readonly sshHost: string;
 		readonly deadlines: LobbyDeadlines;
 		readonly expired: () => LobbyExpiry | undefined;
+		readonly untilExpiry: Promise<unknown>;
 	}
 ): Promise<LobbyStep> => {
 	const touch = (): void => options.deadlines.touch();
@@ -518,6 +523,7 @@ const lobbyRound = async (
 			notice,
 			renderer: options.context.renderer,
 			sshHost: options.sshHost,
+			until: options.untilExpiry,
 		});
 	} finally {
 		door.input.off("data", touch);
@@ -597,11 +603,12 @@ const shellRounds = async (
 		return arrival.message;
 	}
 	let expiry: LobbyExpiry | undefined;
+	const expirySignal = Promise.withResolvers<boolean>();
 	const deadlines = createLobbyDeadlines({
 		limits: options.limits,
 		onExpire: (reason) => {
 			expiry = reason;
-			connection.close();
+			expirySignal.resolve(true);
 		},
 	});
 	const round = {
@@ -609,6 +616,7 @@ const shellRounds = async (
 		deadlines,
 		expired: (): LobbyExpiry | undefined => expiry,
 		sshHost: options.sshHost,
+		untilExpiry: expirySignal.promise,
 	};
 	let step: LobbyStep = { kind: "again", notice: arrival.notice };
 	while (step.kind === "again") {

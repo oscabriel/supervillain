@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 /* oxlint-disable vitest/prefer-importing-vitest-globals, promise/avoid-new -- Bun-only suite: the gateway is Bun-bound, and the waits here are timers. */
 
+import { noticeForRoomHoldEnd } from "../src/index.js";
 import { createOfflineMetrics } from "../src/offline-metrics.js";
 import {
 	GRACE_WINDOW_MS,
@@ -14,6 +15,13 @@ const tick = (ms = 12): Promise<void> =>
 	});
 
 describe("the grace window", () => {
+	test("a dropped seat returns to the lobby with its room preserved", () => {
+		expect(noticeForRoomHoldEnd("iron-keep", "dropped")).toEqual({
+			kind: "dropped-behind",
+			roomName: "iron-keep",
+		});
+	});
+
 	test("says nothing while the seat's own Host still carries the name", async () => {
 		const attached = { name: "keep" };
 		const notices: string[] = [];
