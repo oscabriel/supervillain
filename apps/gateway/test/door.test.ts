@@ -1,47 +1,92 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals, promise/avoid-new, promise/prefer-await-to-callbacks, eslint/no-await-in-loop -- Bun-only suite; a live SSH door is event-shaped and polled. */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import type {
+	Envelope,
+	RoomCommand,
+	RoomStore,
+	RoomSubmission,
+} from "@supervillain/core";
+import { loadOrCreateIdentity } from "@supervillain/identity";
+import { openHostPipe } from "@supervillain/room-wire";
+import type { HostPipe } from "@supervillain/room-wire";
+import { openWsDialer } from "@supervillain/transport-ws";
 import { Client, utils } from "ssh2";
 import type { ClientChannel } from "ssh2";
 
 import { startGateway } from "../src/index.js";
 import type { RunningGateway } from "../src/index.js";
 
+const ROOM = "backpressure-room";
+const ROOM_LABEL = "Backpressure Room";
+
 const sleep = (ms: number): Promise<void> =>
 	new Promise((resolve) => {
 		setTimeout(resolve, ms);
 	});
 
-/** A port the OS just handed back — good enough for a single test run. */
-const freePort = (): Promise<number> =>
-	new Promise((resolve, reject) => {
-		const server = createServer();
-		server.once("error", reject);
-		server.listen(0, "127.0.0.1", () => {
-			const address = server.address();
-			const port = typeof address === "object" && address ? address.port : 0;
-			server.close(() => resolve(port));
-		});
-	});
+class ChatRoomStore implements RoomStore {
+	readonly envelopes: Envelope[] = [];
+	readonly submissions: RoomCommand[] = [];
+	#waiters: (() => void)[] = [];
+
+	submit(command: RoomCommand): Promise<RoomSubmission> {
+		this.submissions.push(command);
+		const text =
+			"text" in command.command && typeof command.command.text === "string"
+				? command.command.text
+				: "seat claimed";
+		const envelope: Envelope = {
+			actor: command.actor,
+			payload: { text },
+			seq: this.envelopes.length + 1,
+			timestamp: "2026-07-25T00:00:00.000Z",
+			type: "core.chat-posted",
+		};
+		this.envelopes.push(envelope);
+		for (const wake of this.#waiters.splice(0)) {
+			wake();
+		}
+		return Promise.resolve({ accepted: true, envelopes: [envelope] });
+	}
+
+	async *stream(fromSeq: number): AsyncGenerator<Envelope> {
+		let index = fromSeq - 1;
+		for (;;) {
+			while (index < this.envelopes.length) {
+				const next = this.envelopes[index];
+				index += 1;
+				if (next !== undefined) {
+					yield next;
+				}
+			}
+			await new Promise<void>((resolve) => {
+				this.#waiters.push(resolve);
+			});
+		}
+	}
+}
 
 interface DoorVisit {
+	readonly bufferedBytes: () => number;
 	readonly transcript: () => string;
 	readonly promptedKeyboard: boolean;
 	readonly send: (data: string) => void;
 	readonly closed: () => boolean;
 	readonly disconnect: () => void;
+	readonly pause: () => void;
+	readonly resume: () => void;
 }
 
 interface VisitOptions {
+	readonly cols?: number;
+	readonly rows?: number;
 	readonly room: string;
 	/** Omit to arrive keyless — the guest door. */
 	readonly privateKey?: string;
-	/** Never read from the channel; the caller drains it later, or never. */
-	readonly slowReader?: boolean;
 }
 
 const visitDoor = (port: number, options: VisitOptions): Promise<DoorVisit> =>
@@ -59,7 +104,11 @@ const visitDoor = (port: number, options: VisitOptions): Promise<DoorVisit> =>
 		client.on("error", reject);
 		client.on("ready", () => {
 			client.shell(
-				{ cols: 120, rows: 40, term: "xterm-256color" },
+				{
+					cols: options.cols ?? 120,
+					rows: options.rows ?? 40,
+					term: "xterm-256color",
+				},
 				(error, stream: ClientChannel) => {
 					if (error) {
 						reject(error);
@@ -68,17 +117,16 @@ const visitDoor = (port: number, options: VisitOptions): Promise<DoorVisit> =>
 					stream.on("close", () => {
 						closed = true;
 					});
-					if (options.slowReader === true) {
-						stream.pause();
-					} else {
-						stream.on("data", (chunk: Buffer) => {
-							transcript += chunk.toString("utf-8");
-						});
-					}
+					stream.on("data", (chunk: Buffer) => {
+						transcript += chunk.toString("utf-8");
+					});
 					resolve({
+						bufferedBytes: () => stream.readableLength,
 						closed: () => closed,
 						disconnect,
+						pause: () => stream.pause(),
 						promptedKeyboard,
+						resume: () => stream.resume(),
 						send: (data) => stream.write(data),
 						transcript: () => transcript,
 					});
@@ -105,7 +153,7 @@ const waitFor = async (
 		if (Date.now() >= deadline) {
 			throw new Error(`Timed out waiting for ${label}.`);
 		}
-		await sleep(50);
+		await sleep(10);
 	}
 };
 
@@ -132,20 +180,44 @@ const visitAndLeave = async (
 describe("the door, live", () => {
 	let stateDir = "";
 	let gateway: RunningGateway | undefined;
+	let host: HostPipe | undefined;
+	let roomStore: ChatRoomStore;
 	let sshPort = 0;
 
 	beforeAll(async () => {
 		stateDir = await mkdtemp(path.join(tmpdir(), "supervillain-door-"));
-		sshPort = await freePort();
 		gateway = await startGateway({
 			bindHost: "127.0.0.1",
 			sshHost: "127.0.0.1",
-			sshPort,
+			sshPort: 0,
 			stateDir,
+			tls: { mode: "terminated-upstream" },
 		});
+		({ sshPort } = gateway);
+		expect(sshPort).toBeGreaterThan(0);
+		const hostIdentity = await loadOrCreateIdentity(
+			path.join(stateDir, "host-identity")
+		);
+		roomStore = new ChatRoomStore();
+		host = openHostPipe({
+			dialer: openWsDialer({
+				secretKeyHex: hostIdentity.secretKeyHex,
+				url: gateway.url,
+			}),
+			rooms: [
+				{
+					info: { gameId: "fake", label: ROOM_LABEL },
+					name: ROOM,
+					store: roomStore,
+				},
+			],
+		});
+		const attachment = await host.attached;
+		expect(attachment.sshPort).toBe(sshPort);
 	});
 
 	afterAll(async () => {
+		await host?.close();
 		await gateway?.close();
 		await rm(stateDir, { force: true, recursive: true });
 	});
@@ -173,18 +245,83 @@ describe("the door, live", () => {
 		expect(visit.promptedKeyboard).toBe(false);
 	}, 60_000);
 
-	test("a reader that never reads stalls only itself", async () => {
-		const key = utils.generateKeyPairSync("ed25519");
+	test("a reader that stops reading stalls only its own frame feed", async () => {
+		const slowKey = utils.generateKeyPairSync("ed25519");
+		const fastKey = utils.generateKeyPairSync("ed25519");
 		const slow = await visitDoor(sshPort, {
-			privateKey: key.private,
-			room: "no-such-table",
-			slowReader: true,
+			cols: 300,
+			privateKey: slowKey.private,
+			room: ROOM,
+			rows: 100,
+		});
+		const fast = await visitDoor(sshPort, {
+			cols: 300,
+			privateKey: fastKey.private,
+			room: ROOM,
+			rows: 100,
 		});
 		try {
-			const other = await visitAndLeave(sshPort, { room: "another-table" });
-			expect(other.transcript()).toContain("no table named 'another-table'");
+			const { submissions } = roomStore;
+			await waitFor("both seats at the table", () =>
+				[slow, fast].every((visit) => visit.transcript().includes(ROOM_LABEL))
+			);
+			slow.pause();
+			const slowTranscriptAtPause = slow.transcript().length;
+			let previousBuffered = -1;
+			let stalledBatches = 0;
+			let batch = 0;
+			while (stalledBatches < 2 && batch < 1000) {
+				const currentBatch = batch;
+				const beforeSubmissions = submissions.length;
+				const bufferedBefore = previousBuffered;
+				const fastBefore = fast.transcript().length;
+				const marker = `pressure-${currentBatch}-`.repeat(15);
+				fast.send(`${marker}\r`);
+				await waitFor(
+					"a fast-seat submission",
+					() => submissions.length > beforeSubmissions
+				);
+				await waitFor(
+					`the fast seat repaint for batch ${currentBatch}`,
+					() => fast.transcript().length > fastBefore
+				);
+				try {
+					await waitFor(
+						"the slow seat's buffered feed advancing",
+						() => slow.bufferedBytes() !== bufferedBefore,
+						1000
+					);
+					stalledBatches = 0;
+				} catch {
+					stalledBatches += 1;
+				}
+				previousBuffered = slow.bufferedBytes();
+				batch += 1;
+			}
+
+			expect(stalledBatches).toBe(2);
+			expect(slow.bufferedBytes()).toBeGreaterThanOrEqual(2 * 1024 * 1024);
+			expect(slow.transcript().length).toBe(slowTranscriptAtPause);
+			const fastBefore = fast.transcript().length;
+			const submissionsBefore = submissions.length;
+			fast.send("still-responsive\r");
+			await waitFor(
+				"the fast seat after the slow stall",
+				() => submissions.length > submissionsBefore
+			);
+			await waitFor(
+				"the fast seat's post-stall repaint",
+				() => fast.transcript().length > fastBefore
+			);
 		} finally {
+			slow.resume();
 			slow.disconnect();
+			fast.disconnect();
 		}
-	}, 60_000);
+
+		const healthy = await visitAndLeave(sshPort, {
+			room: "healthy-after-stall",
+		});
+		expect(healthy.transcript()).toContain("healthy-after-stall");
+	}, 120_000);
 });

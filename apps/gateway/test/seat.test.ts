@@ -1,7 +1,6 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals, promise/avoid-new, promise/prefer-await-to-callbacks, eslint/no-await-in-loop, eslint/require-await, eslint/class-methods-use-this -- Bun-only suite; a live SSH seat is event-shaped and polled, and the fake store is interface-shaped. */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -60,18 +59,6 @@ class QuietRoomStore implements RoomStore {
 const sleep = (ms: number): Promise<void> =>
 	new Promise((resolve) => {
 		setTimeout(resolve, ms);
-	});
-
-/** A port the OS just handed back — good enough for a single test run. */
-const freePort = (): Promise<number> =>
-	new Promise((resolve, reject) => {
-		const server = createServer();
-		server.once("error", reject);
-		server.listen(0, "127.0.0.1", () => {
-			const address = server.address();
-			const port = typeof address === "object" && address ? address.port : 0;
-			server.close(() => resolve(port));
-		});
 	});
 
 const waitFor = async (
@@ -162,16 +149,16 @@ describe("a live seat at the door", () => {
 
 	beforeAll(async () => {
 		stateDir = await mkdtemp(path.join(tmpdir(), "supervillain-seat-"));
-		sshPort = await freePort();
 		gateway = await startGateway({
 			bindHost: "127.0.0.1",
 			sshHost: "127.0.0.1",
-			sshPort,
+			sshPort: 0,
 			stateDir,
 			// Plaintext on loopback: the seat is what this suite is about, and
 			// the TLS story has its own tests.
 			tls: { mode: "terminated-upstream" },
 		});
+		({ sshPort } = gateway);
 		// The Host dials in, exactly as a GM's `create` does (ADR-0012).
 		const hostIdentity = await loadOrCreateIdentity(
 			path.join(stateDir, "host-identity")
@@ -189,7 +176,8 @@ describe("a live seat at the door", () => {
 				},
 			],
 		});
-		await host.attached;
+		const attachment = await host.attached;
+		expect(attachment.sshPort).toBe(sshPort);
 	});
 
 	afterAll(async () => {
