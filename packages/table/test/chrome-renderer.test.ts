@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { once } from "node:events";
+import { PassThrough } from "node:stream";
 
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-lane suite. */
-import { RendererControlState, TextRenderable } from "@opentui/core";
+import {
+	CliRenderEvents,
+	createCliRenderer,
+	RendererControlState,
+	TextRenderable,
+} from "@opentui/core";
+import type { CliRenderer } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { TestRendererSetup } from "@opentui/core/testing";
 import { CORE_CHAT_POSTED } from "@supervillain/core";
@@ -25,6 +33,16 @@ const entry: ViewEntry<unknown, unknown, unknown> = {
 		createPanels: () => [],
 		notices: [{ runs: [{ text: "notice line", token: "muted" }] }],
 		renderEvent: () => null,
+	},
+};
+
+const wireEntry: ViewEntry<unknown, unknown, unknown> = {
+	...entry,
+	view: {
+		...entry.view,
+		notices: Array.from({ length: 24 }, (_, index) => ({
+			runs: [{ text: `notice ${index}`, token: "muted" }],
+		})),
 	},
 };
 
@@ -136,7 +154,119 @@ const mountTable = async (
 	return { exited };
 };
 
+const nextFrame = async (renderer: CliRenderer): Promise<void> => {
+	const listeners = new AbortController();
+	try {
+		const rendered = await Promise.race([
+			once(renderer, CliRenderEvents.FRAME, { signal: listeners.signal }).then(
+				() => true
+			),
+			once(renderer, CliRenderEvents.DESTROY, {
+				signal: listeners.signal,
+			}).then(() => false),
+		]);
+		if (!rendered) {
+			throw new Error("Renderer was destroyed before the expected frame.");
+		}
+	} finally {
+		listeners.abort();
+	}
+};
+
+/**
+ * Mounts the whole table chrome except the conditional map region over a byte-
+ * recording pipe. The overflowing feed makes ScrollBox's painted scrollbar
+ * part of the frame; `map-region.test.ts` separately covers every map cell.
+ * OpenTUI initializes untouched/track-only cells with an opaque RGB-white
+ * foreground, and Slider's public options cannot replace the foreground used
+ * by its `fillRect` track. That pinned remainder is the only allowed truecolor.
+ */
+const paintTableChrome = async (): Promise<{
+	readonly bytes: string;
+	readonly stop: () => Promise<void>;
+}> => {
+	const hadTerm = Object.hasOwn(process.env, "TERM");
+	const originalTerm = process.env.TERM;
+	const restoreTerm = (): void => {
+		if (hadTerm && originalTerm !== undefined) {
+			process.env.TERM = originalTerm;
+			return;
+		}
+		delete process.env.TERM;
+	};
+	process.env.TERM = "xterm-256color";
+	try {
+		const chunks: string[] = [];
+		const output = new PassThrough();
+		output.on("data", (chunk: Buffer) => chunks.push(chunk.toString("latin1")));
+		const renderer = await createCliRenderer({
+			exitOnCtrlC: false,
+			height: 12,
+			remote: false,
+			stdin: new PassThrough() as unknown as NodeJS.ReadStream,
+			stdout: output as unknown as NodeJS.WriteStream,
+			width: 60,
+		});
+		const probe = fakeSession();
+		chunks.length = 0;
+		const painted = nextFrame(renderer);
+		const exited = runChrome({
+			entry: wireEntry,
+			gameId: "fake",
+			renderer,
+			roomLabel: "the table",
+			session: probe.session,
+			store: fakeStore().store,
+		});
+		await painted;
+		return {
+			bytes: chunks.join(""),
+			stop: async () => {
+				try {
+					probe.session.close();
+					await exited;
+				} finally {
+					renderer.destroy();
+					restoreTerm();
+				}
+			},
+		};
+	} catch (error) {
+		restoreTerm();
+		throw error;
+	}
+};
+
+const CSI = `${String.fromCodePoint(27)}\\[`;
+const TRUECOLOR_SGR = new RegExp(
+	`${CSI}[\\d;]*[34]8;2;(?<rgb>\\d+;\\d+;\\d+)m`,
+	"gu"
+);
+const INDEXED_SGR = new RegExp(`${CSI}(?:38|48);5;(?<slot>\\d+)m`, "gu");
+
 describe("table renderer injection", () => {
+	test("themes non-map chrome, with only OpenTUI's blank-cell RGB remainder", async () => {
+		const wire = await paintTableChrome();
+		try {
+			expect(wire.bytes.length).toBeGreaterThan(0);
+			const truecolors = new Set(
+				[...wire.bytes.matchAll(TRUECOLOR_SGR)].map(
+					(match) => match.groups?.rgb
+				)
+			);
+			expect(truecolors).toEqual(new Set(["255;255;255"]));
+			const slots = [...wire.bytes.matchAll(INDEXED_SGR)].map((match) =>
+				Number(match.groups?.slot)
+			);
+			expect(slots.length).toBeGreaterThan(0);
+			for (const slot of slots) {
+				expect(slot).toBeLessThan(16);
+			}
+		} finally {
+			await wire.stop();
+		}
+	});
+
 	test("draws on the injected renderer without starting a render loop", async () => {
 		const setup = await createTestRenderer({ height: 12, width: 60 });
 		const probe = fakeSession();
