@@ -77,7 +77,9 @@ export const openSeat = (options: SeatOptions): Promise<Seat> =>
 		let bytesOut = 0;
 		let keyAt: number | undefined;
 		let broadcastAt: number | undefined;
-		let closed = false;
+		let channelClosed = false;
+		let clientClosed = false;
+		let failed = false;
 		let transcript = "";
 		const latencies: number[] = [];
 
@@ -103,7 +105,7 @@ export const openSeat = (options: SeatOptions): Promise<Seat> =>
 				channel.end();
 				client.end();
 			},
-			closed: () => closed,
+			closed: () => failed || (channelClosed && clientClosed),
 			expectBroadcast: (at) => {
 				broadcastAt ??= at;
 			},
@@ -116,6 +118,9 @@ export const openSeat = (options: SeatOptions): Promise<Seat> =>
 		});
 
 		client
+			.on("close", () => {
+				clientClosed = true;
+			})
 			.on("ready", () => {
 				client.shell(
 					{ cols: options.columns, rows: options.rows, term: "xterm-256color" },
@@ -125,13 +130,14 @@ export const openSeat = (options: SeatOptions): Promise<Seat> =>
 							return;
 						}
 						channel.on("close", () => {
-							closed = true;
+							channelClosed = true;
+							client.end();
 						});
 						if (options.slow) {
 							// No data handler: the channel never flows, the window fills,
 							// and this seat stops reading without lying about it.
 							channel.on("error", () => {
-								closed = true;
+								failed = true;
 							});
 						} else {
 							channel.on("data", onData);
@@ -141,7 +147,7 @@ export const openSeat = (options: SeatOptions): Promise<Seat> =>
 				);
 			})
 			.on("error", (error: Error) => {
-				closed = true;
+				failed = true;
 				reject(error);
 			})
 			.connect({

@@ -12,7 +12,7 @@
 
 /** What the harness asks the gateway process for. */
 export type BenchRequest =
-	| { readonly kind: "sample" }
+	| { readonly kind: "sample"; readonly gc?: boolean }
 	| { readonly kind: "stop" };
 
 /** One reading of the gateway process's own resource use. `cpuMs` is
@@ -21,6 +21,22 @@ export type BenchRequest =
 export interface BenchSample {
 	readonly kind: "sample";
 	readonly cpuMs: number;
+	readonly memory: {
+		readonly arrayBuffers: number;
+		readonly external: number;
+		readonly heapTotal: number;
+		readonly heapUsed: number;
+	};
+	/** Process-global listeners OpenTUI adds once per live renderer. At rest,
+	 * growth here identifies renderer teardown rather than generic RSS high-water. */
+	readonly processListeners: {
+		readonly beforeExit: number;
+		readonly uncaughtException: number;
+		readonly unhandledRejection: number;
+		readonly warning: number;
+	};
+	/** Active runtime resources grouped by the names `process` exposes. */
+	readonly resources: Readonly<Record<string, number>>;
 	readonly rssBytes: number;
 	/** The largest RSS this process has reached, sampled on a timer — a window's
 	 * peak survives a garbage collection that lands before the mark. */

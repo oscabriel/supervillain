@@ -79,6 +79,11 @@ const benchMapRows = (): readonly string[] => {
 	return rows;
 };
 
+export interface BenchRoomOptions {
+	/** Seeds the Room with the battle map the capacity matrix pans. */
+	readonly map?: boolean;
+}
+
 export interface BenchRoom extends RoomStore {
 	/** Appends one envelope from the Host side — the harness's stand-in for a
 	 * GM's machine producing events nobody asked it for. */
@@ -91,7 +96,10 @@ export interface BenchRoom extends RoomStore {
  * map (map-pan needs a map to pan), and answering the handful of commands the
  * table can send.
  */
-export const createBenchRoom = (gameId: string): BenchRoom => {
+export const createBenchRoom = (
+	gameId: string,
+	options: BenchRoomOptions = {}
+): BenchRoom => {
 	const envelopes: Envelope[] = [];
 	let waiters: (() => void)[] = [];
 	let seats = 0;
@@ -118,11 +126,13 @@ export const createBenchRoom = (gameId: string): BenchRoom => {
 	};
 
 	append("bench-host", "core.room-created", { gameId });
-	append("bench-host", "core.map-loaded", {
-		legend: DEFAULT_MAP_LEGEND,
-		name: "bench-hall",
-		rows: benchMapRows(),
-	});
+	if (options.map ?? true) {
+		append("bench-host", "core.map-loaded", {
+			legend: DEFAULT_MAP_LEGEND,
+			name: "bench-hall",
+			rows: benchMapRows(),
+		});
+	}
 
 	const decide = (command: RoomCommand): readonly Envelope[] => {
 		const asked = command.command as { readonly type?: string };
