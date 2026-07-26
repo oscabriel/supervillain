@@ -14,6 +14,16 @@ const sleep = (milliseconds: number) =>
 		setTimeout(resolve, milliseconds);
 	});
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+const reserveLoopbackPort = async (): Promise<number> => {
+	const server = Bun.serve({
+		fetch: () => new Response(),
+		hostname: "127.0.0.1",
+		port: 0,
+	});
+	const { port } = server;
+	await server.stop(true);
+	return port;
+};
 const runCli = async (
 	campaign: string,
 	config: string,
@@ -48,6 +58,56 @@ afterEach(async () => {
 });
 
 describe("supervillain create", () => {
+	test("reports an unreachable gateway and attaches when it becomes reachable", async () => {
+		const scratch = await mkdtemp(path.join(tmpdir(), "supervillain-cli-"));
+		folders.push(scratch);
+		const campaign = path.join(scratch, "campaign");
+		const config = path.join(scratch, "config");
+		const brokerPort = await reserveLoopbackPort();
+		const gatewayAddress = `ws://127.0.0.1:${brokerPort}/`;
+		const cli = path.resolve(import.meta.dir, "../dist/index.js");
+		const command = `stty cols 100 rows 30; env XDG_CONFIG_HOME=${quote(config)} bun ${quote(cli)} create ${quote(campaign)} --name retry-room --gateway ${quote(gatewayAddress)}`;
+		const process = Bun.spawn(["script", "-qec", command, "/dev/null"], {
+			stderr: "ignore",
+			stdin: "pipe",
+			stdout: "pipe",
+		});
+		let output = "";
+		const outputDone = (async (): Promise<void> => {
+			for await (const chunk of process.stdout) {
+				output += Buffer.from(chunk).toString();
+			}
+		})();
+		const waitForOutput = async (expected: string): Promise<void> => {
+			for (let attempt = 0; attempt < 200; attempt += 1) {
+				if (output.includes(expected)) {
+					return;
+				}
+				// oxlint-disable-next-line eslint/no-await-in-loop -- polling bounded process output is the test protocol.
+				await sleep(25);
+			}
+			throw new Error(`Timed out waiting for '${expected}'. Output: ${output}`);
+		};
+
+		await waitForOutput("dialing 127.0.0.1…");
+		const gateway = await startGateway({
+			bindHost: "127.0.0.1",
+			brokerPort,
+			sshHost: "127.0.0.1",
+			sshPort: 0,
+			stateDir: path.join(scratch, "gateway"),
+			tls: { mode: "terminated-upstream" },
+		});
+		gateways.push(gateway);
+		await waitForOutput("your table is live. summon your players:");
+		process.stdin.write("/quit\r");
+		process.stdin.end();
+		expect(await process.exited).toBe(0);
+		await outputDone;
+		expect(output).toContain("retry-room@127.0.0.1");
+		expect(output).not.toContain("still trying");
+	}, 15_000);
+
 	test("registers a room at the gateway and resumes its Log", async () => {
 		const scratch = await mkdtemp(path.join(tmpdir(), "supervillain-cli-"));
 		folders.push(scratch);
