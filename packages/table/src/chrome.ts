@@ -307,6 +307,9 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			: { cursor, map, selectedTokenId, tokens: fold.tokens() };
 	};
 	const renderStatus = (): void => {
+		if (done) {
+			return;
+		}
 		const focused = focusedTarget();
 		status.fg = resolveThemeToken(
 			focused === undefined ? idleStatusToken : "muted"
@@ -324,6 +327,9 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	/** Redraws the region from the folded map and the local cursor. The whole
 	 * surface is one cell grid, so this is the only place map pixels are set. */
 	const renderMap = (): void => {
+		if (done) {
+			return;
+		}
 		const map = fold.map();
 		if (map === null) {
 			mapRegion.visible = false;
@@ -367,6 +373,9 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	 * that could not be written did not land, while a command whose answer was
 	 * lost may have. Neither is ever resubmitted for you (ADR-0001). */
 	const showConnectionLost = (error: unknown): void => {
+		if (done) {
+			return;
+		}
 		idleStatusToken = "danger";
 		idleStatusContent =
 			error instanceof Error && error.name === "SubmissionUncertainError"
@@ -375,6 +384,9 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		renderStatus();
 	};
 	const showSubmission = (result: RoomSubmission): void => {
+		if (done) {
+			return;
+		}
 		if ("rejected" in result) {
 			idleStatusToken = "danger";
 			idleStatusContent = result.message;
@@ -398,6 +410,9 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		table: fold.table(),
 	});
 	const renderSidebar = (): void => {
+		if (done) {
+			return;
+		}
 		const seats = formatSeatList(
 			fold.table(),
 			options.session.actor,
@@ -418,13 +433,18 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	};
 	const dispatchCore = async (command: CoreCommand): Promise<void> => {
 		try {
-			showSubmission(
-				await options.store.submit({
-					actor: options.session.actor,
-					command,
-				})
-			);
+			const submission = await options.store.submit({
+				actor: options.session.actor,
+				command,
+			});
+			if (done) {
+				return;
+			}
+			showSubmission(submission);
 		} catch (error) {
+			if (done) {
+				return;
+			}
 			showConnectionLost(error);
 		}
 	};

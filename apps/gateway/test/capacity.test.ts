@@ -6,7 +6,7 @@
  * ops-tunable from the environment, and a cap that is reached refuses the
  * *next* arrival without touching the table already sitting there.
  *
- * The byte/stall halves of R9's output budget are not here any more: they
+ * The byte/stall halves of R9's envelope-lag budget are not here any more: they
  * rode `attachSshChannel`, and `@opentui/ssh` owns channel backpressure now
  * (#62). The envelope half (`sessionBudget`) still drops a lagging view, and
  * that path is exercised in the room-wire capacity suite.

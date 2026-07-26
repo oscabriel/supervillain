@@ -1,6 +1,6 @@
-/** Where an `@opentui/*` package lands once resolved. Rules target resolved
- * paths, so a bare `^@opentui/` never matches anything. */
-const OPENTUI_PACKAGE = "(^|/)node_modules/@opentui/";
+/** OpenTUI dependencies in either dependency-cruiser's resolved-path or
+ * unresolved bare-specifier form. */
+const OPENTUI_PACKAGE = "(^|/)node_modules/@opentui/|^@opentui/";
 
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
@@ -26,9 +26,8 @@ module.exports = {
 			},
 			name: "opentui-only-on-view-side",
 			severity: "error",
-			// An npm dependency is matched on where it resolves, not on the
-			// bare specifier — hence the node_modules prefix (bun's store nests
-			// one more level, which the leading `/` alternative covers).
+			// Bun's store may add nesting to resolved paths; missing installs and
+			// resolution failures retain the bare package specifier instead.
 			to: { path: OPENTUI_PACKAGE },
 		},
 		{
@@ -42,7 +41,7 @@ module.exports = {
 			severity: "error",
 			to: {
 				path: OPENTUI_PACKAGE,
-				pathNot: "(^|/)node_modules/@opentui/ssh/",
+				pathNot: "(^|/)node_modules/@opentui/ssh/|^@opentui/ssh(?:/|$)",
 			},
 		},
 		{

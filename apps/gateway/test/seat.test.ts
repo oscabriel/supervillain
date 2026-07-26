@@ -23,6 +23,8 @@ import type { RunningGateway } from "../src/index.js";
 
 const ROOM = "the-kitchen";
 const LABEL = "The Kitchen";
+// oxlint-disable-next-line eslint/no-control-regex -- terminal frames use ANSI CSI cursor positions.
+const CURSOR_POSITION = /\u001B\[(?<row>\d+);(?<column>\d+)H/gu;
 
 /** Every actor the door stamped a command with, in arrival order. */
 const stamped: string[] = [];
@@ -89,6 +91,7 @@ const waitFor = async (
 interface Seat {
 	readonly transcript: () => string;
 	readonly send: (data: string) => void;
+	readonly resize: (cols: number, rows: number) => void;
 	readonly close: () => void;
 	readonly closed: () => boolean;
 	/** The actor this seat's key resolves to; undefined for the guest door. */
@@ -134,6 +137,7 @@ const takeSeat = (port: number, options: SeatOptions): Promise<Seat> =>
 						actor: options.keyless === true ? undefined : actor,
 						close: () => client.end(),
 						closed: () => closed,
+						resize: (cols, rows) => stream.setWindow(rows, cols, 0, 0),
 						send: (data) => stream.write(data),
 						transcript: () => transcript,
 					});
@@ -204,6 +208,26 @@ describe("a live seat at the door", () => {
 		// The notice is a notice, not a refusal: one key and the table opens.
 		seat.send(" ");
 		await waitFor("the table", () => seat.transcript().includes(LABEL));
+		seat.close();
+		await waitFor("teardown", () => seat.closed());
+	}, 60_000);
+
+	test("post-connect window changes keep rendering inside the cap", async () => {
+		const seat = await takeSeat(sshPort, { cols: 120, rows: 40 });
+		await waitFor("the table", () => seat.transcript().includes(LABEL));
+		const beforeResize = seat.transcript().length;
+
+		seat.resize(500, 200);
+		await waitFor("the resized frame", () =>
+			seat.transcript().slice(beforeResize).includes("\u001B[")
+		);
+		const resizedFrame = seat.transcript().slice(beforeResize);
+		const cursorPositions = [...resizedFrame.matchAll(CURSOR_POSITION)];
+		expect(cursorPositions.length).toBeGreaterThan(0);
+		for (const position of cursorPositions) {
+			expect(Number(position.groups?.row)).toBeLessThanOrEqual(100);
+			expect(Number(position.groups?.column)).toBeLessThanOrEqual(300);
+		}
 		seat.close();
 		await waitFor("teardown", () => seat.closed());
 	}, 60_000);

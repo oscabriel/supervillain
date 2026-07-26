@@ -51,7 +51,7 @@ const main = async (): Promise<void> => {
 			roomsPerIdentity: UNCAPPED,
 			// The envelope budget keeps its shipped default: the slow-reader
 			// workload is a probe of *it*, and opening it would measure a
-			// gateway nobody runs. (The byte half of the output budget is
+			// gateway nobody runs. (The byte half of the envelope-lag budget is
 			// `@opentui/ssh`'s backpressure now — #62.)
 			sessionBudget: DEFAULT_CAPACITY_LIMITS.sessionBudget,
 			sessionsPerRoom: UNCAPPED,

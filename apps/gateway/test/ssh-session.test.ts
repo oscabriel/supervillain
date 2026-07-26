@@ -28,10 +28,17 @@ const fakeChannel = (cols = 120, rows = 40): ChannelProbe => {
 	const resizeListeners = new Set<(cols: number, rows: number) => void>();
 	const closeListeners = new Set<() => void>();
 	let written = "";
+	let closed = false;
 	return {
 		channel: {
 			cols,
 			onClose(listener) {
+				// Pinned `@opentui/ssh` bridge.ts:196-203: close is level-triggered
+				// and a subscriber arriving after transport close fires immediately.
+				if (closed) {
+					listener();
+					return () => {};
+				}
 				closeListeners.add(listener);
 				return () => closeListeners.delete(listener);
 			},
@@ -45,9 +52,14 @@ const fakeChannel = (cols = 120, rows = 40): ChannelProbe => {
 			},
 		},
 		close() {
+			if (closed) {
+				return;
+			}
+			closed = true;
 			for (const listener of closeListeners) {
 				listener();
 			}
+			closeListeners.clear();
 		},
 		closeListeners: () => closeListeners.size,
 		resize(nextCols, nextRows) {
@@ -132,7 +144,34 @@ describe("attachDoorConnection", () => {
 		expect(session.size()).toEqual({ columns: 100, rows: 30 });
 	});
 
-	test("notifies close once, on channel close or connection close", () => {
+	test("a channel close subscriber arriving after close fires exactly once", () => {
+		const probe = fakeChannel();
+		probe.close();
+		let closes = 0;
+		const unsubscribe = probe.channel.onClose(() => {
+			closes += 1;
+		});
+		unsubscribe();
+		probe.close();
+		expect(closes).toBe(1);
+	});
+
+	test("a connection close subscriber arriving after channel close fires", () => {
+		const probe = fakeChannel();
+		const connection = attachDoorConnection({
+			cap: CAP,
+			channel: probe.channel,
+			input: input(),
+		});
+		probe.close();
+		let closes = 0;
+		connection.onClose(() => {
+			closes += 1;
+		});
+		expect(closes).toBe(1);
+	});
+
+	test("notifies close once when the connection closes before the channel", () => {
 		const probe = fakeChannel();
 		const connection = attachDoorConnection({
 			cap: CAP,
@@ -145,6 +184,22 @@ describe("attachDoorConnection", () => {
 		});
 		connection.close();
 		probe.close();
+		expect(closes).toBe(1);
+	});
+
+	test("notifies close once when the channel closes before the connection", () => {
+		const probe = fakeChannel();
+		const connection = attachDoorConnection({
+			cap: CAP,
+			channel: probe.channel,
+			input: input(),
+		});
+		let closes = 0;
+		connection.onClose(() => {
+			closes += 1;
+		});
+		probe.close();
+		connection.close();
 		expect(closes).toBe(1);
 	});
 
