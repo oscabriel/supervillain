@@ -16,6 +16,10 @@ ssh <room>@supervillain.app
 
 GM platforms: Linux (x64, arm64) and macOS (Apple Silicon and Intel); Windows GMs, use WSL2. Players just need an `ssh` client, on any OS.
 
+## Guides
+
+- [Write and validate battle-map files](docs/maps.md)
+
 ## Decision record
 
 This repo carries its own decision history: the product definition, glossary, and architectural decision records live under [`.agents/`](.agents/), starting from [`.agents/wayfinder/assets/product-definition.md`](.agents/wayfinder/assets/product-definition.md).

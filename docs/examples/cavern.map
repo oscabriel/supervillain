@@ -1,0 +1,12 @@
+name: Sample Cavern
+legend: . floor
+legend: # wall
+legend: + door
+legend: ^ hazard
+legend: ~ difficult
+---
+################
+#......+.......#
+#..~~~~..^^^^..#
+#..............#
+################

@@ -1,4 +1,6 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- dual-lane suite: the harness picks the runner. */
+import { readFile } from "node:fs/promises";
+
 import {
 	DEFAULT_MAP_LEGEND,
 	isValidMapName,
@@ -30,6 +32,13 @@ const messagesOf = (text: string): readonly string[] => {
 };
 
 describe("parseMapFile", () => {
+	test("accepts the GM-facing sample file shipped with the docs", async () => {
+		const sample = await readFile(
+			new URL("../../../docs/examples/cavern.map", import.meta.url)
+		);
+		expect(parseMapFile(sample).ok).toBe(true);
+	});
+
 	test("parses a header, the default legend, and the grid verbatim", () => {
 		const parsed = parseMapFile(bytes(DEFAULT_FILE));
 		expect(parsed).toEqual({
