@@ -80,6 +80,23 @@ describe("device linking", () => {
 		registry.close();
 	});
 
+	test("revoking the minting key retires its outstanding device codes", async () => {
+		const registry = openAt(DAY_ONE);
+		const linkingCode = await mintDevice(registry, DESKTOP);
+		await registry.redeemLinkCode(linkingCode, LAPTOP);
+		const outstandingCode = await mintDevice(registry, DESKTOP);
+
+		expect(await registry.revokeKey(DESKTOP, LAPTOP)).toMatchObject({
+			accepted: true,
+			revoked: DESKTOP,
+		});
+		expect(await registry.redeemLinkCode(outstandingCode, PHONE)).toEqual({
+			message: "This key has been retired.",
+			rejected: true,
+		});
+		registry.close();
+	});
+
 	test("a device code expires after fifteen minutes", async () => {
 		const file = `${tmpdir()}/supervillain-device-${randomUUID()}.db`;
 		const registry = openRoomRegistry({ clock: at(DAY_ONE), path: file });

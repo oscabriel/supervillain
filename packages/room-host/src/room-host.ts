@@ -17,6 +17,7 @@ import {
 	foldTokenMoved,
 	foldTokenPlaced,
 	foldTokenRemoved,
+	isTrustedRoomCommand,
 	isValidMapName,
 	isValidTokenGlyph,
 	isValidTokenId,
@@ -342,7 +343,8 @@ export class RoomHost {
 		this.#game = authority.model.init();
 	}
 
-	async #submit({ actor, command }: RoomCommand): Promise<RoomSubmission> {
+	async #submit(submission: RoomCommand): Promise<RoomSubmission> {
+		const { actor, command } = submission;
 		if (this.#authority === undefined || this.#gameId === undefined) {
 			throw new Error("Room has no game authority.");
 		}
@@ -355,7 +357,8 @@ export class RoomHost {
 		) {
 			return this.#submitCore(
 				actor,
-				command as Record<string, unknown> & { type: string }
+				command as Record<string, unknown> & { type: string },
+				isTrustedRoomCommand(submission)
 			);
 		}
 		const decide = this.#authority.authority.decide as (
@@ -399,9 +402,16 @@ export class RoomHost {
 	// oxlint-disable-next-line eslint/complexity -- validation branches directly mirror the pinned command grammar.
 	async #submitCore(
 		actor: string,
-		command: Record<string, unknown> & { readonly type: string }
+		command: Record<string, unknown> & { readonly type: string },
+		trustedStamper: boolean
 	): Promise<RoomSubmission> {
 		if (command.type === "core.link-actor") {
+			if (!trustedStamper) {
+				return {
+					message: "Only the gateway may link actors.",
+					rejected: true,
+				};
+			}
 			return await this.#submitLink(actor, command.linked);
 		}
 		if (command.type === "core.claim-seat") {

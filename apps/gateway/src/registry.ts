@@ -21,10 +21,12 @@ import { migrate } from "./migrate.js";
  * the bare owner key used to be: a name belongs to an identity row, and keys
  * point at identity rows.
  *
- * Steps 9–11 make that indirection do the work it was shaped for (ADR-0005 as
+ * Steps 9–14 make that indirection do the work it was shaped for (ADR-0005 as
  * relocated by ADR-0013): `identity_keys` *is* the key-equivalence graph, it
  * gains the revoked flag NQ-3 requires, and `link_codes` holds the one-time
- * codes `key link` mints and redeems. Note what is **not** here and never will
+ * codes `key link` mints and redeems. Device codes record their minting key so
+ * revoking it can retire them in the same transaction. Note what is **not**
+ * here and never will
  * be: a queue of pending linking events per room. The graph is the complete
  * truth and a room's missing links are derived from it on demand, so a queue
  * would be a staler second copy of a computable fact (ADR-0013).
@@ -78,6 +80,12 @@ const MIGRATIONS: readonly string[] = [
 		redeemed_at TEXT
 	) STRICT`,
 	"CREATE INDEX link_codes_expires_at ON link_codes (expires_at)",
+	"ALTER TABLE link_codes ADD COLUMN minted_by TEXT",
+	"ALTER TABLE link_codes ADD COLUMN retired_at TEXT",
+	// Pre-hardening device-code rows cannot identify their minting key. Retire
+	// that at-most-15-minute legacy set rather than leave an unverifiable code
+	// live across the migration.
+	"UPDATE link_codes SET retired_at = created_at WHERE kind = 'device' AND minted_by IS NULL",
 ];
 
 /** Both machines are at hand, so a device code lives only as long as it takes
@@ -182,6 +190,7 @@ interface LinkCodeRow {
 	readonly subject: string;
 	readonly expires_at: string;
 	readonly redeemed_at: string | null;
+	readonly retired_at: string | null;
 }
 
 const NOT_A_CODE = "That link code is not valid.";
@@ -270,15 +279,21 @@ export const openRoomRegistry = (
 		 ON CONFLICT(name) DO UPDATE SET updated_at = excluded.updated_at`
 	);
 	const insertLinkCode = db.query(
-		`INSERT INTO link_codes (code, kind, subject, created_at, expires_at)
-		 VALUES ($code, $kind, $subject, $createdAt, $expiresAt)`
+		`INSERT INTO link_codes
+		 (code, kind, subject, created_at, expires_at, minted_by)
+		 VALUES ($code, $kind, $subject, $createdAt, $expiresAt, $mintedBy)`
 	);
 	const selectLinkCode = db.query(
-		`SELECT code, kind, subject, expires_at, redeemed_at
+		`SELECT code, kind, subject, expires_at, redeemed_at, retired_at
 		 FROM link_codes WHERE code = $code`
 	);
 	const markRedeemed = db.query(
 		"UPDATE link_codes SET redeemed_at = $redeemedAt WHERE code = $code"
+	);
+	const retireDeviceCodes = db.query(
+		`UPDATE link_codes SET retired_at = $retiredAt
+		 WHERE kind = 'device' AND minted_by = $key
+		 AND redeemed_at IS NULL AND retired_at IS NULL`
 	);
 	const purgeLinkCodes = db.query(
 		"DELETE FROM link_codes WHERE expires_at < $before OR redeemed_at IS NOT NULL"
@@ -347,7 +362,9 @@ export const openRoomRegistry = (
 		if (isRevoked(key)) {
 			return { message: REVOKE_ALREADY, rejected: true };
 		}
+		const revokedAt = clock();
 		markRevoked.run({ key });
+		retireDeviceCodes.run({ key, retiredAt: revokedAt });
 		return {
 			accepted: true,
 			identityId,
@@ -379,7 +396,8 @@ export const openRoomRegistry = (
 		kind: LinkCodeKind,
 		subject: string,
 		length: number,
-		ttlMs: number
+		ttlMs: number,
+		mintedBy = ""
 	): LinkCodeOutcome => {
 		const createdAt = clock();
 		const expiresAt = new Date(
@@ -389,7 +407,14 @@ export const openRoomRegistry = (
 			const code = newLinkCode(length);
 			const existing = selectLinkCode.get({ code }) as LinkCodeRow | null;
 			if (existing === null) {
-				insertLinkCode.run({ code, createdAt, expiresAt, kind, subject });
+				insertLinkCode.run({
+					code,
+					createdAt,
+					expiresAt,
+					kind,
+					mintedBy,
+					subject,
+				});
 				return { accepted: true, code, expiresAt };
 			}
 		}
@@ -449,6 +474,9 @@ export const openRoomRegistry = (
 		}
 		if (row.redeemed_at !== null) {
 			return { message: USED_CODE, rejected: true };
+		}
+		if (row.retired_at !== null) {
+			return { message: REVOKED_KEY, rejected: true };
 		}
 		const now = clock();
 		if (row.expires_at <= now) {
@@ -532,7 +560,8 @@ export const openRoomRegistry = (
 							"device",
 							resolveIdentity(key),
 							DEVICE_CODE_LENGTH,
-							DEVICE_CODE_TTL_MS
+							DEVICE_CODE_TTL_MS,
+							key
 						)
 			),
 		ownerOf,

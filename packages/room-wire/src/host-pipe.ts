@@ -6,6 +6,7 @@
  */
 import { setTimeout as delay } from "node:timers/promises";
 
+import { markTrustedRoomCommand } from "@supervillain/core";
 import type { RoomStore } from "@supervillain/core";
 
 import {
@@ -131,8 +132,10 @@ const serveSubmit = async (
 		const { submissionId } = request;
 		const remembered =
 			submissionId === undefined ? undefined : memory.recall(submissionId);
-		// oxlint-disable-next-line eslint/no-await-in-loop -- each response follows one submitted command.
-		const submission = remembered ?? (await room.store.submit(request.command));
+		const submission =
+			remembered ??
+			// oxlint-disable-next-line eslint/no-await-in-loop -- each response follows one submitted command.
+			(await room.store.submit(markTrustedRoomCommand(request.command)));
 		if (submissionId !== undefined && remembered === undefined) {
 			memory.remember(submissionId, submission);
 		}

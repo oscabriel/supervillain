@@ -3,7 +3,12 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { Envelope, HostRegistry } from "@supervillain/core";
+import { markTrustedRoomCommand } from "@supervillain/core";
+import type {
+	Envelope,
+	HostRegistry,
+	RoomSubmission,
+} from "@supervillain/core";
 
 import { decide } from "../../games/fake/src/authority.js";
 import { apply, eventTypes, init } from "../../games/fake/src/model.js";
@@ -44,6 +49,18 @@ const openRoom = (folder: string): Promise<RoomHost> =>
 		registry,
 	});
 
+const submitGatewayLink = (
+	host: RoomHost,
+	actor: string,
+	linked: string
+): Promise<RoomSubmission> =>
+	host.submit(
+		markTrustedRoomCommand({
+			actor,
+			command: { linked, type: "core.link-actor" },
+		})
+	);
+
 const readLog = async (folder: string): Promise<Envelope[]> => {
 	const text = await readFile(path.join(folder, "events.jsonl"), "utf-8");
 	return text
@@ -53,13 +70,10 @@ const readLog = async (folder: string): Promise<Envelope[]> => {
 };
 
 describe("core.link-actor", () => {
-	test("appends a linking event and unions the two actors", async () =>
+	test("appends a gateway-stamped linking event and unions the two actors", async () =>
 		await withFolder(async (folder) => {
 			const host = await openRoom(folder);
-			const linked = await host.submit({
-				actor: LAPTOP,
-				command: { type: "core.link-actor", linked: DESKTOP },
-			});
+			const linked = await submitGatewayLink(host, LAPTOP, DESKTOP);
 			expect(linked).toMatchObject({
 				accepted: true,
 				envelopes: [
@@ -76,14 +90,8 @@ describe("core.link-actor", () => {
 	test("is idempotent — being told twice costs nothing", async () =>
 		await withFolder(async (folder) => {
 			const host = await openRoom(folder);
-			await host.submit({
-				actor: LAPTOP,
-				command: { type: "core.link-actor", linked: DESKTOP },
-			});
-			const again = await host.submit({
-				actor: LAPTOP,
-				command: { type: "core.link-actor", linked: DESKTOP },
-			});
+			await submitGatewayLink(host, LAPTOP, DESKTOP);
+			const again = await submitGatewayLink(host, LAPTOP, DESKTOP);
 			expect(again).toEqual({ accepted: true, envelopes: [] });
 			const log = await readLog(folder);
 			expect(
@@ -91,24 +99,33 @@ describe("core.link-actor", () => {
 			).toHaveLength(1);
 		}));
 
-	test("refuses a linking event that names nobody", async () =>
+	test("refuses a gateway-stamped linking event that names nobody", async () =>
+		await withFolder(async (folder) => {
+			const host = await openRoom(folder);
+			expect(await submitGatewayLink(host, LAPTOP, "   ")).toEqual({
+				message: "A linking event names no actor.",
+				rejected: true,
+			});
+		}));
+
+	test("refuses a non-gateway-stamped linking command", async () =>
 		await withFolder(async (folder) => {
 			const host = await openRoom(folder);
 			expect(
 				await host.submit({
 					actor: LAPTOP,
-					command: { type: "core.link-actor", linked: "   " },
+					command: { linked: GUEST, type: "core.link-actor" },
 				})
-			).toEqual({ message: "A linking event names no actor.", rejected: true });
+			).toEqual({
+				message: "Only the gateway may link actors.",
+				rejected: true,
+			});
 		}));
 
-	test("needs no seat — a new key links before it sits down", async () =>
+	test("a gateway-stamped link needs no seat", async () =>
 		await withFolder(async (folder) => {
 			const host = await openRoom(folder);
-			const linked = await host.submit({
-				actor: LAPTOP,
-				command: { type: "core.link-actor", linked: GUEST },
-			});
+			const linked = await submitGatewayLink(host, LAPTOP, GUEST);
 			expect(linked).toMatchObject({ accepted: true });
 		}));
 });
@@ -117,10 +134,7 @@ describe("GM roaming", () => {
 	test("a linked second key claims the seat it already holds", async () =>
 		await withFolder(async (folder) => {
 			const host = await openRoom(folder);
-			await host.submit({
-				actor: LAPTOP,
-				command: { type: "core.link-actor", linked: DESKTOP },
-			});
+			await submitGatewayLink(host, LAPTOP, DESKTOP);
 			const claim = await host.submit({
 				actor: LAPTOP,
 				command: { type: "core.claim-seat" },
@@ -135,10 +149,7 @@ describe("GM roaming", () => {
 	test("the linked key wields the GM's authority", async () =>
 		await withFolder(async (folder) => {
 			const host = await openRoom(folder);
-			await host.submit({
-				actor: LAPTOP,
-				command: { type: "core.link-actor", linked: DESKTOP },
-			});
+			await submitGatewayLink(host, LAPTOP, DESKTOP);
 			expect(
 				await host.submit({
 					actor: LAPTOP,
@@ -164,10 +175,7 @@ describe("guest adoption", () => {
 
 			// The adopting key links, then reopens the folder cold: replay must
 			// derive the same union with the old lines untouched.
-			await first.submit({
-				actor: LAPTOP,
-				command: { type: "core.link-actor", linked: GUEST },
-			});
+			await submitGatewayLink(first, LAPTOP, GUEST);
 			const reopened = await openRoom(folder);
 			const after = await readLog(folder);
 			expect(after.slice(0, before.length)).toEqual(before);
@@ -193,12 +201,9 @@ describe("linking two already-seated actors", () => {
 			// than refusing it and disagreeing forever. The identity then holds two
 			// seats, and lookups answer with the earlier one. See openQuestions —
 			// what *should* happen here is undecided in the definition.
-			expect(
-				await host.submit({
-					actor: LAPTOP,
-					command: { type: "core.link-actor", linked: DESKTOP },
-				})
-			).toMatchObject({ accepted: true });
+			expect(await submitGatewayLink(host, LAPTOP, DESKTOP)).toMatchObject({
+				accepted: true,
+			});
 			expect(host.snapshot().table.seats.map((seat) => seat.id)).toEqual([
 				"gm",
 				"player-1",
@@ -214,10 +219,7 @@ describe("the actor roster", () => {
 				actor: GUEST,
 				command: { type: "core.claim-seat" },
 			});
-			await host.submit({
-				actor: LAPTOP,
-				command: { type: "core.link-actor", linked: GUEST },
-			});
+			await submitGatewayLink(host, LAPTOP, GUEST);
 			expect([...host.actors()].toSorted()).toEqual(
 				[DESKTOP, GUEST, LAPTOP].toSorted()
 			);
