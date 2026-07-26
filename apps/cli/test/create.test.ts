@@ -4,7 +4,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { startGateway } from "@supervillain/gateway";
+import type { RunningGateway } from "@supervillain/gateway";
+
 const folders: string[] = [];
+const gateways: RunningGateway[] = [];
 const sleep = (milliseconds: number) =>
 	new Promise((resolve) => {
 		setTimeout(resolve, milliseconds);
@@ -13,10 +17,12 @@ const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const runCli = async (
 	campaign: string,
 	config: string,
-	inputs: readonly string[]
+	inputs: readonly string[],
+	createArgs: readonly string[]
 ): Promise<{ readonly code: number; readonly output: string }> => {
 	const cli = path.resolve(import.meta.dir, "../dist/index.js");
-	const command = `stty cols 100 rows 30; env XDG_CONFIG_HOME=${quote(config)} bun ${quote(cli)} create ${quote(campaign)}`;
+	const quotedCreateArgs = createArgs.map(quote).join(" ");
+	const command = `stty cols 100 rows 30; env XDG_CONFIG_HOME=${quote(config)} bun ${quote(cli)} create ${quote(campaign)} ${quotedCreateArgs}`;
 	const process = Bun.spawn(["script", "-qec", command, "/dev/null"], {
 		stderr: "ignore",
 		stdin: "pipe",
@@ -33,13 +39,16 @@ const runCli = async (
 };
 
 afterEach(async () => {
+	for (const gateway of gateways.splice(0)) {
+		await gateway.close();
+	}
 	for (const folder of folders.splice(0)) {
 		await rm(folder, { force: true, recursive: true });
 	}
 });
 
 describe("supervillain create", () => {
-	test("serves a local table, persists its door, and resumes its Log", async () => {
+	test("registers a room at the gateway and resumes its Log", async () => {
 		const scratch = await mkdtemp(path.join(tmpdir(), "supervillain-cli-"));
 		folders.push(scratch);
 		const campaign = path.join(scratch, "campaign");
@@ -65,25 +74,29 @@ describe("supervillain create", () => {
 			})
 		);
 		await writeFile(path.join(characters, "invalid.json"), "not json");
-		const first = await runCli(campaign, config, [
-			"hello table\r",
-			"/roll 2d6+1\r",
-			"/quit\r",
-		]);
-		expect(first.code).toBe(0);
-		// No --name, so no gateway and no door: the honest answer is that this
-		// table is local to this machine (ADR-0012, NQ-7 — `join` dials nothing).
-		expect(first.output).toContain(
-			"your table is live. this machine is the Host."
+		const gateway = await startGateway({
+			bindHost: "127.0.0.1",
+			brokerPort: 0,
+			sshHost: "127.0.0.1",
+			sshPort: 0,
+			stateDir: path.join(scratch, "gateway"),
+		});
+		gateways.push(gateway);
+		const gatewayAddress = gateway.pairingCode ?? gateway.url;
+		const createArgs = ["--name", "test-room", "--gateway", gatewayAddress];
+		const first = await runCli(
+			campaign,
+			config,
+			["hello table\r", "/roll 2d6+1\r", "/quit\r"],
+			createArgs
 		);
-		expect(first.output).not.toContain("supervillain join ");
+		expect(first.code).toBe(0);
+		expect(first.output).toContain("your table is live. summon your players:");
+		expect(first.output).toContain("test-room@127.0.0.1");
+		expect(first.output).toContain("supervillain join test-room");
 		expect(first.output).toContain(
 			"invalid.json: Character file must contain valid UTF-8 JSON."
 		);
-		const door = await readFile(path.join(campaign, "door.txt"), "utf-8");
-		expect(door.endsWith("\n")).toBe(true);
-		expect(door.trim()).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/?$/u);
-
 		const bytes = await readFile(path.join(campaign, "events.jsonl"));
 		const events = bytes.toString().trim().split("\n").map(JSON.parse);
 		const identity = JSON.parse(
@@ -121,7 +134,7 @@ describe("supervillain create", () => {
 		);
 		expect(dice.total).toBe(dice.rolls[0] + dice.rolls[1] + 1);
 
-		const resumed = await runCli(campaign, config, ["/quit\r"]);
+		const resumed = await runCli(campaign, config, ["/quit\r"], createArgs);
 		expect(resumed.code).toBe(0);
 		expect(await readFile(path.join(campaign, "events.jsonl"))).toEqual(bytes);
 	}, 40_000);

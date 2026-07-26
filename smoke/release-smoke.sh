@@ -74,7 +74,7 @@ watchdog_pid=$!
 
 attempt=0
 while [ "$attempt" -lt 600 ]; do
-	if [ -s "$campaign/door.txt" ] && [ -s "$campaign/events.jsonl" ]; then
+	if [ -s "$campaign/events.jsonl" ] && grep -q "your table is live\." "$transcript"; then
 		break
 	fi
 	if ! kill -0 "$script_pid" 2>/dev/null; then
@@ -85,8 +85,8 @@ while [ "$attempt" -lt 600 ]; do
 	sleep 0.1
 done
 
-if [ ! -s "$campaign/door.txt" ] || [ ! -s "$campaign/events.jsonl" ]; then
-	echo "release smoke: campaign artifacts did not appear" >&2
+if [ ! -s "$campaign/events.jsonl" ] || ! grep -q "your table is live\." "$transcript"; then
+	echo "release smoke: create did not reach a live table" >&2
 	exit 1
 fi
 
@@ -100,4 +100,4 @@ kill "$watchdog_pid" 2>/dev/null || true
 wait "$watchdog_pid" 2>/dev/null || true
 watchdog_pid=
 
-echo "release smoke: door and event log created without bun or node"
+echo "release smoke: table reached and event log created without bun or node"

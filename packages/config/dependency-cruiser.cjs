@@ -95,15 +95,9 @@ module.exports = {
 		},
 		{
 			// The server half is the gateway's: ADR-0012 has the Host dialing out
-			// and the gateway listening, and the render side imports neither half.
-			// apps/cli is a named, temporary exception. #57 inverted the *gateway*
-			// direction — the Host now dials out and the gateway never dials back —
-			// and #63 replaced `supervillain join <url>` with an ordinary SSH
-			// session, so nothing dials the CLI's listener any more. The listener
-			// itself outlived that change only because #63 declared `create` out of
-			// scope; deleting it (and `door.txt` with it) is its own decision, and
-			// this exception goes with it.
-			from: { pathNot: "^(apps/gateway|apps/cli)/" },
+			// and the gateway listening, and every other surface imports only the
+			// client half or neither half. There are no exceptions.
+			from: { pathNot: "^apps/gateway/" },
 			name: "transport-server-half-is-gateway-only",
 			severity: "error",
 			to: {
