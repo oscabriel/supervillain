@@ -59,7 +59,7 @@ import {
 } from "@supervillain/room-wire";
 import type { HostPipe, HostPipeAttachment } from "@supervillain/room-wire";
 import { attachLocalTty } from "@supervillain/session";
-import { createLocalTtyRenderer, runTable } from "@supervillain/table";
+import { createSessionRenderer, runTable } from "@supervillain/table";
 import { DialTimeoutError, openWsDialer } from "@supervillain/transport-ws";
 
 import { runGatewayRole } from "./gateway-role.js";
@@ -957,7 +957,7 @@ const create = async (args: readonly string[]): Promise<number> => {
 	const session = attachLocalTty({ actor });
 	// The surface's half of ADR-0016: this process owns the local TTY, so it
 	// mints the one renderer, lends it to the table, and destroys it after.
-	const renderer = await createLocalTtyRenderer(session);
+	const renderer = await createSessionRenderer(session);
 	try {
 		await runTable({
 			entry,
