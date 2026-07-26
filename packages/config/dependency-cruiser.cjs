@@ -2,6 +2,16 @@
  * unresolved bare-specifier form. */
 const OPENTUI_PACKAGE = "(^|/)node_modules/@opentui/|^@opentui/";
 
+/** Game packages in resolved source-path or unresolved workspace-specifier form. */
+const GAME_PACKAGE = "^packages/games/|^@supervillain/(draw-steel|fake)(/|$)";
+
+/** room-host in resolved source-path or unresolved workspace-specifier form. */
+const ROOM_HOST_PACKAGE = "^packages/room-host/|^@supervillain/room-host$";
+
+/** Backend SQLite drivers in resolved-path or unresolved bare-specifier form. */
+const BACKEND_STORE_DRIVER =
+	"(^|/)node_modules/(drizzle-orm/(bun-sqlite|better-sqlite3|libsql|sqlite-proxy)(/|$)|better-sqlite3(/|$))|^drizzle-orm/(bun-sqlite|better-sqlite3|libsql|sqlite-proxy)$|^better-sqlite3$|^node:sqlite$";
+
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
 	forbidden: [
@@ -9,7 +19,7 @@ module.exports = {
 			from: { path: "^(?!apps/|packages/games/)" },
 			name: "games-only-imported-by-apps",
 			severity: "error",
-			to: { path: "^packages/games/" },
+			to: { path: GAME_PACKAGE },
 		},
 		{
 			// The render side plus one named exception: the gateway's SSH
@@ -33,9 +43,8 @@ module.exports = {
 		{
 			// The gateway's *runtime* admission to OpenTUI is the Door library
 			// and nothing else: the renderer it lends each session is the
-			// library's to create and destroy (ADR-0016). Type-only imports of
-			// `@opentui/core` are erased at compile time and invisible here;
-			// making them visible is #79's tsPreCompilationDeps work.
+			// library's to create and destroy (ADR-0016). Pre-compilation
+			// dependencies are enabled below, so type-only imports cannot bypass it.
 			from: { path: "^apps/gateway/" },
 			name: "gateway-opentui-is-ssh-only",
 			severity: "error",
@@ -55,7 +64,7 @@ module.exports = {
 			name: "gateway-does-not-import-authority",
 			severity: "error",
 			to: {
-				path: "(^|/)authority(\\.ts)?$|(^|/)decide(\\.ts)?$|^packages/room-host/",
+				path: `(^|/)authority(\\.ts)?$|(^|/)decide(\\.ts)?$|${ROOM_HOST_PACKAGE}`,
 			},
 		},
 		{
@@ -82,7 +91,7 @@ module.exports = {
 			from: { path: "^packages/room-wire/" },
 			name: "room-wire-never-imports-room-host",
 			severity: "error",
-			to: { path: "^packages/room-host/" },
+			to: { path: ROOM_HOST_PACKAGE },
 		},
 		{
 			// room-wire owns the transport seam and implements it for nobody
@@ -139,14 +148,13 @@ module.exports = {
 			from: { pathNot: "^apps/web/" },
 			name: "backend-store-drivers-only-in-web",
 			severity: "error",
-			to: {
-				path: "^(drizzle-orm/(bun-sqlite|better-sqlite3|libsql|sqlite-proxy)|better-sqlite3$|node:sqlite$)",
-			},
+			to: { path: BACKEND_STORE_DRIVER },
 		},
 	],
 	options: {
 		doNotFollow: { path: "node_modules" },
 		exclude: { path: "(^|/)(dist|test)/|\\.test\\.ts$" },
 		tsConfig: { fileName: "tsconfig.json" },
+		tsPreCompilationDeps: true,
 	},
 };
