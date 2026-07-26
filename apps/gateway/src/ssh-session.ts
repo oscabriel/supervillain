@@ -10,6 +10,8 @@ import type {
 import { clampPtySize } from "./capacity.js";
 import type { PtySize } from "./capacity.js";
 
+const noOp = (): void => undefined;
+
 /** The slice of an `@opentui/ssh` session the Door adapts — structural, so the
  * session contract stays untyped to the SSH implementation behind it and tests
  * drive it with plain fakes. */
@@ -53,9 +55,8 @@ export const attachDoorConnection = (
 	let closed = false;
 	const resizeListeners = new Set<(next: TerminalSize) => void>();
 	const closeListeners = new Set<() => void>();
-	// Every write goes straight back to the library's session, whose channel
-	// write defers acknowledgement until the peer drains — the Door buffers
-	// nothing of its own, so a slow reader stalls only its own session.
+	// Raw channel writes acknowledge immediately; only renderer frame writes on
+	// the library-owned stdout wait for peer drain. This adapter adds no queue.
 	const output = new Writable({
 		write(chunk: Buffer | string, _encoding, callback) {
 			channel.write(chunk);
@@ -98,6 +99,10 @@ export const attachDoorConnection = (
 		},
 		input: options.input,
 		onClose(listener) {
+			if (closed) {
+				listener();
+				return noOp;
+			}
 			closeListeners.add(listener);
 			return () => closeListeners.delete(listener);
 		},

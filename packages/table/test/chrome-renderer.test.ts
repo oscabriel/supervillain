@@ -1,15 +1,21 @@
 import { describe, expect, test } from "bun:test";
 
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-lane suite. */
-import { RendererControlState } from "@opentui/core";
+import { RendererControlState, TextRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { TestRendererSetup } from "@opentui/core/testing";
 import { CORE_CHAT_POSTED } from "@supervillain/core";
-import type { Envelope, RoomStore, ViewEntry } from "@supervillain/core";
+import type {
+	Envelope,
+	RoomStore,
+	RoomSubmission,
+	ViewEntry,
+} from "@supervillain/core";
 import type { Session, TerminalSize } from "@supervillain/session";
 
 import { runChrome } from "../src/chrome.js";
 import type { TableHold } from "../src/index.js";
+import { runLobby } from "../src/lobby.js";
 
 const ACTOR = "actor-key";
 
@@ -220,6 +226,77 @@ describe("table renderer injection", () => {
 		// lifetime (ADR-0016), and the next screen finds the root clean.
 		expect(setup.renderer.isDestroyed).toBe(false);
 		expect(setup.renderer.root.getChildren()).toHaveLength(0);
+		setup.renderer.destroy();
+	});
+
+	test("a slow submission completing after quit cannot write to the destroyed tree", async () => {
+		const setup = await createTestRenderer({ height: 12, width: 60 });
+		const probe = fakeSession();
+		const stream = fakeStore();
+		let submissions = 0;
+		let resolveSubmission: ((result: RoomSubmission) => void) | undefined;
+		// oxlint-disable-next-line promise/avoid-new -- the test controls this completion across the screen boundary.
+		const submitted = new Promise<RoomSubmission>((resolve) => {
+			resolveSubmission = resolve;
+		});
+		const store: RoomStore = {
+			stream: stream.store.stream,
+			submit: () => {
+				submissions += 1;
+				return submitted;
+			},
+		};
+		const { exited } = await mountTable(setup, probe, store);
+		const screenRoot = setup.renderer.root.getChildren().at(0);
+		if (screenRoot === undefined || !("getChildren" in screenRoot)) {
+			throw new Error("table screen root was not mounted");
+		}
+		const status = screenRoot.getChildren().at(2);
+		if (!(status instanceof TextRenderable)) {
+			throw new Error("table status line was not mounted");
+		}
+
+		await setup.mockInput.typeText("hello");
+		setup.mockInput.pressEnter();
+		expect(submissions).toBe(1);
+		await setup.mockInput.typeText("/quit");
+		setup.mockInput.pressEnter();
+		await exited;
+		expect(setup.renderer.root.getChildren()).toHaveLength(0);
+
+		resolveSubmission?.({ message: "late rejection", rejected: true });
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(status.chunks.map((chunk) => chunk.text).join("")).not.toContain(
+			"late rejection"
+		);
+		expect(setup.renderer.root.getChildren()).toHaveLength(0);
+		setup.renderer.destroy();
+	});
+
+	test("one renderer releases key listeners across a real lobby and table", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const baseline = setup.renderer.keyInput.listenerCount("keypress");
+		const lobby = runLobby({
+			connection: probe.session,
+			keyed: true,
+			renderer: setup.renderer,
+			sshHost: "supervillain.app",
+		});
+		await setup.waitForFrame((frame) => frame.includes("join a room"));
+		setup.mockInput.pressEnter();
+		await setup.waitForFrame((frame) => frame.includes("type the name"));
+		await setup.mockInput.typeText("gloomhold");
+		setup.mockInput.pressEnter();
+		expect(await lobby).toEqual({ kind: "join", roomName: "gloomhold" });
+		expect(setup.renderer.keyInput.listenerCount("keypress")).toBe(baseline);
+
+		const store = fakeStore();
+		const { exited } = await mountTable(setup, probe, store.store);
+		probe.session.close();
+		await exited;
+		expect(setup.renderer.keyInput.listenerCount("keypress")).toBe(baseline);
 		setup.renderer.destroy();
 	});
 

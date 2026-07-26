@@ -41,8 +41,8 @@ export interface CapacityLimits {
 	 * lobby; the seats already at the table are untouched. */
 	readonly sessionsPerRoom: number;
 	/** Envelopes one session may fall behind before the fold drops its view —
-	 * the per-session output budget of NQ-5. It catches a seat whose *consumer*
-	 * is slow. The socket-side byte half of R9's output budget is
+	 * the per-session envelope-lag budget of NQ-5. It catches a seat whose
+	 * *consumer* is slow. The socket-side byte half of R9's output budget is
 	 * `@opentui/ssh`'s now: its channel writes defer acknowledgement until the
 	 * peer drains, so a dead reader parks its own frame feed instead of growing
 	 * a buffer (#62). */

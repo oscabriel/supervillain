@@ -158,7 +158,7 @@ export interface GatewayOptions {
 	 * (ADR-0008). Defaults are floors against squatting, not capacity policy. */
 	readonly lobbyLimits?: LobbyLimits;
 	/** The protective caps of ADR-0012 (NQ-10) and the PTY cap (NQ-14): rooms
-	 * per identity, sessions per Room, the per-session output budget, and the
+	 * per identity, sessions per Room, the per-session envelope-lag budget, and the
 	 * rendered terminal ceiling. Ops-tunable — `serveGateway` reads them from
 	 * the environment. Defaults are the R9 benchmark's chosen numbers. */
 	readonly capacity?: CapacityLimits;
@@ -408,7 +408,7 @@ const enterRoom = async (
 		const store = live.openStore();
 		const hold = holdRoom({
 			attached: live,
-			// The envelope half of the per-session output budget: a view that fell
+			// The envelope half of the per-session envelope-lag budget: a view that fell
 			// behind is dropped, and it is one seat's problem alone. The byte half
 			// is `@opentui/ssh`'s now — its channel writes wait for the peer to
 			// drain, so a client that stops reading parks its own frame feed
@@ -450,6 +450,7 @@ const enterRoom = async (
 };
 
 const LOBBY_FAREWELL = "the gate closes behind you.";
+const TABLE_COLLAPSED_MESSAGE = "The table collapsed. Try again.";
 
 /** What happens after one visit to the lobby: hold it again (with whatever
  * notice the attempted room entry produced), or close the door with a
@@ -585,7 +586,7 @@ const shellRounds = async (
 
 /** The slice of a live `@opentui/ssh` session the shell handler drives —
  * structural, so the handler stays testable without a real SSH connection. */
-interface DoorSession {
+export interface DoorSession {
 	readonly cols: number;
 	readonly rows: number;
 	readonly write: (data: Buffer | string) => void;
@@ -597,7 +598,7 @@ interface DoorSession {
 	readonly renderer: CliRenderer;
 }
 
-const serveShell = async (
+export const serveShell = async (
 	ssh: DoorSession,
 	options: {
 		readonly roomName: string;
@@ -605,28 +606,26 @@ const serveShell = async (
 		readonly identity: SessionIdentity;
 		readonly sshHost: string;
 		readonly limits: LobbyLimits;
-	}
+	},
+	runRounds: typeof shellRounds = shellRounds
 ): Promise<void> => {
 	const cap = options.rooms.limits.pty;
 	const asked = { columns: ssh.cols, rows: ssh.rows };
-	// The production PTY cap (ADR-0012, NQ-14): the library sized the renderer
-	// to the client's own PTY, clamped at its 500x200 ceiling; bring it down to
-	// the R9-gated cap before anything draws. Every cell above the cap is
-	// per-session gateway cost, which is the whole reason the cap exists.
+	// The production PTY cap (ADR-0012, NQ-14): the library first sizes the
+	// renderer to the client's PTY, clamped at its own 500x200 ceiling. Bring it
+	// down before anything draws, then re-apply the R9-gated cap after every
+	// library resize. Every cell above the cap is per-session gateway cost.
 	const capped = clampPtySize(asked, cap);
 	ssh.renderer.resize(capped.columns, capped.rows);
+	const detachRecap = ssh.onResize((columns, rows) => {
+		const resized = clampPtySize({ columns, rows }, cap);
+		ssh.renderer.resize(resized.columns, resized.rows);
+	});
 	const door: DoorIo = {
 		input: ssh.renderer.stdin,
 		onClose: (listener) => ssh.onClose(listener),
 		write: (data) => ssh.write(data),
 	};
-	if (isOversizedPty(asked, cap)) {
-		// Said before anything is drawn — the alt-screen is up but still blank,
-		// and nothing may paint over it until the keypress: the capped render is
-		// honest about being capped (NQ-14).
-		ssh.write(oversizedTerminalNotice(asked, cap));
-		await awaitKeypress(door);
-	}
 	const connection = attachDoorConnection({
 		cap,
 		channel: ssh,
@@ -651,16 +650,27 @@ const serveShell = async (
 					ssh.end();
 				});
 	try {
-		const goodbye = await shellRounds(connection, door, ssh.renderer, options);
+		if (isOversizedPty(asked, cap)) {
+			// Said before anything is drawn — the alt-screen is up but still blank,
+			// and nothing may paint over it until the keypress: the capped render is
+			// honest about being capped (NQ-14).
+			ssh.write(oversizedTerminalNotice(asked, cap));
+			await awaitKeypress(door);
+		}
+		const goodbye = await runRounds(connection, door, ssh.renderer, options);
 		if (goodbye !== undefined) {
 			// Written before the session ends, so it rides the channel ahead of
 			// the teardown's screen restore; the library then drains, sends an
 			// explicit exit status, and closes the channel in order.
 			ssh.write(`${goodbye}\r\n`);
 		}
+	} catch (error) {
+		ssh.write(`${TABLE_COLLAPSED_MESSAGE}\r\n`);
+		throw error;
 	} finally {
 		release?.();
 		connection.close();
+		detachRecap();
 		ssh.end();
 	}
 };
