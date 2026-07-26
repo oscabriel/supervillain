@@ -223,8 +223,19 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	const feed = new ScrollBoxRenderable(renderer, {
 		flexGrow: 1,
 		rootOptions: { flexGrow: 1 },
+		scrollbarOptions: {
+			arrowOptions: { foregroundColor: resolveThemeToken("primary") },
+			trackOptions: {
+				backgroundColor: resolveThemeToken("muted"),
+				foregroundColor: resolveThemeToken("primary"),
+			},
+		},
 	});
-	const feedText = new TextRenderable(renderer, { content: "", width: "100%" });
+	const feedText = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("primary"),
+		width: "100%",
+	});
 	feed.add(feedText);
 	const sidebar = new BoxRenderable(renderer, {
 		flexDirection: "column",
@@ -232,6 +243,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	});
 	const sidebarText = new TextRenderable(renderer, {
 		content: "",
+		fg: resolveThemeToken("primary"),
 		width: "100%",
 	});
 	sidebar.add(sidebarText);
@@ -242,6 +254,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	});
 	const input = new InputRenderable(renderer, {
 		cursorColor: resolveThemeToken("accent"),
+		focusedTextColor: resolveThemeToken("primary"),
 		maxLength: 1100,
 		placeholder: "Message, /roll NdS+M, /map load <name>, /token place <glyph>",
 		placeholderColor: resolveThemeToken("muted"),
@@ -255,8 +268,16 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		flexShrink: 0,
 		visible: false,
 	});
-	const mapTitle = new TextRenderable(renderer, { content: "", height: 1 });
-	const mapStatus = new TextRenderable(renderer, { content: "", height: 1 });
+	const mapTitle = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("primary"),
+		height: 1,
+	});
+	const mapStatus = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("primary"),
+		height: 1,
+	});
 	// The click handler is wired once the cursor state below exists; until then
 	// a click is simply ignored, which is exactly what click promises anyway.
 	let onMapClick: (cell: MapCursor) => void = ignoreClick;

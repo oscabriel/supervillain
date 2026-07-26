@@ -193,9 +193,9 @@ describe("the chrome map region", () => {
 
 /**
  * A renderer whose whole terminal *is* the map region, over an in-memory pipe
- * that records every byte written to it. Isolating the surface is the point:
- * the claim under test is about the colors the map region puts on the wire, not
- * about the defaults OpenTUI's own widgets paint elsewhere in the chrome.
+ * that records every byte written to it. This suite covers every map cell;
+ * `chrome-renderer.test.ts` mounts the complementary non-map chrome, including
+ * an overflowing feed whose OpenTUI scrollbar paints on the wire.
  */
 const nextFrame = async (renderer: CliRenderer): Promise<void> => {
 	const listeners = new AbortController();
