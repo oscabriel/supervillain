@@ -4,6 +4,13 @@ import type { Session } from "@supervillain/session";
 
 import { runChrome } from "./chrome.js";
 
+export {
+	createTableCheckpointProducer,
+	TABLE_CHECKPOINT_FEED_LINES,
+	TABLE_CHECKPOINT_VERSION,
+} from "./checkpoint.js";
+export type { TableCheckpointPayload } from "./checkpoint.js";
+
 /**
  * What holds a table open, and what ends it from outside the terminal. The
  * gateway uses it for ADR-0012's grace window: when the Host goes offline the

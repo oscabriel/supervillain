@@ -23,7 +23,7 @@ import type {
 	RoomViewReservation,
 } from "@supervillain/room-wire";
 import type { TerminalConnection } from "@supervillain/session";
-import { runTable } from "@supervillain/table";
+import { createTableCheckpointProducer, runTable } from "@supervillain/table";
 import type { TableHold } from "@supervillain/table";
 import { runLobby } from "@supervillain/table/lobby";
 import type { LobbyNotice, LobbyOutcome } from "@supervillain/table/lobby";
@@ -829,6 +829,14 @@ export const startGateway = async (
 	// The Host dials in; the gateway never dials a Host (ADR-0012). The Door
 	// descriptor must carry the OS-assigned port when this process bound zero.
 	const pipes = serveHostPipes({
+		checkpoint: {
+			create: (info) => {
+				const entry = gatewayRegistry.get(info.gameId);
+				return entry === undefined
+					? undefined
+					: createTableCheckpointProducer(entry, info.gameId);
+			},
+		},
 		door: { sshHost: options.sshHost, sshPort: sshListen.port },
 		// The key-equivalence graph reaches the broker as an injected interface,
 		// never a driver: `room-wire` compiles and tests under Node too (NQ-12).

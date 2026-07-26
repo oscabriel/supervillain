@@ -28,6 +28,7 @@ import type {
 	MapToken,
 	NamespacedType,
 	SeatClaimedPayload,
+	SeatView,
 	TableView,
 	TokenFold,
 	ViewEntry,
@@ -42,8 +43,21 @@ export interface FoldSkip {
 	readonly reason: string;
 }
 
+export interface TableFoldCheckpoint<S> {
+	readonly actorClasses: readonly (readonly string[])[];
+	readonly actors: readonly string[];
+	readonly game: Readonly<S>;
+	readonly map: BattleMap | null;
+	readonly seats: readonly SeatView[];
+	readonly skips: readonly FoldSkip[];
+	readonly tokens: readonly MapToken[];
+}
+
 export interface TableFold<S> {
 	readonly apply: (envelope: Envelope) => FeedLine | null;
+	/** Captures the reader-derived state needed to continue this fold without
+	 * replaying its prefix. The session actor is overlaid on restore. */
+	readonly checkpoint: () => TableFoldCheckpoint<S>;
 	readonly state: () => Readonly<S>;
 	readonly actorLabel: (actor: string) => string;
 	/** Whether two actor strings name the same person, through the linking
@@ -118,23 +132,53 @@ const isDiceRolled = (payload: unknown): payload is DiceRolledPayload =>
 export const createTableFold = <S, C, E>(
 	entry: ViewEntry<S, C, E>,
 	gameId: string,
-	actor: string
+	actor: string,
+	restored?: TableFoldCheckpoint<S>
 ): TableFold<S> => {
-	let game = entry.model.init();
-	let map: BattleMap | null = null;
-	let tokens: readonly MapToken[] = [];
+	let game =
+		restored === undefined
+			? entry.model.init()
+			: structuredClone(restored.game as S);
+	let map =
+		restored === undefined
+			? null
+			: (structuredClone(restored.map) satisfies BattleMap | null);
+	let tokens: readonly MapToken[] =
+		restored === undefined ? [] : structuredClone(restored.tokens);
 	let replaying = true;
-	const skips: FoldSkip[] = [];
+	const skips: FoldSkip[] =
+		restored === undefined ? [] : [...structuredClone(restored.skips)];
 	const seats: {
 		actor: string;
 		characterId: string | null;
 		id: string;
-	}[] = [];
+	}[] =
+		restored === undefined
+			? []
+			: restored.seats.map((seat) => ({
+					actor: seat.actor ?? "",
+					characterId: seat.characterId,
+					id: seat.id,
+				}));
 	const table: TableView = { actor, gmSeatId: "gm", seats };
 	// This log's slice of the key-equivalence graph. It is what makes a
 	// historical `guest:X` line reachable after adoption: the envelope keeps
 	// its original actor forever, the union answers who that is now.
 	const links = createActorLinks();
+	if (restored !== undefined) {
+		for (const remembered of restored.actors) {
+			links.remember(remembered);
+		}
+		for (const actorClass of restored.actorClasses) {
+			const [representative, ...members] = actorClass;
+			if (representative === undefined) {
+				continue;
+			}
+			for (const member of members) {
+				links.link(representative, member);
+			}
+		}
+	}
 	const sameActor = (left: string, right: string): boolean =>
 		links.same(left, right);
 	const seatFor = (
@@ -340,6 +384,27 @@ export const createTableFold = <S, C, E>(
 			// Unknown game types fall out here: the module's own apply and
 			// renderEvent skip what its grammar does not recognize.
 			return entry.view.renderEvent(event, game);
+		},
+		checkpoint() {
+			const classKeys = new Set<string>();
+			const actorClasses: string[][] = [];
+			for (const remembered of links.actors()) {
+				const members = links.members(remembered);
+				const key = members.toSorted().join("\u0000");
+				if (!classKeys.has(key)) {
+					classKeys.add(key);
+					actorClasses.push([...members]);
+				}
+			}
+			return {
+				actorClasses,
+				actors: links.actors(),
+				game: structuredClone(game),
+				map: structuredClone(map),
+				seats: structuredClone(seats),
+				skips: structuredClone(skips),
+				tokens: structuredClone(tokens),
+			};
 		},
 		endReplay() {
 			if (!replaying) {

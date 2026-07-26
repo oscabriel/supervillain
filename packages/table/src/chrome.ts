@@ -21,6 +21,7 @@ import type {
 	ViewEntry,
 } from "@supervillain/core";
 
+import { readTableCheckpoint } from "./checkpoint.js";
 import { createTableFold } from "./fold.js";
 import type { TableOptions } from "./index.js";
 import { parseInput } from "./input.js";
@@ -195,12 +196,21 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	// this screen.
 	const onRendererDestroy = (): void => settle();
 	renderer.on(CliRenderEvents.DESTROY, onRendererDestroy);
+	const replay = await options.store.replay?.();
+	const checkpoint =
+		replay?.checkpoint === undefined
+			? undefined
+			: readTableCheckpoint(replay.checkpoint.payload);
 	const fold = createTableFold(
 		options.entry as ViewEntry<unknown, unknown, unknown>,
 		options.gameId,
-		options.session.actor
+		options.session.actor,
+		checkpoint?.fold
 	);
-	const lines = initialFeedLines(options.entry.view.notices);
+	const lines = [
+		...initialFeedLines(options.entry.view.notices),
+		...(checkpoint?.feed ?? []),
+	];
 	const panels = options.entry.view.createPanels();
 	const root = new BoxRenderable(renderer, {
 		flexDirection: "column",
@@ -628,34 +638,56 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	renderMap();
 	input.focus();
 
-	const iterator = options.store.stream(1)[Symbol.asyncIterator]();
-	const showFeed = (line: FeedLine | null): void => {
+	const iterator = (replay?.stream ?? options.store.stream(1))[
+		Symbol.asyncIterator
+	]();
+	const renderFold = (): void => {
 		// The stream can hand over one more envelope after this screen exited;
 		// drawing on a detached tree (or a renderer the surface already tore
 		// down) throws out of the loop instead of ending it.
 		if (done || renderer.isDestroyed) {
 			return;
 		}
-		if (line !== null) {
-			lines.push(line);
-		}
 		feedText.content = feedContent(lines);
 		feed.scrollTo({ x: 0, y: Number.MAX_SAFE_INTEGER });
 		renderSidebar();
 		renderMap();
 	};
+	const showFeed = (line: FeedLine | null): void => {
+		if (line !== null) {
+			lines.push(line);
+		}
+		renderFold();
+	};
 	void (async () => {
+		const batchInitialReplay = replay !== undefined;
+		const replayThroughSeq = replay?.throughSeq;
 		let replaying = true;
 		let pending: Promise<IteratorResult<Envelope>> | null = null;
+		const finishReplay = (): void => {
+			if (!replaying) {
+				return;
+			}
+			replaying = false;
+			const warning = fold.endReplay();
+			if (warning !== null) {
+				lines.push(warning);
+			}
+			// Initial replay is one projection update, not one redraw per Envelope.
+			// The latter made join CPU grow quadratically with history length.
+			renderFold();
+		};
+		if (replayThroughSeq === 0) {
+			finishReplay();
+		}
 		// oxlint-disable-next-line eslint/no-unmodified-loop-condition -- `settle` flips `done` from the exit paths that run between this loop's awaits.
 		while (!done) {
 			pending ??= iterator.next();
-			if (replaying) {
-				// oxlint-disable-next-line eslint/no-await-in-loop -- the replay boundary is the first quiet gap in this stream, which only sequential waiting can see.
+			if (replaying && !batchInitialReplay) {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- legacy stores expose no boundary; their replay ends at the first quiet gap.
 				const arrived = await arrivesBeforeQuiet(pending);
 				if (!arrived) {
-					replaying = false;
-					showFeed(fold.endReplay());
+					finishReplay();
 					continue;
 				}
 			}
@@ -663,9 +695,24 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			const next = await pending;
 			pending = null;
 			if (next.done || done) {
+				finishReplay();
 				break;
 			}
-			showFeed(fold.apply(next.value));
+			const line = fold.apply(next.value);
+			if (replaying && batchInitialReplay) {
+				if (line !== null) {
+					lines.push(line);
+				}
+			} else {
+				showFeed(line);
+			}
+			if (
+				replaying &&
+				replayThroughSeq !== undefined &&
+				next.value.seq >= replayThroughSeq
+			) {
+				finishReplay();
+			}
 		}
 	})();
 	await exited;

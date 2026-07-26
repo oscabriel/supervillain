@@ -134,12 +134,31 @@ describe("the gateway holds game state in memory and nowhere else", () => {
 			path: path.join(folder, "registry.db"),
 		});
 		const pipes = serveHostPipes({
+			checkpoint: {
+				create: () => {
+					let derived = "";
+					return {
+						apply: (next) => {
+							const payload = next.payload as { readonly text?: unknown };
+							if (derived === "" && typeof payload.text === "string") {
+								derived = payload.text;
+							}
+						},
+						capture: () => ({ derived }),
+					};
+				},
+			},
 			door: DOOR,
 			listener,
 			onEvent: (event) => events.push(event),
 			ownership: registry,
 		});
-		const store = new FakeRoomStore([envelope(1, GAME_CONTENT)]);
+		const store = new FakeRoomStore([
+			envelope(1, GAME_CONTENT),
+			...Array.from({ length: 513 }, (_, index) =>
+				envelope(index + 2, "ordinary-room-content")
+			),
+		]);
 		const host = openHostPipe({
 			dialer: openWsDialer({
 				secretKeyHex: await secretKeyIn(folder),
@@ -158,20 +177,29 @@ describe("the gateway holds game state in memory and nowhere else", () => {
 			return true;
 		}) as typeof process.stdout.write;
 		try {
-			const view = pipes.live("keep")?.openStore();
-			if (view === undefined) {
+			const starter = pipes.live("keep")?.openStore();
+			if (starter === undefined) {
 				throw new Error("no live room");
 			}
-			const reader = view.stream(1)[Symbol.asyncIterator]();
-			expect(await valueOf(reader.next())).toMatchObject({
-				payload: { text: GAME_CONTENT },
+			const reader = starter.stream(1)[Symbol.asyncIterator]();
+			for (let seq = 1; seq <= 514; seq += 1) {
+				expect(await valueOf(reader.next())).toMatchObject({ seq });
+			}
+			const late = pipes.live("keep")?.openStore();
+			if (late === undefined) {
+				throw new Error("no live room");
+			}
+			const replay = await late.replay();
+			expect(replay.checkpoint).toMatchObject({
+				payload: { derived: GAME_CONTENT },
+				throughSeq: 2,
 			});
-			await view.submit({
+			await late.submit({
 				actor: "guest:abcdef123456",
-				command: { text: GAME_CONTENT, type: "core.chat" },
+				command: { text: "ordinary-room-content", type: "core.chat" },
 			});
-			expect(await valueOf(reader.next())).toMatchObject({ seq: 2 });
-			await view.close();
+			await starter.close();
+			await late.close();
 		} finally {
 			process.stdout.write = write;
 		}

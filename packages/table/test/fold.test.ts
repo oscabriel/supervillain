@@ -3,6 +3,10 @@ import { describe, expect, test } from "bun:test";
 
 import type { Envelope, ViewEntry } from "@supervillain/core";
 
+import {
+	createTableCheckpointProducer,
+	readTableCheckpoint,
+} from "../src/checkpoint.js";
 import { createTableFold } from "../src/fold.js";
 
 interface State {
@@ -38,6 +42,98 @@ const envelope = (
 ): Envelope => ({ actor, payload, seq, timestamp: "now", type });
 
 describe("createTableFold", () => {
+	test("checkpoint plus tail is exactly equivalent to full replay", () => {
+		const log = [
+			envelope("core.room-created", { gameId: "game" }, "gm-key", 1),
+			envelope(
+				"core.seat-claimed",
+				{ seatId: "player-1" },
+				"guest:abcdef123456",
+				2
+			),
+			envelope(
+				"core.actor-linked",
+				{ linked: "guest:abcdef123456" },
+				"player-key",
+				3
+			),
+			envelope("game.counted", { count: 4 }, "player-key", 4),
+			envelope(
+				"core.map-loaded",
+				{ legend: { ".": "floor" }, name: "Hall", rows: ["..", ".."] },
+				"gm-key",
+				5
+			),
+			envelope(
+				"core.token-placed",
+				{
+					glyph: "@",
+					id: "hero",
+					label: "Hero",
+					seatId: "player-1",
+					x: 1,
+					y: 1,
+				},
+				"gm-key",
+				6
+			),
+			envelope(
+				"core.character-bound",
+				{ characterId: "missing", seatId: "unknown" },
+				"gm-key",
+				7
+			),
+			envelope(
+				"core.chat-posted",
+				{ text: "still here" },
+				"guest:abcdef123456",
+				8
+			),
+		] as const;
+		const full = createTableFold(entry, "game", "player-key");
+		const fullFeed = log.flatMap((next) => {
+			const line = full.apply(next);
+			return line === null ? [] : [line];
+		});
+		const fullWarning = full.endReplay();
+		if (fullWarning !== null) {
+			fullFeed.push(fullWarning);
+		}
+
+		const producer = createTableCheckpointProducer(entry, "game");
+		for (const next of log.slice(0, 5)) {
+			producer.apply(next);
+		}
+		const checkpoint = readTableCheckpoint<State>(producer.capture());
+		const restored = createTableFold(
+			entry,
+			"game",
+			"player-key",
+			checkpoint.fold
+		);
+		const checkpointFeed = [...checkpoint.feed];
+		for (const next of log.slice(5)) {
+			const line = restored.apply(next);
+			if (line !== null) {
+				checkpointFeed.push(line);
+			}
+		}
+		const checkpointWarning = restored.endReplay();
+		if (checkpointWarning !== null) {
+			checkpointFeed.push(checkpointWarning);
+		}
+
+		expect(checkpointFeed).toEqual(fullFeed);
+		expect(restored.state()).toEqual(full.state());
+		expect(restored.table()).toEqual(full.table());
+		expect(restored.map()).toEqual(full.map());
+		expect(restored.tokens()).toEqual(full.tokens());
+		expect(restored.skips()).toEqual(full.skips());
+		expect(restored.sameActor("guest:abcdef123456", "player-key")).toBe(
+			full.sameActor("guest:abcdef123456", "player-key")
+		);
+	});
+
 	test("derives seats, renders their feed line, and uses live actor labels", () => {
 		const fold = createTableFold(entry, "game", "viewer-key");
 		expect(fold.table()).toEqual({

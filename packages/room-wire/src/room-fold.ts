@@ -1,36 +1,41 @@
 /* oxlint-disable promise/avoid-new -- a reader parked on the next envelope is an event, not a promise-returning API. */
 /**
  * The gateway's per-Room fold and the per-session views over it (ADR-0012,
- * NQ-5). One Room, one upstream feed: the fold reads the Host's stream as fast
- * as the Host writes it and holds the envelopes in memory, and every session
- * reads that one history through its own cursor.
+ * NQ-5; ADR-0018). One Room, one upstream feed: the fold reads the Host's
+ * stream as fast as the Host writes it, derives one optional checkpoint, and
+ * holds only a bounded contiguous Envelope tail for every session.
  *
- * The isolation this exists for: a session that stops reading falls behind its
- * own cursor and nobody else's. When its lag passes its budget the fold drops
- * that view — the Room keeps folding, the fast readers keep up, and the Host
- * pipe never blocks. That is what pays for multiplexing every Room over one
- * connection.
- *
- * Memory only (NQ-11). The history, the cursors, and the cached room info live
- * here and touch no disk, no DB, and no log line. A gateway restart loses live
- * sessions and nothing else.
+ * Memory only (NQ-11). Checkpoint, tail, cursors, and cached room info live
+ * here and touch no disk, DB, or log line. A gateway restart or Room detach
+ * discards all of them.
  */
-import type { Envelope, RoomCommand, RoomSubmission } from "@supervillain/core";
+import type {
+	Envelope,
+	RoomCheckpointProducer,
+	RoomCommand,
+	RoomReplay,
+	RoomSubmission,
+} from "@supervillain/core";
 
 import type { RoomInfo } from "./messages.js";
 import { mintSubmissionId } from "./submissions.js";
 
-/**
- * How many envelopes a session may fall behind before the fold drops its view.
- * A cost ceiling and an abuse floor, not capacity policy: the number is
- * R9-gated (ADR-0012, NQ-10), the isolation it buys is the decision.
- */
+/** How many Envelopes a session may fall behind before only its view drops. */
 export const DEFAULT_SESSION_BUDGET = 512;
+
+/** The raw contiguous tail kept after the shared checkpoint (ADR-0018). */
+export const DEFAULT_FOLD_TAIL = 512;
+
+/** The upstream stream has no backlog marker. A quiet loopback gap this wide
+ * means the fold has caught the Host's current end before a replay cursor is
+ * captured; ordinary human-paced live events naturally leave a wider gap. */
+const CHECKPOINT_QUIET_MS = 25;
 
 /** A RoomStore reached across a pipe, plus the room's identity card. */
 export interface PipeRoomStore {
 	readonly submit: (command: RoomCommand) => Promise<RoomSubmission>;
 	readonly stream: (fromSeq: number) => AsyncIterable<Envelope>;
+	readonly replay: () => Promise<RoomReplay>;
 	readonly info: () => Promise<RoomInfo>;
 	readonly close: () => Promise<void>;
 }
@@ -50,8 +55,7 @@ export interface RoomViewReservation {
 	readonly release: () => void;
 }
 
-/** One session's own request/response channel to the Host. Opened per view, so
- * a slow answer delays that seat's next command and nobody else's. */
+/** One session's own request/response channel to the Host. */
 export interface RoomSubmitChannel {
 	readonly send: (
 		command: RoomCommand,
@@ -75,10 +79,19 @@ export type RoomFoldEvent =
 	| { readonly kind: "view-dropped"; readonly views: number }
 	| { readonly kind: "view-opened"; readonly views: number };
 
+export interface RoomFoldCheckpointOptions {
+	/** Created from Room metadata at the composition root; `room-wire` never
+	 * interprets the producer's game/table-owned payload. */
+	readonly create: (info: RoomInfo) => RoomCheckpointProducer | undefined;
+	/** Must be at least the session lag budget. Default 512 (ADR-0018). */
+	readonly tail?: number;
+}
+
 export interface RoomFoldOptions {
 	readonly source: RoomFoldSource;
 	/** Envelopes one view may lag by. Default {@link DEFAULT_SESSION_BUDGET}. */
 	readonly sessionBudget?: number;
+	readonly checkpoint?: RoomFoldCheckpointOptions;
 	readonly onEvent?: (event: RoomFoldEvent) => void;
 }
 
@@ -88,21 +101,19 @@ export interface RoomFold {
 	 * nothing; a successful reservation must be opened or released. */
 	readonly reserveView: (capacity: number) => RoomViewReservation | undefined;
 	readonly views: () => number;
-	/** Envelopes this fold holds — in memory, and nowhere else. */
+	/** Raw Envelopes this fold currently holds; checkpoint state is separate. */
 	readonly length: () => number;
 	readonly close: () => Promise<void>;
 }
 
 interface FoldReader {
-	/** Index into the shared history this reader has not yet handed over. */
-	next: number;
+	/** The next Log sequence this reader has not yet received. */
+	nextSeq: number;
 	dropped: boolean;
 	readonly onDrop: () => void;
 	wake: (() => void) | undefined;
 }
 
-/** A one-shot signal. Nothing here rejects: a dropped seat is a fact, not a
- * failure of this fold. */
 interface FoldSignal {
 	readonly fired: Promise<void>;
 	readonly fire: () => void;
@@ -116,32 +127,79 @@ const createSignal = (): FoldSignal => {
 	return { fire: () => fire?.(), fired };
 };
 
-/** Resumes a reader parked on the next envelope. */
 const wake = (reader: FoldReader): void => {
 	const resume = reader.wake;
 	reader.wake = undefined;
 	resume?.();
 };
 
+const positiveSafeInteger = (value: number, name: string): void => {
+	if (!Number.isSafeInteger(value) || value < 1) {
+		throw new RangeError(`${name} must be a positive safe integer.`);
+	}
+};
+
 export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 	const budget = options.sessionBudget ?? DEFAULT_SESSION_BUDGET;
+	const tailCapacity = options.checkpoint?.tail ?? DEFAULT_FOLD_TAIL;
+	positiveSafeInteger(budget, "sessionBudget");
+	if (options.checkpoint !== undefined) {
+		positiveSafeInteger(tailCapacity, "checkpoint tail");
+		if (tailCapacity < budget) {
+			throw new RangeError(
+				"checkpoint tail must be at least the session budget."
+			);
+		}
+	}
 	const onEvent = options.onEvent ?? ((): void => undefined);
 	const history: Envelope[] = [];
 	const readers = new Set<FoldReader>();
 	const reservations = new Set<{ held: boolean }>();
+	let producer: RoomCheckpointProducer | undefined;
+	let compactedThrough = 0;
+	let latestSeq = 0;
+	let revision = 0;
+	const initialized = Promise.withResolvers<boolean>();
+	let checkpointInvalid = false;
 	let openViews = 0;
 	let feedEnded = false;
 	let closed = false;
 	let reading = false;
 	let info: Promise<RoomInfo> | undefined;
 
+	const historyStartSeq = (): number => history[0]?.seq ?? compactedThrough + 1;
+
 	const append = (envelope: Envelope): void => {
+		if (envelope.seq !== latestSeq + 1) {
+			checkpointInvalid = true;
+			throw new Error("Room fold stream sequence is not contiguous.");
+		}
 		history.push(envelope);
+		latestSeq = envelope.seq;
+		revision += 1;
 		for (const reader of readers) {
-			if (!reader.dropped && history.length - reader.next > budget) {
+			const lag = latestSeq - reader.nextSeq + 1;
+			if (!reader.dropped && lag > budget) {
 				reader.dropped = true;
 				reader.onDrop();
 			}
+		}
+		if (producer !== undefined && history.length > tailCapacity) {
+			const [oldest] = history;
+			if (oldest !== undefined) {
+				try {
+					producer.apply(oldest);
+				} catch (error) {
+					checkpointInvalid = true;
+					throw new Error("Room fold checkpoint producer failed.", {
+						cause: error,
+					});
+				}
+				history.shift();
+				compactedThrough = oldest.seq;
+			}
+		}
+		for (const reader of readers) {
 			wake(reader);
 		}
 	};
@@ -153,20 +211,41 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 		}
 	};
 
-	/** The one reader of the Host's feed. It never waits on a session: a view
-	 * that cannot keep up is dropped, and this loop keeps folding. */
+	const askInfo = async (): Promise<RoomInfo> => {
+		try {
+			return await options.source.info();
+		} catch (error) {
+			info = undefined;
+			throw error;
+		}
+	};
+	const roomInfo = (): Promise<RoomInfo> => (info ??= askInfo());
+
+	/** The one reader of the Host's feed. It never waits on a session. */
 	const read = async (): Promise<void> => {
 		try {
-			for await (const envelope of options.source.stream(history.length + 1)) {
+			if (options.checkpoint !== undefined) {
+				const identified = await roomInfo();
+				if (closed) {
+					return;
+				}
+				producer = options.checkpoint.create(identified);
+			}
+			if (closed) {
+				return;
+			}
+			initialized.resolve(true);
+			for await (const envelope of options.source.stream(1)) {
 				if (closed) {
 					return;
 				}
 				append(envelope);
 			}
 		} catch {
-			// The Room's feed ended — a dead pipe, or a Host that stopped serving
-			// it. Every view sees the same end, and none of them re-dials.
+			// A dead pipe or invalid checkpoint ends this derived fold. The Host
+			// remains the source from which a replacement attachment rebuilds.
 		} finally {
+			initialized.resolve(true);
 			endFeed();
 			onEvent({ kind: "feed-ended" });
 		}
@@ -180,18 +259,6 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 		void read();
 	};
 
-	const askInfo = async (): Promise<RoomInfo> => {
-		try {
-			return await options.source.info();
-		} catch (error) {
-			// A failed ask is not an answer: the next view may ask again.
-			info = undefined;
-			throw error;
-		}
-	};
-
-	const roomInfo = (): Promise<RoomInfo> => (info ??= askInfo());
-
 	const openView = (): RoomView => {
 		const channel = options.source.openSubmit();
 		const dropped = createSignal();
@@ -202,12 +269,16 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 		onEvent({ kind: "view-opened", views: openViews });
 		startReading();
 
-		const readFrom = async function* readFrom(
-			fromSeq: number
-		): AsyncGenerator<Envelope> {
+		const makeReader = (fromSeq: number): FoldReader => {
+			positiveSafeInteger(fromSeq, "fromSeq");
+			if (fromSeq < historyStartSeq()) {
+				throw new RangeError(
+					"Requested history was compacted; use replay() to restore its checkpoint."
+				);
+			}
 			const reader: FoldReader = {
 				dropped: false,
-				next: Math.max(0, fromSeq - 1),
+				nextSeq: fromSeq,
 				onDrop: () => {
 					dropped.fire();
 					onEvent({ kind: "view-dropped", views: openViews });
@@ -216,14 +287,32 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 			};
 			readers.add(reader);
 			own.add(reader);
+			return reader;
+		};
+
+		const readFrom = async function* readFrom(
+			reader: FoldReader,
+			initial: readonly Envelope[] = []
+		): AsyncGenerator<Envelope> {
 			try {
+				for (const envelope of initial) {
+					yield envelope;
+					if (reader.dropped || viewClosed || closed) {
+						return;
+					}
+				}
 				for (;;) {
-					while (reader.next < history.length && !reader.dropped) {
-						const envelope = history[reader.next];
-						reader.next += 1;
-						if (envelope !== undefined) {
-							yield envelope;
+					while (reader.nextSeq <= latestSeq && !reader.dropped) {
+						const index = reader.nextSeq - historyStartSeq();
+						if (index < 0) {
+							throw new Error("Room view fell behind the compacted tail.");
 						}
+						const envelope = history[index];
+						if (envelope === undefined) {
+							break;
+						}
+						reader.nextSeq += 1;
+						yield envelope;
 						if (viewClosed) {
 							return;
 						}
@@ -231,7 +320,7 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 					if (reader.dropped || viewClosed || feedEnded || closed) {
 						return;
 					}
-					// oxlint-disable-next-line eslint/no-await-in-loop -- one park per quiet gap in the Room's feed is the point.
+					// oxlint-disable-next-line eslint/no-await-in-loop -- one park per quiet gap in the Room feed is the point.
 					await new Promise<void>((resolve) => {
 						reader.wake = resolve;
 					});
@@ -240,6 +329,38 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 				readers.delete(reader);
 				own.delete(reader);
 			}
+		};
+
+		const replay = async (): Promise<RoomReplay> => {
+			await initialized.promise;
+			for (;;) {
+				const observed = revision;
+				// oxlint-disable-next-line eslint/no-await-in-loop -- each quiet probe must observe the revision after the previous one.
+				await new Promise<void>((resolve) => {
+					setTimeout(resolve, CHECKPOINT_QUIET_MS);
+				});
+				if (revision === observed || feedEnded || closed) {
+					break;
+				}
+			}
+			if (checkpointInvalid) {
+				throw new Error("Room fold checkpoint is invalid.");
+			}
+			const throughSeq = compactedThrough;
+			const checkpoint =
+				throughSeq === 0 || producer === undefined
+					? undefined
+					: { payload: producer.capture(), throughSeq };
+			// Freeze the bounded tail for this view and register its live cursor at
+			// the same turn. New Envelopes may compact the shared tail while this
+			// session consumes its copy without dropping or skipping it.
+			const initial = [...history];
+			const reader = makeReader(latestSeq + 1);
+			return {
+				checkpoint,
+				stream: readFrom(reader, initial),
+				throughSeq: latestSeq,
+			};
 		};
 
 		const send = (command: RoomCommand): Promise<RoomSubmission> => {
@@ -275,7 +396,8 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 			},
 			dropped: dropped.fired,
 			info: roomInfo,
-			stream: (fromSeq) => readFrom(fromSeq),
+			replay,
+			stream: (fromSeq) => readFrom(makeReader(fromSeq)),
 			submit: send,
 		};
 	};
@@ -306,6 +428,11 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 		};
 	};
 
+	// A checkpoint is a per-Room artifact, not a per-view cache. Start at
+	// attachment so the first late join does not become the Room's full replay
+	// worker; reservations and refused arrivals still cause no additional work.
+	startReading();
+
 	return {
 		close: async () => {
 			if (closed) {
@@ -319,6 +446,9 @@ export const createRoomFold = (options: RoomFoldOptions): RoomFold => {
 			for (const reader of readers) {
 				wake(reader);
 			}
+			history.splice(0);
+			producer = undefined;
+			info = undefined;
 			await options.source.close();
 		},
 		length: () => history.length,

@@ -246,9 +246,36 @@ export type RoomSubmission =
 	| { readonly accepted: true; readonly envelopes: readonly Envelope[] }
 	| Rejection;
 
+/** A disposable reader-fold artifact through one Log sequence. Its payload is
+ * deliberately opaque to the RoomStore seam: the fold that produced it is the
+ * only module that may interpret it. */
+export interface RoomFoldCheckpoint {
+	readonly throughSeq: number;
+	readonly payload: unknown;
+}
+
+/** An atomic late-join starting point: restore the optional checkpoint, then
+ * consume `stream` for its contiguous tail and live Envelopes. */
+export interface RoomReplay {
+	readonly checkpoint?: RoomFoldCheckpoint;
+	/** Last sequence in the frozen initial tail. Later Envelopes are live. */
+	readonly throughSeq: number;
+	readonly stream: AsyncIterable<Envelope>;
+}
+
+/** The injected fold adapter a checkpointing RoomStore drives. It contains no
+ * authority: applying Envelopes only derives a disposable reader artifact. */
+export interface RoomCheckpointProducer {
+	readonly apply: (envelope: Envelope) => void;
+	readonly capture: () => unknown;
+}
+
 export interface RoomStore<C = unknown> {
 	readonly submit: (command: RoomCommand<C>) => Promise<RoomSubmission>;
 	readonly stream: (fromSeq: number) => AsyncIterable<Envelope>;
+	/** Optional acceleration for adapters that share a reader-fold checkpoint.
+	 * Calling this captures checkpoint + tail cursor atomically. */
+	readonly replay?: () => Promise<RoomReplay>;
 }
 
 export interface GameAuthority<S, C, E> {
