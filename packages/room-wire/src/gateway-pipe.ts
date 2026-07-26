@@ -9,7 +9,12 @@
  * one view per session over it (NQ-5). This file owns the plumbing between the
  * fold and the frames; the fold owns the isolation.
  */
-import type { Envelope, RoomCommand, RoomSubmission } from "@supervillain/core";
+import type {
+	Envelope,
+	RoomCheckpointProducer,
+	RoomCommand,
+	RoomSubmission,
+} from "@supervillain/core";
 
 import {
 	encodePipeHandshakeOutcome,
@@ -37,6 +42,7 @@ import type {
 	LinkRedemptionOutcome,
 	RegistrationOutcome,
 	RevocationOutcome,
+	RoomInfo,
 	SubmitRequest,
 } from "./messages.js";
 import { MultiplexPipe, PipeStreamClosedError } from "./pipe.js";
@@ -186,6 +192,12 @@ export interface HostPipeServerOptions {
 	readonly heartbeatMisses?: number;
 	/** Envelopes one session may fall behind before its view is dropped. */
 	readonly sessionBudget?: number;
+	/** The render-fold adapter supplied by the gateway composition root. The
+	 * payload stays opaque here; omitting this preserves full Envelope history. */
+	readonly checkpoint?: {
+		readonly create: (info: RoomInfo) => RoomCheckpointProducer | undefined;
+		readonly tail?: number;
+	};
 	/**
 	 * Rooms one identity may have **attached at once** (ADR-0012, NQ-10). A
 	 * cost ceiling, not a claim on the name: durable ownership is untouched by
@@ -643,6 +655,7 @@ export const serveHostPipes = (
 			drop(name, previous);
 		}
 		const fold = createRoomFold({
+			checkpoint: options.checkpoint,
 			onEvent: (event) => {
 				if (event.kind === "view-dropped") {
 					onEvent({ kind: "view-dropped", room: name });

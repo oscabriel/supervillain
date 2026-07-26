@@ -30,6 +30,7 @@
  *   bun apps/gateway/bench/capacity.ts
  *   bun apps/gateway/bench/capacity.ts --sessions 1,10 --workloads idle,chat
  *   bun apps/gateway/bench/capacity.ts --seconds 20 --json results.json
+ *   bun apps/gateway/bench/capacity.ts --sessions 1 --workloads idle --history 1000,10000
  */
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
@@ -62,6 +63,7 @@ const SEAT_ROWS = 40;
 const OPEN_BATCH = 10;
 const SETTLE_MS = 1500;
 const TEARDOWN_MS = 500;
+const TABLE_READY_TIMEOUT_MS = 60_000;
 const CHAT_INTERVAL_MS = 2000;
 const PAN_INTERVAL_MS = 150;
 const POST_INTERVAL_MS = 100;
@@ -174,13 +176,19 @@ const startGatewayProcess = async (
 interface CellResult {
 	readonly workload: Workload;
 	readonly sessions: number;
+	/** Envelopes posted before the warm late-join measurement. */
+	readonly history: number;
 	readonly seconds: number;
 	/** Gateway CPU across the measurement window, in ms. */
 	readonly cpuMs: number;
 	/** The number a cap is read off: CPU ms per session per wall-clock second. */
 	readonly cpuMsPerSessionPerSecond: number;
-	/** CPU the gateway spent seating the sessions, before the window opened. */
+	/** CPU the gateway spent seating the measured sessions, after warmup. */
 	readonly setupCpuMs: number;
+	/** CPU spent on the one warm arrival that initializes the Room fold. */
+	readonly warmupCpuMs: number;
+	/** Gateway RSS after warmup closed: the live Room fold, with no seat. */
+	readonly foldRssBytes: number;
 	readonly rssBytes: number;
 	readonly peakRssBytes: number;
 	/** RSS growth over the empty gateway, per session. */
@@ -211,7 +219,65 @@ interface CellInput {
 	readonly workload: Workload;
 	readonly sessions: number;
 	readonly seconds: number;
+	readonly history: number;
 }
+
+const waitForTranscript = async (
+	seat: Seat,
+	text: string,
+	failure: string
+): Promise<void> => {
+	const deadline = performance.now() + TABLE_READY_TIMEOUT_MS;
+	while (!seat.transcript().includes(text)) {
+		if (performance.now() >= deadline) {
+			throw new Error(failure);
+		}
+		await sleep(10);
+	}
+};
+
+const waitForFrame = async (seat: Seat): Promise<void> => {
+	const deadline = performance.now() + TABLE_READY_TIMEOUT_MS;
+	while (seat.latencies().length === 0) {
+		if (performance.now() >= deadline) {
+			throw new Error("Timed out waiting for the history warmup frame.");
+		}
+		await sleep(10);
+	}
+};
+
+const warmHistoryFold = async (input: CellInput): Promise<number> => {
+	if (input.history === 0) {
+		return 0;
+	}
+	const before = await input.gateway.sample();
+	const [key] = input.keys;
+	if (key === undefined) {
+		throw new Error("History measurement requires one seat key.");
+	}
+	const seat = await openSeat({
+		columns: SEAT_COLUMNS,
+		host: "127.0.0.1",
+		key,
+		port: input.gateway.sshPort,
+		room: ROOM,
+		rows: SEAT_ROWS,
+		slow: false,
+	});
+	await waitForTranscript(
+		seat,
+		"the bench hall",
+		"Timed out waiting for the history warmup Table."
+	);
+	seat.expectBroadcast(performance.now());
+	input.room.post("history warmup complete");
+	await waitForFrame(seat);
+	await sleep(250);
+	seat.close();
+	await sleep(TEARDOWN_MS);
+	const after = await input.gateway.sample();
+	return after.cpuMs - before.cpuMs;
+};
 
 const openSeats = async (
 	input: CellInput,
@@ -315,6 +381,7 @@ const runCell = async (input: CellInput): Promise<CellResult> => {
 		input.workload === "slow-reader"
 			? Math.max(1, Math.round(input.sessions * SLOW_READER_SHARE))
 			: 0;
+	const warmupCpuMs = await warmHistoryFold(input);
 	const empty = await input.gateway.sample();
 	const pipeBefore = { received: input.pipe.received, sent: input.pipe.sent };
 	const seats = await openSeats(input, slowCount);
@@ -340,6 +407,8 @@ const runCell = async (input: CellInput): Promise<CellResult> => {
 		cpuMs: after.cpuMs - before.cpuMs,
 		cpuMsPerSessionPerSecond:
 			(after.cpuMs - before.cpuMs) / input.sessions / input.seconds,
+		foldRssBytes: empty.rssBytes,
+		history: input.history,
 		latencyKind,
 		latencyMax: latencies.length === 0 ? 0 : Math.max(...latencies),
 		latencyP50: percentile(latencies, 0.5),
@@ -353,6 +422,7 @@ const runCell = async (input: CellInput): Promise<CellResult> => {
 		seconds: input.seconds,
 		sessions: input.sessions,
 		setupCpuMs: before.cpuMs - empty.cpuMs,
+		warmupCpuMs,
 		workload: input.workload,
 	};
 	for (const seat of seats) {
@@ -367,6 +437,7 @@ const padLeft = (value: string, width: number): string => value.padStart(width);
 
 const HEADERS = [
 	["workload", 12],
+	["history", 8],
 	["seats", 6],
 	["cpu ms/s", 9],
 	["cpu ms/seat/s", 14],
@@ -381,6 +452,7 @@ const HEADERS = [
 
 const rowFor = (cell: CellResult): readonly string[] => [
 	cell.workload,
+	String(cell.history),
 	String(cell.sessions),
 	(cell.cpuMs / cell.seconds).toFixed(1),
 	cell.cpuMsPerSessionPerSecond.toFixed(3),
@@ -435,6 +507,7 @@ const parseList = <T extends string>(
 const main = async (): Promise<void> => {
 	const { values } = parseArgs({
 		options: {
+			history: { default: "0", type: "string" },
 			json: { type: "string" },
 			seconds: { default: "10", type: "string" },
 			sessions: { type: "string" },
@@ -442,6 +515,9 @@ const main = async (): Promise<void> => {
 		},
 	});
 	const seconds = Number(values.seconds);
+	const historyCounts = values.history
+		.split(",")
+		.map((part) => Number(part.trim()));
 	const sessionCounts = (values.sessions ?? "1,10,50,100")
 		.split(",")
 		.map((part) => Number(part.trim()));
@@ -465,41 +541,49 @@ const main = async (): Promise<void> => {
 	 */
 	const cells: CellResult[] = [];
 	for (const workload of workloads) {
-		for (const sessions of sessionCounts) {
-			process.stderr.write(`  ${workload} · ${sessions} seats\n`);
-			const pipe: PipeBytes = { received: 0, sent: 0 };
-			const gateway = await startGatewayProcess(
-				path.join(stateDir, `${workload}-${sessions}`)
-			);
-			const room = createBenchRoom(GAME_ID);
-			const host = openHostPipe({
-				dialer: countingDialer(
-					openWsDialer({ secretKeyHex, url: gateway.url }),
-					pipe
-				),
-				rooms: [
-					{
-						info: { gameId: GAME_ID, label: "the bench hall" },
-						name: ROOM,
-						store: room,
-					},
-				],
-			});
-			await host.attached;
-			await sleep(500);
-			cells.push(
-				await runCell({
-					gateway,
-					keys,
-					pipe,
-					room,
-					seconds,
-					sessions,
-					workload,
-				})
-			);
-			await host.close();
-			await gateway.stop();
+		for (const history of historyCounts) {
+			for (const sessions of sessionCounts) {
+				process.stderr.write(
+					`  ${workload} · ${history} history · ${sessions} seats\n`
+				);
+				const pipe: PipeBytes = { received: 0, sent: 0 };
+				const gateway = await startGatewayProcess(
+					path.join(stateDir, `${workload}-${sessions}`)
+				);
+				const room = createBenchRoom(GAME_ID);
+				for (let index = 0; index < history; index += 1) {
+					room.post(`history ${index + 1}`);
+				}
+				const host = openHostPipe({
+					dialer: countingDialer(
+						openWsDialer({ secretKeyHex, url: gateway.url }),
+						pipe
+					),
+					rooms: [
+						{
+							info: { gameId: GAME_ID, label: "the bench hall" },
+							name: ROOM,
+							store: room,
+						},
+					],
+				});
+				await host.attached;
+				await sleep(500);
+				cells.push(
+					await runCell({
+						gateway,
+						history,
+						keys,
+						pipe,
+						room,
+						seconds,
+						sessions,
+						workload,
+					})
+				);
+				await host.close();
+				await gateway.stop();
+			}
 		}
 	}
 

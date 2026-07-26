@@ -185,6 +185,76 @@ describe("the per-Room fold", () => {
 		expect(fold.views()).toBe(0);
 	});
 
+	test("compacts a prefix into one opaque checkpoint and atomically replays its tail", async () => {
+		const probe = fakeSource();
+		let folded = 0;
+		const fold = createRoomFold({
+			checkpoint: {
+				create: () => ({
+					apply: (next) => {
+						folded += next.seq;
+					},
+					capture: () => ({ folded }),
+				}),
+				tail: 2,
+			},
+			sessionBudget: 2,
+			source: probe.source,
+		});
+		const starter = fold.openView();
+		await settle();
+		probe.push(...Array.from({ length: 6 }, (_, index) => envelope(index + 1)));
+		await settle();
+
+		expect(fold.length()).toBe(2);
+		const late = fold.openView();
+		const replay = await late.replay();
+		expect(replay.checkpoint).toEqual({
+			payload: { folded: 10 },
+			throughSeq: 4,
+		});
+		const reader = replay.stream[Symbol.asyncIterator]();
+		expect(await valueOf(reader.next())).toMatchObject({ seq: 5 });
+		expect(await valueOf(reader.next())).toMatchObject({ seq: 6 });
+		expect(() => late.stream(1)).toThrow("compacted");
+
+		await starter.close();
+		await late.close();
+		await fold.close();
+		expect(fold.length()).toBe(0);
+	});
+
+	test("a refused reservation adds no checkpoint, info, channel, or feed work", async () => {
+		const probe = fakeSource();
+		let producers = 0;
+		const fold = createRoomFold({
+			checkpoint: {
+				create: () => {
+					producers += 1;
+					return { apply: () => {}, capture: () => ({}) };
+				},
+			},
+			source: probe.source,
+		});
+		await settle();
+		const before = {
+			channels: probe.channels(),
+			feeds: probe.feeds(),
+			infoAsks: probe.infoAsks(),
+			producers,
+		};
+
+		expect(fold.reserveView(0)).toBeUndefined();
+		expect({
+			channels: probe.channels(),
+			feeds: probe.feeds(),
+			infoAsks: probe.infoAsks(),
+			producers,
+		}).toEqual(before);
+		expect(fold.length()).toBe(0);
+		await fold.close();
+	});
+
 	test("hands a session that arrives late the history it missed", async () => {
 		const probe = fakeSource();
 		const fold = createRoomFold({ source: probe.source });

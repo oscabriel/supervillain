@@ -100,10 +100,15 @@ export {
 	PipeStreamClosedError,
 } from "./pipe.js";
 export type { PipeStream } from "./pipe.js";
-export { createRoomFold, DEFAULT_SESSION_BUDGET } from "./room-fold.js";
+export {
+	createRoomFold,
+	DEFAULT_FOLD_TAIL,
+	DEFAULT_SESSION_BUDGET,
+} from "./room-fold.js";
 export type {
 	PipeRoomStore,
 	RoomFold,
+	RoomFoldCheckpointOptions,
 	RoomFoldEvent,
 	RoomFoldOptions,
 	RoomFoldSource,
