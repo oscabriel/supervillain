@@ -170,6 +170,7 @@ export interface GatewayOptions {
 export interface RunningGateway {
 	/** The gateway's transport URL — what `create --gateway` dials. */
 	readonly url: string;
+	/** The Door's bound port, including the OS-assigned port after binding zero. */
 	readonly sshPort: number;
 	/** The offline tripwire's running counts (ADR-0012, NQ-15). */
 	readonly offline: () => OfflineCounts;
@@ -240,6 +241,7 @@ const awaitKeypress = (door: DoorIo): Promise<void> =>
 			resolve();
 		};
 		door.input.on("data", finish);
+		door.input.resume();
 		detach.push(() => door.input.off("data", finish), door.onClose(finish));
 	});
 
@@ -651,11 +653,20 @@ export const serveShell = async (
 				});
 	try {
 		if (isOversizedPty(asked, cap)) {
-			// Said before anything is drawn — the alt-screen is up but still blank,
-			// and nothing may paint over it until the keypress: the capped render is
-			// honest about being capped (NQ-14).
-			ssh.write(oversizedTerminalNotice(asked, cap));
-			await awaitKeypress(door);
+			// The renderer must relinquish the channel before the raw notice: resize
+			// schedules a frame, and every resize while this interlude holds does too.
+			ssh.renderer.suspend();
+			try {
+				ssh.write(oversizedTerminalNotice(asked, cap));
+				await awaitKeypress(door);
+			} finally {
+				// A close during the wait (revocation, disconnect) destroys the
+				// renderer first, and `resume()` has no destroyed guard — it would
+				// call into native state that `destroy()` already freed.
+				if (!ssh.renderer.isDestroyed) {
+					ssh.renderer.resume();
+				}
+			}
 		}
 		const goodbye = await runRounds(connection, door, ssh.renderer, options);
 		if (goodbye !== undefined) {
@@ -710,31 +721,10 @@ export const startGateway = async (
 		}
 		options.onEvent?.(event);
 	};
-	// The Host dials in; the gateway never dials a Host (ADR-0012). Logging is
-	// metadata only — lifecycle and room names, never a payload (NQ-11).
-	const pipes = serveHostPipes({
-		door: { sshHost: options.sshHost, sshPort: options.sshPort },
-		// The key-equivalence graph reaches the broker as an injected interface,
-		// never a driver: `room-wire` compiles and tests under Node too (NQ-12).
-		keys: registry,
-		listener,
-		onEvent: onPipeEvent,
-		ownership: registry,
-		roomsPerIdentity: capacity.roomsPerIdentity,
-		sessionBudget: capacity.sessionBudget,
-	});
 	const metrics = createOfflineMetrics();
 	const limits = options.lobbyLimits ?? DEFAULT_LOBBY_LIMITS;
 	const rateLimiter = createConnectionRateLimiter({ limits });
-	const rooms: RoomServices = {
-		graceMs: options.graceWindowMs,
-		gracePollMs: options.gracePollMs,
-		limits: capacity,
-		metrics,
-		pipes,
-		registry,
-		sessions,
-	};
+	const roomsReady = Promise.withResolvers<RoomServices>();
 	const door = createServer({
 		auth: {
 			// The keyless guest door: advertised, never prompted (ADR-0008).
@@ -783,16 +773,41 @@ export const startGateway = async (
 				visit: { identity: visitIdentity, roomName: session.identity.username },
 			});
 		})
-		.serve((session) =>
+		.serve(async (session) =>
 			serveShell(session, {
 				identity: session.context.visit.identity,
 				limits,
 				roomName: session.context.visit.roomName,
-				rooms,
+				rooms: await roomsReady.promise,
 				sshHost: options.sshHost,
 			})
 		);
-	await door.listen(options.sshPort, options.bindHost ?? "0.0.0.0");
+	const sshListen = await door.listen(
+		options.sshPort,
+		options.bindHost ?? "0.0.0.0"
+	);
+	// The Host dials in; the gateway never dials a Host (ADR-0012). The Door
+	// descriptor must carry the OS-assigned port when this process bound zero.
+	const pipes = serveHostPipes({
+		door: { sshHost: options.sshHost, sshPort: sshListen.port },
+		// The key-equivalence graph reaches the broker as an injected interface,
+		// never a driver: `room-wire` compiles and tests under Node too (NQ-12).
+		keys: registry,
+		listener,
+		onEvent: onPipeEvent,
+		ownership: registry,
+		roomsPerIdentity: capacity.roomsPerIdentity,
+		sessionBudget: capacity.sessionBudget,
+	});
+	roomsReady.resolve({
+		graceMs: options.graceWindowMs,
+		gracePollMs: options.gracePollMs,
+		limits: capacity,
+		metrics,
+		pipes,
+		registry,
+		sessions,
+	});
 	let closePromise: Promise<void> | undefined;
 	return {
 		certificateFingerprint: tls.fingerprint,
@@ -812,7 +827,7 @@ export const startGateway = async (
 			boundUrl: listener.url,
 			fingerprint: tls.fingerprint,
 		}),
-		sshPort: options.sshPort,
+		sshPort: sshListen.port,
 		url: listener.url,
 	};
 };

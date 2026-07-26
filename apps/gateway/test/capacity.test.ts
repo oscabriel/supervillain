@@ -38,7 +38,10 @@ describe("capacity from the environment", () => {
 		const capacity = capacityFromEnvironment({
 			SUPERVILLAIN_GATEWAY_DOOR_SESSIONS_GLOBAL: "40",
 			SUPERVILLAIN_GATEWAY_DOOR_SESSIONS_PER_CONNECTION: "2",
+			SUPERVILLAIN_GATEWAY_LOBBY_CONNECTIONS_PER_WINDOW: "17",
 			SUPERVILLAIN_GATEWAY_LOBBY_IDLE_MS: "90000",
+			SUPERVILLAIN_GATEWAY_LOBBY_MAX_MS: "120000",
+			SUPERVILLAIN_GATEWAY_LOBBY_WINDOW_MS: "30000",
 			SUPERVILLAIN_GATEWAY_PTY_COLUMNS: "200",
 			SUPERVILLAIN_GATEWAY_PTY_ROWS: "60",
 			SUPERVILLAIN_GATEWAY_ROOMS_PER_IDENTITY: "3",
@@ -53,7 +56,12 @@ describe("capacity from the environment", () => {
 			sessionBudget: 64,
 			sessionsPerRoom: 12,
 		});
-		expect(capacity.lobby.idleMs).toBe(90_000);
+		expect(capacity.lobby).toEqual({
+			connectionsPerWindow: 17,
+			idleMs: 90_000,
+			maxHoldMs: 120_000,
+			windowMs: 30_000,
+		});
 	});
 
 	test("a value that cannot be used is refused by name, never ignored", () => {

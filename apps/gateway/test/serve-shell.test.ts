@@ -2,7 +2,9 @@
 import { expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 
+import { CliRenderEvents, RendererControlState } from "@opentui/core";
 import type { CliRenderer, KeyEvent } from "@opentui/core";
+import { createTestRenderer } from "@opentui/core/testing";
 
 import { keyedIdentity } from "../src/guest.js";
 import {
@@ -19,9 +21,14 @@ interface ShellProbe {
 	readonly session: DoorSession;
 	readonly transcript: () => string;
 	readonly ended: () => boolean;
+	readonly resize: (cols: number, rows: number) => void;
 }
 
-const shellProbe = (cols: number, rows: number): ShellProbe => {
+const shellProbe = (
+	cols: number,
+	rows: number,
+	injectedRenderer?: CliRenderer
+): ShellProbe => {
 	const stdin = new PassThrough();
 	const closeListeners = new Set<() => void>();
 	const resizeListeners = new Set<(cols: number, rows: number) => void>();
@@ -47,10 +54,17 @@ const shellProbe = (cols: number, rows: number): ShellProbe => {
 			},
 		},
 		resize: () => {},
+		resume: () => {},
 		stdin,
+		suspend: () => {},
 	} as unknown as CliRenderer;
 	return {
 		ended: () => ended,
+		resize(nextCols, nextRows) {
+			for (const listener of resizeListeners) {
+				listener(nextCols, nextRows);
+			}
+		},
 		session: {
 			cols,
 			end: close,
@@ -66,7 +80,7 @@ const shellProbe = (cols: number, rows: number): ShellProbe => {
 				resizeListeners.add(listener);
 				return () => resizeListeners.delete(listener);
 			},
-			renderer,
+			renderer: injectedRenderer ?? renderer,
 			rows,
 			write(data) {
 				transcript += data.toString();
@@ -95,6 +109,39 @@ const shellOptions = (sessions: ReturnType<typeof createKeyedSessions>) =>
 		},
 		sshHost: "supervillain.app",
 	}) satisfies Parameters<typeof serveShell>[1];
+
+test("an oversized-terminal notice suspends real frames until the keypress", async () => {
+	const setup = await createTestRenderer({ height: 24, width: 80 });
+	const sessions = createKeyedSessions();
+	const probe = shellProbe(400, 150, setup.renderer);
+	let frames = 0;
+	setup.renderer.on(CliRenderEvents.FRAME, () => {
+		frames += 1;
+	});
+	const serving = serveShell(probe.session, shellOptions(sessions), () => {
+		expect(probe.transcript()).toContain("400x150");
+		expect(frames).toBe(0);
+		expect(setup.renderer.controlState).not.toBe(
+			RendererControlState.EXPLICIT_SUSPENDED
+		);
+		return Promise.resolve();
+	});
+
+	expect(probe.transcript()).toContain("400x150");
+	expect(setup.renderer.controlState).toBe(
+		RendererControlState.EXPLICIT_SUSPENDED
+	);
+	probe.resize(500, 200);
+	await Bun.sleep(0);
+	expect(frames).toBe(0);
+
+	setup.renderer.stdin.emit("data", Buffer.from(" "));
+	await serving;
+	await setup.flush();
+
+	expect(frames).toBeGreaterThan(0);
+	setup.renderer.destroy();
+});
 
 test("revocation is armed while an oversized-terminal notice is waiting", async () => {
 	const sessions = createKeyedSessions();

@@ -1,7 +1,6 @@
 /* oxlint-disable promise/avoid-new, eslint/no-await-in-loop, vitest/prefer-importing-vitest-globals -- bounded PTY polling and sequential live actions are the E2E protocol. */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -22,18 +21,6 @@ const sleep = (milliseconds: number): Promise<void> =>
 	});
 
 const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
-
-/** A port the OS just handed back — good enough for a single test run. */
-const freePort = (): Promise<number> =>
-	new Promise((resolve, reject) => {
-		const server = createServer();
-		server.once("error", reject);
-		server.listen(0, "127.0.0.1", () => {
-			const address = server.address();
-			const port = typeof address === "object" && address ? address.port : 0;
-			server.close(() => resolve(port));
-		});
-	});
 
 const waitFor = async <T>(
 	label: string,
@@ -60,6 +47,21 @@ const readIfExists = async (file: string): Promise<string | undefined> => {
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") {
 			return undefined;
 		}
+		throw error;
+	}
+};
+
+const assertTranscript = async (
+	file: string,
+	assertions: (transcript: string) => void
+): Promise<void> => {
+	const transcript = (await readIfExists(file)) ?? "";
+	try {
+		assertions(transcript);
+	} catch (error) {
+		console.error(`----- BEGIN TRANSCRIPT ${file} -----`);
+		console.error(JSON.stringify(transcript));
+		console.error(`----- END TRANSCRIPT ${file} -----`);
 		throw error;
 	}
 };
@@ -145,21 +147,21 @@ const openDoor = async (): Promise<LiveDoor> => {
 	const stateDir = path.join(scratch, "gateway");
 	const playerConfig = path.join(scratch, "player-config");
 	await mkdir(stateDir, { recursive: true });
-	const sshPort = await freePort();
 	const attached = new Set<string>();
 	const gateway = await startGateway({
 		bindHost: "127.0.0.1",
-		brokerPort: await freePort(),
+		brokerPort: 0,
 		onEvent: (event) => {
 			if (event.kind === "room-attached") {
 				attached.add(event.room);
 			}
 		},
 		sshHost: "127.0.0.1",
-		sshPort,
+		sshPort: 0,
 		stateDir,
 	});
 	gateways.push(gateway);
+	const { sshPort } = gateway;
 	await trustHostKey(
 		stateDir,
 		path.join(playerConfig, "supervillain"),
@@ -180,9 +182,7 @@ afterEach(async () => {
 		}
 	}
 	for (const gateway of gateways.splice(0)) {
-		// A killed `script` can orphan its ssh child, and an open connection holds
-		// the listener open; the run is over either way, so don't hang on it.
-		await Promise.race([gateway.close(), sleep(3000)]);
+		await gateway.close();
 	}
 	for (const folder of folders.splice(0)) {
 		await rm(folder, { force: true, recursive: true });
@@ -265,10 +265,12 @@ describe("supervillain join through a live gateway", () => {
 		expect(await gm.exited).toBe(0);
 		// Transcripts are block-buffered by `script`, so they are only whole once
 		// the processes are gone.
-		expect(await readFile(gmTranscript, "utf-8")).toContain(
-			"hello through the door"
-		);
-		expect(await readFile(playerTranscript, "utf-8")).toContain("rolled 2d6");
+		await assertTranscript(gmTranscript, (transcript) => {
+			expect(transcript).toContain("hello through the door");
+		});
+		await assertTranscript(playerTranscript, (transcript) => {
+			expect(transcript).toContain("rolled 2d6");
+		});
 	}, 120_000);
 
 	test("answers an unregistered name with the gateway's own copy", async () => {
@@ -291,15 +293,17 @@ describe("supervillain join through a live gateway", () => {
 		}
 		const exitCode = await player.exited;
 		if (exitCode !== 0) {
-			// Diagnostic dump: what the player's terminal saw, verbatim.
 			console.error(`player exited ${exitCode}; transcript follows:`);
 			console.error(JSON.stringify(await readIfExists(transcript)));
 		}
 		// No dial error, no disconnect: the lobby said it, and the door closed
 		// cleanly (ADR-0008, ADR-0012).
 		expect(exitCode).toBe(0);
-		const screen = await readFile(transcript, "utf-8");
-		expect(screen).toContain("no table named 'ghost-keep' is registered here.");
-		expect(screen).toContain("the gate closes behind you.");
+		await assertTranscript(transcript, (screen) => {
+			expect(screen).toContain(
+				"no table named 'ghost-keep' is registered here."
+			);
+			expect(screen).toContain("the gate closes behind you.");
+		});
 	}, 120_000);
 });

@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-lane suite. */
+import { once } from "node:events";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 
-import { createCliRenderer } from "@opentui/core";
+import { CliRenderEvents, createCliRenderer } from "@opentui/core";
+import type { CliRenderer } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { TestRendererSetup } from "@opentui/core/testing";
 import type {
@@ -112,20 +114,6 @@ const fakeSession = (
 	size: () => size,
 });
 
-const tick = (): Promise<void> =>
-	// oxlint-disable-next-line promise/avoid-new -- a bare timer needs the constructor.
-	new Promise<void>((resolve) => {
-		setTimeout(resolve, 25);
-	});
-
-/** Lets the fold's stream, the replay window, and the render queue all drain. */
-const settle = async (): Promise<void> => {
-	for (let pass = 0; pass < 20; pass += 1) {
-		// oxlint-disable-next-line eslint/no-await-in-loop -- draining is sequential by nature.
-		await tick();
-	}
-};
-
 const mount = async (
 	setup: TestRendererSetup,
 	store: RoomStore
@@ -152,9 +140,9 @@ describe("the chrome map region", () => {
 		for (const next of MAP_EVENTS) {
 			store.push(next);
 		}
-		await settle();
-		await setup.flush();
-		const frame = setup.captureCharFrame();
+		const frame = await setup.waitForFrame(
+			(text) => text.includes("map · Hall 5×4") && text.includes("#K..#")
+		);
 
 		expect(frame).toContain("map · Hall 5×4");
 		// Terrain reads as the author wrote it; the token sits on top of it.
@@ -209,10 +197,29 @@ describe("the chrome map region", () => {
  * the claim under test is about the colors the map region puts on the wire, not
  * about the defaults OpenTUI's own widgets paint elsewhere in the chrome.
  */
+const nextFrame = async (renderer: CliRenderer): Promise<void> => {
+	const listeners = new AbortController();
+	try {
+		const rendered = await Promise.race([
+			once(renderer, CliRenderEvents.FRAME, { signal: listeners.signal }).then(
+				() => true
+			),
+			once(renderer, CliRenderEvents.DESTROY, {
+				signal: listeners.signal,
+			}).then(() => false),
+		]);
+		if (!rendered) {
+			throw new Error("Renderer was destroyed before the expected frame.");
+		}
+	} finally {
+		listeners.abort();
+	}
+};
+
 const paintSurface = async (): Promise<{
 	readonly bytes: () => string;
 	readonly clear: () => void;
-	readonly update: (state: MapRegionState) => void;
+	readonly update: (state: MapRegionState) => Promise<void>;
 	readonly stop: () => void;
 }> => {
 	// A real seat's terminal answers OpenTUI's capability query over its own
@@ -220,34 +227,61 @@ const paintSurface = async (): Promise<{
 	// to literal RGB and the assertion would be about the harness rather than
 	// about us. `remote: false` plus a 256-colour TERM stands in for a terminal
 	// that says what it can do.
-	process.env.TERM = "xterm-256color";
-	const chunks: string[] = [];
-	const output = new PassThrough();
-	output.on("data", (chunk: Buffer) => chunks.push(chunk.toString("latin1")));
-	const renderer = await createCliRenderer({
-		exitOnCtrlC: false,
-		height: 4,
-		remote: false,
-		stdin: new PassThrough() as unknown as NodeJS.ReadStream,
-		stdout: output as unknown as NodeJS.WriteStream,
-		width: 5,
-	});
-	const surface = new MapSurfaceRenderable(
-		renderer,
-		{ height: 4, width: 5 },
-		() => {
-			// Hit-testing has its own test; the wire tests never click.
+	const hadTerm = Object.hasOwn(process.env, "TERM");
+	const originalTerm = process.env.TERM;
+	const restoreTerm = (): void => {
+		if (hadTerm && originalTerm !== undefined) {
+			process.env.TERM = originalTerm;
+			return;
 		}
-	);
-	renderer.root.add(surface);
-	return {
-		bytes: () => chunks.join(""),
-		clear: () => {
-			chunks.length = 0;
-		},
-		stop: () => renderer.destroy(),
-		update: (state) => surface.update(state),
+		delete process.env.TERM;
 	};
+	process.env.TERM = "xterm-256color";
+	try {
+		const chunks: string[] = [];
+		const output = new PassThrough();
+		output.on("data", (chunk: Buffer) => chunks.push(chunk.toString("latin1")));
+		const renderer = await createCliRenderer({
+			exitOnCtrlC: false,
+			height: 4,
+			remote: false,
+			stdin: new PassThrough() as unknown as NodeJS.ReadStream,
+			stdout: output as unknown as NodeJS.WriteStream,
+			width: 5,
+		});
+		const surface = new MapSurfaceRenderable(
+			renderer,
+			{ height: 4, width: 5 },
+			() => {
+				// Hit-testing has its own test; the wire tests never click.
+			}
+		);
+		const mounted = nextFrame(renderer);
+		renderer.root.add(surface);
+		await mounted;
+		chunks.length = 0;
+		return {
+			bytes: () => chunks.join(""),
+			clear: () => {
+				chunks.length = 0;
+			},
+			stop: () => {
+				try {
+					renderer.destroy();
+				} finally {
+					restoreTerm();
+				}
+			},
+			update: async (state) => {
+				const painted = nextFrame(renderer);
+				surface.update(state);
+				await painted;
+			},
+		};
+	} catch (error) {
+		restoreTerm();
+		throw error;
+	}
 };
 
 const kraan: MapToken = {
@@ -274,11 +308,20 @@ const TRUECOLOR_SGR = new RegExp(`${CSI}[\\d;]*[34]8;2;`, "u");
 const INDEXED_SGR = new RegExp(`${CSI}(?:38|48);5;(?<slot>\\d+)m`, "gu");
 
 describe("the map region on the wire", () => {
+	test("restores the terminal capability environment after painting", async () => {
+		const hadTerm = Object.hasOwn(process.env, "TERM");
+		const originalTerm = process.env.TERM;
+		const wire = await paintSurface();
+		wire.stop();
+
+		expect(Object.hasOwn(process.env, "TERM")).toBe(hadTerm);
+		expect(process.env.TERM).toBe(originalTerm);
+	});
+
 	test("paints exact ANSI-16 and never a truecolor SGR escape", async () => {
 		const wire = await paintSurface();
 		try {
-			wire.update(surfaceState([kraan]));
-			await settle();
+			await wire.update(surfaceState([kraan]));
 			const bytes = wire.bytes();
 			expect(bytes.length).toBeGreaterThan(0);
 			expect(TRUECOLOR_SGR.test(bytes)).toBe(false);
@@ -297,11 +340,9 @@ describe("the map region on the wire", () => {
 	test("costs a token move far less than #38's 2 KB ceiling", async () => {
 		const wire = await paintSurface();
 		try {
-			wire.update(surfaceState([kraan]));
-			await settle();
+			await wire.update(surfaceState([kraan]));
 			wire.clear();
-			wire.update(surfaceState([{ ...kraan, x: 3, y: 2 }]));
-			await settle();
+			await wire.update(surfaceState([{ ...kraan, x: 3, y: 2 }]));
 			const moved = wire.bytes();
 			expect(moved.length).toBeGreaterThan(0);
 			expect(moved.length).toBeLessThan(2048);
