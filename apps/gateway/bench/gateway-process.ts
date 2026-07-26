@@ -16,7 +16,7 @@ import { parseArgs } from "node:util";
 
 import { DEFAULT_CAPACITY_LIMITS, startGateway } from "../src/index.js";
 import { encodeLine, takeLines } from "./protocol.js";
-import type { BenchReply } from "./protocol.js";
+import type { BenchReply, BenchRequest } from "./protocol.js";
 
 const MICROSECONDS_PER_MILLISECOND = 1000;
 const RSS_POLL_MS = 200;
@@ -26,6 +26,14 @@ const UNCAPPED = 100_000;
 
 const say = (reply: BenchReply): void => {
 	process.stdout.write(encodeLine(reply));
+};
+
+const activeResources = (): Readonly<Record<string, number>> => {
+	const counts: Record<string, number> = {};
+	for (const resource of process.getActiveResourcesInfo()) {
+		counts[resource] = (counts[resource] ?? 0) + 1;
+	}
+	return counts;
 };
 
 const main = async (): Promise<void> => {
@@ -89,20 +97,40 @@ const main = async (): Promise<void> => {
 		const taken = takeLines(buffer + chunk.toString("utf-8"));
 		buffer = taken.rest;
 		for (const line of taken.lines) {
-			if (line.includes("stop")) {
+			const request = JSON.parse(line) as BenchRequest;
+			if (request.kind === "stop") {
 				void stop();
 				return;
 			}
+			if (request.gc) {
+				// Diagnostic only: the rest harness uses this to distinguish reachable
+				// retention from an allocator high-water mark. Capacity samples never
+				// request it, and production never forces collection.
+				Bun.gc(true);
+			}
 			const used = process.cpuUsage();
-			const rssBytes = process.memoryUsage.rss();
-			peakRssBytes = Math.max(peakRssBytes, rssBytes);
+			const memory = process.memoryUsage();
+			peakRssBytes = Math.max(peakRssBytes, memory.rss);
 			say({
 				cpuMs: (used.user + used.system) / MICROSECONDS_PER_MILLISECOND,
 				kind: "sample",
+				memory: {
+					arrayBuffers: memory.arrayBuffers,
+					external: memory.external,
+					heapTotal: memory.heapTotal,
+					heapUsed: memory.heapUsed,
+				},
 				peakRssBytes,
-				rssBytes,
+				processListeners: {
+					beforeExit: process.listenerCount("beforeExit"),
+					uncaughtException: process.listenerCount("uncaughtException"),
+					unhandledRejection: process.listenerCount("unhandledRejection"),
+					warning: process.listenerCount("warning"),
+				},
+				resources: activeResources(),
+				rssBytes: memory.rss,
 			});
-			peakRssBytes = rssBytes;
+			peakRssBytes = memory.rss;
 		}
 	});
 };

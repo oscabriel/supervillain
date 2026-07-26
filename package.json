@@ -32,7 +32,8 @@
 		"test:transport-ws": "bun run --cwd packages/transport-ws test:bun && bun run --cwd packages/transport-ws test:node",
 		"test:room-wire": "bun run --cwd packages/room-wire test:bun && bun run --cwd packages/room-wire test:node",
 		"bench:table-idle-cpu": "bun packages/table/bench/idle-cpu.ts",
-		"bench:gateway-capacity": "bun apps/gateway/bench/capacity.ts"
+		"bench:gateway-capacity": "bun apps/gateway/bench/capacity.ts",
+		"bench:gateway-rest": "bun apps/gateway/bench/rest.ts"
 	},
 	"devDependencies": {
 		"oxfmt": "^0.58.0",
