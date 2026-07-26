@@ -28,18 +28,22 @@ interface ShellProbe {
 const shellProbe = (
 	cols: number,
 	rows: number,
-	injectedRenderer?: CliRenderer
+	injectedRenderer?: CliRenderer,
+	bufferUntilEnd = false
 ): ShellProbe => {
 	const stdin = new PassThrough();
 	const closeListeners = new Set<() => void>();
 	const resizeListeners = new Set<(cols: number, rows: number) => void>();
 	const keypressListeners = new Set<(key: KeyEvent) => void>();
 	let transcript = "";
+	let pending = "";
 	let ended = false;
 	const close = (): void => {
 		if (ended) {
 			return;
 		}
+		transcript += pending;
+		pending = "";
 		ended = true;
 		for (const listener of closeListeners) {
 			listener();
@@ -84,6 +88,10 @@ const shellProbe = (
 			renderer: injectedRenderer ?? renderer,
 			rows,
 			write(data) {
+				if (bufferUntilEnd) {
+					pending += data.toString();
+					return;
+				}
 				transcript += data.toString();
 			},
 		},
@@ -193,6 +201,34 @@ test("an oversized-terminal notice suspends real frames until the keypress", asy
 	await setup.flush();
 
 	expect(frames).toBeGreaterThan(0);
+	setup.renderer.destroy();
+});
+
+test("a lobby expiry drains its farewell before the session closes", async () => {
+	const setup = await createTestRenderer({ height: 24, width: 80 });
+	const sessions = createKeyedSessions();
+	const probe = shellProbe(80, 24, setup.renderer, true);
+	const base = shellOptions(sessions);
+	const serving = serveShell(probe.session, {
+		...base,
+		limits: { ...base.limits, idleMs: 5, maxHoldMs: 1000 },
+		rooms: {
+			...base.rooms,
+			metrics: { recordJoinAttempt: () => {} } as never,
+			pipes: { live() {} } as never,
+			registry: { isClaimed: () => false } as never,
+		},
+	});
+
+	await serving;
+
+	// The fake models @opentui/ssh's raw-write contract: write only queues the
+	// bytes, and end drains that queue before announcing close. Seeing the text
+	// after close therefore proves delivery rather than merely call order.
+	expect(probe.ended()).toBe(true);
+	expect(probe.transcript()).toContain(
+		"the lobby went quiet, so we closed it. ssh back any time.\r\n"
+	);
 	setup.renderer.destroy();
 });
 

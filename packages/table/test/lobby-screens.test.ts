@@ -10,7 +10,6 @@ import {
 	OFFLINE_TAGLINE,
 	screenBodyLines,
 	SPLASH_TAGLINE,
-	toggleRenderTier,
 } from "../src/lobby-screens.js";
 import type {
 	LobbyChromeContext,
@@ -50,11 +49,6 @@ describe("lobby menu", () => {
 		expect(moveMenuIndex(LOBBY_MENU.length - 1, 1)).toBe(0);
 		expect(menuActionAt(0)).toBe("join");
 	});
-
-	test("the render tier is a two-state toggle", () => {
-		expect(toggleRenderTier("text")).toBe("pixel-glyph");
-		expect(toggleRenderTier("pixel-glyph")).toBe("text");
-	});
 });
 
 describe("inline notices", () => {
@@ -89,6 +83,16 @@ describe("inline notices", () => {
 		expect(full).toContain("run your own gateway");
 	});
 
+	test("a dropped seat says what happened and how to return", () => {
+		const dropped = noticeLines(
+			{ kind: "dropped-behind", roomName: "Blood-Moon" },
+			context
+		).join("\n");
+		expect(dropped).toContain("Blood-Moon");
+		expect(dropped).toContain("fell too far behind");
+		expect(dropped).toContain("join again");
+	});
+
 	test("the offline beat is the only tagline on the notice", () => {
 		expect(
 			noticeLines({ kind: "offline-room", roomName: "x" }, context).join("\n")
@@ -120,19 +124,19 @@ describe("lobby screens", () => {
 		expect(body).toContain("free forever");
 	});
 
-	test("settings report the session-local tier and whether a key was seen", () => {
-		expect(screenBodyLines(stateOn("settings"), context).join("\n")).toContain(
-			"no key"
+	test("settings report whether a key was seen without offering a render tier", () => {
+		const guestSettings = screenBodyLines(stateOn("settings"), context).join(
+			"\n"
 		);
+		expect(guestSettings).toContain("no key");
+		expect(guestSettings).not.toContain("render tier");
+		expect(guestSettings).not.toContain("pixel-glyph");
 		expect(
 			screenBodyLines(stateOn("settings"), {
 				...context,
 				keyed: true,
 			}).join("\n")
 		).toContain("key recognized");
-		expect(screenBodyLines(stateOn("settings"), context).join("\n")).toContain(
-			"this session only"
-		);
 	});
 
 	test("every screen still renders with its tagline deleted", () => {
