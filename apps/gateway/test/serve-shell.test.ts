@@ -5,6 +5,7 @@ import { PassThrough } from "node:stream";
 import { CliRenderEvents, RendererControlState } from "@opentui/core";
 import type { CliRenderer, KeyEvent } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
+import type { RoomView, RoomViewReservation } from "@supervillain/room-wire";
 
 import { keyedIdentity } from "../src/guest.js";
 import {
@@ -110,6 +111,58 @@ const shellOptions = (sessions: ReturnType<typeof createKeyedSessions>) =>
 		sshHost: "supervillain.app",
 	}) satisfies Parameters<typeof serveShell>[1];
 
+interface ReservationProbe {
+	readonly reservation: RoomViewReservation;
+	readonly opens: () => number;
+	readonly releases: () => number;
+}
+
+const reservationProbe = (): ReservationProbe => {
+	let held = true;
+	let opens = 0;
+	let releases = 0;
+	return {
+		opens: () => opens,
+		releases: () => releases,
+		reservation: {
+			open: (): RoomView | undefined => {
+				if (!held) {
+					return;
+				}
+				held = false;
+				opens += 1;
+				return {} as RoomView;
+			},
+			release: () => {
+				if (!held) {
+					return;
+				}
+				held = false;
+				releases += 1;
+			},
+		},
+	};
+};
+
+const withLiveRoom = (
+	sessions: ReturnType<typeof createKeyedSessions>,
+	live: {
+		readonly deliverLinks: () => Promise<void>;
+		readonly reserveStore: () => RoomViewReservation | undefined;
+	}
+): Parameters<typeof serveShell>[1] => {
+	const options = shellOptions(sessions);
+	return {
+		...options,
+		rooms: {
+			...options.rooms,
+			metrics: { recordJoinAttempt: () => {} } as never,
+			pipes: { live: () => live } as never,
+			registry: { isClaimed: () => true } as never,
+		},
+	};
+};
+
 test("an oversized-terminal notice suspends real frames until the keypress", async () => {
 	const setup = await createTestRenderer({ height: 24, width: 80 });
 	const sessions = createKeyedSessions();
@@ -157,6 +210,45 @@ test("revocation is armed while an oversized-terminal notice is waiting", async 
 
 	expect(probe.transcript()).toContain(REVOKED_SESSION_MESSAGE);
 	expect(probe.ended()).toBe(true);
+});
+
+test("a disconnect releases an arrival reserved while links are in flight", async () => {
+	const sessions = createKeyedSessions();
+	const probe = shellProbe(120, 40);
+	const links = Promise.withResolvers<boolean>();
+	const reserved = reservationProbe();
+	const serving = serveShell(
+		probe.session,
+		withLiveRoom(sessions, {
+			deliverLinks: () => links.promise,
+			reserveStore: () => reserved.reservation,
+		})
+	);
+
+	await Bun.sleep(0);
+	probe.session.end();
+	expect(reserved.releases()).toBe(1);
+	links.resolve(true);
+	await serving;
+
+	expect(reserved.opens()).toBe(0);
+});
+
+test("a link-delivery failure releases the reserved arrival", async () => {
+	const sessions = createKeyedSessions();
+	const probe = shellProbe(120, 40);
+	const reserved = reservationProbe();
+	const serving = serveShell(
+		probe.session,
+		withLiveRoom(sessions, {
+			deliverLinks: () => Promise.reject(new Error("link delivery failed")),
+			reserveStore: () => reserved.reservation,
+		})
+	);
+
+	await expect(serving).rejects.toThrow("link delivery failed");
+	expect(reserved.releases()).toBe(1);
+	expect(reserved.opens()).toBe(0);
 });
 
 test("a table failure says the collapse message and still rejects", async () => {

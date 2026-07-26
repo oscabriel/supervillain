@@ -20,6 +20,7 @@ import type {
 	HostPipeServer,
 	LiveRoom,
 	RoomView,
+	RoomViewReservation,
 } from "@supervillain/room-wire";
 import type { TerminalConnection } from "@supervillain/session";
 import { runTable } from "@supervillain/table";
@@ -336,28 +337,33 @@ export const noticeForMissingRoom = (
 		? { kind: "offline-room", roomName }
 		: { kind: "unknown-room", roomName };
 
+/** One arrival that synchronously acquired a Room slot before any work that
+ * may suspend. The reservation is consumed only after linking facts arrive. */
+export interface AdmittedArrival {
+	readonly kind: "admitted";
+	readonly reservation: RoomViewReservation;
+}
+
 /**
- * What one arrival is told, or `undefined` when it may sit down. Three honest
- * answers and no fourth: the name is unknown, the name is registered but no
- * pipe carries it, or the Room is carrying as many sessions as this gateway
- * allows (ADR-0012, NQ-10).
+ * Atomically admits one arrival, or returns one of the three honest lobby
+ * notices: unknown name, offline Room, or full Room (ADR-0012, NQ-10).
  *
- * The capacity answer is decided *here*, before a view is opened, which is the
- * whole "never degrade a live table" rule expressed as an order of operations:
- * a refused arrival reads a count and touches nothing else.
+ * Reserving is synchronous and happens before link delivery can suspend. A
+ * refused arrival therefore leaves no reservation, view, or fold entry behind.
  */
-export const arrivalNotice = (
+export const reserveArrival = (
 	roomName: string,
-	live: Pick<LiveRoom, "views"> | undefined,
+	live: Pick<LiveRoom, "reserveStore"> | undefined,
 	registry: Pick<GatewayRoomRegistry, "isClaimed">,
 	limits: Pick<CapacityLimits, "sessionsPerRoom">
-): LobbyNotice | undefined => {
+): AdmittedArrival | LobbyNotice => {
 	if (live === undefined) {
 		return noticeForMissingRoom(roomName, registry);
 	}
-	return live.views() >= limits.sessionsPerRoom
+	const reservation = live.reserveStore(limits.sessionsPerRoom);
+	return reservation === undefined
 		? { kind: "full-room", roomName }
-		: undefined;
+		: { kind: "admitted", reservation };
 };
 
 /** What a seat is told when the fold drops it for falling too far behind. */
@@ -388,26 +394,50 @@ const enterRoom = async (
 		}
 		attempt += 1;
 		// Unknown, offline, or full — three honest notices and never a
-		// disconnect. Decided before a view is opened, so a refused arrival
-		// costs the Room's fold nothing at all (ADR-0012, NQ-10).
-		const refusal = arrivalNotice(
+		// disconnect. The synchronous reservation is the capacity check and the
+		// acquire, so concurrent arrivals cannot all pass one stale count.
+		if (live === undefined) {
+			return {
+				kind: "notice",
+				notice: noticeForMissingRoom(roomName, context.registry),
+			};
+		}
+		const arrival = reserveArrival(
 			roomName,
 			live,
 			context.registry,
 			context.limits
 		);
-		if (refusal !== undefined || live === undefined) {
-			return {
-				kind: "notice",
-				notice: refusal ?? noticeForMissingRoom(roomName, context.registry),
-			};
+		if (arrival.kind !== "admitted") {
+			return { kind: "notice", notice: arrival };
 		}
-		// The unknown-key-joins case (ADR-0005): before anyone claims a seat, let
-		// the room learn whether the graph already knows the person behind this
-		// key — the same derived query registration uses, and no queue either way.
-		// oxlint-disable-next-line eslint/no-await-in-loop -- each attempt sits on a fresh pipe, and the fresh pipe has to be told.
-		await live.deliverLinks();
-		const store = live.openStore();
+		let connectionClosed = false;
+		const stopWatchingClose = connection.onClose(() => {
+			connectionClosed = true;
+			arrival.reservation.release();
+		});
+		let store: RoomView | undefined;
+		try {
+			// The unknown-key-joins case (ADR-0005): before anyone claims a seat,
+			// let the room learn whether the graph already knows the person behind
+			// this key. The reservation holds capacity across this await.
+			// oxlint-disable-next-line eslint/no-await-in-loop -- each attempt sits on a fresh pipe, and the fresh pipe has to be told.
+			await live.deliverLinks();
+			store = arrival.reservation.open();
+		} finally {
+			stopWatchingClose();
+			// Error, disconnect, closed fold, or a future timeout: every path that
+			// did not consume the reservation releases it here.
+			arrival.reservation.release();
+		}
+		if (store === undefined) {
+			if (connectionClosed) {
+				return { kind: "entered" };
+			}
+			// The Host disappeared or superseded this fold while linking facts were
+			// in flight. Re-read the live half and either re-seat or answer offline.
+			continue;
+		}
 		const hold = holdRoom({
 			attached: live,
 			// The envelope half of the per-session envelope-lag budget: a view that fell
