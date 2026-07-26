@@ -1,4 +1,5 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals, eslint/require-await, eslint/max-classes-per-file, eslint/class-methods-use-this, promise/avoid-new -- dual-lane broker suite: interface-shaped async fakes over the memory transport. */
+import { isTrustedRoomCommand } from "@supervillain/core";
 import type {
 	Envelope,
 	RoomCommand,
@@ -178,6 +179,9 @@ describe("derived linking at registration", () => {
 		expect(store.submissions).toEqual([
 			{ actor: LAPTOP, command: { linked: DESKTOP, type: "core.link-actor" } },
 		]);
+		expect(isTrustedRoomCommand(store.submissions[0] as RoomCommand)).toBe(
+			true
+		);
 		expect(events).toContainEqual({
 			kind: "room-linked",
 			links: 1,

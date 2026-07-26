@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 
-import { isRecord } from "@supervillain/core";
+import { isRecord, markTrustedRoomCommand } from "@supervillain/core";
 import type {
 	Envelope,
 	RoomCommand,
@@ -274,7 +274,9 @@ const handleConnection = async (
 			const submission: RoomSubmission =
 				command.actor === connection.remoteId || trusted === true
 					? // oxlint-disable-next-line eslint/no-await-in-loop -- each response follows one submitted command.
-						await store.submit(command)
+						await store.submit(
+							trusted === true ? markTrustedRoomCommand(command) : command
+						)
 					: {
 							message: "Actor does not match the connection identity.",
 							rejected: true,

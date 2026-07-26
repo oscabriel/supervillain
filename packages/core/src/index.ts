@@ -223,6 +223,25 @@ export interface RoomCommand<C = unknown> {
 	readonly command: C;
 }
 
+/**
+ * Process-local provenance for a command admitted by a trusted stamper. The
+ * mark lives outside the serialized command, so no wire peer can claim it by
+ * adding a field to JSON. Transport adapters apply it only after authenticating
+ * the trusted connection; the Host consumes it for commands whose authority is
+ * the gateway's identity graph rather than a Seat.
+ */
+const trustedRoomCommands = new WeakSet<RoomCommand>();
+
+export const markTrustedRoomCommand = <C>(
+	command: RoomCommand<C>
+): RoomCommand<C> => {
+	trustedRoomCommands.add(command);
+	return command;
+};
+
+export const isTrustedRoomCommand = (command: RoomCommand): boolean =>
+	trustedRoomCommands.has(command);
+
 export type RoomSubmission =
 	| { readonly accepted: true; readonly envelopes: readonly Envelope[] }
 	| Rejection;
