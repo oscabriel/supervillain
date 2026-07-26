@@ -3,8 +3,8 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import type { CliRenderer, KeyEvent } from "@opentui/core";
 import { createServer } from "@opentui/ssh";
+import type { Session as SshSession } from "@opentui/ssh";
 import type { GatewayRegistry } from "@supervillain/core";
 import {
 	apply as drawSteelApply,
@@ -63,6 +63,8 @@ import { holdRoom } from "./room-hold.js";
 import { attachDoorConnection, sessionForActor } from "./ssh-session.js";
 import { pipePairingCode, resolveGatewayTls } from "./tls.js";
 import type { GatewayTlsOptions } from "./tls.js";
+
+type SshRenderer = SshSession["renderer"];
 
 export {
 	loadOrMintPipeCertificate,
@@ -254,7 +256,7 @@ interface RoomEntryContext {
 	readonly identity: SessionIdentity;
 	/** The one renderer this session draws on, minted and destroyed by
 	 * `serveShell` and borrowed by every lobby and table round (ADR-0016). */
-	readonly renderer: CliRenderer;
+	readonly renderer: SshRenderer;
 	/** The offline tripwire's counters (NQ-15). Counts only. */
 	readonly metrics: OfflineMetrics;
 	/** The protective caps this door enforces (NQ-10). */
@@ -564,7 +566,7 @@ interface RoomServices {
 const shellRounds = async (
 	connection: TerminalConnection,
 	door: DoorIo,
-	renderer: CliRenderer,
+	renderer: SshRenderer,
 	options: {
 		readonly roomName: string;
 		readonly rooms: RoomServices;
@@ -627,7 +629,7 @@ export interface DoorSession {
 		listener: (cols: number, rows: number) => void
 	) => () => void;
 	readonly onClose: (listener: () => void) => () => void;
-	readonly renderer: CliRenderer;
+	readonly renderer: SshRenderer;
 }
 
 export const serveShell = async (
@@ -666,7 +668,7 @@ export const serveShell = async (
 	// The library turns OpenTUI's own ctrl-c handling off — a server must never
 	// let one seat's keystroke reach the process. The table's contract still
 	// says ctrl-c leaves, so the Door reinstates it against this seat alone.
-	ssh.renderer.keyInput.on("keypress", (key: KeyEvent) => {
+	ssh.renderer.keyInput.on("keypress", (key) => {
 		if (key.ctrl && key.name === "c") {
 			connection.close();
 		}
