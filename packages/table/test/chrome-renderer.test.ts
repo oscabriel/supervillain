@@ -249,12 +249,18 @@ describe("table renderer injection", () => {
 		const wire = await paintTableChrome();
 		try {
 			expect(wire.bytes.length).toBeGreaterThan(0);
+			// The one permitted remainder is OpenTUI's untouched/track-only-cell
+			// RGB-white foreground, which has no public override. Whether those
+			// cells paint at all varies by environment (a headless CI frame may
+			// emit none), so the claim is "nothing but white", not "white appears".
 			const truecolors = new Set(
 				[...wire.bytes.matchAll(TRUECOLOR_SGR)].map(
 					(match) => match.groups?.rgb
 				)
 			);
-			expect(truecolors).toEqual(new Set(["255;255;255"]));
+			for (const rgb of truecolors) {
+				expect(rgb).toBe("255;255;255");
+			}
 			const slots = [...wire.bytes.matchAll(INDEXED_SGR)].map((match) =>
 				Number(match.groups?.slot)
 			);
