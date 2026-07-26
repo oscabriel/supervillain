@@ -38,6 +38,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@opentui/core": "0.4.3",
+        "@opentui/ssh": "0.4.3",
         "@supervillain/core": "workspace:*",
         "@supervillain/draw-steel": "workspace:*",
         "@supervillain/fake": "workspace:*",
@@ -46,11 +47,11 @@
         "@supervillain/session": "workspace:*",
         "@supervillain/table": "workspace:*",
         "@supervillain/transport-ws": "workspace:*",
-        "ssh2": "^1.17.0",
       },
       "devDependencies": {
         "@types/node": "^24.0.0",
         "@types/ssh2": "^1.15.0",
+        "ssh2": "1.17.0",
       },
     },
     "packages/config": {
@@ -246,6 +247,8 @@
     "@opentui/core-win32-arm64": ["@opentui/core-win32-arm64@0.4.3", "", { "os": "win32", "cpu": "arm64" }, "sha512-Mx2zuOjrhm/z2SDS6RExIyjP/SnN/8QhhagxURUw0jQi/NssGSeAllu1cBAFFnhobJL5QLTE4FU4CRhUK9svgg=="],
 
     "@opentui/core-win32-x64": ["@opentui/core-win32-x64@0.4.3", "", { "os": "win32", "cpu": "x64" }, "sha512-NuoqvWKGXaYnmlqvu7Gg2lLI6yVMnS9OfWBvxp+7Q+McSgHFSTQmYBXaPpvQ8HikpQXE1nCeMPtuSG4PdZHe2w=="],
+
+    "@opentui/ssh": ["@opentui/ssh@0.4.3", "", { "dependencies": { "ssh2": "^1.16.0" }, "peerDependencies": { "@opentui/core": "0.4.3" } }, "sha512-XMrkSsYNF5jwSbCYHY7caPkvFpQz6yok8lDQGV4TXHzjbixBJa7Vu2Sm113T6vueFlqRSTU13IV8nvC7Uklh7Q=="],
 
     "@oxfmt/binding-android-arm-eabi": ["@oxfmt/binding-android-arm-eabi@0.58.0", "", { "os": "android", "cpu": "arm" }, "sha512-Uz62sHduGGPftXtILGyxdSW4PX82rUg+rfdNqhsgxe881g4rIoXlIqmZQ6HVKcF4f+F8qMhdD03Bx5u7gmeTdg=="],
 

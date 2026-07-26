@@ -1,3 +1,7 @@
+/** Where an `@opentui/*` package lands once resolved. Rules target resolved
+ * paths, so a bare `^@opentui/` never matches anything. */
+const OPENTUI_PACKAGE = "(^|/)node_modules/@opentui/";
+
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
 	forbidden: [
@@ -8,12 +12,38 @@ module.exports = {
 			to: { path: "^packages/games/" },
 		},
 		{
+			// The render side plus one named exception: the gateway's SSH
+			// entrypoint, which serves the Door on `@opentui/ssh` (ADR-0012,
+			// NQ-14). The exception is a single file, not the app — and the
+			// next rule holds it to `@opentui/ssh` alone, so no render-side
+			// package gains an OpenTUI path through the gateway.
 			from: {
-				pathNot: ["^packages/table/", "^packages/games/[^/]+/src/view\\.ts$"],
+				pathNot: [
+					"^packages/table/",
+					"^packages/games/[^/]+/src/view\\.ts$",
+					"^apps/gateway/src/index\\.ts$",
+				],
 			},
 			name: "opentui-only-on-view-side",
 			severity: "error",
-			to: { path: "^@opentui/" },
+			// An npm dependency is matched on where it resolves, not on the
+			// bare specifier — hence the node_modules prefix (bun's store nests
+			// one more level, which the leading `/` alternative covers).
+			to: { path: OPENTUI_PACKAGE },
+		},
+		{
+			// The gateway's *runtime* admission to OpenTUI is the Door library
+			// and nothing else: the renderer it lends each session is the
+			// library's to create and destroy (ADR-0016). Type-only imports of
+			// `@opentui/core` are erased at compile time and invisible here;
+			// making them visible is #79's tsPreCompilationDeps work.
+			from: { path: "^apps/gateway/" },
+			name: "gateway-opentui-is-ssh-only",
+			severity: "error",
+			to: {
+				path: OPENTUI_PACKAGE,
+				pathNot: "(^|/)node_modules/@opentui/ssh/",
+			},
 		},
 		{
 			from: { path: "^packages/table/" },
@@ -47,7 +77,7 @@ module.exports = {
 			},
 			name: "node-compat-is-platform-free",
 			severity: "error",
-			to: { path: "^(bun:|@opentui/)" },
+			to: { path: `^bun:|${OPENTUI_PACKAGE}` },
 		},
 		{
 			from: { path: "^packages/room-wire/" },

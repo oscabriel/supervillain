@@ -45,13 +45,15 @@ const main = async (): Promise<void> => {
 	await mkdir(stateDir, { recursive: true });
 	const gateway = await startGateway({
 		capacity: {
+			doorSessionsGlobal: UNCAPPED,
+			doorSessionsPerConnection: UNCAPPED,
 			pty: { columns: 500, rows: 200 },
 			roomsPerIdentity: UNCAPPED,
-			// The two budgets keep their shipped defaults: the slow-reader
-			// workload is a probe of *those*, and opening them would measure a
-			// gateway nobody runs.
+			// The envelope budget keeps its shipped default: the slow-reader
+			// workload is a probe of *it*, and opening it would measure a
+			// gateway nobody runs. (The byte half of the output budget is
+			// `@opentui/ssh`'s backpressure now — #62.)
 			sessionBudget: DEFAULT_CAPACITY_LIMITS.sessionBudget,
-			sessionOutputBytes: DEFAULT_CAPACITY_LIMITS.sessionOutputBytes,
 			sessionsPerRoom: UNCAPPED,
 		},
 		// The harness drives sessions for minutes at a time and never types in

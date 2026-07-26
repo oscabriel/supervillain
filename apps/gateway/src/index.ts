@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import type { CliRenderer } from "@opentui/core";
+import type { CliRenderer, KeyEvent } from "@opentui/core";
+import { createServer } from "@opentui/ssh";
 import type { GatewayRegistry } from "@supervillain/core";
 import {
 	apply as drawSteelApply,
@@ -12,10 +13,7 @@ import {
 import { view as drawSteelView } from "@supervillain/draw-steel/view";
 import { apply as fakeApply, init as fakeInit } from "@supervillain/fake/model";
 import { view as fakeView } from "@supervillain/fake/view";
-import {
-	actorFromSshEd25519Blob,
-	loadOrCreateIdentity,
-} from "@supervillain/identity";
+import { loadOrCreateIdentity } from "@supervillain/identity";
 import { serveHostPipes } from "@supervillain/room-wire";
 import type {
 	GatewayPipeEvent,
@@ -23,20 +21,12 @@ import type {
 	LiveRoom,
 	RoomView,
 } from "@supervillain/room-wire";
-import { createSessionRenderer, runTable } from "@supervillain/table";
+import type { TerminalConnection } from "@supervillain/session";
+import { runTable } from "@supervillain/table";
 import type { TableHold } from "@supervillain/table";
 import { runLobby } from "@supervillain/table/lobby";
 import type { LobbyNotice, LobbyOutcome } from "@supervillain/table/lobby";
 import { startWsListener } from "@supervillain/transport-ws/server";
-import { Server, utils } from "ssh2";
-import type {
-	AuthContext,
-	AuthenticationType,
-	ClientInfo,
-	Connection,
-	PseudoTtyInfo,
-	WindowChangeInfo,
-} from "ssh2";
 
 import {
 	capacityFromEnvironment,
@@ -45,7 +35,8 @@ import {
 	isOversizedPty,
 	oversizedTerminalNotice,
 } from "./capacity.js";
-import type { CapacityLimits, GatewayCapacity, PtySize } from "./capacity.js";
+import type { CapacityLimits, GatewayCapacity } from "./capacity.js";
+import { actorFromIdentity, admitsPublicKey } from "./door-auth.js";
 import { guestIdentity, guestUpgradeBox, keyedIdentity } from "./guest.js";
 import type { SessionIdentity } from "./guest.js";
 import {
@@ -68,8 +59,7 @@ import {
 import type { KeyedSessions } from "./revocation.js";
 import { GATEWAY_ROLE_USAGE, parseGatewayRoleArgs } from "./role.js";
 import { holdRoom } from "./room-hold.js";
-import { attachSshChannel, sessionForActor } from "./ssh-session.js";
-import type { SshChannelStream, SshConnection } from "./ssh-session.js";
+import { attachDoorConnection, sessionForActor } from "./ssh-session.js";
 import { pipePairingCode, resolveGatewayTls } from "./tls.js";
 import type { GatewayTlsOptions } from "./tls.js";
 
@@ -116,11 +106,6 @@ export {
 } from "./revocation.js";
 export type { KeyedSessions } from "./revocation.js";
 
-const AUTH_METHODS: AuthenticationType[] = [
-	"publickey",
-	"keyboard-interactive",
-];
-
 /** The one port a self-hosted operator forwards. A tunable default, not a
  * protocol constant: 443 belongs to Caddy on the hosted box (#40), so the pipe
  * takes the conventional alternate. */
@@ -143,6 +128,13 @@ const gatewayRegistry: GatewayRegistry = {
 	},
 };
 
+/** What the gateway's exhaust may say (ADR-0012, NQ-11): pipe lifecycle from
+ * `room-wire`, plus the door's error *codes* — an error's name is metadata, its
+ * message may carry anything, so only the code leaves the process. */
+export type GatewayEvent =
+	| GatewayPipeEvent
+	| { readonly kind: "door-error"; readonly code: string };
+
 export interface GatewayOptions {
 	/** Holds the gateway identity, SSH host key, and registry database. */
 	readonly stateDir: string;
@@ -160,7 +152,7 @@ export interface GatewayOptions {
 	 * started with no arguments never carries production traffic in the clear. */
 	readonly tls?: GatewayTlsOptions;
 	/** Connection-lifecycle exhaust. Metadata only (ADR-0012, NQ-11). */
-	readonly onEvent?: (event: GatewayPipeEvent) => void;
+	readonly onEvent?: (event: GatewayEvent) => void;
 	/** Lobby hardening: idle/max timeouts and the per-IP connection window. The
 	 * lobby is an unauthenticated held session, so these are on from day one
 	 * (ADR-0008). Defaults are floors against squatting, not capacity policy. */
@@ -190,110 +182,65 @@ export interface RunningGateway {
 	readonly close: () => Promise<void>;
 }
 
-const loadOrCreateHostKey = async (folder: string): Promise<string> => {
-	const file = path.join(folder, "ssh_host_ed25519_key");
-	try {
-		return await readFile(file, "utf-8");
-	} catch (error) {
-		if (
-			!(error instanceof Error && "code" in error && error.code === "ENOENT")
-		) {
-			throw error;
-		}
+/** The raw-byte face of one library session that the rounds write plain text
+ * through, plus the keystroke stream a between-screens pause waits on.
+ * Structural on purpose: tests drive the rounds with plain fakes. */
+interface DoorIo {
+	readonly write: (data: Buffer | string) => void;
+	readonly input: NodeJS.ReadStream;
+	readonly onClose: (listener: () => void) => () => void;
+}
+
+/** Resolves the session's identity state from what the library verified. A key
+ * resolves to an actor at connect — the key *is* the identity, nothing is
+ * minted (`@opentui/ssh` runs the admission policy only after the signature
+ * over the session blob checks out). A keyless visitor resolves to the
+ * pre-identity guest state: ADR-0008 mints the `guest:` actor lazily, at first
+ * room entry, because the lobby writes to no log. */
+const identityOf = (identity: {
+	readonly method: string;
+	readonly username: string;
+	readonly publicKey?: { readonly blob: Buffer };
+}): SessionIdentity => {
+	const actor = actorFromIdentity(identity);
+	return actor === undefined ? guestIdentity() : keyedIdentity(actor);
+};
+
+/** The one fact about a door error that may leave the process (NQ-11): its
+ * `code` when it carries one, its name otherwise — never the message, which
+ * can quote anything the peer sent. */
+const errorCodeOf = (error: unknown): string => {
+	if (error instanceof Error) {
+		const { code } = error as { readonly code?: unknown };
+		return typeof code === "string" ? code : error.name;
 	}
-	const generated = utils.generateKeyPairSync("ed25519");
-	await writeFile(file, generated.private, { flag: "wx", mode: 0o600 });
-	return generated.private;
-};
-
-/** Resolves the connection's identity state. A key resolves to an actor at
- * connect — the key *is* the identity, nothing is minted. A keyless visitor
- * resolves to the pre-identity guest state: ADR-0008 mints the `guest:` actor
- * lazily, at first room entry, because the lobby writes to no log. */
-const authenticate = (ctx: AuthContext): SessionIdentity | undefined => {
-	if (ctx.method === "publickey" && ctx.key.algo === "ssh-ed25519") {
-		const actor = actorFromSshEd25519Blob(ctx.key.data);
-		if (actor === undefined) {
-			ctx.reject(AUTH_METHODS);
-			return undefined;
-		}
-		if (ctx.signature === undefined) {
-			// Pre-auth probe: the client asks whether this key would be accepted.
-			ctx.accept();
-			return undefined;
-		}
-		const key = utils.parseKey(ctx.key.data);
-		if (
-			ctx.blob === undefined ||
-			key instanceof Error ||
-			!key.verify(ctx.blob, ctx.signature, ctx.hashAlgo)
-		) {
-			ctx.reject(AUTH_METHODS);
-			return undefined;
-		}
-		ctx.accept();
-		return keyedIdentity(actor);
-	}
-	if (ctx.method === "keyboard-interactive") {
-		// The keyless guest door: no prompts, straight in, and no actor yet.
-		ctx.accept();
-		return guestIdentity();
-	}
-	ctx.reject(AUTH_METHODS);
-	return undefined;
-};
-
-/** Closes the channel with an explicit exit status. A client that never gets
- * one calls the session a failure (ssh exits 255), so every ordinary goodbye —
- * leaving the lobby, quitting the table — has to say 0 out loud. */
-const closeChannel = (stream: SshChannelStream, status: number): void => {
-	stream.exit?.(status);
-	stream.end();
-};
-
-const farewell = (
-	stream: SshChannelStream,
-	message: string,
-	status = 0
-): void => {
-	stream.write(`${message}\r\n`);
-	closeChannel(stream, status);
-};
-
-/** How long a goodbye waits for the client's half of the channel close before
- * the connection is torn down anyway. */
-const FAREWELL_GRACE_MS = 3000;
-
-/** Ends the client only once its channel finished closing. A DISCONNECT sent
- * in the same tick as the farewell can reach the client before it processes
- * the channel close, and ssh calls that a failure (255) — the exact clean
- * goodbye the exit status was written out loud for. */
-const endAfterChannelClose = (
-	client: Connection,
-	stream: SshChannelStream
-): void => {
-	let ended = false;
-	const done = (): void => {
-		if (ended) {
-			return;
-		}
-		ended = true;
-		client.end();
-	};
-	// The grace timer stays armed after a close; `done` going inert makes the
-	// late firing a no-op, and unref keeps it from holding the process open.
-	setTimeout(done, FAREWELL_GRACE_MS).unref?.();
-	stream.once("close", done);
+	return "unknown";
 };
 
 /** Clear and home — the canvas a plain-text interlude between two screens
  * needs, now that one renderer's alt-screen spans the whole session. */
 const CLEAR_SCREEN = "\u001B[2J\u001B[H";
 
-const awaitKeypress = (stream: SshChannelStream): Promise<void> =>
+/** Waits for one keystroke, or for the client to leave first. Both paths
+ * detach everything they added — a session that ends here leaves nothing
+ * subscribed to the channel. */
+const awaitKeypress = (door: DoorIo): Promise<void> =>
 	// oxlint-disable-next-line promise/avoid-new -- a single keypress is an event, not a promise-returning API.
 	new Promise((resolve) => {
-		stream.once("data", () => resolve());
+		let settled = false;
+		const detach: (() => void)[] = [];
+		const finish = (): void => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			for (const off of detach) {
+				off();
+			}
+			resolve();
+		};
+		door.input.on("data", finish);
+		detach.push(() => door.input.off("data", finish), door.onClose(finish));
 	});
 
 interface RoomEntryContext {
@@ -323,8 +270,8 @@ type RoomEntryResult =
 	| { readonly kind: "failed"; readonly message: string };
 
 const runRoomTable = async (
-	connection: SshConnection,
-	stream: SshChannelStream,
+	connection: TerminalConnection,
+	door: DoorIo,
 	store: RoomView,
 	context: RoomEntryContext,
 	hold: TableHold
@@ -345,11 +292,9 @@ const runRoomTable = async (
 		// The box is plain text between two screens on the session's one
 		// renderer (ADR-0016), so the previous screen's frame is still on the
 		// alt-screen beneath it — clear first or the box lands mid-frame.
-		stream.write(CLEAR_SCREEN);
-		stream.write(
-			guestUpgradeBox("accepted" in minted ? minted.code : undefined)
-		);
-		await awaitKeypress(stream);
+		door.write(CLEAR_SCREEN);
+		door.write(guestUpgradeBox("accepted" in minted ? minted.code : undefined));
+		await awaitKeypress(door);
 	}
 	const claim = await store.submit({
 		actor: assumed.actor,
@@ -425,8 +370,8 @@ export const SEAT_BEHIND_MESSAGE =
  * lands in the lobby's offline chrome — never on a closed door.
  */
 const enterRoom = async (
-	connection: SshConnection,
-	stream: SshChannelStream,
+	connection: TerminalConnection,
+	door: DoorIo,
 	roomName: string,
 	context: RoomEntryContext
 ): Promise<RoomEntryResult> => {
@@ -463,10 +408,12 @@ const enterRoom = async (
 		const store = live.openStore();
 		const hold = holdRoom({
 			attached: live,
-			// Both halves of the per-session output budget end this seat the same
-			// way: a view that fell behind its envelope budget, and a client that
-			// stopped reading its socket. Either is one seat's problem alone.
-			dropped: Promise.race([store.dropped, connection.outputOverflowed]),
+			// The envelope half of the per-session output budget: a view that fell
+			// behind is dropped, and it is one seat's problem alone. The byte half
+			// is `@opentui/ssh`'s now — its channel writes wait for the peer to
+			// drain, so a client that stops reading parks its own frame feed
+			// instead of growing a buffer here (#62).
+			dropped: store.dropped,
 			graceMs: context.graceMs,
 			live: () => context.pipes.live(roomName),
 			onGraceExpiry: () => context.metrics.recordGraceExpiry(),
@@ -476,7 +423,7 @@ const enterRoom = async (
 		let result: RoomEntryResult;
 		try {
 			// oxlint-disable-next-line eslint/no-await-in-loop -- one seat at a time: the next attempt only exists because this one ended.
-			result = await runRoomTable(connection, stream, store, context, hold);
+			result = await runRoomTable(connection, door, store, context, hold);
 		} finally {
 			hold.stop();
 			// oxlint-disable-next-line eslint/no-await-in-loop -- the view is released before the next one opens.
@@ -515,8 +462,8 @@ type LobbyStep =
  * max deadlines are armed only while the lobby holds the terminal: a player
  * sitting at a table is not squatting, and a long game is not an idle one. */
 const lobbyRound = async (
-	connection: SshConnection,
-	stream: SshChannelStream,
+	connection: TerminalConnection,
+	door: DoorIo,
 	notice: LobbyNotice | undefined,
 	options: {
 		readonly context: RoomEntryContext;
@@ -527,7 +474,7 @@ const lobbyRound = async (
 ): Promise<LobbyStep> => {
 	const touch = (): void => options.deadlines.touch();
 	options.deadlines.hold();
-	stream.on("data", touch);
+	door.input.on("data", touch);
 	let outcome: LobbyOutcome;
 	try {
 		outcome = await runLobby({
@@ -538,7 +485,7 @@ const lobbyRound = async (
 			sshHost: options.sshHost,
 		});
 	} finally {
-		stream.off("data", touch);
+		door.input.off("data", touch);
 		options.deadlines.release();
 	}
 	const expiry = options.expired();
@@ -550,7 +497,7 @@ const lobbyRound = async (
 	}
 	const result = await enterRoom(
 		connection,
-		stream,
+		door,
 		outcome.roomName,
 		options.context
 	);
@@ -578,11 +525,12 @@ interface RoomServices {
 }
 
 /** Every lobby and table round of one session, on the session's one borrowed
- * renderer. Returns what the door should say on the way out; the caller owns
- * the renderer's teardown and the goodbye's delivery. */
+ * renderer. Returns what the door should say on the way out, or undefined for
+ * a seat that simply got up; the caller owns the goodbye's delivery and the
+ * session's end. */
 const shellRounds = async (
-	connection: SshConnection,
-	stream: SshChannelStream,
+	connection: TerminalConnection,
+	door: DoorIo,
 	renderer: CliRenderer,
 	options: {
 		readonly roomName: string;
@@ -591,7 +539,7 @@ const shellRounds = async (
 		readonly sshHost: string;
 		readonly limits: LobbyLimits;
 	}
-): Promise<{ readonly message?: string; readonly status: number }> => {
+): Promise<string | undefined> => {
 	const context: RoomEntryContext = {
 		graceMs: options.rooms.graceMs,
 		gracePollMs: options.rooms.gracePollMs,
@@ -606,17 +554,12 @@ const shellRounds = async (
 	// is where you land when there is nothing to land in — which is also where
 	// bare `ssh <gateway>` lands, since an SSH client with no user sends the
 	// local account name and that is indistinguishable from a typed room name.
-	const arrival = await enterRoom(
-		connection,
-		stream,
-		options.roomName,
-		context
-	);
+	const arrival = await enterRoom(connection, door, options.roomName, context);
 	if (arrival.kind === "entered") {
-		return { status: 0 };
+		return undefined;
 	}
 	if (arrival.kind === "failed") {
-		return { message: arrival.message, status: 1 };
+		return arrival.message;
 	}
 	let expiry: LobbyExpiry | undefined;
 	const deadlines = createLobbyDeadlines({
@@ -635,152 +578,91 @@ const shellRounds = async (
 	let step: LobbyStep = { kind: "again", notice: arrival.notice };
 	while (step.kind === "again") {
 		// oxlint-disable-next-line eslint/no-await-in-loop -- the lobby is a held session: one visit finishes before the next room entry starts.
-		step = await lobbyRound(connection, stream, step.notice, round);
+		step = await lobbyRound(connection, door, step.notice, round);
 	}
-	return { message: step.message, status: 0 };
+	return step.message;
 };
 
+/** The slice of a live `@opentui/ssh` session the shell handler drives —
+ * structural, so the handler stays testable without a real SSH connection. */
+interface DoorSession {
+	readonly cols: number;
+	readonly rows: number;
+	readonly write: (data: Buffer | string) => void;
+	readonly end: () => void;
+	readonly onResize: (
+		listener: (cols: number, rows: number) => void
+	) => () => void;
+	readonly onClose: (listener: () => void) => () => void;
+	readonly renderer: CliRenderer;
+}
+
 const serveShell = async (
-	connection: SshConnection,
-	stream: SshChannelStream,
+	ssh: DoorSession,
 	options: {
 		readonly roomName: string;
 		readonly rooms: RoomServices;
 		readonly identity: SessionIdentity;
 		readonly sshHost: string;
 		readonly limits: LobbyLimits;
-		/** The terminal size the client asked for, when it was larger than this
-		 * gateway renders. Undefined for every ordinary window. */
-		readonly oversized?: PtySize;
 	}
 ): Promise<void> => {
-	if (options.oversized !== undefined) {
-		// Said before anything is drawn, because the alt-screen would swallow it
-		// afterwards: the capped render is honest about being capped (NQ-14).
-		stream.write(
-			oversizedTerminalNotice(options.oversized, options.rooms.limits.pty)
-		);
-		await awaitKeypress(stream);
+	const cap = options.rooms.limits.pty;
+	const asked = { columns: ssh.cols, rows: ssh.rows };
+	// The production PTY cap (ADR-0012, NQ-14): the library sized the renderer
+	// to the client's own PTY, clamped at its 500x200 ceiling; bring it down to
+	// the R9-gated cap before anything draws. Every cell above the cap is
+	// per-session gateway cost, which is the whole reason the cap exists.
+	const capped = clampPtySize(asked, cap);
+	ssh.renderer.resize(capped.columns, capped.rows);
+	const door: DoorIo = {
+		input: ssh.renderer.stdin,
+		onClose: (listener) => ssh.onClose(listener),
+		write: (data) => ssh.write(data),
+	};
+	if (isOversizedPty(asked, cap)) {
+		// Said before anything is drawn — the alt-screen is up but still blank,
+		// and nothing may paint over it until the keypress: the capped render is
+		// honest about being capped (NQ-14).
+		ssh.write(oversizedTerminalNotice(asked, cap));
+		await awaitKeypress(door);
 	}
-	// The surface's half of ADR-0016: one renderer per session, minted here,
-	// borrowed by every lobby and table round, destroyed here — before the
-	// goodbye, so the farewell lands on the restored screen, not the
-	// alt-screen the destroy is about to tear down.
-	const renderer = await createSessionRenderer(connection);
-	let goodbye: { readonly message?: string; readonly status: number };
-	try {
-		goodbye = await shellRounds(connection, stream, renderer, options);
-	} finally {
-		if (!renderer.isDestroyed) {
-			renderer.destroy();
+	const connection = attachDoorConnection({
+		cap,
+		channel: ssh,
+		input: ssh.renderer.stdin,
+	});
+	// The library turns OpenTUI's own ctrl-c handling off — a server must never
+	// let one seat's keystroke reach the process. The table's contract still
+	// says ctrl-c leaves, so the Door reinstates it against this seat alone.
+	ssh.renderer.keyInput.on("keypress", (key: KeyEvent) => {
+		if (key.ctrl && key.name === "c") {
+			connection.close();
 		}
-	}
-	if (goodbye.message === undefined) {
-		closeChannel(stream, goodbye.status);
-	} else {
-		farewell(stream, goodbye.message, goodbye.status);
-	}
-};
-
-const handleConnection = (
-	client: Connection,
-	options: {
-		readonly rooms: RoomServices;
-		readonly sshHost: string;
-		readonly limits: LobbyLimits;
-	}
-): void => {
-	let identity: SessionIdentity | undefined;
-	let roomName = "";
-	// The production PTY cap (ADR-0012, NQ-14): a terminal larger than this is
-	// rendered at the cap, never refused, and told so once. Every cell above the
-	// cap is per-session gateway cost, which is the whole reason it exists.
-	const ptyCap = options.rooms.limits.pty;
-	client
-		.on("authentication", (ctx) => {
-			roomName = ctx.username;
-			identity = authenticate(ctx) ?? identity;
-		})
-		.on("ready", () => {
-			client.on("session", (acceptSession) => {
-				const session = acceptSession();
-				let size = { columns: 0, rows: 0 };
-				let oversized: PtySize | undefined;
-				let connection: SshConnection | undefined;
-				session.on("pty", (acceptPty, _rejectPty, info: PseudoTtyInfo) => {
-					const asked = { columns: info.cols, rows: info.rows };
-					if (isOversizedPty(asked, ptyCap)) {
-						oversized = asked;
-					}
-					size = clampPtySize(asked, ptyCap);
-					acceptPty?.();
+	});
+	const keyed = keyedActorOf(options.identity);
+	const release =
+		keyed === undefined
+			? undefined
+			: options.rooms.sessions.hold(keyed, () => {
+					// Revocation is immediate on every surface (#59): the retired
+					// key's terminal is taken down now, not at the next login.
+					ssh.write(`${REVOKED_SESSION_MESSAGE}\r\n`);
+					ssh.end();
 				});
-				session.on(
-					"window-change",
-					(acceptWc, _rejectWc, info: WindowChangeInfo) => {
-						connection?.resize(
-							clampPtySize({ columns: info.cols, rows: info.rows }, ptyCap)
-						);
-						acceptWc?.();
-					}
-				);
-				session.on("shell", (acceptShell) => {
-					const stream = acceptShell() as unknown as SshChannelStream;
-					const shellIdentity = identity;
-					if (shellIdentity === undefined) {
-						farewell(stream, "authentication left no identity.", 1);
-						return;
-					}
-					// The door's half of the revoked-key refusal (ADR-0012, NQ-3). It
-					// lands here rather than at the auth callback because rejecting the
-					// publickey method would drop the visitor into the keyless guest
-					// path — a retired key would become a guest instead of being told
-					// anything.
-					const refusal = doorRefusal(shellIdentity, options.rooms.registry);
-					if (refusal !== undefined) {
-						farewell(stream, refusal, 1);
-						endAfterChannelClose(client, stream);
-						return;
-					}
-					const keyed = keyedActorOf(shellIdentity);
-					connection = attachSshChannel({
-						initialSize: size,
-						outputBudgetBytes: options.rooms.limits.sessionOutputBytes,
-						outputStallMs: options.rooms.limits.sessionStallMs,
-						stream,
-					});
-					const shellConnection = connection;
-					const release =
-						keyed === undefined
-							? undefined
-							: options.rooms.sessions.hold(keyed, () => {
-									farewell(stream, REVOKED_SESSION_MESSAGE, 1);
-								});
-					void (async (): Promise<void> => {
-						try {
-							await serveShell(shellConnection, stream, {
-								identity: shellIdentity,
-								limits: options.limits,
-								oversized,
-								roomName,
-								rooms: options.rooms,
-								sshHost: options.sshHost,
-							});
-						} catch {
-							// The floor beneath a TUI failure: one plain-text line, then
-							// the door closes (ADR-0008).
-							farewell(stream, "The table collapsed. Try again.", 1);
-						} finally {
-							release?.();
-							endAfterChannelClose(client, stream);
-						}
-					})();
-				});
-			});
-		})
-		.on("error", () => {
-			// A dropped client ends only its own connection.
-		});
+	try {
+		const goodbye = await shellRounds(connection, door, ssh.renderer, options);
+		if (goodbye !== undefined) {
+			// Written before the session ends, so it rides the channel ahead of
+			// the teardown's screen restore; the library then drains, sends an
+			// explicit exit status, and closes the channel in order.
+			ssh.write(`${goodbye}\r\n`);
+		}
+	} finally {
+		release?.();
+		connection.close();
+		ssh.end();
+	}
 };
 
 export const startGateway = async (
@@ -832,51 +714,81 @@ export const startGateway = async (
 		sessionBudget: capacity.sessionBudget,
 	});
 	const metrics = createOfflineMetrics();
-	const hostKey = await loadOrCreateHostKey(options.stateDir);
 	const limits = options.lobbyLimits ?? DEFAULT_LOBBY_LIMITS;
 	const rateLimiter = createConnectionRateLimiter({ limits });
-	const server = new Server(
-		{ hostKeys: [hostKey] },
-		(client, info: ClientInfo) => {
-			if (!rateLimiter.admit(info.ip)) {
-				// Per-IP rate limiting is on from the lobby's first commit: the lobby
-				// is an unauthenticated held session (ADR-0008). Refused before the
-				// handshake, so there is no channel to say it on.
-				client.end();
-				return;
+	const rooms: RoomServices = {
+		graceMs: options.graceWindowMs,
+		gracePollMs: options.gracePollMs,
+		limits: capacity,
+		metrics,
+		pipes,
+		registry,
+		sessions,
+	};
+	const door = createServer({
+		auth: {
+			// The keyless guest door: advertised, never prompted (ADR-0008).
+			keyboardInteractive: () => true,
+			// The library runs the policy only after the signature over the
+			// session blob verifies, so an admitted key is a proven key — and any
+			// ed25519 key is an identity on first contact (ADR-0012, NQ-8).
+			publicKey: { allow: admitsPublicKey },
+		},
+		hostKey: { path: path.join(options.stateDir, "ssh_host_ed25519_key") },
+		// Whole-session idle/max reaping stays off, and deliberately: seated-idle
+		// timeouts were declined (ADR-0012, dated 2026-07-25) — a player reading
+		// quietly at a table is not squatting. Squatting is the lobby's problem,
+		// and the lobby's own deadlines govern it.
+		limits: {
+			session: {
+				global: capacity.doorSessionsGlobal,
+				perConnection: capacity.doorSessionsPerConnection,
+			},
+		},
+		// The library's one runtime error sink, routed to the metadata exhaust:
+		// codes and counts may leave the process, messages may not (NQ-11).
+		onError: (error) => {
+			options.onEvent?.({ code: errorCodeOf(error), kind: "door-error" });
+		},
+		startupBanner: false,
+	})
+		.use((session, next) => {
+			// Per-IP rate limiting is on from the lobby's first commit: the lobby
+			// is an unauthenticated held session (ADR-0008). Refused silently,
+			// exactly as the pre-handshake refusal always was.
+			if (!rateLimiter.admit(session.remoteAddress.address)) {
+				session.deny();
 			}
-			handleConnection(client, {
-				limits,
-				rooms: {
-					graceMs: options.graceWindowMs,
-					gracePollMs: options.gracePollMs,
-					limits: capacity,
-					metrics,
-					pipes,
-					registry,
-					sessions,
-				},
-				sshHost: options.sshHost,
+			const visitIdentity = identityOf(session.identity);
+			// The door's half of the revoked-key refusal (ADR-0012, NQ-3). It
+			// lands here rather than in the admission policy because refusing the
+			// publickey method would drop the visitor into the keyless guest path
+			// — a retired key would become a guest instead of being told anything.
+			// deny() speaks on the main screen: no renderer exists yet.
+			const refusal = doorRefusal(visitIdentity, registry);
+			if (refusal !== undefined) {
+				session.deny(refusal);
+			}
+			return next({
+				visit: { identity: visitIdentity, roomName: session.identity.username },
 			});
-		}
-	);
-	// oxlint-disable-next-line promise/avoid-new -- ssh2's listen is callback-shaped.
-	await new Promise<void>((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(options.sshPort, options.bindHost ?? "0.0.0.0", () => {
-			server.off("error", reject);
-			resolve();
-		});
-	});
+		})
+		.serve((session) =>
+			serveShell(session, {
+				identity: session.context.visit.identity,
+				limits,
+				roomName: session.context.visit.roomName,
+				rooms,
+				sshHost: options.sshHost,
+			})
+		);
+	await door.listen(options.sshPort, options.bindHost ?? "0.0.0.0");
 	let closePromise: Promise<void> | undefined;
 	return {
 		certificateFingerprint: tls.fingerprint,
 		close: () => {
 			closePromise ??= (async (): Promise<void> => {
-				// oxlint-disable-next-line promise/avoid-new -- ssh2's close is callback-shaped.
-				await new Promise<void>((resolve) => {
-					server.close(() => resolve());
-				});
+				await door.close();
 				await pipes.close();
 				await listener.close();
 				registry.close();

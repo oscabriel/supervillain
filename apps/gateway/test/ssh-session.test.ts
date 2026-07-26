@@ -9,79 +9,161 @@ import {
 	keyedIdentity,
 	mintGuestActor,
 } from "../src/guest.js";
-import { attachSshChannel, sessionForActor } from "../src/ssh-session.js";
-import type { SshChannelStream } from "../src/ssh-session.js";
+import { attachDoorConnection, sessionForActor } from "../src/ssh-session.js";
+import type { DoorChannel } from "../src/ssh-session.js";
 
-const fakeChannel = (): SshChannelStream =>
-	new PassThrough() as unknown as SshChannelStream;
+const CAP = { columns: 300, rows: 100 };
 
-describe("attachSshChannel", () => {
-	test("exposes the channel as the connection's streams and marks it a TTY", () => {
-		const stream = fakeChannel();
-		const connection = attachSshChannel({
-			initialSize: { columns: 120, rows: 40 },
-			stream,
+interface ChannelProbe {
+	readonly channel: DoorChannel;
+	readonly written: () => string;
+	readonly resize: (cols: number, rows: number) => void;
+	readonly close: () => void;
+	readonly resizeListeners: () => number;
+	readonly closeListeners: () => number;
+}
+
+/** A plain fake of the slice of `@opentui/ssh`'s session the Door adapts. */
+const fakeChannel = (cols = 120, rows = 40): ChannelProbe => {
+	const resizeListeners = new Set<(cols: number, rows: number) => void>();
+	const closeListeners = new Set<() => void>();
+	let written = "";
+	return {
+		channel: {
+			cols,
+			onClose(listener) {
+				closeListeners.add(listener);
+				return () => closeListeners.delete(listener);
+			},
+			onResize(listener) {
+				resizeListeners.add(listener);
+				return () => resizeListeners.delete(listener);
+			},
+			rows,
+			write(data) {
+				written += data.toString();
+			},
+		},
+		close() {
+			for (const listener of closeListeners) {
+				listener();
+			}
+		},
+		closeListeners: () => closeListeners.size,
+		resize(nextCols, nextRows) {
+			for (const listener of resizeListeners) {
+				listener(nextCols, nextRows);
+			}
+		},
+		resizeListeners: () => resizeListeners.size,
+		written: () => written,
+	};
+};
+
+const input = (): NodeJS.ReadStream =>
+	new PassThrough() as unknown as NodeJS.ReadStream;
+
+describe("attachDoorConnection", () => {
+	test("borrows the library's input and writes straight back to the channel", () => {
+		const probe = fakeChannel();
+		const stdin = input();
+		const connection = attachDoorConnection({
+			cap: CAP,
+			channel: probe.channel,
+			input: stdin,
 		});
-		expect(connection.input).toBe(stream as never);
-		expect(connection.output).toBe(stream as never);
-		expect(stream.isTTY).toBe(true);
-		expect(connection.size()).toEqual({ columns: 120, rows: 40 });
+		expect(connection.input).toBe(stdin);
+		connection.output.write("a frame");
+		expect(probe.written()).toBe("a frame");
 	});
 
 	test("carries no actor until one is bound to it", () => {
-		const connection = attachSshChannel({
-			initialSize: { columns: 80, rows: 24 },
-			stream: fakeChannel(),
+		const connection = attachDoorConnection({
+			cap: CAP,
+			channel: fakeChannel().channel,
+			input: input(),
 		});
 		expect("actor" in connection).toBe(false);
 		expect(sessionForActor(connection, "abc").actor).toBe("abc");
 	});
 
-	test("falls back to 80x24 when the client reports a zero-size pty", () => {
-		const connection = attachSshChannel({
-			initialSize: { columns: 0, rows: 0 },
-			stream: fakeChannel(),
+	test("announces the capped size, never the client's own", () => {
+		const probe = fakeChannel(400, 150);
+		const connection = attachDoorConnection({
+			cap: CAP,
+			channel: probe.channel,
+			input: input(),
 		});
-		expect(connection.size()).toEqual({ columns: 80, rows: 24 });
+		expect(connection.size()).toEqual({ columns: 300, rows: 100 });
+		expect(connection.output.columns).toBe(300);
+		expect(connection.output.rows).toBe(100);
 	});
 
-	test("routes resize() to listeners and updates size()", () => {
-		const connection = attachSshChannel({
-			initialSize: { columns: 80, rows: 24 },
-			stream: fakeChannel(),
+	test("caps every resize and hands listeners the capped size", () => {
+		const probe = fakeChannel();
+		const connection = attachDoorConnection({
+			cap: CAP,
+			channel: probe.channel,
+			input: input(),
 		});
 		const seen: { columns: number; rows: number }[] = [];
 		const unsubscribe = connection.onResize((size) => seen.push(size));
-		connection.resize({ columns: 100, rows: 30 });
+		probe.resize(500, 200);
+		expect(connection.size()).toEqual({ columns: 300, rows: 100 });
+		probe.resize(100, 30);
 		expect(connection.size()).toEqual({ columns: 100, rows: 30 });
 		unsubscribe();
-		connection.resize({ columns: 90, rows: 25 });
-		expect(seen).toEqual([{ columns: 100, rows: 30 }]);
+		probe.resize(90, 25);
+		expect(seen).toEqual([
+			{ columns: 300, rows: 100 },
+			{ columns: 100, rows: 30 },
+		]);
 	});
 
 	test("a bound session shares the connection's resize and size", () => {
-		const connection = attachSshChannel({
-			initialSize: { columns: 80, rows: 24 },
-			stream: fakeChannel(),
+		const probe = fakeChannel();
+		const connection = attachDoorConnection({
+			cap: CAP,
+			channel: probe.channel,
+			input: input(),
 		});
 		const session = sessionForActor(connection, "abc");
-		connection.resize({ columns: 100, rows: 30 });
+		probe.resize(100, 30);
 		expect(session.size()).toEqual({ columns: 100, rows: 30 });
 	});
 
-	test("notifies close once, on stream close or connection close", () => {
-		const stream = fakeChannel();
-		const connection = attachSshChannel({
-			initialSize: { columns: 80, rows: 24 },
-			stream,
+	test("notifies close once, on channel close or connection close", () => {
+		const probe = fakeChannel();
+		const connection = attachDoorConnection({
+			cap: CAP,
+			channel: probe.channel,
+			input: input(),
 		});
 		let closes = 0;
 		connection.onClose(() => {
 			closes += 1;
 		});
 		connection.close();
-		stream.emit("close");
+		probe.close();
 		expect(closes).toBe(1);
+	});
+
+	test("close() releases the screens but never ends the library's session", () => {
+		// The Door ends the session itself, after the goodbye is written — a
+		// close that tore the channel down here would race the farewell.
+		const probe = fakeChannel();
+		const connection = attachDoorConnection({
+			cap: CAP,
+			channel: probe.channel,
+			input: input(),
+		});
+		connection.close();
+		// Teardown left nothing subscribed to the library's session.
+		expect(probe.resizeListeners()).toBe(0);
+		expect(probe.closeListeners()).toBe(0);
+		// The channel itself is still the library's to end.
+		connection.output.write("goodbye");
+		expect(probe.written()).toBe("goodbye");
 	});
 });
 
