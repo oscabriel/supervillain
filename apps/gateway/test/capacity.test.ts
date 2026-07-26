@@ -1,13 +1,17 @@
-/* oxlint-disable vitest/prefer-importing-vitest-globals, promise/avoid-new -- Bun-only suite; the gateway is Bun-bound by bun:sqlite, and the waits here are timers. */
+/* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; the gateway is Bun-bound by bun:sqlite. */
 /**
  * The protective caps (ADR-0012, NQ-10) and the production PTY cap (NQ-14).
  *
  * Two rules are asserted here rather than described: every number is
  * ops-tunable from the environment, and a cap that is reached refuses the
  * *next* arrival without touching the table already sitting there.
+ *
+ * The byte/stall halves of R9's output budget are not here any more: they
+ * rode `attachSshChannel`, and `@opentui/ssh` owns channel backpressure now
+ * (#62). The envelope half (`sessionBudget`) still drops a lagging view, and
+ * that path is exercised in the room-wire capacity suite.
  */
 import { describe, expect, test } from "bun:test";
-import { PassThrough } from "node:stream";
 
 import {
 	arrivalNotice,
@@ -18,8 +22,6 @@ import {
 	oversizedTerminalNotice,
 	PTY_LIBRARY_CEILING,
 } from "../src/index.js";
-import { attachSshChannel } from "../src/ssh-session.js";
-import type { SshChannelStream } from "../src/ssh-session.js";
 
 const claimed = (
 	...names: readonly string[]
@@ -34,21 +36,21 @@ describe("capacity from the environment", () => {
 
 	test("every cap is an operator's to turn", () => {
 		const capacity = capacityFromEnvironment({
+			SUPERVILLAIN_GATEWAY_DOOR_SESSIONS_GLOBAL: "40",
+			SUPERVILLAIN_GATEWAY_DOOR_SESSIONS_PER_CONNECTION: "2",
 			SUPERVILLAIN_GATEWAY_LOBBY_IDLE_MS: "90000",
 			SUPERVILLAIN_GATEWAY_PTY_COLUMNS: "200",
 			SUPERVILLAIN_GATEWAY_PTY_ROWS: "60",
 			SUPERVILLAIN_GATEWAY_ROOMS_PER_IDENTITY: "3",
 			SUPERVILLAIN_GATEWAY_SESSIONS_PER_ROOM: "12",
 			SUPERVILLAIN_GATEWAY_SESSION_BUDGET: "64",
-			SUPERVILLAIN_GATEWAY_SESSION_OUTPUT_BYTES: "1048576",
-			SUPERVILLAIN_GATEWAY_SESSION_STALL_MS: "5000",
 		});
 		expect(capacity.limits).toEqual({
+			doorSessionsGlobal: 40,
+			doorSessionsPerConnection: 2,
 			pty: { columns: 200, rows: 60 },
 			roomsPerIdentity: 3,
 			sessionBudget: 64,
-			sessionOutputBytes: 1_048_576,
-			sessionStallMs: 5000,
 			sessionsPerRoom: 12,
 		});
 		expect(capacity.lobby.idleMs).toBe(90_000);
@@ -143,86 +145,5 @@ describe("what one arrival is told", () => {
 		).toEqual({ kind: "full-room", roomName: "iron-keep" });
 		// One count read, and nothing else: no view opened, no seat disturbed.
 		expect(reads).toBe(1);
-	});
-});
-
-/** A channel nobody reads: its write callbacks never land, which is exactly
- * what a client that stopped reading looks like from here. */
-const stalledChannel = (): SshChannelStream =>
-	new PassThrough({ highWaterMark: 1 }) as unknown as SshChannelStream;
-
-describe("the per-session output budget", () => {
-	test("a seat that stops accepting output is given up on, and only that seat", async () => {
-		const stream = stalledChannel();
-		const connection = attachSshChannel({
-			initialSize: { columns: 80, rows: 24 },
-			outputStallMs: 20,
-			stream,
-		});
-		let overflowed = false;
-		void connection.outputOverflowed.then(() => {
-			overflowed = true;
-		});
-		stream.write("a frame nobody will ever read");
-		await new Promise<void>((resolve) => {
-			setTimeout(resolve, 80);
-		});
-		expect(overflowed).toBe(true);
-	});
-
-	test("a seat that keeps up is never given up on", async () => {
-		const stream = new PassThrough() as unknown as SshChannelStream;
-		stream.resume();
-		const connection = attachSshChannel({
-			initialSize: { columns: 80, rows: 24 },
-			outputStallMs: 20,
-			stream,
-		});
-		let overflowed = false;
-		void connection.outputOverflowed.then(() => {
-			overflowed = true;
-		});
-		for (let frame = 0; frame < 20; frame += 1) {
-			stream.write(`frame ${frame}`);
-		}
-		await new Promise<void>((resolve) => {
-			setTimeout(resolve, 80);
-		});
-		expect(overflowed).toBe(false);
-	});
-
-	test("unwritten bytes past the budget end the seat too", async () => {
-		const stream = stalledChannel();
-		const connection = attachSshChannel({
-			initialSize: { columns: 80, rows: 24 },
-			outputBudgetBytes: 32,
-			stream,
-		});
-		let overflowed = false;
-		void connection.outputOverflowed.then(() => {
-			overflowed = true;
-		});
-		stream.write("x".repeat(64));
-		await new Promise<void>((resolve) => {
-			setTimeout(resolve, 20);
-		});
-		expect(overflowed).toBe(true);
-	});
-
-	test("with no budget set, nothing is watched at all", async () => {
-		const stream = stalledChannel();
-		const connection = attachSshChannel({
-			initialSize: { columns: 80, rows: 24 },
-			stream,
-		});
-		let overflowed = false;
-		void connection.outputOverflowed.then(() => {
-			overflowed = true;
-		});
-		stream.write("x".repeat(4096));
-		await new Promise<void>((resolve) => {
-			setTimeout(resolve, 50);
-		});
-		expect(overflowed).toBe(false);
 	});
 });

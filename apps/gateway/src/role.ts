@@ -59,10 +59,13 @@ benchmark on one box; your box is not that box, so they are yours to turn:
   SUPERVILLAIN_GATEWAY_SESSION_BUDGET       envelopes one session may fall
                                             behind before its own view is
                                             dropped
-  SUPERVILLAIN_GATEWAY_SESSION_OUTPUT_BYTES bytes one session's SSH channel may
-                                            hold unread before it is dropped
-  SUPERVILLAIN_GATEWAY_SESSION_STALL_MS     how long a session's channel may
-                                            stall entirely before it is dropped
+  SUPERVILLAIN_GATEWAY_DOOR_SESSIONS_PER_CONNECTION
+                                            shell sessions one SSH connection
+                                            may hold (ControlMaster sharing is
+                                            legitimate; a hostile multiplexer
+                                            is not)
+  SUPERVILLAIN_GATEWAY_DOOR_SESSIONS_GLOBAL shell sessions this door may hold
+                                            at once, across every connection
   SUPERVILLAIN_GATEWAY_PTY_COLUMNS          rendered terminal ceiling; a
   SUPERVILLAIN_GATEWAY_PTY_ROWS             bigger window gets the capped
                                             picture and an honest notice

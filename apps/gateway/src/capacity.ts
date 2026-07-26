@@ -42,29 +42,33 @@ export interface CapacityLimits {
 	readonly sessionsPerRoom: number;
 	/** Envelopes one session may fall behind before the fold drops its view —
 	 * the per-session output budget of NQ-5. It catches a seat whose *consumer*
-	 * is slow. */
+	 * is slow. The socket-side byte half of R9's output budget is
+	 * `@opentui/ssh`'s now: its channel writes defer acknowledgement until the
+	 * peer drains, so a dead reader parks its own frame feed instead of growing
+	 * a buffer (#62). */
 	readonly sessionBudget: number;
-	/** Bytes one session may leave unread on its own channel before the gateway
-	 * closes it. The other half of the same promise: a seat whose *socket* is
-	 * slow never lags a fold cursor, it grows a write buffer, and the R9
-	 * benchmark measured that growth as unbounded without this. */
-	readonly sessionOutputBytes: number;
-	/** How long one session's write may sit unflushed before the gateway gives
-	 * that seat up. A client that reads *nothing* never grows a buffer — the
-	 * renderer's feed waits on each write — so time, not bytes, is what catches
-	 * it. */
-	readonly sessionStallMs: number;
+	/** Shell sessions one SSH connection may hold at once. More than one is
+	 * legitimate — OpenSSH connection sharing (`ControlMaster`) reuses one TCP
+	 * connection for every terminal a player opens — so this bounds a hostile
+	 * multiplexer without breaking an ordinary ssh config. Chosen, not
+	 * measured: R9 ran one session per connection. */
+	readonly doorSessionsPerConnection: number;
+	/** Shell sessions this door may hold at once, across every connection. The
+	 * whole-box companion to `sessionsPerRoom`: R9 saturated one core at ~50
+	 * chatting seats, so 100 live sessions is already past what one box serves
+	 * comfortably — the cap protects the seats that are already in. */
+	readonly doorSessionsGlobal: number;
 	/** The rendered PTY size ceiling. A larger terminal gets the capped render
 	 * plus an honest notice, never a refusal. */
 	readonly pty: PtySize;
 }
 
 export const DEFAULT_CAPACITY_LIMITS: CapacityLimits = {
+	doorSessionsGlobal: 100,
+	doorSessionsPerConnection: 4,
 	pty: { columns: 300, rows: 100 },
 	roomsPerIdentity: 8,
 	sessionBudget: 512,
-	sessionOutputBytes: 4 * 1024 * 1024,
-	sessionStallMs: 30_000,
 	sessionsPerRoom: 32,
 };
 
@@ -86,8 +90,8 @@ export const CAPACITY_ENVIRONMENT = [
 	"SUPERVILLAIN_GATEWAY_ROOMS_PER_IDENTITY",
 	"SUPERVILLAIN_GATEWAY_SESSIONS_PER_ROOM",
 	"SUPERVILLAIN_GATEWAY_SESSION_BUDGET",
-	"SUPERVILLAIN_GATEWAY_SESSION_OUTPUT_BYTES",
-	"SUPERVILLAIN_GATEWAY_SESSION_STALL_MS",
+	"SUPERVILLAIN_GATEWAY_DOOR_SESSIONS_PER_CONNECTION",
+	"SUPERVILLAIN_GATEWAY_DOOR_SESSIONS_GLOBAL",
 	"SUPERVILLAIN_GATEWAY_PTY_COLUMNS",
 	"SUPERVILLAIN_GATEWAY_PTY_ROWS",
 	"SUPERVILLAIN_GATEWAY_LOBBY_IDLE_MS",
@@ -133,6 +137,16 @@ export const capacityFromEnvironment = (
 	env: CapacityEnvironment
 ): GatewayCapacity => ({
 	limits: {
+		doorSessionsGlobal: readCount(
+			env,
+			"SUPERVILLAIN_GATEWAY_DOOR_SESSIONS_GLOBAL",
+			DEFAULT_CAPACITY_LIMITS.doorSessionsGlobal
+		),
+		doorSessionsPerConnection: readCount(
+			env,
+			"SUPERVILLAIN_GATEWAY_DOOR_SESSIONS_PER_CONNECTION",
+			DEFAULT_CAPACITY_LIMITS.doorSessionsPerConnection
+		),
 		pty: {
 			columns: readCount(
 				env,
@@ -156,16 +170,6 @@ export const capacityFromEnvironment = (
 			env,
 			"SUPERVILLAIN_GATEWAY_SESSION_BUDGET",
 			DEFAULT_CAPACITY_LIMITS.sessionBudget
-		),
-		sessionOutputBytes: readCount(
-			env,
-			"SUPERVILLAIN_GATEWAY_SESSION_OUTPUT_BYTES",
-			DEFAULT_CAPACITY_LIMITS.sessionOutputBytes
-		),
-		sessionStallMs: readCount(
-			env,
-			"SUPERVILLAIN_GATEWAY_SESSION_STALL_MS",
-			DEFAULT_CAPACITY_LIMITS.sessionStallMs
 		),
 		sessionsPerRoom: readCount(
 			env,
