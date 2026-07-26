@@ -6,6 +6,8 @@ import path from "node:path";
 
 import { ROOM_NAME_RULE } from "@supervillain/room-wire";
 
+import { pinGateway } from "../src/gateways.js";
+
 const NO_GATEWAY =
 	"join needs a gateway: pass --gateway <url> or set SUPERVILLAIN_GATEWAY.";
 const folders: string[] = [];
@@ -62,8 +64,23 @@ describe("supervillain join argument handling", () => {
 		});
 		expect(result).toEqual({
 			code: 1,
-			error: "'supervillain.app' is not a gateway URL.\n",
+			error:
+				"Transport address 'supervillain.app' is not a ws:// or wss:// URL.\n",
 		});
+	});
+
+	test("refuses a pairing code that conflicts with the stored gateway pin", async () => {
+		const config = await makeConfig();
+		const store = path.join(config, "supervillain");
+		await pinGateway(store, "wss://gateway.example:8443", "ab".repeat(32));
+		const changed = `wss://gateway.example:8443#fp=sha256:${"cd".repeat(32)}`;
+		const result = await runJoin(["iron-keep", "--gateway", changed], {
+			XDG_CONFIG_HOME: config,
+		});
+		expect(result.code).toBe(1);
+		expect(result.error).toContain("Refused:");
+		expect(result.error).toContain("gateways.json");
+		expect(result.error).toContain("supervillain gateway forget");
 	});
 
 	test("refuses an ssh port that is not a port", async () => {

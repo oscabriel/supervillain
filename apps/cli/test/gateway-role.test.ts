@@ -28,6 +28,7 @@ describe("the gateway role selector", () => {
 		const result = await runCli(["--help"]);
 		expect(result.code).toBe(0);
 		expect(result.output).toContain("supervillain gateway serve");
+		expect(result.output).toContain("supervillain gateway forget");
 		expect(result.output).toContain("Operator role");
 	});
 
@@ -40,16 +41,16 @@ describe("the gateway role selector", () => {
 		expect(result.output).toContain("--state <dir>");
 	});
 
-	test("`gateway` alone asks for the one subcommand it has", async () => {
+	test("`gateway` alone asks for one of its management subcommands", async () => {
 		const result = await runCli(["gateway"]);
 		expect(result.code).toBe(1);
-		expect(result.error).toContain("gateway requires serve.");
+		expect(result.error).toContain("gateway requires serve or forget.");
 	});
 
 	test("an unknown gateway subcommand is refused", async () => {
 		const result = await runCli(["gateway", "publish"]);
 		expect(result.code).toBe(1);
-		expect(result.error).toContain("gateway requires serve.");
+		expect(result.error).toContain("gateway requires serve or forget.");
 	});
 
 	test("a bad serve flag is refused before anything binds", async () => {

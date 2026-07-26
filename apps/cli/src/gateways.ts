@@ -75,25 +75,54 @@ export const readGatewayPins = async (
 
 /** Records the trust decision. Called only after a connection succeeded, so a
  * gateway that was never reached leaves nothing behind to un-pair. */
-export const pinGateway = async (
+const writeGatewayPins = async (
 	configFolder: string,
-	origin: string,
-	fingerprint: string
+	gateways: Record<string, PinnedGateway>
 ): Promise<void> => {
-	const pins = await readGatewayPins(configFolder);
-	const file: PinFile = {
-		gateways: {
-			...pins,
-			[origin]: { fingerprint, pinnedAt: new Date().toISOString() },
-		},
-		version: PIN_VERSION,
-	};
+	const file: PinFile = { gateways, version: PIN_VERSION };
 	await mkdir(configFolder, { recursive: true });
 	await writeFile(
 		pinFilePath(configFolder),
 		`${JSON.stringify(file, null, 2)}\n`,
 		{ mode: 0o600 }
 	);
+};
+
+export const pinGateway = async (
+	configFolder: string,
+	origin: string,
+	fingerprint: string
+): Promise<void> => {
+	const pins = await readGatewayPins(configFolder);
+	await writeGatewayPins(configFolder, {
+		...pins,
+		[origin]: { fingerprint, pinnedAt: new Date().toISOString() },
+	});
+};
+
+export interface ForgottenGateway extends PinnedGateway {
+	readonly origin: string;
+}
+
+/** Removes the trust decision for the gateway named by a bare URL or pairing
+ * code. The offered fingerprint is deliberately not compared: forgetting is
+ * the explicit recovery path when a gateway has legitimately changed it. */
+export const forgetGateway = async (
+	configFolder: string,
+	address: string
+): Promise<ForgottenGateway | undefined> => {
+	const pairing = parsePairingCode(address);
+	const origin = gatewayOrigin(pairing.url);
+	const pins = await readGatewayPins(configFolder);
+	const forgotten = pins[origin];
+	if (forgotten === undefined) {
+		return undefined;
+	}
+	const remaining = Object.fromEntries(
+		Object.entries(pins).filter(([candidate]) => candidate !== origin)
+	);
+	await writeGatewayPins(configFolder, remaining);
+	return { ...forgotten, origin };
 };
 
 /** The gateway a `--gateway` value resolved to, with the trust this machine will
@@ -127,9 +156,10 @@ export class PinnedGatewayChangedError extends Error {
 				"A gateway's certificate changes when it is rebuilt — or when something is",
 				"impersonating it. supervillain will not connect until you decide which.",
 				"",
-				"If you rebuilt that gateway yourself, remove its entry from",
+				"If you rebuilt that gateway yourself, forget the old decision and pair again:",
+				`  supervillain gateway forget ${options.origin}`,
+				"This removes its entry from:",
 				`  ${options.pinFile}`,
-				"and pair again.",
 			].join("\n")
 		);
 		this.name = "PinnedGatewayChangedError";
