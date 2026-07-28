@@ -50,8 +50,9 @@ tar -xzf "$temporary_directory/$archive" -C "$temporary_directory" supervillain
 install_directory=${SUPERVILLAIN_INSTALL_DIR:-$HOME/.local/bin}
 mkdir -p "$install_directory"
 install -m 755 "$temporary_directory/supervillain" "$install_directory/supervillain"
+ln -sf supervillain "$install_directory/vil"
 
-echo "installed $install_directory/supervillain"
+echo "installed $install_directory/supervillain and its vil alias"
 case ":${PATH:-}:" in
 	*":$install_directory:"*) ;;
 	*) echo "add $install_directory to your PATH." ;;

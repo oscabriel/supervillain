@@ -8,6 +8,8 @@ A terminal-first virtual tabletop. Players `ssh` into a live game room; the GM h
 curl -fsSL https://raw.githubusercontent.com/oscabriel/supervillain/main/install.sh | sh
 ```
 
+This installs the `supervillain` binary and a `vil` short alias; both identify as supervillain.
+
 Then `supervillain create` to host a table, and hand your players:
 
 ```sh

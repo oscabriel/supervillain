@@ -1,7 +1,15 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- this pure-local smoke runs with bun test. */
 import { expect, test } from "bun:test";
 import { constants } from "node:fs";
-import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+	access,
+	chmod,
+	mkdir,
+	mkdtemp,
+	readlink,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -88,6 +96,9 @@ test("installs a verified local fixture and rejects a corrupt checksum", async (
 			expect(
 				await isExecutable(path.join(installDirectory, "supervillain"))
 			).toBe(true);
+			const alias = path.join(installDirectory, "vil");
+			expect(await isExecutable(alias)).toBe(true);
+			expect(await readlink(alias)).toBe("supervillain");
 
 			checksumBody = `${"0".repeat(64)}  ${archiveName}\n`;
 			const corrupt = await run(
