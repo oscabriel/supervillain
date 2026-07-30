@@ -2,6 +2,7 @@
  * Everything here is a pure function of lobby state, so the screens can be
  * asserted line by line — including the ADR-0008 rule that every screen must
  * still read correctly with its tagline deleted. */
+export { WORDMARK_TEXT } from "./wordmark-data.js";
 
 /** The lobby's four screens (ADR-0008): splash, interactive join, the
  * become-a-GM install pitch, and session-local settings. */
@@ -57,13 +58,6 @@ export const LOBBY_MENU: readonly LobbyMenuItem[] = [
 	{ action: "settings", label: "settings" },
 	{ action: "leave", label: "leave" },
 ];
-
-/** The wordmark, text tier. ADR-0007 pins pixel-glyph as the default render tier
- * with text as a lossless fallback, and the *text tier is the source format* —
- * so the splash ships the text wordmark now and gains the pixel one for free
- * when the glyph atlas lands. ADR-0007 is documentation-only as of this
- * writing: there is no atlas, no rasterizer, and nothing to fall back from. */
-export const WORDMARK_TEXT = "S U P E R V I L L A I N";
 
 /** Deadpan beat one of two (ADR-0008). The splash reads fine without it. */
 export const SPLASH_TAGLINE =

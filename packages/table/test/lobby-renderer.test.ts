@@ -8,6 +8,7 @@ import type { TerminalConnection, TerminalSize } from "@supervillain/session";
 
 import { runLobby } from "../src/lobby.js";
 import type { LobbyNotice, LobbyOutcome } from "../src/lobby.js";
+import { pixelWordmarkRows } from "../src/pixel-wordmark.js";
 
 const sleep = (ms: number): Promise<void> =>
 	// oxlint-disable-next-line promise/avoid-new -- a bare timer needs the constructor.
@@ -74,7 +75,10 @@ describe("the lobby", () => {
 		const { outcome } = await mountLobby(setup, probe);
 
 		const frame = setup.captureCharFrame();
-		expect(frame).toContain("S U P E R V I L L A I N");
+		for (const row of pixelWordmarkRows) {
+			expect(frame).toContain(row.join(""));
+		}
+		expect(frame).not.toContain("S U P E R V I L L A I N");
 		expect(frame).toContain("join a room");
 		expect(frame).toContain("become a GM");
 		expect(setup.renderer.isRunning).toBe(false);

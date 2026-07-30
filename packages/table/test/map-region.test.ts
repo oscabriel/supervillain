@@ -36,6 +36,12 @@ const HALL: BattleMap = {
 	rows: ["#####", "#...#", "#.^.#", "##+##"],
 };
 
+const VIEWPORT_SOAK_MAP: BattleMap = {
+	legend: { ".": "floor" },
+	name: "Viewport Soak",
+	rows: Array.from({ length: 100 }, () => ".".repeat(200)),
+};
+
 const envelope = (
 	type: `${string}.${string}`,
 	payload: unknown,
@@ -328,6 +334,8 @@ const CSI = `${String.fromCodePoint(27)}\\[`;
 const TRUECOLOR_SGR = new RegExp(`${CSI}[\\d;]*[34]8;2;`, "u");
 /** Indexed SGR: `38;5;n` / `48;5;n`. The only color form the map may emit. */
 const INDEXED_SGR = new RegExp(`${CSI}(?:38|48);5;(?<slot>\\d+)m`, "gu");
+const FRAMEBUFFER_RANGE_MIN_BYTES = 100;
+const FRAMEBUFFER_RANGE_MAX_BYTES = 2048;
 
 describe("the map region on the wire", () => {
 	test("restores the terminal capability environment after painting", async () => {
@@ -380,18 +388,36 @@ describe("the map region on the wire", () => {
 		}
 	});
 
-	test("costs a token move far less than #38's 2 KB ceiling", async () => {
-		const wire = await paintSurface();
-		try {
-			await wire.update(surfaceState([kraan]));
-			wire.clear();
-			await wire.update(surfaceState([{ ...kraan, x: 3, y: 2 }]));
-			const moved = wire.bytes();
-			expect(moved.length).toBeGreaterThan(0);
-			expect(moved.length).toBeLessThan(2048);
-			expect(TRUECOLOR_SGR.test(moved)).toBe(false);
-		} finally {
-			wire.stop();
+	test.each([
+		{ height: 51, label: "156x51", width: 156 },
+		{ height: 15, label: "48x15", width: 48 },
+	])(
+		"keeps a pixel-mode token move inside #38's 0.1–2 KB range at $label terminal cells",
+		async ({ height, width }) => {
+			const size = { height, width };
+			const wire = await paintSurface(size);
+			const token = { ...kraan, x: 10, y: 4 };
+			const pixelState = (next: MapToken): MapRegionState => ({
+				cursor: null,
+				map: VIEWPORT_SOAK_MAP,
+				mode: "pixel",
+				ownSeatId: "gm",
+				selectedTokenId: null,
+				tokens: [next],
+			});
+			try {
+				await wire.update(pixelState(token));
+				wire.clear();
+				await wire.update(pixelState({ ...token, x: token.x + 1 }));
+				const moved = wire.bytes();
+				expect(moved.length).toBeGreaterThanOrEqual(
+					FRAMEBUFFER_RANGE_MIN_BYTES
+				);
+				expect(moved.length).toBeLessThanOrEqual(FRAMEBUFFER_RANGE_MAX_BYTES);
+				expect(TRUECOLOR_SGR.test(moved)).toBe(false);
+			} finally {
+				wire.stop();
+			}
 		}
-	});
+	);
 });

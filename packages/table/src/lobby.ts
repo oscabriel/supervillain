@@ -23,6 +23,11 @@ import type {
 	LobbyNotice,
 	LobbyState,
 } from "./lobby-screens.js";
+import {
+	PIXEL_WORDMARK_ROWS,
+	PixelWordmarkRenderable,
+	wordmarkTierForWidth,
+} from "./pixel-wordmark.js";
 import { resolveThemeToken } from "./theme.js";
 
 export type {
@@ -67,6 +72,9 @@ export interface LobbyOptions extends LobbyChromeContext {
 	readonly until?: Promise<unknown>;
 }
 
+const LOBBY_LEFT_PADDING = 2;
+const WORDMARK_GAP_ROWS = 1;
+
 const NOTICE_TOKEN: Readonly<Record<LobbyNotice["kind"], "danger" | "muted">> =
 	{
 		"dropped-behind": "danger",
@@ -108,15 +116,24 @@ export const runLobby = async (
 	const root = new BoxRenderable(renderer, {
 		flexDirection: "column",
 		height: "100%",
-		paddingLeft: 2,
+		paddingLeft: LOBBY_LEFT_PADDING,
 		paddingTop: 1,
 		width: "100%",
 	});
-	const wordmark = new TextRenderable(renderer, {
+	const wordmark = new BoxRenderable(renderer, {
+		flexDirection: "column",
+		height: PIXEL_WORDMARK_ROWS + WORDMARK_GAP_ROWS,
+		width: "100%",
+	});
+	const pixelWordmark = new PixelWordmarkRenderable(renderer);
+	const textWordmark = new TextRenderable(renderer, {
 		content: WORDMARK_TEXT,
 		fg: resolveThemeToken("accent"),
-		height: 2,
+		height: 1 + WORDMARK_GAP_ROWS,
+		visible: false,
 	});
+	wordmark.add(pixelWordmark);
+	wordmark.add(textWordmark);
 	const notice = new TextRenderable(renderer, {
 		content: "",
 		fg: resolveThemeToken("danger"),
@@ -154,6 +171,13 @@ export const runLobby = async (
 	renderer.root.add(root);
 
 	const draw = (): void => {
+		const wordmarkTier = wordmarkTierForWidth(
+			renderer.terminalWidth - LOBBY_LEFT_PADDING
+		);
+		pixelWordmark.visible = wordmarkTier === "pixel";
+		textWordmark.visible = wordmarkTier === "text";
+		wordmark.height =
+			(wordmarkTier === "pixel" ? PIXEL_WORDMARK_ROWS : 1) + WORDMARK_GAP_ROWS;
 		const lines = noticeLines(state.notice, options);
 		notice.visible = lines.length > 0;
 		notice.height = Math.max(lines.length + 1, 1);
@@ -242,9 +266,10 @@ export const runLobby = async (
 	};
 	renderer.keyInput.on("keypress", onKeypress);
 
-	const unsubscribeResize = options.connection.onResize(({ columns, rows }) =>
-		renderer.resize(columns, rows)
-	);
+	const unsubscribeResize = options.connection.onResize(({ columns, rows }) => {
+		renderer.resize(columns, rows);
+		draw();
+	});
 	const unsubscribeClose = options.connection.onClose(() =>
 		leaveWith({ kind: "leave" })
 	);

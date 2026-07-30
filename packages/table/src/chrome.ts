@@ -30,9 +30,9 @@ import type { ParsedInput } from "./input.js";
 import { mapCommandFor, mapKeyAction } from "./map-interaction.js";
 import type { MapInteraction } from "./map-interaction.js";
 import {
-	MAP_VIEWPORT_MAX_ROWS,
 	MapSurfaceRenderable,
 	mapRegionSize,
+	mapViewportCellRows,
 } from "./map-region.js";
 import type { MapRenderMode } from "./map-region.js";
 import { mapStatusLine, mapTitleLine } from "./map.js";
@@ -42,6 +42,17 @@ import { resolveTextAttributes, resolveThemeToken } from "./theme.js";
 const SIDEBAR_WIDTH = 28;
 const FRAME_DIVIDER_WIDTH = 1;
 const FIXED_BAND_ROWS = 4;
+
+/** The map grid's terminal-cell budget inside the table chrome. Width leaves
+ * the fixed sidebar and its rule; height leaves the fixed bands, the map's
+ * own title/status, and the feed's non-negotiable one-line floor. */
+export const tableMapRegionAvailable = (terminal: {
+	readonly width: number;
+	readonly height: number;
+}): { readonly width: number; readonly height: number } => ({
+	height: mapViewportCellRows(terminal.height),
+	width: Math.max(1, terminal.width - SIDEBAR_WIDTH - FRAME_DIVIDER_WIDTH),
+});
 
 /** The map region's own focus stop, ahead of the module panels: chrome's
  * region is chrome's, and a module panel can never claim it. */
@@ -375,7 +386,10 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			: { cursor, map, selectedTokenId, tokens: fold.tokens() };
 	};
 	const centerWidth = (): number =>
-		Math.max(1, renderer.terminalWidth - SIDEBAR_WIDTH - FRAME_DIVIDER_WIDTH);
+		tableMapRegionAvailable({
+			height: renderer.terminalHeight,
+			width: renderer.terminalWidth,
+		}).width;
 	/** Reflows every rule from live terminal dimensions. One vertical rule marks
 	 * the sidebar; center-region headers compute real meetings against it. */
 	const renderFrame = (): void => {
@@ -462,12 +476,13 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 		const size = mapRegionSize(
 			map,
-			{
-				height: MAP_VIEWPORT_MAX_ROWS,
-				// ADR-0021's 4×3 tile geometry is unchanged; chrome spends exactly
-				// one additional terminal column on the sidebar's single-side rule.
-				width: centerWidth(),
-			},
+			// The map gets the live main-band remainder after the feed's
+			// non-negotiable one-line floor, rather than the text tier's old
+			// fixed 16-row cap. Pixel mode rounds this to whole 4×3 tiles.
+			tableMapRegionAvailable({
+				height: renderer.terminalHeight,
+				width: renderer.terminalWidth,
+			}),
 			mapMode
 		);
 		mapSurface.width = size.width;

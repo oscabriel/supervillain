@@ -13,9 +13,11 @@ import {
 } from "@supervillain/atlas";
 import type { BattleMap, MapToken } from "@supervillain/core";
 
+import { tableMapRegionAvailable } from "../src/chrome.js";
 import { mapKeyAction } from "../src/map-interaction.js";
 import { composePixelCells, pixelViewportSize } from "../src/map-pixel.js";
 import { mapRegionSize } from "../src/map-region.js";
+import { scrollViewport } from "../src/map.js";
 import type { MapCell, MapViewport } from "../src/map.js";
 
 const CAVERN: BattleMap = {
@@ -25,6 +27,12 @@ const CAVERN: BattleMap = {
 };
 
 const WHOLE: MapViewport = { height: 4, originX: 0, originY: 0, width: 5 };
+
+const LARGE_MAP: BattleMap = {
+	legend: { ".": "floor" },
+	name: "Viewport Soak",
+	rows: Array.from({ length: 100 }, () => ".".repeat(200)),
+};
 
 const compose = (
 	over: Partial<Parameters<typeof composePixelCells>[0]> = {}
@@ -100,13 +108,21 @@ describe("pixel composition (ADR-0021)", () => {
 		}
 	});
 
-	test("a terrain tile paints its legend character's ding, losslessly", () => {
-		const rows = compose();
-		// (0,0) is '#' — a wall; the ding keyed by '#' is what must appear.
-		expect(decodeBlock(tileBlock(rows, 0, 0))).toEqual(atlasBitmap("#"));
-		// (2,3) is '+' — the door.
-		expect(decodeBlock(tileBlock(rows, 2, 3))).toEqual(atlasBitmap("+"));
-	});
+	test.each([".", "#", "+", "^", "~"])(
+		"the default-legend key '%s' paints that exact keyed ding losslessly",
+		(glyph) => {
+			const map: BattleMap = {
+				legend: { [glyph]: "floor" },
+				name: "Default legend key",
+				rows: [glyph],
+			};
+			const rows = compose({
+				map,
+				viewport: { height: 1, originX: 0, originY: 0, width: 1 },
+			});
+			expect(decodeBlock(tileBlock(rows, 0, 0))).toEqual(atlasBitmap(glyph));
+		}
+	);
 
 	test("a legend character without a ding falls back to its text glyph", () => {
 		const macron = "\u0100";
@@ -202,6 +218,45 @@ describe("pixel viewport arithmetic", () => {
 			width: 5,
 		});
 	});
+
+	test.each([
+		{
+			expectedOrigin: { originX: 161, originY: 83 },
+			expectedRegion: { height: 51, width: 156 },
+			expectedViewport: { height: 17, width: 39 },
+			label: "188x60",
+			terminal: { height: 60, width: 188 },
+		},
+		{
+			expectedOrigin: { originX: 188, originY: 95 },
+			expectedRegion: { height: 15, width: 48 },
+			expectedViewport: { height: 5, width: 12 },
+			label: "80x24",
+			terminal: { height: 24, width: 80 },
+		},
+	])(
+		"fits whole 4×3 tiles and scrolls to the far edge at $label",
+		({ expectedOrigin, expectedRegion, expectedViewport, terminal }) => {
+			const region = mapRegionSize(
+				LARGE_MAP,
+				tableMapRegionAvailable(terminal),
+				"pixel"
+			);
+			expect(region).toEqual(expectedRegion);
+			const viewportSize = pixelViewportSize(region);
+			expect(viewportSize).toEqual(expectedViewport);
+			const viewport = scrollViewport(
+				LARGE_MAP,
+				viewportSize,
+				{ originX: 0, originY: 0 },
+				{ x: 199, y: 99 }
+			);
+			expect(viewport).toEqual({
+				...expectedOrigin,
+				...expectedViewport,
+			});
+		}
+	);
 });
 
 describe("the render-mode toggle", () => {

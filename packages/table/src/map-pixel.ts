@@ -26,6 +26,8 @@ import {
 import { mapCellSemantics } from "./map.js";
 import type { MapCell, MapComposition } from "./map.js";
 
+export { TILE_COLUMNS, TILE_ROWS } from "@supervillain/atlas";
+
 const UNKNOWN_GLYPH_KEY = "?";
 
 /** The bitmap a map character renders as: ding first, text second, `?` last. */

@@ -11,11 +11,15 @@
  */
 import { FrameBufferRenderable, RGBA } from "@opentui/core";
 import type { OptimizedBuffer, RenderContext } from "@opentui/core";
-import { TILE_COLUMNS, TILE_ROWS } from "@supervillain/atlas";
 import type { BattleMap, MapToken } from "@supervillain/core";
 import { mapDimensions } from "@supervillain/core";
 
-import { composePixelCells, pixelViewportSize } from "./map-pixel.js";
+import {
+	composePixelCells,
+	pixelViewportSize,
+	TILE_COLUMNS,
+	TILE_ROWS,
+} from "./map-pixel.js";
 import { composeMapCells, mapCellAt, scrollViewport } from "./map.js";
 import type { MapCursor, MapViewport } from "./map.js";
 import { resolveThemeToken } from "./theme.js";
@@ -24,8 +28,17 @@ import { resolveThemeToken } from "./theme.js";
  * per-session toggle, and no capability detection sits between them. */
 export type MapRenderMode = "pixel" | "text";
 
-/** How many terminal rows the region may spend on the grid before it pans. */
-export const MAP_VIEWPORT_MAX_ROWS = 16;
+/** Rows outside the main band, plus the map's title/status and the feed's
+ * header/one-line floor. The feed is non-negotiable; everything left is the
+ * map grid's live terminal-cell budget. */
+const MAP_VIEWPORT_RESERVED_ROWS = 8;
+
+/** The map grid's terminal-row budget at a terminal height. This is dynamic:
+ * 80×24 retains the feed beneath a 15-row pixel grid, while 188×60 can spend
+ * 51 rows on 17 whole 4×3 tiles instead of carrying the text tier's old
+ * 16-row ceiling into pixel mode. */
+export const mapViewportCellRows = (terminalRows: number): number =>
+	Math.max(1, Math.floor(terminalRows) - MAP_VIEWPORT_RESERVED_ROWS);
 
 /** The blank beyond a map's edge: the terminal's own default, never a color.
  * `defaultBackground` emits the SGR reset, so it adds nothing to the palette. */
