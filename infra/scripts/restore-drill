@@ -1,0 +1,60 @@
+#!/bin/sh
+# Non-destructive repository drill. Run on a scratch box with Litestream and
+# restic credentials exported; it restores both SQLite stores and the complete
+# restic tree under the destination, never over a running production path.
+set -eu
+
+if [ "$#" -ne 1 ]; then
+	echo "usage: restore-drill EMPTY_DESTINATION" >&2
+	exit 2
+fi
+
+destination=$1
+if [ -e "$destination" ] && [ -n "$(find "$destination" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+	echo "restore destination is not empty: $destination" >&2
+	exit 1
+fi
+: "${LITESTREAM_REPLICA_URL:?export LITESTREAM_REPLICA_URL}"
+: "${LITESTREAM_ACCESS_KEY_ID:?export LITESTREAM_ACCESS_KEY_ID}"
+: "${LITESTREAM_SECRET_ACCESS_KEY:?export LITESTREAM_SECRET_ACCESS_KEY}"
+: "${RESTIC_REPOSITORY:?export RESTIC_REPOSITORY}"
+: "${RESTIC_PASSWORD:?export RESTIC_PASSWORD}"
+
+mkdir -p "$destination/litestream" "$destination/restic"
+replica=${LITESTREAM_REPLICA_URL%/}/sqlite
+litestream_config=${LITESTREAM_CONFIG:-/etc/supervillain/litestream.yml}
+# Restic commonly exports AWS_* credentials in the same operator shell, and
+# Litestream gives those precedence over LITESTREAM_*. Override them for these
+# two commands and load the configured S3-compatible endpoint/region.
+AWS_ACCESS_KEY_ID=$LITESTREAM_ACCESS_KEY_ID \
+	AWS_SECRET_ACCESS_KEY=$LITESTREAM_SECRET_ACCESS_KEY \
+	litestream restore -config "$litestream_config" -integrity-check full \
+	-o "$destination/litestream/gateway-registry.db" \
+	"$replica/gateway/registry.db"
+AWS_ACCESS_KEY_ID=$LITESTREAM_ACCESS_KEY_ID \
+	AWS_SECRET_ACCESS_KEY=$LITESTREAM_SECRET_ACCESS_KEY \
+	litestream restore -config "$litestream_config" -integrity-check full \
+	-o "$destination/litestream/web-store.db" \
+	"$replica/web/store.db"
+restic restore latest --tag supervillain --target "$destination/restic"
+
+for database in "$destination/litestream/gateway-registry.db" \
+	"$destination/litestream/web-store.db"; do
+	[ "$(sqlite3 "$database" 'PRAGMA integrity_check;')" = ok ]
+done
+for directory in \
+	var/lib/supervillain/gateway \
+	var/lib/supervillain/web/snapshots \
+	var/lib/supervillain/web/og \
+	var/lib/caddy; do
+	[ -d "$destination/restic/$directory" ] || {
+		echo "restic restore is missing $directory" >&2
+		exit 1
+	}
+done
+if find "$destination" -path '*/etc/supervillain/web-token-key' -print -quit | grep -q .; then
+	echo "web token key must not be present in either backup" >&2
+	exit 1
+fi
+
+printf '%s\n' "restore drill artifacts are internally readable at $destination"

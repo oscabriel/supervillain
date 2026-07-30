@@ -1,0 +1,55 @@
+#!/bin/sh
+# Restic's copy is belt-and-braces behind Litestream. The staging tree is the
+# full durable tree plus the Caddy cache, but every SQLite file is replaced by
+# sqlite3's transactionally consistent .backup output before restic sees it.
+set -eu
+
+state=${SV_BACKUP_STATE:-/var/lib/supervillain}
+caddy=${SV_BACKUP_CADDY:-/var/lib/caddy}
+runtime=${SV_BACKUP_RUNTIME:-/run/sv-restic}
+stage=$runtime/backup
+rm -rf "$stage"
+mkdir -p "$stage"
+cleanup() {
+	rm -rf "$stage"
+}
+trap cleanup EXIT HUP INT TERM
+
+mkdir -p "$stage/var/lib/supervillain" "$stage/var/lib/caddy"
+rsync -a \
+	--exclude='*.db' \
+	--exclude='*.db-journal' \
+	--exclude='*.db-shm' \
+	--exclude='*.db-wal' \
+	"$state/" "$stage/var/lib/supervillain/"
+rsync -a "$caddy/" "$stage/var/lib/caddy/"
+
+find "$state" -type f -name '*.db' -print | while IFS= read -r database; do
+	relative=${database#"$state"/}
+	target=$stage/var/lib/supervillain/$relative
+	mkdir -p "$(dirname "$target")"
+	sqlite3 "$database" ".timeout 5000" ".backup '$target'"
+	# Fail the entire snapshot if a supposedly safe copy is not readable.
+	[ "$(sqlite3 "$target" 'PRAGMA quick_check;')" = ok ]
+done
+
+# The precious web token key is deliberately outside both source roots. A
+# leaked database replica or restic snapshot must not reconstruct live URLs.
+if [ -e "$stage/etc/supervillain/web-token-key" ]; then
+	echo "web token key entered the backup staging tree" >&2
+	exit 1
+fi
+
+(
+	cd "$stage"
+	restic backup --tag supervillain var/lib/supervillain var/lib/caddy
+)
+restic forget \
+	--tag supervillain \
+	--group-by host,tags \
+	--keep-daily 7 \
+	--keep-weekly 4 \
+	--keep-monthly 6 \
+	--prune
+
+curl --fail --silent --show-error --max-time 10 "$HEALTHCHECK_URL" >/dev/null

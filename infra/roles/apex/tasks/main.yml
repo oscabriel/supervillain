@@ -1,0 +1,447 @@
+---
+- name: Refuse an unproved platform or break-glass path
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system == "Linux"
+      - ansible_facts.architecture == "x86_64"
+      - ansible_facts.distribution == "Ubuntu"
+      - ansible_facts.distribution_major_version == "24"
+      - sv_break_glass_console_verified | bool
+      - sv_deploy_authorized_key is defined
+      - sv_deploy_authorized_key | length > 40
+    fail_msg: >-
+      Provisioning requires Ubuntu 24.04 x86_64, a tested Hostinger browser console, and the dedicated deploy public key. Set sv_break_glass_console_verified=true only after testing the console.
+
+- name: Install baseline packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - restic
+      - rsync
+      - sqlite3
+      - ufw
+      - unzip
+    state: present
+    update_cache: true
+
+- name: Install the Caddy repository signing key
+  ansible.builtin.get_url:
+    url: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+    dest: /usr/share/keyrings/caddy-stable-archive-keyring.asc
+    mode: "0644"
+
+- name: Configure the official Caddy repository
+  ansible.builtin.copy:
+    content: >-
+      deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.asc] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
+    dest: /etc/apt/sources.list.d/caddy-stable.list
+    mode: "0644"
+
+- name: Install the validated Caddy version
+  ansible.builtin.apt:
+    name: "caddy={{ sv_caddy_version }}"
+    state: present
+    update_cache: true
+    allow_downgrade: true
+
+- name: Hold Caddy for eyes-on upgrades
+  ansible.builtin.dpkg_selections:
+    name: caddy
+    selection: hold
+
+- name: Download the pinned Bun runtime
+  ansible.builtin.get_url:
+    url: "{{ sv_bun_archive_url }}"
+    dest: "/var/cache/bun-linux-x64-{{ sv_bun_version }}.zip"
+    checksum: "sha256:{{ sv_bun_archive_sha256 }}"
+    mode: "0644"
+
+- name: Create the versioned Bun directory
+  ansible.builtin.file:
+    path: "/opt/bun-{{ sv_bun_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Unpack the pinned Bun runtime
+  ansible.builtin.unarchive:
+    src: "/var/cache/bun-linux-x64-{{ sv_bun_version }}.zip"
+    dest: "/opt/bun-{{ sv_bun_version }}"
+    remote_src: true
+    creates: "/opt/bun-{{ sv_bun_version }}/bun-linux-x64/bun"
+
+- name: Create the stable Bun prefix
+  ansible.builtin.file:
+    path: /opt/bun/bin
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Point the stable Bun path at the pinned runtime
+  ansible.builtin.file:
+    src: "/opt/bun-{{ sv_bun_version }}/bun-linux-x64/bun"
+    dest: /opt/bun/bin/bun
+    state: link
+    force: true
+
+- name: Download the pinned Litestream package
+  ansible.builtin.get_url:
+    url: "{{ sv_litestream_deb_url }}"
+    dest: "/var/cache/litestream-{{ sv_litestream_version }}.deb"
+    checksum: "sha256:{{ sv_litestream_deb_sha256 }}"
+    mode: "0644"
+
+- name: Install Litestream
+  ansible.builtin.apt:
+    deb: "/var/cache/litestream-{{ sv_litestream_version }}.deb"
+    state: present
+
+- name: Create service groups
+  ansible.builtin.group:
+    name: "{{ item }}"
+    system: true
+  loop:
+    - sv-data
+    - sv-gateway
+    - sv-web
+    - sv-litestream
+
+- name: Create unprivileged service users
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    group: "{{ item.group }}"
+    groups: "{{ item.groups | default(omit) }}"
+    append: true
+    create_home: false
+    home: /nonexistent
+    shell: /usr/sbin/nologin
+    system: true
+  loop:
+    - { name: sv-gateway, group: sv-gateway, groups: sv-data }
+    - { name: sv-web, group: sv-web, groups: sv-data }
+    - {
+        name: sv-litestream,
+        group: sv-litestream,
+        groups: "sv-data,sv-gateway,sv-web",
+      }
+
+- name: Create the dedicated deploy user
+  ansible.builtin.user:
+    name: deploy
+    create_home: true
+    home: /home/deploy
+    shell: /bin/bash
+    state: present
+
+- name: Create deploy SSH directory
+  ansible.builtin.file:
+    path: /home/deploy/.ssh
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0700"
+
+- name: Install the restricted deploy public key
+  ansible.builtin.copy:
+    content: "restrict {{ sv_deploy_authorized_key }}\n"
+    dest: /home/deploy/.ssh/authorized_keys
+    owner: deploy
+    group: deploy
+    mode: "0600"
+
+- name: Install restricted deploy sudo policy
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../files/sv-deploy-sudoers"
+    dest: /etc/sudoers.d/supervillain-deploy
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Create release roots owned by deploy
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0755"
+  loop:
+    - /opt/supervillain
+    - /opt/supervillain/releases
+    - /opt/supervillain/current
+
+- name: Create the durable root
+  ansible.builtin.file:
+    path: /var/lib/supervillain
+    state: directory
+    owner: root
+    group: sv-data
+    mode: "0750"
+
+- name: Create service-owned durable directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    # Setgid keeps app- and Litestream-created SQLite sidecars in the service
+    # group; sticky prevents Litestream from unlinking service-owned keys.
+    - {
+        path: /var/lib/supervillain/gateway,
+        owner: sv-gateway,
+        group: sv-gateway,
+        mode: "3770",
+      }
+    - {
+        path: /var/lib/supervillain/web,
+        owner: sv-web,
+        group: sv-web,
+        mode: "3770",
+      }
+    - {
+        path: /var/lib/supervillain/web/snapshots,
+        owner: sv-web,
+        group: sv-web,
+        mode: "0750",
+      }
+    - {
+        path: /var/lib/supervillain/web/og,
+        owner: sv-web,
+        group: sv-web,
+        mode: "0750",
+      }
+    - {
+        path: /var/lib/supervillain/litestream,
+        owner: sv-litestream,
+        group: sv-litestream,
+        mode: "0700",
+      }
+
+- name: Create protected configuration directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/supervillain, group: sv-web, mode: "0750" }
+    - { path: /usr/local/libexec/supervillain, group: root, mode: "0755" }
+
+- name: Install the web public configuration contract
+  ansible.builtin.copy:
+    content: |
+      SUPERVILLAIN_WEB_STATE_ROOT=/var/lib/supervillain/web
+      SUPERVILLAIN_WEB_TOKEN_KEY_PATH=/etc/supervillain/web-token-key
+    dest: /etc/supervillain/web.env
+    owner: root
+    group: sv-web
+    mode: "0640"
+
+- name: Install backup environment files from the operator's ignored files
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: "{{ item.group }}"
+    mode: "0640"
+  loop:
+    - {
+        src: "{{ sv_litestream_env_source }}",
+        dest: /etc/supervillain/litestream.env,
+        group: sv-litestream,
+      }
+    - {
+        src: "{{ sv_restic_env_source }}",
+        dest: /etc/supervillain/restic.env,
+        group: root,
+      }
+  no_log: true
+
+- name: Install service helper scripts
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../scripts/{{ item }}"
+    dest: "/usr/local/libexec/supervillain/{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - ensure-web-token-key
+    - restic-backup
+    - validate-live
+
+- name: Install Litestream configuration
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../files/litestream.yml"
+    dest: /etc/supervillain/litestream.yml
+    owner: root
+    group: sv-litestream
+    mode: "0640"
+  notify: restart litestream
+
+- name: Install systemd units
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../files/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - sv-gateway.service
+    - sv-web-key.service
+    - sv-web.service
+    - sv-litestream.service
+    - sv-restic-backup.service
+    - sv-restic-backup.timer
+  register: sv_units
+
+- name: Reload systemd after unit changes
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: sv_units.changed
+
+- name: Enable application units without starting an absent release
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+  loop:
+    - sv-gateway.service
+    - sv-web.service
+
+- name: Disable the package's unused stock Litestream unit
+  ansible.builtin.systemd_service:
+    name: litestream.service
+    enabled: false
+    state: stopped
+
+- name: Enable continuous replication and nightly backup
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - sv-litestream.service
+    - sv-restic-backup.timer
+
+- name: Install the apex Caddyfile
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../files/Caddyfile"
+    dest: /etc/caddy/Caddyfile
+    owner: root
+    group: caddy
+    mode: "0644"
+    validate: /usr/bin/caddy validate --config %s --adapter caddyfile
+  notify: restart caddy
+
+- name: Enable and start Caddy
+  ansible.builtin.systemd_service:
+    name: caddy
+    enabled: true
+    state: started
+
+- name: Apply all non-SSH handlers before changing the connection port
+  ansible.builtin.meta: flush_handlers
+
+- name: Open the new administrative SSH port before moving sshd
+  ansible.builtin.command:
+    cmd: "ufw limit {{ sv_admin_ssh_port }}/tcp comment 'administrative ssh'"
+  register: sv_ufw_admin
+  changed_when: "'Skipping' not in sv_ufw_admin.stdout"
+
+- name: Open public service ports
+  ansible.builtin.command:
+    cmd: "ufw allow {{ item.port }}/tcp comment '{{ item.comment }}'"
+  loop:
+    - { port: "22", comment: "supervillain gateway" }
+    - { port: "80", comment: "caddy http" }
+    - { port: "443", comment: "caddy https" }
+  register: sv_ufw_public
+  changed_when: "'Skipping' not in sv_ufw_public.stdout"
+
+- name: Set default-deny inbound firewall policy
+  ansible.builtin.command:
+    cmd: ufw default deny incoming
+  register: sv_ufw_deny
+  changed_when: "'Default incoming policy changed' in sv_ufw_deny.stdout"
+
+- name: Keep outbound traffic available
+  ansible.builtin.command:
+    cmd: ufw default allow outgoing
+  register: sv_ufw_allow_out
+  changed_when: "'Default outgoing policy changed' in sv_ufw_allow_out.stdout"
+
+- name: Require UFW to mirror rules to IPv6
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: "^IPV6="
+    line: IPV6=yes
+
+- name: Enable the firewall
+  ansible.builtin.command:
+    cmd: ufw --force enable
+  register: sv_ufw_enable
+  changed_when: "'already enabled' not in sv_ufw_enable.stdout"
+
+- name: Install the administrative SSH port contract for local checks
+  ansible.builtin.copy:
+    content: "{{ sv_admin_ssh_port }}\n"
+    dest: /etc/supervillain/admin-ssh-port
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Reload mirrored firewall rules
+  ansible.builtin.command:
+    cmd: ufw --force reload
+  changed_when: false
+
+- name: Move administrative sshd off public port 22
+  ansible.builtin.template:
+    src: "{{ role_path }}/../../files/sshd-supervillain.conf.j2"
+    dest: /etc/ssh/sshd_config.d/90-supervillain-admin.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart administrative ssh
+
+- name: Validate the complete sshd configuration before restart
+  ansible.builtin.command:
+    cmd: /usr/sbin/sshd -t
+  changed_when: false
+
+- name: Apply the SSH move before verifying it
+  ansible.builtin.meta: flush_handlers
+
+- name: Keep ssh.service enabled and release socket-activated TCP 22
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      systemctl enable ssh.service
+      systemctl disable --now ssh.socket
+    executable: /bin/sh
+  changed_when: false
+
+- name: Verify administrative SSH from the control machine
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host | default(inventory_hostname) }}"
+    port: "{{ sv_admin_ssh_port }}"
+    connect_timeout: 5
+    timeout: 30
+  become: false
+  delegate_to: localhost
+
+- name: Verify that sshd released the gateway's public port
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host | default(inventory_hostname) }}"
+    port: 22
+    connect_timeout: 2
+    state: stopped
+    timeout: 30
+  become: false
+  delegate_to: localhost

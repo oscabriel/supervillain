@@ -1,0 +1,73 @@
+#!/bin/sh
+# Run on the apex box after a deploy. This checks routing and both redaction
+# fences without printing the canary capability token.
+set -eu
+
+domain=${1:-supervillain.app}
+admin_port=$(cat /etc/supervillain/admin-ssh-port)
+case "$admin_port" in
+	*[!0-9]* | '')
+		echo "invalid administrative SSH port contract" >&2
+		exit 1
+		;;
+esac
+canary=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+since=$(date +%s)
+
+for unit in sv-gateway sv-web sv-litestream caddy; do
+	systemctl is-active --quiet "$unit"
+done
+
+# Public port 22 remains the gateway; admin SSH and HTTP(S) keep their ports.
+ss -ltn | grep -Eq 'LISTEN.+:22[[:space:]]'
+ss -ltn | grep -Eq 'LISTEN.+:80[[:space:]]'
+ss -ltn | grep -Eq 'LISTEN.+:443[[:space:]]'
+ss -ltn | grep -Eq "LISTEN.+:${admin_port}[[:space:]]"
+for port in 22 80 443 "$admin_port"; do
+	ufw status | grep -Eq "^$port/tcp[[:space:]]+\\(v6\\)"
+done
+# Application listeners must not be wildcard-bound.
+ss -ltn | grep -Eq '127\.0\.0\.1:3000[[:space:]]'
+ss -ltn | grep -Eq '127\.0\.0\.1:3001[[:space:]]'
+if ss -ltn | grep -Eq '(0\.0\.0\.0|\[::\]):300[01][[:space:]]'; then
+	echo "an application listener escaped loopback" >&2
+	exit 1
+fi
+
+headers=$(mktemp)
+access_delta=$(mktemp)
+access_log=/var/log/caddy/supervillain-access.log
+cleanup() {
+	rm -f "$headers" "$access_delta"
+}
+trap cleanup EXIT HUP INT TERM
+curl --silent --show-error --output /dev/null --dump-header "$headers" \
+	"http://$domain/operator-path?kept=yes"
+grep -Eq '^HTTP/[^ ]+ 302' "$headers"
+grep -Eiq "^location: https://$domain/operator-path\?kept=yes" "$headers"
+
+curl --fail --silent --show-error --output /dev/null "https://$domain/"
+first_access_line=$(($(wc -l <"$access_log") + 1))
+http_capability_status=$(curl --silent --show-error --output /dev/null \
+	--write-out '%{http_code}' "http://$domain/a/$canary")
+[ "$http_capability_status" = 302 ]
+# The generic unknown-capability response proves the HTTPS request reached web.
+capability_status=$(curl --silent --show-error --output /dev/null \
+	--write-out '%{http_code}' \
+	-H "Referer: https://$domain/a/$canary" \
+	"https://$domain/a/$canary?from=validation")
+[ "$capability_status" = 404 ]
+sleep 1
+
+if journalctl --since="@$since" -u sv-web -u caddy --no-pager | grep -Fq "$canary"; then
+	echo "capability canary reached an app or edge journal" >&2
+	exit 1
+fi
+tail -n "+$first_access_line" "$access_log" >"$access_delta"
+if grep -Fq "$canary" "$access_log"; then
+	echo "capability canary reached the Caddy access log" >&2
+	exit 1
+fi
+[ "$(grep -Fc '"uri":"/a/REDACTED"' "$access_delta")" -ge 2 ]
+
+printf '%s\n' "live routing, loopback binds, and capability-log fences passed"

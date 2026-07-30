@@ -30,6 +30,7 @@ jobs:
       - run: bun run test:gateway
       - run: bun run test:web
       - run: bun run test:install
+      - run: sh infra/scripts/validate-local
 
   # The dual Bun/Node lane is the standing claim that the event-sourced core stays
   # runtime-portable: only the edges (Table, gateway render, CLI binary) are

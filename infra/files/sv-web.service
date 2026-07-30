@@ -1,0 +1,44 @@
+[Unit]
+Description=supervillain web
+After=network-online.target sv-web-key.service
+Requires=sv-web-key.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sv-web
+Group=sv-web
+WorkingDirectory=/opt/supervillain/current/web
+EnvironmentFile=-/etc/supervillain/web.env
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+ExecStart=/opt/bun/bin/bun .output/server/index.mjs
+Restart=on-failure
+RestartSec=2s
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=30s
+# The store and WAL are group-readable/writable by sv-litestream. The token
+# reconstruction key is separately created 0600 outside this writable tree.
+UMask=0007
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/supervillain/web-token-key
+ReadWritePaths=/var/lib/supervillain/web
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

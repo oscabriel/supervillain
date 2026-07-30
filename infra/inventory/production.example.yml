@@ -1,0 +1,14 @@
+all:
+  children:
+    apex:
+      hosts:
+        supervillain.app:
+          ansible_host: 203.0.113.10
+          ansible_port: "{{ sv_admin_ssh_port }}"
+          ansible_user: YOUR_BOOTSTRAP_ADMIN
+  vars:
+    # The public key only. The private deploy key stays in the operator's
+    # machine and the DEPLOY_SSH_KEY GitHub Actions secret.
+    sv_deploy_authorized_key: "ssh-ed25519 REPLACE_ME github-actions-deploy"
+    sv_litestream_env_source: "{{ inventory_dir }}/../secrets/litestream.env"
+    sv_restic_env_source: "{{ inventory_dir }}/../secrets/restic.env"

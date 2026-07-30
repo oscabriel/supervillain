@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+key=/etc/supervillain/web-token-key
+
+if [ -e "$key" ]; then
+	if [ ! -f "$key" ] || [ "$(wc -c <"$key")" -ne 32 ]; then
+		echo "web token key exists but is not a 32-byte regular file: $key" >&2
+		exit 1
+	fi
+	chown sv-web:sv-web "$key"
+	chmod 0600 "$key"
+	exit 0
+fi
+
+temporary=$(mktemp /etc/supervillain/.web-token-key.XXXXXX)
+cleanup() {
+	rm -f "$temporary"
+}
+trap cleanup EXIT HUP INT TERM
+
+dd if=/dev/urandom of="$temporary" bs=32 count=1 status=none
+chown sv-web:sv-web "$temporary"
+chmod 0600 "$temporary"
+# A same-directory hard link is an atomic create-if-absent. Never overwrite a
+# key that appeared concurrently.
+if ! ln "$temporary" "$key"; then
+	echo "refusing to overwrite web token key: $key" >&2
+	exit 1
+fi
+rm -f "$temporary"
+trap - EXIT HUP INT TERM

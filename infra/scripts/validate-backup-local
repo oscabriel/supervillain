@@ -1,0 +1,52 @@
+#!/bin/sh
+# End-to-end belt-and-braces backup against a local encrypted restic repo.
+set -eu
+
+root=$(CDPATH='' cd -- "$(dirname "$0")/../.." && pwd)
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/sv-restic-validation.XXXXXX")
+cleanup() {
+	rm -rf "$temporary"
+}
+trap cleanup EXIT HUP INT TERM
+state=$temporary/state
+caddy=$temporary/caddy
+runtime=$temporary/runtime
+repository=$temporary/repository
+restore=$temporary/restore
+mkdir -p "$state/gateway" "$state/web/snapshots" "$state/web/og" \
+	"$state/litestream" "$caddy" "$runtime"
+printf 'host-key fixture\n' >"$state/gateway/ssh_host_ed25519_key"
+chmod 0600 "$state/gateway/ssh_host_ed25519_key"
+printf 'snapshot fixture\n' >"$state/web/snapshots/artifact.json"
+printf 'png fixture\n' >"$state/web/og/artifact.png"
+printf 'certificate fixture\n' >"$caddy/cert.pem"
+printf 'must never be backed up\n' >"$temporary/web-token-key"
+sqlite3 "$state/gateway/registry.db" \
+	"CREATE TABLE rooms (name TEXT); INSERT INTO rooms VALUES ('restored-room');"
+sqlite3 "$state/web/store.db" \
+	"CREATE TABLE artifacts (name TEXT); INSERT INTO artifacts VALUES ('restored-artifact');"
+printf 'ok\n' >"$temporary/health"
+
+RESTIC_REPOSITORY="$repository" RESTIC_PASSWORD=local-validation \
+	restic init >/dev/null
+RESTIC_REPOSITORY="$repository" RESTIC_PASSWORD=local-validation \
+	HEALTHCHECK_URL="file://$temporary/health" \
+	SV_BACKUP_STATE="$state" SV_BACKUP_CADDY="$caddy" \
+	SV_BACKUP_RUNTIME="$runtime" \
+	sh "$root/infra/scripts/restic-backup" >/dev/null
+RESTIC_REPOSITORY="$repository" RESTIC_PASSWORD=local-validation \
+	restic restore latest --tag supervillain --target "$restore" >/dev/null
+
+[ "$(sqlite3 "$restore/var/lib/supervillain/gateway/registry.db" \
+	'SELECT name FROM rooms;')" = restored-room ]
+[ "$(sqlite3 "$restore/var/lib/supervillain/web/store.db" \
+	'SELECT name FROM artifacts;')" = restored-artifact ]
+[ -f "$restore/var/lib/supervillain/gateway/ssh_host_ed25519_key" ]
+[ "$(stat -c %a "$restore/var/lib/supervillain/gateway/ssh_host_ed25519_key")" = 600 ]
+[ -f "$restore/var/lib/supervillain/web/snapshots/artifact.json" ]
+[ -f "$restore/var/lib/supervillain/web/og/artifact.png" ]
+[ -f "$restore/var/lib/caddy/cert.pem" ]
+if find "$restore" -name web-token-key -print -quit | grep -q .; then
+	echo "local restic validation restored the excluded token key" >&2
+	exit 1
+fi

@@ -1,0 +1,184 @@
+---
+- name: Deploy one supervillain component through the shared release mechanism
+  hosts: apex
+  gather_facts: false
+  become: false
+  vars:
+    sv_specs:
+      gateway:
+        service: sv-gateway.service
+        probe_ports: [22, 3001]
+        required_path: supervillain
+      web:
+        service: sv-web.service
+        probe_ports: [3000]
+        required_path: .output/server/index.mjs
+  pre_tasks:
+    - name: Validate deployment inputs
+      ansible.builtin.assert:
+        that:
+          - sv_deployable in sv_specs
+          - sv_release_sha is match('^[0-9a-f]{7,40}$') or sv_release_sha == 'local'
+          - sv_artifact_path | length > 0
+        fail_msg: >-
+          Set sv_deployable to gateway or web, sv_release_sha to a Git SHA, and sv_artifact_path to the controller-side tar.gz bundle.
+
+    - name: Check the controller-side artifact
+      ansible.builtin.stat:
+        path: "{{ sv_artifact_path }}"
+        checksum_algorithm: sha256
+        get_checksum: true
+      delegate_to: localhost
+      register: sv_artifact
+      failed_when: not sv_artifact.stat.isreg | default(false)
+
+    - name: Resolve component paths
+      ansible.builtin.set_fact:
+        sv_spec: "{{ sv_specs[sv_deployable] }}"
+        sv_release_dir: "/opt/supervillain/releases/{{ sv_release_sha }}/{{ sv_deployable }}"
+        sv_current_link: "/opt/supervillain/current/{{ sv_deployable }}"
+        sv_release_seal: "/opt/supervillain/releases/{{ sv_release_sha }}/{{ sv_deployable }}/.artifact.sha256"
+
+  tasks:
+    - name: Read the previous release target
+      ansible.builtin.command:
+        cmd: "readlink -f {{ sv_current_link }}"
+      register: sv_previous
+      changed_when: false
+      failed_when: false
+
+    - name: Read an existing immutable release seal
+      ansible.builtin.command:
+        cmd: "cat {{ sv_release_seal }}"
+      register: sv_existing_seal
+      changed_when: false
+      failed_when: false
+
+    - name: Refuse different bytes under an existing Git SHA
+      ansible.builtin.assert:
+        that:
+          - sv_existing_seal.rc != 0 or sv_existing_seal.stdout == sv_artifact.stat.checksum
+        fail_msg: >-
+          The release SHA already exists with a different artifact checksum. Releases are immutable; use the artifact built from that SHA or a new SHA.
+
+    - name: Remove an unsealed partial release
+      ansible.builtin.file:
+        path: "{{ sv_release_dir }}"
+        state: absent
+      when: sv_existing_seal.rc != 0
+
+    - name: Create the immutable release directory
+      ansible.builtin.file:
+        path: "{{ sv_release_dir }}"
+        state: directory
+        owner: deploy
+        group: deploy
+        mode: "0755"
+
+    - name: Unpack a new component artifact
+      ansible.builtin.unarchive:
+        src: "{{ sv_artifact_path }}"
+        dest: "{{ sv_release_dir }}"
+        owner: deploy
+        group: deploy
+        mode: "u=rwX,go=rX"
+      when: sv_existing_seal.rc != 0
+
+    - name: Seal the new release with its artifact checksum
+      ansible.builtin.copy:
+        content: "{{ sv_artifact.stat.checksum }}\n"
+        dest: "{{ sv_release_seal }}"
+        owner: deploy
+        group: deploy
+        mode: "0444"
+      when: sv_existing_seal.rc != 0
+
+    - name: Make the compiled gateway executable
+      ansible.builtin.file:
+        path: "{{ sv_release_dir }}/supervillain"
+        owner: deploy
+        group: deploy
+        mode: "0755"
+      when: sv_deployable == "gateway"
+
+    - name: Verify the bundle has its deployable entry point
+      ansible.builtin.stat:
+        path: "{{ sv_release_dir }}/{{ sv_spec.required_path }}"
+      register: sv_entrypoint
+      failed_when: not sv_entrypoint.stat.isreg | default(false)
+
+    - name: Flip only this component's current symlink
+      ansible.builtin.file:
+        src: "{{ sv_release_dir }}"
+        dest: "{{ sv_current_link }}"
+        state: link
+        owner: deploy
+        group: deploy
+        force: true
+
+    - name: Restart and probe only the selected component
+      block:
+        - name: Restart the selected unit through the restricted sudo rule
+          ansible.builtin.command:
+            cmd: "sudo -n /usr/bin/systemctl restart {{ sv_spec.service }}"
+          changed_when: true
+
+        - name: Wait for the selected loopback listeners
+          ansible.builtin.wait_for:
+            host: 127.0.0.1
+            port: "{{ item }}"
+            connect_timeout: 2
+            timeout: 30
+          loop: "{{ sv_spec.probe_ports }}"
+
+        - name: Exercise the web root through its loopback listener
+          ansible.builtin.uri:
+            url: http://127.0.0.1:3000/
+            status_code: 200
+            return_content: false
+          when: sv_deployable == "web"
+      rescue:
+        - name: Refuse automatic rollback when no previous release exists
+          ansible.builtin.assert:
+            that:
+              - sv_previous.rc == 0
+              - sv_previous.stdout | length > 0
+            fail_msg: >-
+              The first deployment failed its health probe and has no previous release to restore. Inspect journalctl for the selected unit.
+
+        - name: Restore the previous component symlink
+          ansible.builtin.file:
+            src: "{{ sv_previous.stdout }}"
+            dest: "{{ sv_current_link }}"
+            state: link
+            owner: deploy
+            group: deploy
+            force: true
+
+        - name: Restart the rolled-back unit
+          ansible.builtin.command:
+            cmd: "sudo -n /usr/bin/systemctl restart {{ sv_spec.service }}"
+          changed_when: true
+
+        - name: Report the failed deployment after rollback
+          ansible.builtin.fail:
+            msg: >-
+              {{ sv_deployable }} {{ sv_release_sha }} failed its health probe; {{ sv_previous.stdout }} is current again.
+
+    - name: Retain the current release and four prior releases for this component
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          current=$(readlink -f {{ sv_current_link }})
+          find /opt/supervillain/releases -mindepth 2 -maxdepth 2 \
+            -type d -name {{ sv_deployable }} -printf '%T@ %p\n' |
+            sort -rn |
+            awk -v current="$current" '$2 != current { seen++; if (seen > 4) print $2 }' |
+            while IFS= read -r old; do
+              [ -n "$old" ] || continue
+              rm -rf -- "$old"
+              rmdir -- "$(dirname "$old")" 2>/dev/null || true
+            done
+        executable: /bin/bash
+      register: sv_prune
+      changed_when: false

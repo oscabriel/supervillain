@@ -1,0 +1,42 @@
+[Unit]
+Description=supervillain gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sv-gateway
+Group=sv-gateway
+WorkingDirectory=/var/lib/supervillain/gateway
+Environment=SUPERVILLAIN_GATEWAY_TLS=terminated-upstream
+ExecStart=/opt/supervillain/current/gateway/supervillain gateway serve --state /var/lib/supervillain/gateway --ssh-host supervillain.app --ssh-port 22 --broker-port 3001 --broker-url wss://supervillain.app
+Restart=on-failure
+RestartSec=2s
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=30s
+# SQLite files must be group-readable/writable by sv-litestream; private keys
+# are created with explicit 0600 modes by the application.
+UMask=0007
+
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/supervillain/gateway
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
