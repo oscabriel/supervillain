@@ -29,7 +29,7 @@ Resolved on [Backend data layer: DB and ORM (#32)](https://github.com/oscabriel/
 | link codes (device 15 min, adoption 7 days) | gateway store | ADR-0005 — 7-day codes must survive a restart |
 | gateway ed25519 host key | file, not a row | #40 (precious; escrowed off-box) |
 | (owner identity, type, name) → snapshot document | backend store + file on disk | ADR-0009 |
-| capability tokens | backend store | ADR-0009 (OG image URLs derive from these) |
+| capability tokens | backend store | ADR-0009 (OG image URLs derive from these) _(corrected 2026-07-30, [ADR-0022](./0022-capability-token-derived-secret-hash-at-rest-redaction-and-the-token-handle.md): seeds + hashes, never plaintext; the reconstruction key is a file, not a row — precious, escrowed off-box, never in the backup set)_ |
 | dead-token tombstones | backend store | ADR-0009 — revoke kills a URL _forever_; a later publish mints fresh, never resurrects |
 
 **The mirror — never durable, anywhere, and testable as an invariant:** the per-Room fold, reconnect snapshots, session buffers, `name → current pipe`, all guest session state, and every form of game content (payloads, chat, rolls, sheets, maps) including in logs, metrics, telemetry, and crash reports.
