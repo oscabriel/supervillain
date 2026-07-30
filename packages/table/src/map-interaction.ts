@@ -23,6 +23,7 @@ export type MapAction =
 	| { readonly kind: "cursor"; readonly cursor: MapCursor }
 	| { readonly kind: "select"; readonly tokenId: string | null }
 	| { readonly kind: "command"; readonly command: CoreCommand }
+	| { readonly kind: "toggle-render-mode" }
 	| { readonly kind: "unfocus" }
 	| { readonly kind: "notice"; readonly message: string };
 
@@ -80,6 +81,11 @@ export const mapKeyAction = (
 	}
 	if (SELECT_KEYS.has(key.name)) {
 		return enterAction(state);
+	}
+	// The pixel↔text toggle (ADR-0007/0021): per-session, keyboard-only, no
+	// capability detection — tofu costs exactly this keystroke.
+	if (key.name === "t") {
+		return { kind: "toggle-render-mode" };
 	}
 	if (REMOVE_KEYS.has(key.name)) {
 		const target =

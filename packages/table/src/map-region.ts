@@ -11,12 +11,18 @@
  */
 import { FrameBufferRenderable, RGBA } from "@opentui/core";
 import type { OptimizedBuffer, RenderContext } from "@opentui/core";
+import { TILE_COLUMNS, TILE_ROWS } from "@supervillain/atlas";
 import type { BattleMap, MapToken } from "@supervillain/core";
 import { mapDimensions } from "@supervillain/core";
 
+import { composePixelCells, pixelViewportSize } from "./map-pixel.js";
 import { composeMapCells, mapCellAt, scrollViewport } from "./map.js";
 import type { MapCursor, MapViewport } from "./map.js";
 import { resolveThemeToken } from "./theme.js";
+
+/** The two render tiers (ADR-0007/0021): pixel is the default, text is the
+ * per-session toggle, and no capability detection sits between them. */
+export type MapRenderMode = "pixel" | "text";
 
 /** How many terminal rows the region may spend on the grid before it pans. */
 export const MAP_VIEWPORT_MAX_ROWS = 16;
@@ -28,6 +34,7 @@ const BLANK_BG = RGBA.defaultBackground();
 const BLANK_GLYPH = " ";
 
 export interface MapRegionState {
+	readonly mode: MapRenderMode;
 	readonly map: BattleMap;
 	readonly tokens: readonly MapToken[];
 	readonly cursor: MapCursor | null;
@@ -60,11 +67,16 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 			if (map === undefined) {
 				return;
 			}
+			// In pixel mode a click lands somewhere in a tile's 4×3 block; the
+			// division makes both tiers resolve through the same hit-test.
+			const pixel = this.#state?.mode === "pixel";
 			const cell = mapCellAt(
 				map,
 				this.#viewport,
-				event.x - this.x,
-				event.y - this.y
+				pixel
+					? Math.floor((event.x - this.x) / TILE_COLUMNS)
+					: event.x - this.x,
+				pixel ? Math.floor((event.y - this.y) / TILE_ROWS) : event.y - this.y
 			);
 			if (cell !== null) {
 				event.preventDefault();
@@ -94,10 +106,14 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 		if (state === null) {
 			return;
 		}
-		const size = {
+		const cells = {
 			height: this.frameBuffer.height,
 			width: this.frameBuffer.width,
 		};
+		// The viewport is always in map cells; the pixel tier just fits fewer
+		// of them into the same terminal budget. Scrolling, cursor following,
+		// and hit-testing never learn which tier is drawing.
+		const size = state.mode === "pixel" ? pixelViewportSize(cells) : cells;
 		this.#viewport = scrollViewport(
 			state.map,
 			size,
@@ -108,7 +124,9 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 			originX: this.#viewport.originX,
 			originY: this.#viewport.originY,
 		};
-		const rows = composeMapCells({
+		const compose =
+			state.mode === "pixel" ? composePixelCells : composeMapCells;
+		const rows = compose({
 			cursor: state.cursor,
 			map: state.map,
 			ownSeatId: state.ownSeatId,
@@ -116,8 +134,12 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 			tokens: state.tokens,
 			viewport: this.#viewport,
 		});
-		for (const [row, cells] of rows.entries()) {
-			for (const [column, cell] of cells.entries()) {
+		// Iterate the framebuffer, not the composition: in pixel mode the
+		// composed rows cover whole tiles only, and any remainder column or row
+		// must blank rather than hold a stale cell.
+		for (let row = 0; row < cells.height; row += 1) {
+			for (let column = 0; column < cells.width; column += 1) {
+				const cell = rows[row]?.[column] ?? null;
 				if (cell === null) {
 					this.frameBuffer.setCell(
 						column,
@@ -141,15 +163,28 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 }
 
 /** The region's size for a map: as wide as the grid or the space, whichever is
- * smaller, and never taller than the rows the region is allowed to spend. */
+ * smaller, and never taller than the rows the region is allowed to spend. In
+ * pixel mode the same budget holds whole 4×3 tiles — the size is rounded to
+ * tile multiples so no partial tile ever paints. */
 export const mapRegionSize = (
 	map: BattleMap,
-	available: { readonly width: number; readonly height: number }
+	available: { readonly width: number; readonly height: number },
+	mode: MapRenderMode
 ): { readonly width: number; readonly height: number } => {
 	const { height, width } = mapDimensions(map);
+	if (mode === "text") {
+		return {
+			height: Math.max(1, Math.min(height, available.height)),
+			width: Math.max(1, Math.min(width, available.width)),
+		};
+	}
+	const tiles = {
+		height: Math.min(height, Math.floor(available.height / TILE_ROWS)),
+		width: Math.min(width, Math.floor(available.width / TILE_COLUMNS)),
+	};
 	return {
-		height: Math.max(1, Math.min(height, available.height)),
-		width: Math.max(1, Math.min(width, available.width)),
+		height: Math.max(1, tiles.height) * TILE_ROWS,
+		width: Math.max(1, tiles.width) * TILE_COLUMNS,
 	};
 };
 

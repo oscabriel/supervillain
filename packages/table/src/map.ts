@@ -160,41 +160,52 @@ const tokenStyle = (
 });
 
 /**
+ * What one map cell means, before any glyph table gets involved: the
+ * character the author (or a token) put there, and the two theme tokens it
+ * wears. Both render tiers draw exactly this — the text tier prints the
+ * character, the pixel tier looks the same character up in the atlas — which
+ * is what "the fallback is the same data" means mechanically (ADR-0007/0021).
+ */
+export const mapCellSemantics = (
+	composition: MapComposition,
+	x: number,
+	y: number
+): MapCell | null => {
+	const { cursor, map, ownSeatId, selectedTokenId, tokens } = composition;
+	const glyph = isInsideMap(map, x, y) ? mapGlyphAt(map, x, y) : null;
+	if (glyph === null) {
+		return null;
+	}
+	const tile = mapTileAt(map, x, y);
+	const terrain = tile === null ? UNKNOWN_TILE_STYLE : TILE_STYLE[tile];
+	const token = tokenAt(tokens, x, y);
+	const base =
+		token === null
+			? { ...terrain, glyph }
+			: { ...tokenStyle(token, terrain, ownSeatId), glyph: token.glyph };
+	if (cursor !== null && cursor.x === x && cursor.y === y) {
+		return { ...CURSOR_STYLE, glyph: base.glyph };
+	}
+	if (token !== null && token.id === selectedTokenId) {
+		return { ...SELECTED_STYLE, glyph: base.glyph };
+	}
+	return base;
+};
+
+/**
  * Composes the visible window into rows of cells. `null` is a cell the map
  * does not have — the region is larger than the grid there and draws nothing.
  */
 export const composeMapCells = (
 	composition: MapComposition
 ): readonly (readonly (MapCell | null)[])[] => {
-	const { cursor, map, ownSeatId, selectedTokenId, tokens, viewport } =
-		composition;
+	const { viewport } = composition;
 	const rows: (MapCell | null)[][] = [];
 	for (let row = 0; row < viewport.height; row += 1) {
 		const y = viewport.originY + row;
 		const cells: (MapCell | null)[] = [];
 		for (let column = 0; column < viewport.width; column += 1) {
-			const x = viewport.originX + column;
-			const glyph = isInsideMap(map, x, y) ? mapGlyphAt(map, x, y) : null;
-			if (glyph === null) {
-				cells.push(null);
-				continue;
-			}
-			const tile = mapTileAt(map, x, y);
-			const terrain = tile === null ? UNKNOWN_TILE_STYLE : TILE_STYLE[tile];
-			const token = tokenAt(tokens, x, y);
-			const base =
-				token === null
-					? { ...terrain, glyph }
-					: { ...tokenStyle(token, terrain, ownSeatId), glyph: token.glyph };
-			if (cursor !== null && cursor.x === x && cursor.y === y) {
-				cells.push({ ...CURSOR_STYLE, glyph: base.glyph });
-				continue;
-			}
-			if (token !== null && token.id === selectedTokenId) {
-				cells.push({ ...SELECTED_STYLE, glyph: base.glyph });
-				continue;
-			}
-			cells.push(base);
+			cells.push(mapCellSemantics(composition, viewport.originX + column, y));
 		}
 		rows.push(cells);
 	}

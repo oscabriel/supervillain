@@ -312,7 +312,9 @@ describe("table renderer injection", () => {
 	});
 
 	test("turns the existing map title row into a band-header junction", async () => {
-		const setup = await createTestRenderer({ height: 12, width: 60 });
+		// 16 rows, not 12: the default pixel tier spends 4×3 cells per tile
+		// (ADR-0021), and the feed rule this test asserts must stay on screen.
+		const setup = await createTestRenderer({ height: 16, width: 60 });
 		const probe = fakeSession();
 		const store = fakeStore();
 		const { exited } = await mountTable(setup, probe, store.store);

@@ -132,7 +132,7 @@ const mount = async (
 };
 
 describe("the chrome map region", () => {
-	test("draws the folded map as one cell grid with its tokens over it", async () => {
+	test("defaults to the pixel tier and t round-trips to text and back", async () => {
 		const setup = await createTestRenderer({ height: 24, width: 60 });
 		const store = fakeStore();
 		const { exited } = await mount(setup, store.store);
@@ -140,15 +140,28 @@ describe("the chrome map region", () => {
 		for (const next of MAP_EVENTS) {
 			store.push(next);
 		}
-		const frame = await setup.waitForFrame(
-			(text) => text.includes("map · Hall 5×4") && text.includes("#K..#")
+		// Pixel is the default (ADR-0007/0021): the title paints, the legend
+		// characters do not — the grid is octant blocks, 4×3 cells per tile.
+		const pixel = await setup.waitForFrame((text) =>
+			text.includes("map · Hall 5×4")
 		);
+		expect(pixel).not.toContain("#####");
 
-		expect(frame).toContain("map · Hall 5×4");
-		// Terrain reads as the author wrote it; the token sits on top of it.
-		expect(frame).toContain("#K..#");
-		expect(frame).toContain("#.^.#");
-		expect(frame).toContain("##+##");
+		// The toggle is a keystroke on the focused region, and the text tier is
+		// ADR-0006's rendering unchanged: terrain reads as the author wrote it,
+		// the token sits on top of it.
+		setup.mockInput.pressKey("\t");
+		await setup.waitForFrame((text) => text.includes("map: arrows/hjkl"));
+		setup.mockInput.pressKey("t");
+		const text = await setup.waitForFrame((frame) => frame.includes("#K..#"));
+		expect(text).toContain("#K..#");
+		expect(text).toContain("#.^.#");
+		expect(text).toContain("##+##");
+
+		// And back: the toggle round-trips within the session.
+		setup.mockInput.pressKey("t");
+		const again = await setup.waitForFrame((frame) => !frame.includes("#####"));
+		expect(again).toContain("map · Hall 5×4");
 
 		setup.renderer.destroy();
 		await exited;
@@ -161,12 +174,13 @@ describe("the chrome map region", () => {
 		for (const next of MAP_EVENTS) {
 			store.push(next);
 		}
-		await setup.waitForFrame((text) => text.includes("#####"));
+		await setup.waitForFrame((text) => text.includes("map · Hall 5×4"));
 
 		// Row 0 of the chrome is the header, row 1 the map title, so the grid
-		// starts at row 2 — a click on its third cell is 2,2 in map cells.
-		setup.mockMouse.click(2, 4);
-		await setup.waitForFrame((text) => text.includes("2,2 hazard"));
+		// starts at row 2. In the default pixel tier one tile is 4×3 cells: a
+		// click at (10,7) is local (10,5), which is tile 2,1 — a floor cell.
+		setup.mockMouse.click(10, 7);
+		await setup.waitForFrame((text) => text.includes("2,1 floor"));
 
 		// Clicking never submits: the mouse reaches only what the keys reach.
 		expect(store.submitted()).toEqual([]);
@@ -216,7 +230,10 @@ const nextFrame = async (renderer: CliRenderer): Promise<void> => {
 	}
 };
 
-const paintSurface = async (): Promise<{
+const paintSurface = async (size?: {
+	readonly width: number;
+	readonly height: number;
+}): Promise<{
 	readonly bytes: () => string;
 	readonly clear: () => void;
 	readonly update: (state: MapRegionState) => Promise<void>;
@@ -237,21 +254,22 @@ const paintSurface = async (): Promise<{
 		delete process.env.TERM;
 	};
 	process.env.TERM = "xterm-256color";
+	const dims = size ?? { height: 4, width: 5 };
 	try {
 		const chunks: string[] = [];
 		const output = new PassThrough();
 		output.on("data", (chunk: Buffer) => chunks.push(chunk.toString("latin1")));
 		const renderer = await createCliRenderer({
 			exitOnCtrlC: false,
-			height: 4,
+			height: dims.height,
 			remote: false,
 			stdin: new PassThrough() as unknown as NodeJS.ReadStream,
 			stdout: output as unknown as NodeJS.WriteStream,
-			width: 5,
+			width: dims.width,
 		});
 		const surface = new MapSurfaceRenderable(
 			renderer,
-			{ height: 4, width: 5 },
+			{ height: dims.height, width: dims.width },
 			() => {
 				// Hit-testing has its own test; the wire tests never click.
 			}
@@ -293,9 +311,13 @@ const kraan: MapToken = {
 	y: 1,
 };
 
-const surfaceState = (tokens: readonly MapToken[]): MapRegionState => ({
+const surfaceState = (
+	tokens: readonly MapToken[],
+	mode: MapRegionState["mode"] = "text"
+): MapRegionState => ({
 	cursor: { x: 2, y: 2 },
 	map: HALL,
+	mode,
 	ownSeatId: "gm",
 	selectedTokenId: "token-1",
 	tokens,
@@ -322,6 +344,27 @@ describe("the map region on the wire", () => {
 		const wire = await paintSurface();
 		try {
 			await wire.update(surfaceState([kraan]));
+			const bytes = wire.bytes();
+			expect(bytes.length).toBeGreaterThan(0);
+			expect(TRUECOLOR_SGR.test(bytes)).toBe(false);
+			const slots = [...bytes.matchAll(INDEXED_SGR)].map((match) =>
+				Number(match.groups?.slot)
+			);
+			expect(slots.length).toBeGreaterThan(0);
+			for (const slot of slots) {
+				expect(slot).toBeLessThan(16);
+			}
+		} finally {
+			wire.stop();
+		}
+	});
+
+	test("paints the pixel tier in exact ANSI-16 too (ADR-0021)", async () => {
+		// Two whole 4×3 tiles across, two down — the smallest pixel window
+		// that exercises tile seams on the wire.
+		const wire = await paintSurface({ height: 6, width: 8 });
+		try {
+			await wire.update(surfaceState([kraan], "pixel"));
 			const bytes = wire.bytes();
 			expect(bytes.length).toBeGreaterThan(0);
 			expect(TRUECOLOR_SGR.test(bytes)).toBe(false);

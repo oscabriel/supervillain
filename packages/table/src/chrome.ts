@@ -34,6 +34,7 @@ import {
 	MapSurfaceRenderable,
 	mapRegionSize,
 } from "./map-region.js";
+import type { MapRenderMode } from "./map-region.js";
 import { mapStatusLine, mapTitleLine } from "./map.js";
 import type { MapCursor } from "./map.js";
 import { resolveTextAttributes, resolveThemeToken } from "./theme.js";
@@ -346,6 +347,9 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	let idleStatusToken: "danger" | "muted" = "muted";
 	let cursor: MapCursor = { x: 0, y: 0 };
 	let selectedTokenId: string | null = null;
+	// Pixel is the default and the toggle is the whole ceremony: per-session,
+	// no capability detection, no persistence at v1 (ADR-0007/0021).
+	let mapMode: MapRenderMode = "pixel";
 	let lastMapName: string | null = null;
 	let mapRegionRows = 0;
 	const interactivePanels = panels.filter((panel) => panel.onKey !== undefined);
@@ -428,7 +432,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		);
 		if (focused === MAP_FOCUS) {
 			status.content =
-				"map: arrows/hjkl move · Enter picks up and drops · x removes · Esc returns";
+				"map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text mode · Esc returns";
 			return;
 		}
 		status.content =
@@ -456,12 +460,16 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			cursor = { x: 0, y: 0 };
 			selectedTokenId = null;
 		}
-		const size = mapRegionSize(map, {
-			height: MAP_VIEWPORT_MAX_ROWS,
-			// ADR-0021's 4×3 tile geometry is unchanged; chrome spends exactly
-			// one additional terminal column on the sidebar's single-side rule.
-			width: centerWidth(),
-		});
+		const size = mapRegionSize(
+			map,
+			{
+				height: MAP_VIEWPORT_MAX_ROWS,
+				// ADR-0021's 4×3 tile geometry is unchanged; chrome spends exactly
+				// one additional terminal column on the sidebar's single-side rule.
+				width: centerWidth(),
+			},
+			mapMode
+		);
 		mapSurface.width = size.width;
 		mapSurface.height = size.height;
 		// The title and status lines ride above and below the grid; naming the
@@ -481,6 +489,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		mapSurface.update({
 			cursor: mapFocused() ? cursor : null,
 			map,
+			mode: mapMode,
 			ownSeatId: ownSeatId(),
 			selectedTokenId,
 			tokens: fold.tokens(),
@@ -656,6 +665,8 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			return;
 		} else if (action.kind === "notice") {
 			showNotice(action.message);
+		} else if (action.kind === "toggle-render-mode") {
+			mapMode = mapMode === "pixel" ? "text" : "pixel";
 		} else {
 			selectedTokenId = null;
 			void dispatchCore(action.command).then(renderMap, renderMap);

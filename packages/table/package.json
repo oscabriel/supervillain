@@ -20,6 +20,7 @@
 	},
 	"dependencies": {
 		"@opentui/core": "0.4.3",
+		"@supervillain/atlas": "workspace:*",
 		"@supervillain/core": "workspace:*",
 		"@supervillain/session": "workspace:*"
 	},
