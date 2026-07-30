@@ -22,6 +22,7 @@ import type {
 } from "@supervillain/core";
 
 import { readTableCheckpoint } from "./checkpoint.js";
+import { bandHeader, ruleHeader, verticalBandDivider } from "./chrome-frame.js";
 import { createTableFold } from "./fold.js";
 import type { TableOptions } from "./index.js";
 import { parseInput } from "./input.js";
@@ -38,6 +39,8 @@ import type { MapCursor } from "./map.js";
 import { resolveTextAttributes, resolveThemeToken } from "./theme.js";
 
 const SIDEBAR_WIDTH = 28;
+const FRAME_DIVIDER_WIDTH = 1;
+const FIXED_BAND_ROWS = 4;
 
 /** The map region's own focus stop, ahead of the module panels: chrome's
  * region is chrome's, and a module panel can never claim it. */
@@ -224,9 +227,10 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		width: "100%",
 	});
 	const header = new TextRenderable(renderer, {
-		content: `${options.roomLabel} · ${options.gameId}`,
-		fg: resolveThemeToken("primary"),
+		content: "",
+		fg: resolveThemeToken("muted"),
 		height: 1,
+		width: "100%",
 	});
 	const main = new BoxRenderable(renderer, {
 		flexDirection: "row",
@@ -235,6 +239,12 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	const center = new BoxRenderable(renderer, {
 		flexDirection: "column",
 		flexGrow: 1,
+	});
+	const feedHeader = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("muted"),
+		height: 1,
+		width: "100%",
 	});
 	const feed = new ScrollBoxRenderable(renderer, {
 		flexGrow: 1,
@@ -253,6 +263,13 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		width: "100%",
 	});
 	feed.add(feedText);
+	const mainDivider = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("muted"),
+		flexShrink: 0,
+		height: "100%",
+		width: FRAME_DIVIDER_WIDTH,
+	});
 	const sidebar = new BoxRenderable(renderer, {
 		flexDirection: "column",
 		width: SIDEBAR_WIDTH,
@@ -263,6 +280,12 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		width: "100%",
 	});
 	sidebar.add(sidebarText);
+	const stateHeader = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("muted"),
+		height: 1,
+		width: "100%",
+	});
 	const status = new TextRenderable(renderer, {
 		content: "",
 		fg: resolveThemeToken("muted"),
@@ -306,11 +329,14 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	mapRegion.add(mapSurface);
 	mapRegion.add(mapStatus);
 	center.add(mapRegion);
+	center.add(feedHeader);
 	center.add(feed);
 	main.add(center);
+	main.add(mainDivider);
 	main.add(sidebar);
 	root.add(header);
 	root.add(main);
+	root.add(stateHeader);
 	root.add(status);
 	root.add(input);
 	renderer.root.add(root);
@@ -321,6 +347,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	let cursor: MapCursor = { x: 0, y: 0 };
 	let selectedTokenId: string | null = null;
 	let lastMapName: string | null = null;
+	let mapRegionRows = 0;
 	const interactivePanels = panels.filter((panel) => panel.onKey !== undefined);
 	/** The focus ring: chrome's map region first when one is loaded, then the
 	 * module's interactive panels, then back to the input line. */
@@ -342,6 +369,54 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		return map === null
 			? null
 			: { cursor, map, selectedTokenId, tokens: fold.tokens() };
+	};
+	const centerWidth = (): number =>
+		Math.max(1, renderer.terminalWidth - SIDEBAR_WIDTH - FRAME_DIVIDER_WIDTH);
+	/** Reflows every rule from live terminal dimensions. One vertical rule marks
+	 * the sidebar; center-region headers compute real meetings against it. */
+	const renderFrame = (): void => {
+		const width = renderer.terminalWidth;
+		header.content = styledLine(
+			bandHeader({
+				leftLabel: `${options.roomLabel} · ${options.gameId}`,
+				rightLabel: "seats",
+				rightWidth: SIDEBAR_WIDTH,
+				vertical: "down",
+				width,
+			})
+		);
+		feedHeader.content = styledLine(ruleHeader("feed", centerWidth()));
+		stateHeader.content = styledLine(
+			bandHeader({
+				leftLabel: "state",
+				rightLabel: "",
+				rightWidth: SIDEBAR_WIDTH,
+				vertical: "up",
+				width,
+			})
+		);
+		const map = fold.map();
+		if (map !== null) {
+			// The map producer owns this copy; the chrome grammar deliberately
+			// normalizes every region title to the same header styling.
+			const label = mapTitleLine(map)
+				.runs.map((run) => run.text)
+				.join("");
+			mapTitle.content = styledLine(ruleHeader(label, centerWidth()));
+		}
+		const junctionRows = map === null ? [0] : [0, mapRegionRows];
+		mainDivider.content = styledLine({
+			runs: [
+				{
+					attrs: ["dim"],
+					text: verticalBandDivider(
+						Math.max(0, renderer.terminalHeight - FIXED_BAND_ROWS),
+						junctionRows
+					),
+					token: "muted",
+				},
+			],
+		});
 	};
 	const renderStatus = (): void => {
 		if (done) {
@@ -370,8 +445,10 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		const map = fold.map();
 		if (map === null) {
 			mapRegion.visible = false;
+			mapRegionRows = 0;
 			lastMapName = null;
 			selectedTokenId = null;
+			renderFrame();
 			return;
 		}
 		if (map.name !== lastMapName) {
@@ -381,15 +458,18 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 		const size = mapRegionSize(map, {
 			height: MAP_VIEWPORT_MAX_ROWS,
-			width: Math.max(1, renderer.terminalWidth - SIDEBAR_WIDTH),
+			// ADR-0021's 4×3 tile geometry is unchanged; chrome spends exactly
+			// one additional terminal column on the sidebar's single-side rule.
+			width: centerWidth(),
 		});
 		mapSurface.width = size.width;
 		mapSurface.height = size.height;
 		// The title and status lines ride above and below the grid; naming the
 		// region's height keeps the feed from being laid out over it.
-		mapRegion.height = size.height + 2;
+		mapRegionRows = size.height + 2;
+		mapRegion.height = mapRegionRows;
 		mapRegion.visible = true;
-		mapTitle.content = styledLine(mapTitleLine(map));
+		renderFrame();
 		mapStatus.content = styledLine(
 			mapStatusLine({
 				cursor: mapFocused() ? cursor : null,
@@ -461,7 +541,11 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 				.render(panelInput(panel === focusedPanel))
 				.map((line) => line.runs.map((run) => run.text).join(""))
 		);
-		sidebarText.content = ["Seats", seats, "", ...panelLines].join("\n");
+		sidebarText.content = [
+			seats,
+			...(seats === "" || panelLines.length === 0 ? [] : [""]),
+			...panelLines,
+		].join("\n");
 	};
 	const showNotice = (message: string): void => {
 		idleStatusToken = "muted";

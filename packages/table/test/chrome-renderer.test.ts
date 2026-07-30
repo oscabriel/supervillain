@@ -12,7 +12,7 @@ import {
 import type { CliRenderer } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { TestRendererSetup } from "@opentui/core/testing";
-import { CORE_CHAT_POSTED } from "@supervillain/core";
+import { CORE_CHAT_POSTED, CORE_MAP_LOADED } from "@supervillain/core";
 import type {
 	Envelope,
 	RoomStore,
@@ -131,6 +131,15 @@ const chatEnvelope = (text: string): Envelope => ({
 	seq: 1,
 	ts: 0,
 	type: CORE_CHAT_POSTED,
+});
+
+const mapEnvelope = (): Envelope => ({
+	actor: ACTOR,
+	payload: { legend: { ".": "floor" }, name: "Hall", rows: ["..", ".."] },
+	roomId: "room",
+	seq: 1,
+	ts: 0,
+	type: CORE_MAP_LOADED,
 });
 
 /** Mounts the table on the injected renderer and draws one frame. The exit
@@ -273,6 +282,52 @@ describe("table renderer injection", () => {
 		}
 	});
 
+	test("draws exact wide and narrow character-frame bands", async () => {
+		const setup = await createTestRenderer({ height: 12, width: 60 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const { exited } = await mountTable(setup, probe, store.store);
+
+		const wide = setup.captureCharFrame().split("\n");
+		expect(wide[0]).toBe(
+			"─┤ the table · fake ├──────────┬─┤ seats ├──────────────────"
+		);
+		expect(wide[1]).toBe("─┤ feed ├──────────────────────┤".padEnd(60));
+		expect(wide[4]?.at(31)).toBe("│");
+		expect(wide[9]).toBe(
+			"─┤ state ├─────────────────────┴────────────────────────────"
+		);
+
+		probe.resize({ columns: 40, rows: 8 });
+		await setup.waitForFrame((frame) =>
+			frame.startsWith("─┤ the t… ├┬─┤ seats ├──────────────────")
+		);
+		const narrow = setup.captureCharFrame().split("\n");
+		expect(narrow[0]).toBe("─┤ the t… ├┬─┤ seats ├──────────────────");
+		expect(narrow[1]).toBe("─┤ feed ├──┤".padEnd(40));
+		expect(narrow[5]).toBe("─┤ state ├─┴────────────────────────────");
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("turns the existing map title row into a band-header junction", async () => {
+		const setup = await createTestRenderer({ height: 12, width: 60 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const { exited } = await mountTable(setup, probe, store.store);
+
+		store.push(mapEnvelope());
+		await setup.waitForFrame((frame) => frame.includes("map · Hall 2×2"));
+		const frame = setup.captureCharFrame().split("\n");
+		expect(frame[1]).toBe("─┤ map · Hall 2×2 ├────────────┤".padEnd(60));
+		const feedRule = frame.find((row) => row.startsWith("─┤ feed ├"));
+		expect(feedRule?.at(31)).toBe("┤");
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
 	test("draws on the injected renderer without starting a render loop", async () => {
 		const setup = await createTestRenderer({ height: 12, width: 60 });
 		const probe = fakeSession();
@@ -387,7 +442,7 @@ describe("table renderer injection", () => {
 		if (screenRoot === undefined || !("getChildren" in screenRoot)) {
 			throw new Error("table screen root was not mounted");
 		}
-		const status = screenRoot.getChildren().at(2);
+		const status = screenRoot.getChildren().at(3);
 		if (!(status instanceof TextRenderable)) {
 			throw new Error("table status line was not mounted");
 		}
