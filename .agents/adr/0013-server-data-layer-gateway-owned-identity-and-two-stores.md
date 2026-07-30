@@ -25,6 +25,7 @@ Resolved on [Backend data layer: DB and ORM (#32)](https://github.com/oscabriel/
 | name → owner identity | gateway store | NQ-4 (replaces the `rooms` table's dead `address` column) |
 | resolved identity → presentation prefs | gateway store | ADR-0008 |
 | key → identity (the equivalence graph) | gateway store | ADR-0005, relocated here |
+| former identity id → current identity (lineage aliases) | gateway store | _(added 2026-07-30, [ADR-0023](./0023-loopback-identity-conduit-and-identity-lineage-aliases.md): the permitted lone-key move records the deleted identity id so backend artifact ownership survives linking)_ |
 | revoked keys | gateway store | NQ-3, [#59](https://github.com/oscabriel/supervillain/issues/59) |
 | link codes (device 15 min, adoption 7 days) | gateway store | ADR-0005 — 7-day codes must survive a restart |
 | gateway ed25519 host key | file, not a row | #40 (precious; escrowed off-box) |
