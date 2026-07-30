@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -53,6 +53,21 @@ const sshString = (value: Uint8Array | string): Buffer => {
 	const length = Buffer.alloc(4);
 	length.writeUInt32BE(bytes.byteLength);
 	return Buffer.concat([length, bytes]);
+};
+
+/** The OpenSSH SHA256 fingerprint for a key actor. Guest actors deliberately
+ * have none: the Door recognized no key, which is the distinction #90 exists
+ * to make visible. */
+export const fingerprintFromActor = (actor: string): string | undefined => {
+	if (!HEX_KEY.test(actor)) {
+		return undefined;
+	}
+	const blob = Buffer.concat([
+		sshString(SSH_ED25519),
+		sshString(Buffer.from(actor, "hex")),
+	]);
+	const digest = createHash("sha256").update(blob).digest("base64url");
+	return `SHA256:${digest}`;
 };
 
 const OPENSSH_MAGIC = Buffer.from("openssh-key-v1\0", "binary");

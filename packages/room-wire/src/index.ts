@@ -92,6 +92,7 @@ export type {
 	RevocationOutcome,
 	RoomInfo,
 	SubmitRequest,
+	WhoAmIResult,
 } from "./messages.js";
 export {
 	DEFAULT_HEARTBEAT_INTERVAL_MS,

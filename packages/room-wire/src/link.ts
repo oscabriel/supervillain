@@ -16,11 +16,13 @@ import {
 	parseLinkCodeOutcome,
 	parseLinkRedemptionOutcome,
 	parseRevocationOutcome,
+	parseWhoAmIResult,
 } from "./messages.js";
 import type {
 	LinkCodeOutcome,
 	LinkRedemptionOutcome,
 	RevocationOutcome,
+	WhoAmIResult,
 } from "./messages.js";
 import { MultiplexPipe } from "./pipe.js";
 import type { TransportConnection, TransportDialer } from "./seam.js";
@@ -40,6 +42,8 @@ export interface GatewayLink {
 	/** Retires another key of this identity — the retire half of rotation
 	 * (ADR-0012, NQ-3). Run from a machine you still control. */
 	readonly revoke: (key: string) => Promise<RevocationOutcome>;
+	/** Reports the identity class and fingerprints the gateway resolved (#90). */
+	readonly whoAmI: () => Promise<WhoAmIResult>;
 	readonly close: () => Promise<void>;
 }
 
@@ -90,5 +94,6 @@ export const openGatewayLink = async (
 			ask({ mint: "device" } as const, parseLinkCodeOutcome),
 		redeem: (code) => ask({ redeem: code }, parseLinkRedemptionOutcome),
 		revoke: (key) => ask({ revoke: key }, parseRevocationOutcome),
+		whoAmI: () => ask({ whoami: true } as const, parseWhoAmIResult),
 	};
 };

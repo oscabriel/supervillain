@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
+import { fingerprintFromActor } from "@supervillain/identity";
+
 import { migrate } from "../src/migrate.js";
 import { openRoomRegistry } from "../src/registry.js";
 
@@ -64,6 +66,37 @@ describe("openRoomRegistry", () => {
 		// No linking exists yet: a second key is a second identity, which is
 		// exactly why GM roaming does not work until ADR-0005 lands.
 		expect(registry.resolveIdentity("laptop-key")).not.toBe(first);
+		registry.close();
+	});
+
+	test("reports a keyless or minted guest without inventing a matched key", () => {
+		const registry = openTestRegistry();
+		const guest = {
+			identity: "guest",
+			linkedFingerprints: [],
+			matchedFingerprint: undefined,
+		} as const;
+		expect(registry.whoAmI()).toEqual(guest);
+		expect(registry.whoAmI("guest:abc123def456")).toEqual(guest);
+		registry.close();
+	});
+
+	test("reports the matched key separately from its other linked keys", async () => {
+		const registry = openTestRegistry();
+		const desktop = "11".repeat(32);
+		const laptop = "22".repeat(32);
+		registry.resolveIdentity(desktop);
+		const code = await registry.mintDeviceCode(desktop);
+		if ("rejected" in code) {
+			throw new Error(code.message);
+		}
+		await registry.redeemLinkCode(code.code, laptop);
+
+		expect(registry.whoAmI(laptop)).toEqual({
+			identity: "keyed",
+			linkedFingerprints: [fingerprintFromActor(desktop)],
+			matchedFingerprint: fingerprintFromActor(laptop),
+		});
 		registry.close();
 	});
 

@@ -22,6 +22,7 @@ import type {
 	LobbyChromeContext,
 	LobbyNotice,
 	LobbyState,
+	WhoAmIFacts,
 } from "./lobby-screens.js";
 import {
 	PIXEL_WORDMARK_ROWS,
@@ -35,6 +36,7 @@ export type {
 	LobbyMenuAction,
 	LobbyNotice,
 	LobbyState,
+	WhoAmIFacts,
 } from "./lobby-screens.js";
 export {
 	LOBBY_MENU,
@@ -67,6 +69,14 @@ export interface LobbyOptions extends LobbyChromeContext {
 	/** The inline notice the lobby opens with, if the visitor asked for a room
 	 * that is unregistered or not live. */
 	readonly notice?: LobbyNotice;
+	/** Redeems a device-link code for the key SSH matched. This is deliberately
+	 * injected by the gateway: Table renders, while the gateway owns the graph. */
+	readonly linkMatchedKey?: (
+		code: string
+	) => Promise<
+		| { readonly accepted: true; readonly whoami: WhoAmIFacts }
+		| { readonly rejected: true; readonly message: string }
+	>;
 	/** An outside deadline that asks this visit to release the borrowed renderer
 	 * without closing the underlying terminal. */
 	readonly until?: Promise<unknown>;
@@ -111,6 +121,9 @@ export const runLobby = async (
 	}
 
 	let state: LobbyState = initialLobbyState(options.notice);
+	let { whoami } = options;
+	let linkNotice = "";
+	let linking = false;
 	let outcome: LobbyOutcome = { kind: "leave" };
 
 	const root = new BoxRenderable(renderer, {
@@ -186,11 +199,20 @@ export const runLobby = async (
 			state.notice === undefined ? "muted" : NOTICE_TOKEN[state.notice.kind]
 		);
 		title.content = LOBBY_TITLES[state.screen];
-		body.content = screenBodyLines(state, options).join("\n");
+		const bodyLines = screenBodyLines(state, { ...options, whoami });
+		body.content =
+			state.screen === "whoami" && linkNotice !== ""
+				? [...bodyLines, "", linkNotice].join("\n")
+				: bodyLines.join("\n");
 		hint.content = LOBBY_HINTS[state.screen];
 		const joining = state.screen === "join";
-		input.visible = joining;
-		if (joining) {
+		const linkingKey =
+			state.screen === "whoami" &&
+			whoami?.matchedFingerprint !== undefined &&
+			options.linkMatchedKey !== undefined;
+		input.visible = joining || linkingKey;
+		input.placeholder = linkingKey ? "link code" : "room name";
+		if (joining || linkingKey) {
 			input.focus();
 		} else {
 			input.blur();
@@ -216,12 +238,40 @@ export const runLobby = async (
 	};
 
 	input.on(InputRenderableEvents.ENTER, (value: unknown) => {
-		const roomName = typeof value === "string" ? value.trim() : "";
-		if (roomName === "") {
+		const entered = typeof value === "string" ? value.trim() : "";
+		if (entered === "") {
 			return;
 		}
 		input.value = "";
-		leaveWith({ kind: "join", roomName });
+		if (state.screen === "join") {
+			leaveWith({ kind: "join", roomName: entered });
+			return;
+		}
+		if (state.screen !== "whoami" || options.linkMatchedKey === undefined) {
+			return;
+		}
+		if (linking) {
+			return;
+		}
+		const { linkMatchedKey } = options;
+		linking = true;
+		linkNotice = "linking matched key…";
+		draw();
+		void (async (): Promise<void> => {
+			const result = await linkMatchedKey(entered);
+			if (result === undefined) {
+				return;
+			}
+			if ("accepted" in result) {
+				const { whoami: updated } = result;
+				whoami = updated;
+				linkNotice = "matched key linked. whoami is updated.";
+			} else {
+				linkNotice = result.message;
+			}
+			linking = false;
+			draw();
+		})();
 	});
 
 	const moveMenu = (delta: number): void => {
@@ -254,8 +304,11 @@ export const runLobby = async (
 			goTo("splash");
 			return;
 		}
-		if (state.screen === "join") {
-			// The input owns every other key while the join screen is up.
+		if (
+			state.screen === "join" ||
+			(state.screen === "whoami" && input.visible)
+		) {
+			// The input owns every other key while a typed action is up.
 			return;
 		}
 		key.preventDefault();

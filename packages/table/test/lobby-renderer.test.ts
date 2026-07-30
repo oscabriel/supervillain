@@ -142,6 +142,48 @@ describe("the lobby", () => {
 		await outcome;
 	});
 
+	test("links the SSH-matched key from whoami and refreshes the answer", async () => {
+		const setup = await createTestRenderer({ height: 30, width: 100 });
+		const probe = fakeConnection();
+		let redeemed = "";
+		const outcome = runLobby({
+			connection: probe.connection,
+			keyed: true,
+			linkMatchedKey: (code) => {
+				redeemed = code;
+				return Promise.resolve({
+					accepted: true,
+					whoami: {
+						identity: "keyed",
+						linkedFingerprints: ["SHA256:existing"],
+						matchedFingerprint: "SHA256:matched",
+					},
+				});
+			},
+			renderer: setup.renderer,
+			sshHost: "supervillain.app",
+			whoami: {
+				identity: "keyed",
+				linkedFingerprints: [],
+				matchedFingerprint: "SHA256:matched",
+			},
+		});
+		await setup.waitForFrame((frame) => frame.includes("join a room"));
+
+		setup.mockInput.pressArrow("down");
+		setup.mockInput.pressArrow("down");
+		setup.mockInput.pressEnter();
+		await setup.waitForFrame((frame) => frame.includes("matched fingerprint"));
+		await setup.mockInput.typeText("ABCD-1234");
+		setup.mockInput.pressEnter();
+		await setup.waitForFrame((frame) => frame.includes("SHA256:existing"));
+
+		expect(redeemed).toBe("ABCD-1234");
+		expect(setup.captureCharFrame()).toContain("matched key linked");
+		setup.renderer.destroy();
+		await outcome;
+	});
+
 	test("hands a typed room name back and returns the renderer intact", async () => {
 		const setup = await createTestRenderer({ height: 24, width: 80 });
 		const probe = fakeConnection();

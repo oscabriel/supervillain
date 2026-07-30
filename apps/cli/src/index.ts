@@ -98,6 +98,7 @@ const USAGE = `Usage:
   supervillain publish <character|log|map> <campaign-folder> <name> [--game <id>] [--web <url>] [--json] [--qr]
   supervillain publish revoke <character|log|map> <name> [--web <url>] [--capability <url>] [--yes] [--json]
   supervillain publish list [--web <url>] [--json]
+  supervillain whoami [--gateway <addr>] [--json]
   supervillain key show
   supervillain key link [<code>] [--gateway <addr>]
   supervillain key revoke <key> [--gateway <addr>]
@@ -1351,6 +1352,61 @@ const openKeyConduit = async (
 	}
 };
 
+/** Reports exactly what the gateway resolved for the CLI-managed identity
+ * key. This is diagnosis, not recognition of a person: SSH accepts offered keys
+ * one at a time, so the first accepted key can be the wrong one (#90). */
+const whoami = async (args: readonly string[]): Promise<number> => {
+	let parsed: ReturnType<typeof parseArgs>;
+	try {
+		parsed = parseArgs({
+			allowPositionals: true,
+			args: [...args],
+			options: {
+				gateway: { type: "string" },
+				json: { type: "boolean" },
+			},
+		});
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	if (parsed.positionals.length > 0) {
+		console.error("whoami takes no arguments.");
+		return 1;
+	}
+	const gatewayAddress = keyGatewayAddress(parsed.values);
+	if (gatewayAddress === "") {
+		console.error(
+			"whoami needs a gateway: pass --gateway <addr> or set SUPERVILLAIN_GATEWAY."
+		);
+		return 1;
+	}
+	const link = await openKeyConduit(gatewayAddress);
+	if (link === undefined) {
+		return 1;
+	}
+	try {
+		const facts = await link.whoAmI();
+		if (parsed.values.json === true) {
+			console.log(JSON.stringify(facts));
+			return 0;
+		}
+		console.log(`identity:             ${facts.identity}`);
+		console.log(`matched fingerprint:  ${facts.matchedFingerprint ?? "none"}`);
+		if (facts.linkedFingerprints.length === 0) {
+			console.log("linked fingerprints:  none");
+			return 0;
+		}
+		console.log("linked fingerprints:");
+		for (const fingerprint of facts.linkedFingerprints) {
+			console.log(`  ${fingerprint}`);
+		}
+		return 0;
+	} finally {
+		await link.close();
+	}
+};
+
 /**
  * `key link` targets the **gateway**, which owns the key-equivalence graph
  * (ADR-0013's correction to ADR-0005). It rides the same outbound pipe the Host
@@ -1955,6 +2011,9 @@ const main = async (args: readonly string[]): Promise<number> => {
 	}
 	if (verb === "publish") {
 		return await publish(rest);
+	}
+	if (verb === "whoami") {
+		return await whoami(rest);
 	}
 	console.error(`Unknown command '${verb}'.`);
 	return 1;

@@ -77,6 +77,18 @@ class MemoryKeyGraph implements KeyGraph {
 		return this.revoked.has(key);
 	}
 
+	whoAmI(key: string) {
+		const identity = this.identities.get(key) ?? key;
+		this.identities.set(key, identity);
+		return {
+			identity: "keyed" as const,
+			linkedFingerprints: [...this.identities]
+				.filter(([actor, held]) => actor !== key && held === identity)
+				.map(([actor]) => `fingerprint:${actor}`),
+			matchedFingerprint: `fingerprint:${key}`,
+		};
+	}
+
 	async revokeKey(target: string, byKey: string): Promise<RevocationOutcome> {
 		const identityId = this.identities.get(target);
 		if (identityId === undefined || identityId !== this.identities.get(byKey)) {
@@ -324,6 +336,27 @@ describe("derived linking at registration", () => {
 });
 
 describe("the key link conduit", () => {
+	test("reports the matched key and the other keys linked to its identity", async () => {
+		const hub = createMemoryTransportHub("gateway-key");
+		const keys = new MemoryKeyGraph();
+		keys.identities.set(DESKTOP, "identity:one");
+		keys.identities.set(LAPTOP, "identity:one");
+		const server = serveHostPipes({
+			door: DOOR,
+			keys,
+			listener: hub.listener,
+			ownership: new MemoryOwnership(),
+		});
+		const link = await openGatewayLink({ dialer: hub.dialer(LAPTOP) });
+		expect(await link.whoAmI()).toEqual({
+			identity: "keyed",
+			linkedFingerprints: [`fingerprint:${DESKTOP}`],
+			matchedFingerprint: `fingerprint:${LAPTOP}`,
+		});
+		await link.close();
+		await server.close();
+	});
+
 	test("mints on one machine and redeems on another, over a room-less pipe", async () => {
 		const hub = createMemoryTransportHub("gateway-key");
 		const keys = new MemoryKeyGraph();

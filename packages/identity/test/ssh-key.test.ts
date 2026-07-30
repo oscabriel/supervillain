@@ -7,6 +7,7 @@ import path from "node:path";
 
 import {
 	actorFromSshEd25519Blob,
+	fingerprintFromActor,
 	loadOrCreateIdentity,
 	openSshPrivateKey,
 	openSshPublicKeyLine,
@@ -35,6 +36,19 @@ const rawEd25519PublicKey = (): { hex: string; bytes: Uint8Array } => {
 	const bytes = Uint8Array.from(Buffer.from(jwk.x, "base64url"));
 	return { bytes, hex: Buffer.from(bytes).toString("hex") };
 };
+
+describe("fingerprintFromActor", () => {
+	test("formats the OpenSSH SHA256 fingerprint of an actor key", () => {
+		expect(fingerprintFromActor("00".repeat(32))).toBe(
+			"SHA256:kmYcvdi2GkPeWxB6XLjrZB8JHsy2Hm8luHMFp9GMvqk"
+		);
+	});
+
+	test("refuses guest actors and malformed key actors", () => {
+		expect(fingerprintFromActor("guest:abc123def456")).toBeUndefined();
+		expect(fingerprintFromActor("not-a-key")).toBeUndefined();
+	});
+});
 
 describe("actorFromSshEd25519Blob", () => {
 	test("extracts the actor hex from a wire-format ssh-ed25519 blob", () => {

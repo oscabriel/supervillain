@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { randomBytes, randomUUID } from "node:crypto";
 
+import { fingerprintFromActor } from "@supervillain/identity";
 import type { IdentityDirectory } from "@supervillain/identity";
 import type {
 	ActorLink,
@@ -10,6 +11,7 @@ import type {
 	LinkRedemptionOutcome,
 	RevocationOutcome,
 	RoomOwnership,
+	WhoAmIResult,
 } from "@supervillain/room-wire";
 
 import { isGuestActor } from "./guest.js";
@@ -171,6 +173,9 @@ export interface GatewayRoomRegistry
 	 * that hop, which is also the only shape that works with no backend.
 	 */
 	readonly mintAdoptionCode: (guestActor: string) => LinkCodeOutcome;
+	/** What this Door session's matched key resolves to. Undefined means the
+	 * keyless guest path; no key is silently invented for it (#90). */
+	readonly whoAmI: (key: string | undefined) => WhoAmIResult;
 	readonly close: () => void;
 }
 
@@ -429,6 +434,26 @@ export const openRoomRegistry = (
 		return row?.owner_id;
 	};
 
+	const whoAmI = (key: string | undefined): WhoAmIResult => {
+		if (key === undefined || isGuestActor(key)) {
+			return {
+				identity: "guest",
+				linkedFingerprints: [],
+				matchedFingerprint: undefined,
+			};
+		}
+		const identityId = resolveIdentity(key);
+		return {
+			identity: "keyed",
+			linkedFingerprints: liveActorsOf(identityId).flatMap((actor) => {
+				const fingerprint =
+					actor === key ? undefined : fingerprintFromActor(actor);
+				return fingerprint === undefined ? [] : [fingerprint];
+			}),
+			matchedFingerprint: fingerprintFromActor(key),
+		};
+	};
+
 	const mintCode = (
 		kind: LinkCodeKind,
 		subject: string,
@@ -623,5 +648,6 @@ export const openRoomRegistry = (
 		resolveIdentity,
 		revokeKey: (target: string, byKey: string): Promise<RevocationOutcome> =>
 			Promise.resolve(db.transaction(() => revoke(target, byKey))()),
+		whoAmI,
 	};
 };

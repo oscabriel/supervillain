@@ -113,7 +113,13 @@ const shellOptions = (sessions: ReturnType<typeof createKeyedSessions>) =>
 			limits: DEFAULT_CAPACITY_LIMITS,
 			metrics: {} as never,
 			pipes: {} as never,
-			registry: {} as never,
+			registry: {
+				whoAmI: () => ({
+					identity: "keyed",
+					linkedFingerprints: [],
+					matchedFingerprint: "SHA256:matched",
+				}),
+			} as never,
 			sessions,
 		},
 		sshHost: "supervillain.app",
@@ -166,7 +172,10 @@ const withLiveRoom = (
 			...options.rooms,
 			metrics: { recordJoinAttempt: () => {} } as never,
 			pipes: { live: () => live } as never,
-			registry: { isClaimed: () => true } as never,
+			registry: {
+				...options.rooms.registry,
+				isClaimed: () => true,
+			} as never,
 		},
 	};
 };
@@ -216,7 +225,10 @@ test("a lobby expiry drains its farewell before the session closes", async () =>
 			...base.rooms,
 			metrics: { recordJoinAttempt: () => {} } as never,
 			pipes: { live() {} } as never,
-			registry: { isClaimed: () => false } as never,
+			registry: {
+				...base.rooms.registry,
+				isClaimed: () => false,
+			} as never,
 		},
 	});
 

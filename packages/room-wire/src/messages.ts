@@ -203,7 +203,8 @@ export const parseActorRoster = (value: unknown): readonly string[] => {
 export type LinkRequest =
 	| { readonly mint: "device" }
 	| { readonly redeem: string }
-	| { readonly revoke: string };
+	| { readonly revoke: string }
+	| { readonly whoami: true };
 
 export const parseLinkRequest = (value: unknown): LinkRequest => {
 	if (isRecord(value)) {
@@ -216,8 +217,35 @@ export const parseLinkRequest = (value: unknown): LinkRequest => {
 		if (typeof value.revoke === "string" && value.revoke.length > 0) {
 			return { revoke: value.revoke };
 		}
+		if (value.whoami === true) {
+			return { whoami: true };
+		}
 	}
 	throw new TypeError("Link request is invalid.");
+};
+
+export interface WhoAmIResult {
+	readonly identity: "guest" | "keyed";
+	readonly matchedFingerprint: string | undefined;
+	readonly linkedFingerprints: readonly string[];
+}
+
+export const parseWhoAmIResult = (value: unknown): WhoAmIResult => {
+	if (
+		isRecord(value) &&
+		(value.identity === "guest" || value.identity === "keyed") &&
+		(value.matchedFingerprint === undefined ||
+			typeof value.matchedFingerprint === "string") &&
+		Array.isArray(value.linkedFingerprints) &&
+		value.linkedFingerprints.every((one) => typeof one === "string")
+	) {
+		return {
+			identity: value.identity,
+			linkedFingerprints: value.linkedFingerprints as readonly string[],
+			matchedFingerprint: value.matchedFingerprint,
+		};
+	}
+	throw new TypeError("Whoami result is invalid.");
 };
 
 export type LinkCodeOutcome =

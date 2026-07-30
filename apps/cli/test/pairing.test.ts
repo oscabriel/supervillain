@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { startGateway } from "@supervillain/gateway";
 import type { RunningGateway } from "@supervillain/gateway";
+import { fingerprintFromActor } from "@supervillain/identity";
 
 import { pinFilePath, pinGateway, readGatewayPins } from "../src/gateways.js";
 
@@ -122,12 +123,47 @@ describe("pairing across CLI gateway consumers", () => {
 			gateway.pairingCode,
 		]);
 		expect(redeemed.code).toBe(0);
+		const firstIdentity = JSON.parse(
+			await readFile(
+				path.join(firstConfig, "supervillain", "identity.json"),
+				"utf-8"
+			)
+		) as { publicKeyHex: string };
 		const secondIdentity = JSON.parse(
 			await readFile(
 				path.join(secondConfig, "supervillain", "identity.json"),
 				"utf-8"
 			)
 		) as { publicKeyHex: string };
+		const whoami = await runCli(secondConfig, [
+			"whoami",
+			"--gateway",
+			gateway.pairingCode,
+		]);
+		expect(whoami).toEqual({
+			code: 0,
+			error: "",
+			output: [
+				"identity:             keyed",
+				`matched fingerprint:  ${fingerprintFromActor(secondIdentity.publicKeyHex)}`,
+				"linked fingerprints:",
+				`  ${fingerprintFromActor(firstIdentity.publicKeyHex)}`,
+				"",
+			].join("\n"),
+		});
+		const whoamiJson = await runCli(secondConfig, [
+			"whoami",
+			"--json",
+			"--gateway",
+			gateway.pairingCode,
+		]);
+		expect(JSON.parse(whoamiJson.output)).toEqual({
+			identity: "keyed",
+			linkedFingerprints: [fingerprintFromActor(firstIdentity.publicKeyHex)],
+			matchedFingerprint: fingerprintFromActor(secondIdentity.publicKeyHex),
+		});
+		expect(whoamiJson).toMatchObject({ code: 0, error: "" });
+
 		const revoked = await runCli(firstConfig, [
 			"key",
 			"revoke",

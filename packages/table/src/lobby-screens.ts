@@ -4,11 +4,21 @@
  * still read correctly with its tagline deleted. */
 export { WORDMARK_TEXT } from "./wordmark-data.js";
 
-/** The lobby's four screens (ADR-0008): splash, interactive join, the
- * become-a-GM install pitch, and session-local settings. */
-export type LobbyScreenId = "splash" | "join" | "become-gm" | "settings";
+/** The Lobby screens. `whoami` is the gateway-authority query added by #90;
+ * it is reachable from the splash beside ADR-0008's original four screens. */
+export type LobbyScreenId =
+	| "splash"
+	| "join"
+	| "become-gm"
+	| "whoami"
+	| "settings";
 
-export type LobbyMenuAction = "join" | "become-gm" | "settings" | "leave";
+export type LobbyMenuAction =
+	| "join"
+	| "become-gm"
+	| "whoami"
+	| "settings"
+	| "leave";
 
 /** Why the visitor is looking at the lobby instead of a table. The room name is
  * carried verbatim: ADR-0008 requires the typed name preserved in the notice.
@@ -35,6 +45,14 @@ export interface LobbyState {
 	readonly notice: LobbyNotice | undefined;
 }
 
+export interface WhoAmIFacts {
+	readonly identity: "guest" | "keyed";
+	/** The key that won SSH authentication, not a claim about a person. */
+	readonly matchedFingerprint: string | undefined;
+	/** Other keys in the matched key's equivalence class. */
+	readonly linkedFingerprints: readonly string[];
+}
+
 export interface LobbyChromeContext {
 	/** The hostname players are told to ssh to — the summon line, not the bind. */
 	readonly sshHost: string;
@@ -42,6 +60,9 @@ export interface LobbyChromeContext {
 	 * all in the lobby (ADR-0008: guests are pre-identity), so this is a fact
 	 * about the connection, never an identity. */
 	readonly keyed: boolean;
+	/** Session facts supplied by the gateway. Omitted only by older embedders;
+	 * the fallback still says exactly what the connection established. */
+	readonly whoami?: WhoAmIFacts;
 	/** Set false to prove the ADR-0008 rule that every screen works with its
 	 * tagline deleted. */
 	readonly taglines?: boolean;
@@ -55,6 +76,7 @@ export interface LobbyMenuItem {
 export const LOBBY_MENU: readonly LobbyMenuItem[] = [
 	{ action: "join", label: "join a room" },
 	{ action: "become-gm", label: "become a GM" },
+	{ action: "whoami", label: "whoami" },
 	{ action: "settings", label: "settings" },
 	{ action: "leave", label: "leave" },
 ];
@@ -71,6 +93,7 @@ export const LOBBY_TITLES: Readonly<Record<LobbyScreenId, string>> = {
 	join: "join a room",
 	settings: "settings",
 	splash: "the lobby",
+	whoami: "whoami",
 };
 
 export const LOBBY_HINTS: Readonly<Record<LobbyScreenId, string>> = {
@@ -78,6 +101,7 @@ export const LOBBY_HINTS: Readonly<Record<LobbyScreenId, string>> = {
 	join: "enter to join · esc to go back",
 	settings: "esc to go back",
 	splash: "up/down to move · enter to choose · ctrl-c to leave",
+	whoami: "esc to go back",
 };
 
 export const initialLobbyState = (notice?: LobbyNotice): LobbyState => ({
@@ -156,6 +180,40 @@ const becomeGmLines = (context: LobbyChromeContext): readonly string[] => [
 	"is the whole of portability.",
 ];
 
+const whoamiLines = (context: LobbyChromeContext): readonly string[] => {
+	const facts = context.whoami ?? {
+		identity: context.keyed ? ("keyed" as const) : ("guest" as const),
+		linkedFingerprints: [],
+		matchedFingerprint: undefined,
+	};
+	const linked =
+		facts.linkedFingerprints.length === 0
+			? ["linked fingerprints:  none"]
+			: [
+					"linked fingerprints:",
+					...facts.linkedFingerprints.map((fingerprint) => `  ${fingerprint}`),
+				];
+	const repair =
+		facts.matchedFingerprint === undefined
+			? [
+					"no key matched. reconnect with the key you want to link, then open",
+					"whoami again.",
+				]
+			: [
+					"on a key already linked to the identity you want, run:",
+					"  supervillain key link",
+					"then paste its code below to link this matched key.",
+				];
+	return [
+		`identity:             ${facts.identity}`,
+		`matched fingerprint:  ${facts.matchedFingerprint ?? "none"}`,
+		...linked,
+		"",
+		"link this key too",
+		...repair,
+	];
+};
+
 const settingsLines = (context: LobbyChromeContext): readonly string[] => [
 	`  identity   ${context.keyed ? "key recognized" : "no key — keyless guest"}`,
 ];
@@ -173,6 +231,9 @@ export const screenBodyLines = (
 	}
 	if (state.screen === "settings") {
 		return settingsLines(context);
+	}
+	if (state.screen === "whoami") {
+		return whoamiLines(context);
 	}
 	return splashLines(state, context);
 };

@@ -18,6 +18,20 @@ ssh <room>@supervillain.app
 
 GM platforms: Linux (x64, arm64) and macOS (Apple Silicon and Intel); Windows GMs, use WSL2. Players just need an `ssh` client, on any OS.
 
+### Pin the key SSH offers
+
+SSH offers keys one at a time, and the gateway must accept or reject each key before it can see the next one. If your agent holds several keys, the first accepted key may resolve to a different identity than the one you intended. The Lobby's `whoami` screen reports the key fingerprint the gateway matched and the other key fingerprints linked to its identity.
+
+Pin the intended key for the gateway in `~/.ssh/config`:
+
+```sshconfig
+Host supervillain.app
+  IdentitiesOnly yes
+  IdentityFile ~/.ssh/id_ed25519_supervillain
+```
+
+Replace the host and key path when using a self-hosted gateway. `IdentitiesOnly yes` makes SSH offer only the configured key; it does not identify a person. If `whoami` shows the wrong key, use “link this key too” on that Lobby screen, or reconnect after correcting this stanza.
+
 ## Guides
 
 - [Write and validate battle-map files](docs/maps.md)

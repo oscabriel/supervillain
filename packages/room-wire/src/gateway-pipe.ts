@@ -43,6 +43,7 @@ import type {
 	RegistrationOutcome,
 	RevocationOutcome,
 	RoomInfo,
+	WhoAmIResult,
 	SubmitRequest,
 } from "./messages.js";
 import { MultiplexPipe, PipeStreamClosedError } from "./pipe.js";
@@ -108,6 +109,8 @@ export interface KeyGraph {
 		target: string,
 		byKey: string
 	) => Promise<RevocationOutcome>;
+	/** Reports what the authenticated connection key resolved to (#90). */
+	readonly whoAmI: (key: string) => WhoAmIResult;
 }
 
 const NO_KEY_GRAPH = "This gateway does not serve key linking.";
@@ -123,6 +126,11 @@ const unservedKeyGraph: KeyGraph = {
 		Promise.resolve({ message: NO_KEY_GRAPH, rejected: true }),
 	resolveActorLinks: () => Promise.resolve([]),
 	revokeKey: () => Promise.resolve({ message: NO_KEY_GRAPH, rejected: true }),
+	whoAmI: () => ({
+		identity: "keyed",
+		linkedFingerprints: [],
+		matchedFingerprint: undefined,
+	}),
 };
 
 /**
@@ -386,6 +394,11 @@ const serveLinkRequest = async (
 	registrar: Pick<PipeRegistrar, "keys" | "onRevoked">
 ): Promise<void> => {
 	const request = parseLinkRequest(decodeJson(await stream.receive()));
+	if ("whoami" in request) {
+		await stream.send(encodeJson(registrar.keys.whoAmI(key)));
+		stream.close();
+		return;
+	}
 	if ("revoke" in request) {
 		const outcome = await registrar.keys.revokeKey(request.revoke, key);
 		await stream.send(encodeJson(outcome));

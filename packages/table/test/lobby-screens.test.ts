@@ -26,6 +26,7 @@ const screens: readonly LobbyScreenId[] = [
 	"splash",
 	"join",
 	"become-gm",
+	"whoami",
 	"settings",
 ];
 
@@ -35,10 +36,11 @@ const stateOn = (screen: LobbyScreenId): LobbyState => ({
 });
 
 describe("lobby menu", () => {
-	test("offers join, become a GM, settings and leave", () => {
+	test("offers join, become a GM, whoami, settings and leave", () => {
 		expect(LOBBY_MENU.map((item) => item.action)).toEqual([
 			"join",
 			"become-gm",
+			"whoami",
 			"settings",
 			"leave",
 		]);
@@ -109,7 +111,7 @@ describe("inline notices", () => {
 describe("lobby screens", () => {
 	test("the splash marks the selected menu item", () => {
 		const lines = screenBodyLines(
-			{ ...initialLobbyState(), menuIndex: 2 },
+			{ ...initialLobbyState(), menuIndex: 3 },
 			context
 		);
 		expect(lines.some((line) => line.startsWith("  > settings"))).toBe(true);
@@ -122,6 +124,40 @@ describe("lobby screens", () => {
 		expect(body).toContain("supervillain create");
 		expect(body).toContain("ssh <name>@supervillain.app");
 		expect(body).toContain("free forever");
+	});
+
+	test("whoami names the matched key and every other linked fingerprint", () => {
+		const body = screenBodyLines(stateOn("whoami"), {
+			...context,
+			whoami: {
+				identity: "keyed",
+				linkedFingerprints: ["SHA256:linked-one", "SHA256:linked-two"],
+				matchedFingerprint: "SHA256:matched",
+			},
+		}).join("\n");
+		expect(body).toContain("identity:             keyed");
+		expect(body).toContain("matched fingerprint:  SHA256:matched");
+		expect(body).toContain("SHA256:linked-one");
+		expect(body).toContain("SHA256:linked-two");
+		expect(body).toContain("link this key too");
+		expect(body).toContain("supervillain key link");
+		expect(body).toContain("paste its code below");
+	});
+
+	test("whoami says a guest matched no key and shows the repair threshold", () => {
+		const body = screenBodyLines(stateOn("whoami"), {
+			...context,
+			whoami: {
+				identity: "guest",
+				linkedFingerprints: [],
+				matchedFingerprint: undefined,
+			},
+		}).join("\n");
+		expect(body).toContain("identity:             guest");
+		expect(body).toContain("matched fingerprint:  none");
+		expect(body).toContain("linked fingerprints:  none");
+		expect(body).toContain("reconnect with the key you want to link");
+		expect(body).not.toContain("person");
 	});
 
 	test("settings report whether a key was seen without offering a render tier", () => {

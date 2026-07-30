@@ -548,13 +548,30 @@ const lobbyRound = async (
 	door.input.on("data", touch);
 	let outcome: LobbyOutcome;
 	try {
+		const matchedKey = options.context.identity.actor();
 		outcome = await runLobby({
 			connection,
 			keyed: options.context.identity.keyed,
+			linkMatchedKey:
+				matchedKey === undefined
+					? undefined
+					: async (code) => {
+							const linked = await options.context.registry.redeemLinkCode(
+								code,
+								matchedKey
+							);
+							return "rejected" in linked
+								? linked
+								: {
+										accepted: true,
+										whoami: options.context.registry.whoAmI(matchedKey),
+									};
+						},
 			notice,
 			renderer: options.context.renderer,
 			sshHost: options.sshHost,
 			until: options.untilExpiry,
+			whoami: options.context.registry.whoAmI(matchedKey),
 		});
 	} finally {
 		door.input.off("data", touch);
