@@ -26,9 +26,9 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Token**: A movable marker on the battle map: id, glyph, label, position, optional seat binding — never game fields. The GM controls all tokens; a player moves only tokens bound to their own seat. _Avoid_: piece, miniature; unqualified "token" for theme tokens (that's **Theme token**)
 
-**Glyph atlas**: The committed, build-time-baked set of 1-bit glyph bitmaps (from MonoMek, CC0) that pixel-glyph mode renders from. Pure data in a render-side package; every entry is keyed by the character it depicts, which is what makes text mode a lossless fallback. _Avoid_: sprite sheet, font (it ships no font)
+**Glyph atlas**: The committed, build-time-baked set of 1-bit glyph bitmaps (from MEKMODE, by MEK.txt — ADR-0021) that pixel-glyph mode renders from. Pure data in a render-side package; every entry is keyed by the character it depicts, which is what makes text mode a lossless fallback. _Avoid_: sprite sheet, font (it ships no font)
 
-**Pixel-glyph mode / Text mode**: The two render tiers of the battle map (and ornamental chrome). Pixel-glyph (default): atlas glyphs rasterized as quadrant blocks, one tile = 4×4 cells. Text (per-session toggle): one legend character per cell — the map file's own format. Same data, same events, same interactions; body text is always real text in both. _Avoid_: graphics mode, ASCII mode
+**Pixel-glyph mode / Text mode**: The two render tiers of the battle map (and ornamental chrome). Pixel-glyph (default): atlas glyphs rasterized as octant blocks, one tile = 4×3 cells. Text (per-session toggle): one legend character per cell — the map file's own format. Same data, same events, same interactions; body text is always real text in both. _Avoid_: graphics mode, ASCII mode
 
 ## Identity
 
