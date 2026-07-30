@@ -23,5 +23,6 @@
 		// skipped. Re-test on every @tanstack pin bump and drop when fixed.
 		"skipLibCheck": true
 	},
-	"include": ["src/**/*.ts", "src/**/*.tsx"]
+	"include": ["src/**/*.ts", "src/**/*.tsx"],
+	"references": [{ "path": "../../packages/core" }]
 }

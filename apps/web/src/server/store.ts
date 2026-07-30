@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 
 import { migrate } from "./migrate";
@@ -31,7 +31,7 @@ export type ArtifactType = "character" | "log" | "map";
 export interface Artifact {
 	readonly type: ArtifactType;
 	readonly name: string;
-	/** #100's self-describing snapshot document; #104 owns validation. */
+	/** #100's self-describing snapshot document; the API owns validation. */
 	readonly document: unknown;
 }
 
@@ -42,6 +42,36 @@ export interface ArtifactKey {
 }
 
 export interface ArtifactIngest extends Artifact, ArtifactKey {}
+
+export interface PublishArtifactInput extends Artifact {
+	readonly ownerIdentity: string;
+	/** Current identity plus former owner ids supplied by the gateway conduit. */
+	readonly ownerIdentityIds: readonly string[];
+}
+
+export interface PublishedArtifactSummary {
+	readonly capability: string;
+	readonly name: string;
+	readonly publishedAt: string;
+	readonly type: ArtifactType;
+}
+
+export type PublishArtifactResult =
+	| {
+			readonly kind: "published";
+			readonly capability: string;
+			readonly created: boolean;
+			readonly publishedAt: string;
+	  }
+	| {
+			readonly kind: "collision";
+			readonly capabilities: readonly string[];
+	  };
+
+export type RevokeOwnedArtifactResult =
+	| { readonly kind: "revoked" }
+	| { readonly kind: "not-found" }
+	| { readonly kind: "collision"; readonly capabilities: readonly string[] };
 
 export interface BackendStoreOptions {
 	/** The operated-box default is `/var/lib/supervillain`. */
@@ -54,9 +84,22 @@ export interface BackendStoreOptions {
 }
 
 export interface BackendStore {
+	/** Compatibility/store-level single-owner entry; API callers use publishArtifact. */
 	readonly ingestArtifact: (artifact: ArtifactIngest) => string;
+	readonly publishArtifact: (
+		artifact: PublishArtifactInput
+	) => PublishArtifactResult;
+	readonly listArtifacts: (
+		ownerIdentityIds: readonly string[]
+	) => readonly PublishedArtifactSummary[];
 	readonly getArtifact: (capability: string) => Artifact | undefined;
 	readonly revokeArtifact: (artifact: ArtifactKey) => boolean;
+	readonly revokeOwnedArtifact: (artifact: {
+		readonly ownerIdentityIds: readonly string[];
+		readonly type: ArtifactType;
+		readonly name: string;
+		readonly capability?: string;
+	}) => RevokeOwnedArtifactResult;
 	readonly close: () => void;
 }
 
@@ -68,6 +111,7 @@ const TOKEN_BYTE_LENGTH = 32;
 const CAPABILITY_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 const DATABASE_FILE = "web.sqlite";
 const SNAPSHOT_DIRECTORY = "snapshots";
+const OG_DIRECTORY = "og";
 const TOKEN_KEY_MODE = 0o600;
 const TOKEN_MINT_ATTEMPTS = 8;
 
@@ -118,6 +162,9 @@ const hashCapability = (capability: string): Buffer | undefined => {
 	}
 	return createHash("sha256").update(token).digest();
 };
+
+const capabilityFromSeed = (tokenKey: Buffer, seed: Buffer): string =>
+	createHmac("sha256", tokenKey).update(seed).digest("base64url");
 
 const createCapability = (
 	tokenKey: Buffer,
@@ -171,11 +218,29 @@ const writeSnapshot = (
 	return pointer;
 };
 
+const unlinkIfPresent = (file: string): void => {
+	if (existsSync(file)) {
+		unlinkSync(file);
+	}
+};
+
+interface OwnedArtifactRow {
+	readonly id: string;
+	readonly name: string;
+	readonly ownerIdentity: string;
+	readonly publishedAt: string;
+	readonly seed: Buffer;
+	readonly snapshotPath: string;
+	readonly tokenHash: Buffer;
+	readonly type: ArtifactType;
+}
+
 /**
  * Opens the web backend's complete durable store. Drizzle is deliberately used
  * only for typed SQL queries; no relational query API or migration tooling is
  * configured. Schema drift is asserted after every migration/startup.
  */
+// oxlint-disable-next-line eslint/max-lines-per-function -- one database handle owns these prepared typed operations as a unit.
 export const openBackendStore = (
 	options: BackendStoreOptions = {}
 ): BackendStore => {
@@ -187,6 +252,7 @@ export const openBackendStore = (
 		throw new Error("Web token key must live outside the backed-up state tree");
 	}
 	mkdirSync(path.join(stateRoot, SNAPSHOT_DIRECTORY), { recursive: true });
+	mkdirSync(path.join(stateRoot, OG_DIRECTORY), { recursive: true });
 	const tokenKey = loadOrCreateTokenKey(tokenKeyPath);
 	const database = drizzle({
 		connection: {
@@ -218,11 +284,7 @@ export const openBackendStore = (
 		return live !== undefined || dead !== undefined;
 	};
 
-	const mintCapability = (): {
-		readonly capability: string;
-		readonly seed: Buffer;
-		readonly tokenHash: Buffer;
-	} => {
+	const mintCapability = () => {
 		for (let attempt = 0; attempt < TOKEN_MINT_ATTEMPTS; attempt += 1) {
 			const minted = createCapability(tokenKey, newSeed);
 			if (!capabilityExists(minted.tokenHash)) {
@@ -230,6 +292,170 @@ export const openBackendStore = (
 			}
 		}
 		throw new Error("Could not mint a unique capability token");
+	};
+
+	const ownedArtifacts = (
+		ownerIdentityIds: readonly string[],
+		type?: ArtifactType,
+		name?: string
+	): readonly OwnedArtifactRow[] => {
+		if (ownerIdentityIds.length === 0) {
+			return [];
+		}
+		const conditions = [
+			inArray(publishedArtifacts.ownerIdentity, [...ownerIdentityIds]),
+		];
+		if (type !== undefined) {
+			conditions.push(eq(publishedArtifacts.type, type));
+		}
+		if (name !== undefined) {
+			conditions.push(eq(publishedArtifacts.name, name));
+		}
+		const rows = database
+			.select({
+				id: publishedArtifacts.id,
+				name: publishedArtifacts.name,
+				ownerIdentity: publishedArtifacts.ownerIdentity,
+				publishedAt: publishedArtifacts.publishedAt,
+				seed: capabilityTokens.seed,
+				snapshotPath: publishedArtifacts.snapshotPath,
+				tokenHash: capabilityTokens.tokenHash,
+				type: publishedArtifacts.type,
+			})
+			.from(publishedArtifacts)
+			.innerJoin(
+				capabilityTokens,
+				eq(capabilityTokens.artifactId, publishedArtifacts.id)
+			)
+			.where(and(...conditions))
+			.all();
+		const ownerOrder = new Map(
+			ownerIdentityIds.map((identityId, index) => [identityId, index])
+		);
+		return rows.toSorted(
+			(left, right) =>
+				(ownerOrder.get(left.ownerIdentity) ?? Number.MAX_SAFE_INTEGER) -
+				(ownerOrder.get(right.ownerIdentity) ?? Number.MAX_SAFE_INTEGER)
+		);
+	};
+
+	const publishArtifact = ({
+		document,
+		name,
+		ownerIdentity,
+		ownerIdentityIds,
+		type,
+	}: PublishArtifactInput): PublishArtifactResult => {
+		const matches = ownedArtifacts(ownerIdentityIds, type, name);
+		if (matches.length > 1) {
+			return {
+				capabilities: matches.map((row) =>
+					capabilityFromSeed(tokenKey, row.seed)
+				),
+				kind: "collision",
+			};
+		}
+		const [existing] = matches;
+		const publishedAt = clock();
+		if (existing !== undefined) {
+			writeSnapshot(stateRoot, existing.id, document);
+			database
+				.update(publishedArtifacts)
+				.set({ publishedAt })
+				.where(eq(publishedArtifacts.id, existing.id))
+				.run();
+			return {
+				capability: capabilityFromSeed(tokenKey, existing.seed),
+				created: false,
+				kind: "published",
+				publishedAt,
+			};
+		}
+		const artifactId = newArtifactId();
+		const minted = mintCapability();
+		const snapshotPath = writeSnapshot(stateRoot, artifactId, document);
+		try {
+			database.transaction((transaction) => {
+				transaction
+					.insert(publishedArtifacts)
+					.values({
+						id: artifactId,
+						name,
+						ownerIdentity,
+						publishedAt,
+						snapshotPath,
+						type,
+					})
+					.run();
+				transaction
+					.insert(capabilityTokens)
+					.values({
+						artifactId,
+						seed: minted.seed,
+						tokenHash: minted.tokenHash,
+					})
+					.run();
+			});
+		} catch (error) {
+			unlinkSync(path.join(stateRoot, snapshotPath));
+			throw error;
+		}
+		return {
+			capability: minted.capability,
+			created: true,
+			kind: "published",
+			publishedAt,
+		};
+	};
+
+	const revokeOwnedArtifact = (artifact: {
+		readonly ownerIdentityIds: readonly string[];
+		readonly type: ArtifactType;
+		readonly name: string;
+		readonly capability?: string;
+	}): RevokeOwnedArtifactResult => {
+		let matches = ownedArtifacts(
+			artifact.ownerIdentityIds,
+			artifact.type,
+			artifact.name
+		);
+		if (artifact.capability !== undefined) {
+			matches = matches.filter(
+				(row) => capabilityFromSeed(tokenKey, row.seed) === artifact.capability
+			);
+		}
+		if (matches.length === 0) {
+			return { kind: "not-found" };
+		}
+		if (matches.length > 1) {
+			return {
+				capabilities: matches.map((row) =>
+					capabilityFromSeed(tokenKey, row.seed)
+				),
+				kind: "collision",
+			};
+		}
+		const [target] = matches;
+		if (target === undefined) {
+			return { kind: "not-found" };
+		}
+		const writeDeadTokenTombstone = (): void => {
+			database.transaction((transaction) => {
+				// Operator takedown semantics land here later; #87d, not designed by #104.
+				transaction
+					.insert(deadTokenTombstones)
+					.values({ revokedAt: clock(), tokenHash: target.tokenHash })
+					.run();
+				transaction
+					.delete(publishedArtifacts)
+					.where(eq(publishedArtifacts.id, target.id))
+					.run();
+			});
+		};
+		writeDeadTokenTombstone();
+		unlinkIfPresent(path.join(stateRoot, target.snapshotPath));
+		unlinkIfPresent(path.join(stateRoot, OG_DIRECTORY, `${target.id}.png`));
+		return { kind: "revoked" };
 	};
 
 	return {
@@ -276,85 +502,37 @@ export const openBackendStore = (
 				type: artifact.type,
 			};
 		},
-		ingestArtifact: ({ document, name, ownerIdentity, type }) => {
-			const artifactId = newArtifactId();
-			const minted = mintCapability();
-			const snapshotPath = writeSnapshot(stateRoot, artifactId, document);
-			try {
-				database.transaction((transaction) => {
-					transaction
-						.insert(publishedArtifacts)
-						.values({
-							id: artifactId,
-							name,
-							ownerIdentity,
-							publishedAt: clock(),
-							snapshotPath,
-							type,
-						})
-						.run();
-					transaction
-						.insert(capabilityTokens)
-						.values({
-							artifactId,
-							seed: minted.seed,
-							tokenHash: minted.tokenHash,
-						})
-						.run();
-				});
-			} catch (error) {
-				unlinkSync(path.join(stateRoot, snapshotPath));
-				throw error;
-			}
-			return minted.capability;
-		},
-		revokeArtifact: ({ name, ownerIdentity, type }) => {
-			const artifact = database
-				.select({
-					id: publishedArtifacts.id,
-					snapshotPath: publishedArtifacts.snapshotPath,
-				})
-				.from(publishedArtifacts)
-				.where(
-					and(
-						eq(publishedArtifacts.ownerIdentity, ownerIdentity),
-						eq(publishedArtifacts.type, type),
-						eq(publishedArtifacts.name, name)
-					)
-				)
-				.limit(1)
-				.get();
-			if (!artifact) {
-				return false;
-			}
-			const capability = database
-				.select({ tokenHash: capabilityTokens.tokenHash })
-				.from(capabilityTokens)
-				.where(eq(capabilityTokens.artifactId, artifact.id))
-				.limit(1)
-				.get();
-			if (!capability) {
-				throw new Error("Published artifact has no capability token");
-			}
-			database.transaction((transaction) => {
-				transaction
-					.insert(deadTokenTombstones)
-					.values({ revokedAt: clock(), tokenHash: capability.tokenHash })
-					.run();
-				transaction
-					.delete(publishedArtifacts)
-					.where(eq(publishedArtifacts.id, artifact.id))
-					.run();
+		ingestArtifact: (artifact) => {
+			const result = publishArtifact({
+				...artifact,
+				ownerIdentityIds: [artifact.ownerIdentity],
 			});
-			unlinkSync(path.join(stateRoot, artifact.snapshotPath));
-			return true;
+			if (result.kind !== "published") {
+				throw new Error("Single-owner ingest unexpectedly collided");
+			}
+			return result.capability;
 		},
+		listArtifacts: (ownerIdentityIds) =>
+			ownedArtifacts(ownerIdentityIds).map((row) => ({
+				capability: capabilityFromSeed(tokenKey, row.seed),
+				name: row.name,
+				publishedAt: row.publishedAt,
+				type: row.type,
+			})),
+		publishArtifact,
+		revokeArtifact: ({ name, ownerIdentity, type }) =>
+			revokeOwnedArtifact({
+				name,
+				ownerIdentityIds: [ownerIdentity],
+				type,
+			}).kind === "revoked",
+		revokeOwnedArtifact,
 	};
 };
 
 let defaultStore: BackendStore | undefined;
 
-const getDefaultStore = (): BackendStore => {
+export const getDefaultStore = (): BackendStore => {
 	defaultStore ??= openBackendStore({
 		stateRoot: process.env.SUPERVILLAIN_WEB_STATE_ROOT,
 		tokenKeyPath: process.env.SUPERVILLAIN_WEB_TOKEN_KEY_PATH,
@@ -362,13 +540,5 @@ const getDefaultStore = (): BackendStore => {
 	return defaultStore;
 };
 
-/** Compatibility wrapper for #101's tracer route; #104 replaces its lifecycle. */
 export const getArtifact = (capability: string): Artifact | undefined =>
 	getDefaultStore().getArtifact(capability);
-
-/** Compatibility wrapper for #101's unauthenticated tracer ingest only. */
-export const ingestArtifact = (artifact: Artifact): string =>
-	getDefaultStore().ingestArtifact({
-		...artifact,
-		ownerIdentity: "tracer-owner",
-	});

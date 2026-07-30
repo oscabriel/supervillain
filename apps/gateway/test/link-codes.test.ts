@@ -274,6 +274,7 @@ describe("derived linking facts", () => {
 		await rm(file);
 		expect(tables).toEqual([
 			"identities",
+			"identity_aliases",
 			"identity_keys",
 			"link_codes",
 			"rooms",

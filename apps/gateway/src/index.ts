@@ -47,6 +47,7 @@ import {
 	LOBBY_EXPIRY_MESSAGE,
 } from "./hardening.js";
 import type { LobbyDeadlines, LobbyExpiry, LobbyLimits } from "./hardening.js";
+import { startIdentityConduit } from "./identity-conduit.js";
 import { createOfflineMetrics } from "./offline-metrics.js";
 import type { OfflineCounts, OfflineMetrics } from "./offline-metrics.js";
 import { openRoomRegistry } from "./registry.js";
@@ -114,6 +115,8 @@ export type { KeyedSessions } from "./revocation.js";
  * protocol constant: 443 belongs to Caddy on the hosted box (#40), so the pipe
  * takes the conventional alternate. */
 const DEFAULT_PIPE_PORT = 8443;
+/** The hosted web's same-box cold-path hop; never bound beyond loopback. */
+const DEFAULT_IDENTITY_CONDUIT_PORT = 3002;
 
 const gatewayRegistry: GatewayRegistry = {
 	get: (gameId) => {
@@ -152,6 +155,9 @@ export interface GatewayOptions {
 	readonly brokerPort?: number;
 	/** The pipe URL Hosts should dial, when it differs from the bind. */
 	readonly brokerUrl?: string;
+	/** Loopback-only identity conduit port. Embedded/test gateways default to an
+	 * ephemeral port; the operated gateway role pins 3002. */
+	readonly identityConduitPort?: number;
 	/** Where the pipe's TLS ends (ADR-0014). Default: `self-signed`, so a gateway
 	 * started with no arguments never carries production traffic in the clear. */
 	readonly tls?: GatewayTlsOptions;
@@ -184,6 +190,8 @@ export interface RunningGateway {
 	readonly pairingCode: string | undefined;
 	/** The fingerprint a Host pins, for a gateway with no CA behind it. */
 	readonly certificateFingerprint: string | undefined;
+	/** ADR-0013's local-only hosted-web identity hop. */
+	readonly identityConduitUrl: string;
 	readonly close: () => Promise<void>;
 }
 
@@ -774,6 +782,10 @@ export const startGateway = async (
 	const registry = openRoomRegistry({
 		path: path.join(options.stateDir, "registry.db"),
 	});
+	const identityConduit = await startIdentityConduit({
+		directory: registry,
+		port: options.identityConduitPort ?? 0,
+	});
 	const sessions = createKeyedSessions();
 	/** Revocation is immediate on every surface, not just the one it was asked
 	 * on: the pipe half closes the retired key's pipes, and this closes the
@@ -888,10 +900,12 @@ export const startGateway = async (
 				await door.close();
 				await pipes.close();
 				await listener.close();
+				await identityConduit.close();
 				registry.close();
 			})();
 			return closePromise;
 		},
+		identityConduitUrl: identityConduit.url,
 		offline: () => metrics.counts(),
 		pairingCode: pipePairingCode({
 			advertisedUrl: options.brokerUrl,
@@ -1004,6 +1018,7 @@ export const serveGateway = async (
 	const gateway = await startGateway({
 		...parsed.options,
 		capacity: capacity.limits,
+		identityConduitPort: DEFAULT_IDENTITY_CONDUIT_PORT,
 		lobbyLimits: capacity.lobby,
 		tls,
 	});

@@ -1,5 +1,6 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals, eslint/no-await-in-loop -- Bun-only suite; booting a real server is polled, not parallel. */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,9 +13,48 @@ import path from "node:path";
  */
 const appDir = path.join(import.meta.dir, "..");
 const port = 4890;
+const conduitPort = 4891;
 const base = `http://localhost:${port}`;
+const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+const publicJwk = publicKey.export({ format: "jwk" });
+if (typeof publicJwk.x !== "string") {
+	throw new TypeError("smoke key did not expose raw public material");
+}
+const publicKeyHex = Buffer.from(publicJwk.x, "base64url").toString("hex");
 let server: ReturnType<typeof Bun.spawn> | undefined;
+let conduit: ReturnType<typeof Bun.serve> | undefined;
 let stateParent = "";
+
+const snapshot = (title: string) => ({
+	artifactType: "character",
+	card: { description: "Production smoke", fields: [], title },
+	schemaVersion: 1,
+	sections: [],
+});
+
+const authenticatedFetch = async (
+	pathname: string,
+	init?: RequestInit
+): Promise<Response> => {
+	const challengeResponse = await fetch(`${base}/api/publish/challenge`, {
+		body: JSON.stringify({ key: publicKeyHex }),
+		headers: { "content-type": "application/json" },
+		method: "POST",
+	});
+	const { challenge } = (await challengeResponse.json()) as {
+		readonly challenge: string;
+	};
+	const signature = sign(
+		null,
+		Buffer.from(`supervillain/publish-http/1\n${challenge}\n${publicKeyHex}`),
+		privateKey
+	).toString("hex");
+	const headers = new Headers(init?.headers);
+	headers.set("supervillain-key", publicKeyHex);
+	headers.set("supervillain-challenge", challenge);
+	headers.set("supervillain-signature", signature);
+	return fetch(`${base}${pathname}`, { ...init, headers });
+};
 
 const waitForBoot = async (): Promise<void> => {
 	const deadline = Date.now() + 10_000;
@@ -32,6 +72,18 @@ const waitForBoot = async (): Promise<void> => {
 
 beforeAll(async () => {
 	stateParent = await mkdtemp(path.join(tmpdir(), "supervillain-web-smoke-"));
+	conduit = Bun.serve({
+		fetch: async (request) => {
+			const body = (await request.json()) as { readonly key?: string };
+			return Response.json({
+				identityId: body.key === publicKeyHex ? "smoke-identity" : null,
+				ownerIdentityIds: body.key === publicKeyHex ? ["smoke-identity"] : [],
+				revoked: false,
+			});
+		},
+		hostname: "127.0.0.1",
+		port: conduitPort,
+	});
 	const build = Bun.spawn(["bun", "run", "build"], {
 		cwd: appDir,
 		stderr: "pipe",
@@ -47,6 +99,7 @@ beforeAll(async () => {
 		env: {
 			...process.env,
 			PORT: String(port),
+			SUPERVILLAIN_IDENTITY_CONDUIT_URL: `http://127.0.0.1:${conduitPort}`,
 			SUPERVILLAIN_WEB_STATE_ROOT: path.join(stateParent, "state"),
 			SUPERVILLAIN_WEB_TOKEN_KEY_PATH: path.join(
 				stateParent,
@@ -63,10 +116,11 @@ beforeAll(async () => {
 afterAll(async () => {
 	server?.kill();
 	await server?.exited;
+	conduit?.stop(true);
 	await rm(stateParent, { force: true, recursive: true });
 });
 
-describe("production output under bun (tracer)", () => {
+describe("production output under bun", () => {
 	test("GET / is server-rendered 200", async () => {
 		const res = await fetch(`${base}/`);
 		expect(res.status).toBe(200);
@@ -74,9 +128,9 @@ describe("production output under bun (tracer)", () => {
 	});
 
 	test("GET /a/:capability SSRs a known artifact", async () => {
-		const ingest = await fetch(`${base}/api/ingest`, {
+		const ingest = await authenticatedFetch("/api/publish", {
 			body: JSON.stringify({
-				document: {},
+				document: snapshot("Doctor Malignant"),
 				name: "Doctor Malignant",
 				type: "character",
 			}),
@@ -84,7 +138,7 @@ describe("production output under bun (tracer)", () => {
 			method: "POST",
 		});
 		const { url } = (await ingest.json()) as { readonly url: string };
-		const res = await fetch(`${base}${url}`);
+		const res = await fetch(url);
 		expect(res.status).toBe(200);
 		expect(await res.text()).toContain("Doctor Malignant");
 	});
@@ -94,12 +148,12 @@ describe("production output under bun (tracer)", () => {
 		expect(res.status).toBe(404);
 	});
 
-	test("POST /api/ingest lands on the mounted Hono app and reads back over SSR", async () => {
-		const res = await fetch(`${base}/api/ingest`, {
+	test("POST /api/publish lands on the mounted Hono app and reads back over SSR", async () => {
+		const res = await authenticatedFetch("/api/publish", {
 			body: JSON.stringify({
-				document: {},
-				name: "Smoke Session",
-				type: "log",
+				document: snapshot("Smoke Character"),
+				name: "Smoke Character",
+				type: "character",
 			}),
 			headers: { "content-type": "application/json" },
 			method: "POST",
@@ -109,10 +163,10 @@ describe("production output under bun (tracer)", () => {
 			capability: string;
 			url: string;
 		};
-		expect(url).toBe(`/a/${capability}`);
-		const page = await fetch(`${base}${url}`);
+		expect(url).toBe(`${base}/a/${capability}`);
+		const page = await fetch(url);
 		expect(page.status).toBe(200);
-		expect(await page.text()).toContain("Smoke Session");
+		expect(await page.text()).toContain("Smoke Character");
 	});
 
 	test("static assets are served", async () => {

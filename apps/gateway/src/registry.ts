@@ -86,6 +86,13 @@ const MIGRATIONS: readonly string[] = [
 	// that at-most-15-minute legacy set rather than leave an unverifiable code
 	// live across the migration.
 	"UPDATE link_codes SET retired_at = created_at WHERE kind = 'device' AND minted_by IS NULL",
+	// A lone key may own backend artifacts even when it owns no gateway rooms.
+	// Preserve the former owner id when ADR-0005 permits moving that key, so the
+	// web cold path can still list/revoke both sides of the link (#104).
+	`CREATE TABLE identity_aliases (
+		former_identity_id TEXT PRIMARY KEY,
+		current_identity_id TEXT NOT NULL REFERENCES identities(id)
+	) STRICT`,
 ];
 
 /** Both machines are at hand, so a device code lives only as long as it takes
@@ -155,6 +162,9 @@ export interface GatewayRoomRegistry
 	readonly actorsOf: (identityId: string) => readonly string[];
 	/** The subset that still authenticates: `actorsOf` minus the retired keys. */
 	readonly liveActorsOf: (identityId: string) => readonly string[];
+	/** Current owner identity followed by identities this key formerly owned.
+	 * Backend ownership survives ADR-0005's permitted lone-key move. */
+	readonly ownerIdentitiesOf: (key: string) => readonly string[];
 	/**
 	 * Mints an adoption code for a live guest session. The gateway mints it
 	 * itself — ADR-0005 routed this through the backend and ADR-0013 removed
@@ -178,6 +188,10 @@ interface RevokedRow {
 
 interface KeyRow {
 	readonly key: string;
+}
+
+interface FormerIdentityRow {
+	readonly former_identity_id: string;
 }
 
 interface CountRow {
@@ -272,6 +286,18 @@ export const openRoomRegistry = (
 	const repointIdentityKey = db.query(
 		"UPDATE identity_keys SET identity_id = $identityId WHERE key = $key"
 	);
+	const repointIdentityAliases = db.query(
+		`UPDATE identity_aliases SET current_identity_id = $identityId
+		 WHERE current_identity_id = $formerIdentityId`
+	);
+	const insertIdentityAlias = db.query(
+		`INSERT INTO identity_aliases (former_identity_id, current_identity_id)
+		 VALUES ($formerIdentityId, $identityId)`
+	);
+	const selectIdentityAliases = db.query(
+		`SELECT former_identity_id FROM identity_aliases
+		 WHERE current_identity_id = $identityId ORDER BY former_identity_id`
+	);
 	const deleteIdentity = db.query("DELETE FROM identities WHERE id = $id");
 	const upsertRoom = db.query(
 		`INSERT INTO rooms (name, owner_id, updated_at)
@@ -321,6 +347,17 @@ export const openRoomRegistry = (
 
 	const liveActorsOf = (identityId: string): readonly string[] =>
 		(selectLiveKeysOf.all({ identityId }) as KeyRow[]).map((row) => row.key);
+
+	const ownerIdentitiesOf = (key: string): readonly string[] => {
+		const identityId = identityOf(key);
+		if (identityId === undefined) {
+			return [];
+		}
+		const former = selectIdentityAliases.all({
+			identityId,
+		}) as FormerIdentityRow[];
+		return [identityId, ...former.map((row) => row.former_identity_id)];
+	};
 
 	/**
 	 * The retire half of rotation (ADR-0012, NQ-3). Two rules, both narrow on
@@ -458,6 +495,14 @@ export const openRoomRegistry = (
 		if (siblings.length > 0 || rooms > 0) {
 			return { message: TANGLED, rejected: true };
 		}
+		// Gateway room ownership cannot reveal backend artifact ownership. Keep the
+		// old id as lineage before deleting its gateway identity, and flatten any
+		// earlier moves onto the new current identity (#104, ADR-0013).
+		repointIdentityAliases.run({
+			formerIdentityId: current,
+			identityId,
+		});
+		insertIdentityAlias.run({ formerIdentityId: current, identityId });
 		repointIdentityKey.run({ identityId, key });
 		deleteIdentity.run({ id: current });
 		return { accepted: true, identityId, linked: anchor };
@@ -564,6 +609,7 @@ export const openRoomRegistry = (
 							key
 						)
 			),
+		ownerIdentitiesOf,
 		ownerOf,
 		redeemLinkCode: (
 			code: string,
