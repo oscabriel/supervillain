@@ -1,4 +1,5 @@
 import type { MapLegend } from "./map.js";
+import type { FeedLine } from "./text.js";
 import { isRecord } from "./validation.js";
 import type { ContentValidator } from "./validation.js";
 
@@ -44,6 +45,37 @@ export {
 	tokenAt,
 	validateMapFile,
 } from "./map.js";
+export type {
+	CharacterSnapshotDocumentV1,
+	LogSnapshotDocumentV1,
+	MapSnapshotDocumentV1,
+	SnapshotArtifactType,
+	SnapshotCardV1,
+	SnapshotDocument,
+	SnapshotDocumentV1,
+	SnapshotFieldV1,
+	SnapshotLogBlockV1,
+	SnapshotLogEntryV1,
+	SnapshotMapGridV1,
+	SnapshotMapLegendV1,
+	SnapshotMapTileV1,
+	SnapshotSectionV1,
+	SnapshotTextAttributeV1,
+	SnapshotTextBlockV1,
+	SnapshotTextRunV1,
+	SnapshotThemeTokenV1,
+	SnapshotValidationResult,
+} from "./snapshot.js";
+export {
+	SNAPSHOT_ARTIFACT_TYPES,
+	SNAPSHOT_MAP_TILES_V1,
+	SNAPSHOT_SCHEMA_VERSION,
+	SNAPSHOT_TEXT_ATTRIBUTES_V1,
+	SNAPSHOT_THEME_TOKENS_V1,
+	validateSnapshotDocument,
+} from "./snapshot.js";
+export type { FeedLine, TextAttribute, TextRun, ThemeToken } from "./text.js";
+export { TEXT_ATTRIBUTES, THEME_TOKENS } from "./text.js";
 export type {
 	ContentValidator,
 	ValidationIssue,
@@ -286,23 +318,6 @@ export interface GameAuthority<S, C, E> {
 		table: TableView
 	) => E[] | Rejection;
 	readonly apply: (state: Readonly<S>, event: E) => S;
-}
-
-export type ThemeToken = "accent" | "danger" | "muted" | "primary" | "success";
-
-/** The second styling axis (DESIGN.md): exactly these five. `blink` is
- * banned, so the union simply never grows it. `reverse` is the domain word;
- * render adapters map it to whatever their backend calls inversion. */
-export type TextAttribute = "bold" | "dim" | "italic" | "reverse" | "underline";
-
-export interface TextRun {
-	readonly text: string;
-	readonly token: ThemeToken;
-	readonly attrs?: readonly TextAttribute[];
-}
-
-export interface FeedLine {
-	readonly runs: readonly TextRun[];
 }
 
 export type LayoutSlot = "sidebar";

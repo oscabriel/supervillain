@@ -1,0 +1,25 @@
+{
+	"schemaVersion": 1,
+	"artifactType": "map",
+	"card": {
+		"title": "Ember Gate",
+		"description": "A narrow gatehouse over difficult ground",
+		"fields": [
+			{ "label": "dimensions", "value": "6 × 4" },
+			{ "label": "terrain", "value": "floor, wall, door, difficult" }
+		],
+		"glyph": "+",
+		"accentHint": "muted"
+	},
+	"map": {
+		"type": "map-grid",
+		"name": "Ember Gate",
+		"legend": {
+			"#": "wall",
+			".": "floor",
+			"+": "door",
+			"~": "difficult"
+		},
+		"rows": ["######", "#..+.#", "#~~~~#", "######"]
+	}
+}
