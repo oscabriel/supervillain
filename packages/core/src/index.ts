@@ -290,9 +290,15 @@ export interface GameAuthority<S, C, E> {
 
 export type ThemeToken = "accent" | "danger" | "muted" | "primary" | "success";
 
+/** The second styling axis (DESIGN.md): exactly these five. `blink` is
+ * banned, so the union simply never grows it. `reverse` is the domain word;
+ * render adapters map it to whatever their backend calls inversion. */
+export type TextAttribute = "bold" | "dim" | "italic" | "reverse" | "underline";
+
 export interface TextRun {
 	readonly text: string;
 	readonly token: ThemeToken;
+	readonly attrs?: readonly TextAttribute[];
 }
 
 export interface FeedLine {

@@ -208,6 +208,7 @@ export const createTableFold = <S, C, E>(
 		return {
 			runs: [
 				{
+					attrs: ["dim"],
 					text: `room created · ${envelope.payload.gameId}`,
 					token: "muted",
 				},
@@ -237,6 +238,7 @@ export const createTableFold = <S, C, E>(
 		return {
 			runs: [
 				{
+					attrs: ["dim"],
 					text: `${payload.seatId} joined the table`,
 					token: "muted",
 				},
@@ -280,7 +282,11 @@ export const createTableFold = <S, C, E>(
 		}
 		return {
 			runs: [
-				{ text: `${actorLabel(envelope.actor)}: `, token: "accent" },
+				{
+					attrs: ["bold"],
+					text: `${actorLabel(envelope.actor)}: `,
+					token: "accent",
+				},
 				{ text: envelope.payload.text, token: "primary" },
 			],
 		};
@@ -293,12 +299,16 @@ export const createTableFold = <S, C, E>(
 		}
 		return {
 			runs: [
-				{ text: actorLabel(envelope.actor), token: "accent" },
+				{
+					attrs: ["bold"],
+					text: actorLabel(envelope.actor),
+					token: "accent",
+				},
 				{
 					text: ` rolled ${payload.notation} → ${payload.rolls.join(", ")} = `,
 					token: "primary",
 				},
-				{ text: String(payload.total), token: "success" },
+				{ attrs: ["bold"], text: String(payload.total), token: "success" },
 			],
 		};
 	};
@@ -313,7 +323,13 @@ export const createTableFold = <S, C, E>(
 		// load lands on is bare — last-loaded wins (ADR-0006).
 		tokens = [];
 		return {
-			runs: [{ text: `map loaded · ${loaded.name}`, token: "muted" }],
+			runs: [
+				{
+					attrs: ["dim"],
+					text: `map loaded · ${loaded.name}`,
+					token: "muted",
+				},
+			],
 		};
 	};
 
@@ -362,7 +378,9 @@ export const createTableFold = <S, C, E>(
 			if (envelope.type === CORE_MAP_CLEARED) {
 				map = null;
 				tokens = [];
-				return { runs: [{ text: "map cleared", token: "muted" }] };
+				return {
+					runs: [{ attrs: ["dim"], text: "map cleared", token: "muted" }],
+				};
 			}
 			if (
 				envelope.type === CORE_TOKEN_PLACED ||

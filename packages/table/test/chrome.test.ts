@@ -10,7 +10,27 @@ import {
 	initialFeedLines,
 	nextPanelFocus,
 	rerenderOnPanelFocusTransition,
+	styledLine,
 } from "../src/chrome.js";
+
+describe("styledLine", () => {
+	test("an attributed run's chunk carries the packed bitmask", () => {
+		const line = styledLine({
+			runs: [
+				{ attrs: ["bold", "reverse"], text: "Aria", token: "accent" },
+				{ text: " rolls", token: "primary" },
+			],
+		});
+		// BOLD(1) | INVERSE(32) from the pinned clone @ a0b9064.
+		expect(line.chunks[0]?.attributes).toBe(33);
+		expect(line.chunks[0]?.text).toBe("Aria");
+	});
+
+	test("a plain run's chunk carries no attributes", () => {
+		const line = styledLine({ runs: [{ text: "quiet", token: "muted" }] });
+		expect(line.chunks[0]?.attributes).toBeUndefined();
+	});
+});
 
 describe("table sidebar", () => {
 	test("shows seats derived after a seat-claimed envelope", () => {

@@ -3,7 +3,6 @@ import { describe, expect, test } from "bun:test";
 
 import type { FeedLine, GamePanelInput, TableView } from "@supervillain/core";
 
-import { independenceNotice } from "../src/content.js";
 import { apply, init } from "../src/model.js";
 import type { DsCommand, DsEvent, DsState } from "../src/model.js";
 import { view } from "../src/view.js";
@@ -75,10 +74,10 @@ const threeCharacterTable: TableView = {
 };
 
 describe("Draw Steel view", () => {
-	test("renders the independence notice and initiative rows", () => {
-		expect(view.notices).toEqual([
-			{ runs: [{ text: independenceNotice, token: "muted" }] },
-		]);
+	test("renders initiative rows without table-feed notices", () => {
+		// The license-mandated independence notice lives on the CLI's help
+		// surface, not in every table feed — the view declares no notices.
+		expect(view.notices).toBeUndefined();
 		const [panel] = view.createPanels();
 		if (panel === undefined) {
 			throw new Error("initiative panel missing");
@@ -123,6 +122,49 @@ describe("Draw Steel view", () => {
 		expect(active.map(text)).toContain("M+2 A+1 R+0 I+1 P+2 · stamina 20");
 		expect(active.map(text)).toContain("↑/↓ select · s/e · t · a/m · r");
 		expect(inactive.map(text)).not.toContain("↑/↓ select · s/e · t · a/m · r");
+	});
+
+	test("uses attributes for names, asides, and critical results", () => {
+		const state = stateWithRoster();
+		const [sheet] = state.characters;
+		if (sheet === undefined) {
+			throw new Error("character missing");
+		}
+		const entered = view.renderEvent(
+			{ sheet, type: "ds.character-entered" },
+			state
+		);
+		expect(entered?.runs[0]).toEqual({
+			attrs: ["bold"],
+			text: "Coda",
+			token: "accent",
+		});
+		expect(entered?.runs[2]?.attrs).toEqual(["italic"]);
+
+		const roll = view.renderEvent(
+			{
+				banes: 0,
+				characterName: "Sir Vile",
+				characteristic: "might",
+				critical: true,
+				dice: [8, 2],
+				edges: 0,
+				modifier: 2,
+				tier: 2,
+				total: 12,
+				type: "ds.power-rolled",
+			},
+			state
+		);
+		expect(roll?.runs[0]).toEqual({
+			attrs: ["bold"],
+			text: "Sir Vile",
+			token: "accent",
+		});
+		expect(roll?.runs.find((run) => run.text === "12")?.attrs).toEqual([
+			"bold",
+		]);
+		expect(roll?.runs.at(-1)?.attrs).toEqual(["bold"]);
 	});
 
 	test("renders every event type from payloads, with turn names from state", () => {

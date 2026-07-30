@@ -110,6 +110,10 @@ describe("legacy Draw Steel log", () => {
 			"Ramona",
 			"Sable",
 		]);
-		expect(lines[2]?.runs[0]).toEqual({ text: "Ramona", token: "accent" });
+		expect(lines[2]?.runs[0]).toEqual({
+			attrs: ["bold"],
+			text: "Ramona",
+			token: "accent",
+		});
 	});
 });

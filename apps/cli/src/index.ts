@@ -30,6 +30,7 @@ import type {
 import { decide as drawSteelDecide } from "@supervillain/draw-steel/authority";
 import {
 	content as drawSteelContent,
+	independenceNotice,
 	intake as drawSteelIntake,
 } from "@supervillain/draw-steel/content";
 import {
@@ -115,7 +116,9 @@ Operator role (this same binary is the self-hosted gateway — ADR-0015):
   key, and the gateway resolves the room name. It is a convenience wrapper
   over 'ssh <room>@<gateway>' — nothing more. Joining a room you host yourself
   is just another session at your own table: your key already holds the GM
-  seat, so you sit back down in it.`;
+  seat, so you sit back down in it.
+
+${independenceNotice}`;
 
 /** Credentials live in per-machine config, never in the campaign folder — the
  * folder moves between machines and backups; the key must not (ADR-0012). */

@@ -7,7 +7,7 @@ import type {
 	TextRun,
 } from "@supervillain/core";
 
-import { independenceNotice, terminology } from "./content.js";
+import { terminology } from "./content.js";
 import { playOf, sheetOfEnteredEvent } from "./model.js";
 import type {
 	DsCharacteristic,
@@ -27,6 +27,11 @@ const CHARACTERISTICS: readonly DsCharacteristic[] = [
 ];
 
 const line = (...runs: readonly TextRun[]): FeedLine => ({ runs });
+const nameRun = (text: string): TextRun => ({
+	attrs: ["bold"],
+	text,
+	token: "accent",
+});
 const signed = (value: number): string =>
 	value >= 0 ? `+${value}` : `−${Math.abs(value)}`;
 const arithmeticModifier = (value: number): string =>
@@ -414,16 +419,16 @@ const edgeBaneLabel = (edges: number, banes: number) => {
 
 export const view: GameView<DsState, DsCommand, DsEvent> = {
 	createPanels: () => [createInitiativePanel(), createSheetPanel()],
-	notices: [line({ text: independenceNotice, token: "muted" })],
 	// oxlint-disable-next-line eslint/complexity -- branches mirror the pinned event register for exhaustive rendering.
 	renderEvent(event, state) {
 		switch (event.type) {
 			case "ds.character-entered": {
 				const sheet = sheetOfEnteredEvent(event);
 				return line(
-					{ text: sheet.name, token: "accent" },
+					nameRun(sheet.name),
 					{ text: " enters play ", token: "primary" },
 					{
+						attrs: ["italic"],
 						text: `(${characteristicSummary(sheet)})`,
 						token: "muted",
 					}
@@ -440,20 +445,20 @@ export const view: GameView<DsState, DsCommand, DsEvent> = {
 				});
 			}
 			case "ds.combatant-added": {
-				return line(
-					{ text: event.name, token: "accent" },
-					{ text: ` joins the ${event.side}.`, token: "primary" }
-				);
+				return line(nameRun(event.name), {
+					text: ` joins the ${event.side}.`,
+					token: "primary",
+				});
 			}
 			case "ds.turn-taken": {
 				const name =
 					state.encounter.combatants.find(
 						(combatant) => combatant.id === event.combatantId
 					)?.name ?? event.combatantId;
-				return line(
-					{ text: name, token: "accent" },
-					{ text: " takes their turn", token: "primary" }
-				);
+				return line(nameRun(name), {
+					text: " takes their turn",
+					token: "primary",
+				});
 			}
 			case "ds.round-started": {
 				return line({ text: `round ${event.round} begins`, token: "primary" });
@@ -468,67 +473,57 @@ export const view: GameView<DsState, DsCommand, DsEvent> = {
 					event.type === "ds.condition-applied"
 						? ` is ${event.condition}`
 						: ` is no longer ${event.condition}`;
-				return line(
-					{ text: name, token: "accent" },
-					{ text: change, token: "primary" }
-				);
+				return line(nameRun(name), { text: change, token: "primary" });
 			}
 			case "ds.resource-changed": {
 				const resourceName =
 					state.characters.find(
 						(character) => character.name === event.characterName
 					)?.heroicResource ?? "heroic resource";
-				return line(
-					{ text: event.characterName, token: "accent" },
-					{
-						text: ` ${signed(event.delta)} ${resourceName.toLowerCase()} → ${event.total}`,
-						token: "primary",
-					}
-				);
+				return line(nameRun(event.characterName), {
+					text: ` ${signed(event.delta)} ${resourceName.toLowerCase()} → ${event.total}`,
+					token: "primary",
+				});
 			}
 			case "ds.recovery-spent": {
-				return line(
-					{ text: event.characterName, token: "accent" },
-					{
-						text: ` spends a recovery (${event.remaining} left)`,
-						token: "primary",
-					}
-				);
+				return line(nameRun(event.characterName), {
+					text: ` spends a recovery (${event.remaining} left)`,
+					token: "primary",
+				});
 			}
 			case "ds.surges-changed": {
-				return line(
-					{ text: event.characterName, token: "accent" },
-					{
-						text: ` ${signed(event.delta)} surges → ${event.total}`,
-						token: "primary",
-					}
-				);
+				return line(nameRun(event.characterName), {
+					text: ` ${signed(event.delta)} surges → ${event.total}`,
+					token: "primary",
+				});
 			}
 			case "ds.victory-gained": {
-				return line(
-					{ text: event.characterName, token: "accent" },
-					{
-						text: ` earns a victory (${event.total})`,
-						token: "primary",
-					}
-				);
+				return line(nameRun(event.characterName), {
+					text: ` earns a victory (${event.total})`,
+					token: "primary",
+				});
 			}
 			case "ds.power-rolled": {
 				const edgeBane = edgeBaneLabel(event.edges, event.banes);
 				const modifier = arithmeticModifier(event.modifier);
-				const prefix =
-					event.characterName === null ? "" : `${event.characterName} — `;
+				const actorRuns: readonly TextRun[] =
+					event.characterName === null
+						? []
+						: [nameRun(event.characterName), { text: " — ", token: "primary" }];
 				return line(
+					...actorRuns,
 					{
-						text: `${prefix}power roll (${event.characteristic}): ${event.dice[0]} + ${event.dice[1]} ${modifier}${edgeBane.rollAdjustment} = `,
+						text: `power roll (${event.characteristic}): ${event.dice[0]} + ${event.dice[1]} ${modifier}${edgeBane.rollAdjustment} = `,
 						token: "primary",
 					},
-					{ text: String(event.total), token: "accent" },
+					{ attrs: ["bold"], text: String(event.total), token: "accent" },
 					{ text: " → ", token: "primary" },
 					{ text: terminology.tiers[event.tier], token: tierToken(event.tier) },
 					{ text: edgeBane.tierShift, token: "primary" },
 					...(event.critical
-						? ([{ text: " · crit!", token: "success" }] as const)
+						? ([
+								{ attrs: ["bold"], text: " · crit!", token: "success" },
+							] as const)
 						: [])
 				);
 			}

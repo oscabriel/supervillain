@@ -146,7 +146,7 @@ describe("createTableFold", () => {
 				envelope("core.seat-claimed", { seatId: "gm" }, "actor-key-long", 2)
 			)
 		).toEqual({
-			runs: [{ text: "gm joined the table", token: "muted" }],
+			runs: [{ attrs: ["dim"], text: "gm joined the table", token: "muted" }],
 		});
 		expect(fold.table()).toEqual({
 			actor: "viewer-key",
@@ -160,7 +160,7 @@ describe("createTableFold", () => {
 			)
 		).toEqual({
 			runs: [
-				{ text: "gm: ", token: "accent" },
+				{ attrs: ["bold"], text: "gm: ", token: "accent" },
 				{ text: "hello", token: "primary" },
 			],
 		});
@@ -222,7 +222,9 @@ describe("createTableFold", () => {
 		const fold = createTableFold(entry, "game", "viewer-key");
 		expect(
 			fold.apply(envelope("core.room-created", { gameId: "game" }))
-		).toEqual({ runs: [{ text: "room created · game", token: "muted" }] });
+		).toEqual({
+			runs: [{ attrs: ["dim"], text: "room created · game", token: "muted" }],
+		});
 		expect(
 			fold.apply(
 				envelope("core.dice-rolled", {
@@ -234,9 +236,9 @@ describe("createTableFold", () => {
 			)
 		).toEqual({
 			runs: [
-				{ text: "actor-ke", token: "accent" },
+				{ attrs: ["bold"], text: "actor-ke", token: "accent" },
 				{ text: " rolled 2d6+1 → 2, 5 = ", token: "primary" },
-				{ text: "8", token: "success" },
+				{ attrs: ["bold"], text: "8", token: "success" },
 			],
 		});
 		expect(fold.apply(envelope("core.future", {}))).toBeNull();
@@ -258,7 +260,9 @@ describe("createTableFold", () => {
 					2
 				)
 			)
-		).toEqual({ runs: [{ text: "map loaded · Hall", token: "muted" }] });
+		).toEqual({
+			runs: [{ attrs: ["dim"], text: "map loaded · Hall", token: "muted" }],
+		});
 		expect(fold.map()).toEqual({
 			legend: { "#": "wall", ".": "floor" },
 			name: "Hall",
@@ -279,7 +283,9 @@ describe("createTableFold", () => {
 		});
 		expect(
 			fold.apply(envelope("core.map-cleared", {}, "actor-key-long", 4))
-		).toEqual({ runs: [{ text: "map cleared", token: "muted" }] });
+		).toEqual({
+			runs: [{ attrs: ["dim"], text: "map cleared", token: "muted" }],
+		});
 		expect(fold.map()).toBeNull();
 	});
 
@@ -399,7 +405,7 @@ describe("createTableFold", () => {
 			fold.apply(envelope("core.chat-posted", { text: "still here" }, "a", 8))
 		).toEqual({
 			runs: [
-				{ text: "a: ", token: "accent" },
+				{ attrs: ["bold"], text: "a: ", token: "accent" },
 				{ text: "still here", token: "primary" },
 			],
 		});
@@ -548,7 +554,7 @@ describe("createTableFold", () => {
 			fold.apply(envelope("core.chat-posted", { text: "still here" }, "a", 45))
 		).toEqual({
 			runs: [
-				{ text: "a: ", token: "accent" },
+				{ attrs: ["bold"], text: "a: ", token: "accent" },
 				{ text: "still here", token: "primary" },
 			],
 		});

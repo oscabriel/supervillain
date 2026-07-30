@@ -35,7 +35,7 @@ import {
 } from "./map-region.js";
 import { mapStatusLine, mapTitleLine } from "./map.js";
 import type { MapCursor } from "./map.js";
-import { resolveThemeToken } from "./theme.js";
+import { resolveTextAttributes, resolveThemeToken } from "./theme.js";
 
 const SIDEBAR_WIDTH = 28;
 
@@ -75,13 +75,19 @@ const ignoreClick = (): void => {
 	// Deliberately nothing: no capability may depend on the mouse.
 };
 
-const styledLine = (line: FeedLine): StyledText =>
+/** A FeedLine's one crossing into OpenTUI: token → indexed color, named
+ * attributes → packed bitmask. A plain run stays attribute-free. */
+export const styledLine = (line: FeedLine): StyledText =>
 	new StyledText(
-		line.runs.map((run) => ({
-			__isChunk: true,
-			fg: resolveThemeToken(run.token),
-			text: run.text,
-		}))
+		line.runs.map((run) => {
+			const attributes = resolveTextAttributes(run.attrs);
+			return {
+				__isChunk: true as const,
+				fg: resolveThemeToken(run.token),
+				text: run.text,
+				...(attributes === 0 ? {} : { attributes }),
+			};
+		})
 	);
 
 /** `sameActor` is the log's link graph (ADR-0005), so the marker still finds
