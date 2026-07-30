@@ -6,6 +6,9 @@ import path from "node:path";
 
 import { startGateway } from "@supervillain/gateway";
 import type { RunningGateway } from "@supervillain/gateway";
+import { isValidRoomName } from "@supervillain/room-wire";
+
+import { generateRoomName, registerGeneratedName } from "../src/room-names.js";
 
 const folders: string[] = [];
 const gateways: RunningGateway[] = [];
@@ -57,7 +60,106 @@ afterEach(async () => {
 	}
 });
 
+describe("room name generation", () => {
+	test("every generated two-word name satisfies the room-name rule", () => {
+		for (let draw = 0; draw < 5000; draw += 1) {
+			const name = generateRoomName();
+			expect(name.split("-")).toHaveLength(2);
+			expect(name).not.toMatch(/\d/u);
+			expect(isValidRoomName(name)).toBe(true);
+		}
+	});
+
+	test("regenerates a generated name when registration reports a collision", async () => {
+		const names = ["amber-badger", "brisk-cobra"];
+		const attempted: string[] = [];
+		const result = await registerGeneratedName({
+			generate: () => names.shift() ?? "calm-dingo",
+			register: (name) => {
+				attempted.push(name);
+				return Promise.resolve(
+					name === "amber-badger"
+						? {
+								failed:
+									"The name 'amber-badger' is already claimed by another key.",
+							}
+						: { value: "attached" }
+				);
+			},
+		});
+
+		expect(attempted).toEqual(["amber-badger", "brisk-cobra"]);
+		expect(result).toEqual({ name: "brisk-cobra", value: "attached" });
+	});
+
+	test("stops after a bounded number of generated-name collisions", async () => {
+		let attempts = 0;
+		const result = await registerGeneratedName({
+			generate: () => "amber-badger",
+			register: (name) => {
+				attempts += 1;
+				return Promise.resolve({
+					failed: `The name '${name}' is already claimed by another key.`,
+				});
+			},
+		});
+
+		expect(attempts).toBe(5);
+		expect(result).toEqual({
+			failed: "Could not find an available room name after 5 attempts.",
+		});
+	});
+});
+
 describe("supervillain create", () => {
+	test("creates with a generated room name and no gateway", async () => {
+		const scratch = await mkdtemp(path.join(tmpdir(), "supervillain-cli-"));
+		folders.push(scratch);
+		const result = await runCli(
+			path.join(scratch, "campaign"),
+			path.join(scratch, "config"),
+			["/quit\r"],
+			[]
+		);
+
+		expect(result.code).toBe(0);
+		const match = /this room is called:\s+(?<name>[a-z]+-[a-z]+)/u.exec(
+			result.output
+		);
+		expect(match).not.toBeNull();
+		expect(isValidRoomName(match?.groups?.name ?? "")).toBe(true);
+		expect(result.output).toContain(
+			"no room is registered, so this table is local to this machine."
+		);
+	}, 15_000);
+
+	test("registers its generated name when a gateway is configured", async () => {
+		const scratch = await mkdtemp(path.join(tmpdir(), "supervillain-cli-"));
+		folders.push(scratch);
+		const gateway = await startGateway({
+			bindHost: "127.0.0.1",
+			brokerPort: 0,
+			sshHost: "127.0.0.1",
+			sshPort: 0,
+			stateDir: path.join(scratch, "gateway"),
+		});
+		gateways.push(gateway);
+		const result = await runCli(
+			path.join(scratch, "campaign"),
+			path.join(scratch, "config"),
+			["/quit\r"],
+			["--gateway", gateway.pairingCode ?? gateway.url]
+		);
+
+		expect(result.code).toBe(0);
+		const name = /this room is called:\s+(?<name>[a-z]+-[a-z]+)/u.exec(
+			result.output
+		)?.groups?.name;
+		expect(name).toBeDefined();
+		expect(result.output).toContain(`${name}@127.0.0.1`);
+		expect(result.output).toContain(`supervillain join ${name}`);
+	}, 15_000);
+
 	test("reports an unreachable gateway and attaches when it becomes reachable", async () => {
 		const scratch = await mkdtemp(path.join(tmpdir(), "supervillain-cli-"));
 		folders.push(scratch);

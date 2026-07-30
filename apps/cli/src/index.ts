@@ -90,9 +90,10 @@ import {
 	PublishNetworkError,
 } from "./publish-client.js";
 import { produceSnapshotDocument } from "./publish-documents.js";
+import { generateRoomName, registerGeneratedName } from "./room-names.js";
 
 const USAGE = `Usage:
-  supervillain create <campaign-folder> [--game <id>] [--name <room> [--gateway <addr-or-pairing-code>]]
+  supervillain create <campaign-folder> [--game <id>] [--name <room>] [--gateway <addr-or-pairing-code>]
   supervillain join <room> [--gateway <addr-or-pairing-code>] [--ssh-port <port>]
   supervillain publish <character|log|map> <campaign-folder> <name> [--game <id>] [--web <url>] [--json] [--qr]
   supervillain publish revoke <character|log|map> <name> [--web <url>] [--capability <url>] [--yes] [--json]
@@ -113,8 +114,10 @@ Operator role (this same binary is the self-hosted gateway — ADR-0015):
                              [--broker-port <port>] [--broker-url <url>]
   supervillain gateway forget <url-or-pairing-code>
 
-  --name registers the room at a gateway so players can ssh in; the gateway
-  address comes from --gateway or SUPERVILLAIN_GATEWAY. That address is a
+  create picks a readable room name when --name is omitted. With a gateway,
+  that name is registered so players can ssh in; without one, the table stays
+  local to this machine. The gateway address comes from --gateway or
+  SUPERVILLAIN_GATEWAY. That address is a
   wss:// URL, or the pairing code a self-hosted gateway prints — the same URL
   with its certificate fingerprint on the end. The first connection pins that
   certificate on this machine; a gateway that later serves a different one is
@@ -814,11 +817,12 @@ const runIntake = async (
 const summonNotice = (options: {
 	readonly attachment: HostPipeAttachment | undefined;
 	readonly gatewayAddress: string | undefined;
-	readonly roomName: string | undefined;
+	readonly roomName: string;
 }): string => {
 	const { attachment, gatewayAddress, roomName } = options;
-	if (attachment === undefined || roomName === undefined) {
-		return "your table is live. this machine is the Host.\n\nno room is registered, so this table is local to this machine. pass\n--name <room> --gateway <url> to open a door for players.\n\n";
+	const chosenName = `this room is called:\n\n  ${roomName}\n\n`;
+	if (attachment === undefined) {
+		return `${chosenName}your table is live. this machine is the Host.\n\nno room is registered, so this table is local to this machine. pass\n--gateway <url> to open a door for players.\n\n`;
 	}
 	const atDefaultPort = attachment.sshPort === DEFAULT_SSH_PORT;
 	const portFlag = atDefaultPort ? "" : `-p ${attachment.sshPort} `;
@@ -827,7 +831,7 @@ const summonNotice = (options: {
 	// The pipe URL's port is not the door's, so a non-default door has to be
 	// spelled out for the player too.
 	const sshPortFlag = atDefaultPort ? "" : ` --ssh-port ${attachment.sshPort}`;
-	return `your table is live. summon your players:\n\n  ssh ${portFlag}${roomName}@${attachment.sshHost}\n  supervillain join ${roomName}${gatewayFlag}${sshPortFlag}\n\nthis name is held by your identity. to host it from another machine, run\n'supervillain key link' here and redeem the code there.\n\n`;
+	return `${chosenName}your table is live. summon your players:\n\n  ssh ${portFlag}${roomName}@${attachment.sshHost}\n  supervillain join ${roomName}${gatewayFlag}${sshPortFlag}\n\nthis name is held by your identity. to host it from another machine, run\n'supervillain key link' here and redeem the code there.\n\n`;
 };
 
 type HostRoom = Parameters<typeof openHostPipe>[0]["rooms"][number];
@@ -1043,16 +1047,17 @@ const create = async (args: readonly string[]): Promise<number> => {
 	});
 	const store = new InProcessRoomStore(host);
 	const roomLabel = path.basename(path.resolve(campaignFolder));
-	const roomName = parsed.values.name;
+	const explicitRoomName =
+		typeof parsed.values.name === "string" ? parsed.values.name : undefined;
+	const gatewayAddress =
+		typeof parsed.values.gateway === "string"
+			? parsed.values.gateway
+			: process.env.SUPERVILLAIN_GATEWAY;
+	let roomName = explicitRoomName ?? generateRoomName();
 	let attachment: HostPipeAttachment | undefined;
 	let pipe: HostPipe | undefined;
-	let gatewayAddress: string | undefined;
-	if (typeof roomName === "string") {
-		gatewayAddress =
-			typeof parsed.values.gateway === "string"
-				? parsed.values.gateway
-				: process.env.SUPERVILLAIN_GATEWAY;
-		const registration = await registerAtGateway({
+	const register = async (name: string): Promise<Registration> =>
+		await registerAtGateway({
 			gatewayAddress,
 			room: {
 				// The roster the gateway resolves against its graph at every
@@ -1060,24 +1065,35 @@ const create = async (args: readonly string[]): Promise<number> => {
 				// that happened while it was offline (ADR-0013).
 				actors: () => host.actors(),
 				info: { gameId, label: roomLabel },
-				name: roomName,
+				name,
 				store,
 			},
 			secretKeyHex: identity.secretKeyHex,
 		});
+	if (explicitRoomName !== undefined) {
+		const registration = await register(explicitRoomName);
 		if ("failed" in registration) {
 			console.error(registration.failed);
 			return 1;
 		}
 		({ attachment, pipe } = registration);
+	} else if (gatewayAddress !== undefined) {
+		const result = await registerGeneratedName({
+			register: async (name) => {
+				const registration = await register(name);
+				return "failed" in registration
+					? registration
+					: { value: registration };
+			},
+		});
+		if ("failed" in result) {
+			console.error(result.failed);
+			return 1;
+		}
+		roomName = result.name;
+		({ attachment, pipe } = result.value);
 	}
-	process.stdout.write(
-		summonNotice({
-			attachment,
-			gatewayAddress,
-			roomName: typeof roomName === "string" ? roomName : undefined,
-		})
-	);
+	process.stdout.write(summonNotice({ attachment, gatewayAddress, roomName }));
 	await runIntake(campaignFolder, gameId, actor, store);
 	const session = attachLocalTty({ actor });
 	// The surface's half of ADR-0016: this process owns the local TTY, so it
