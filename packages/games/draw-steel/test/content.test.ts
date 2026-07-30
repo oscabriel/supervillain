@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	independenceNotice,
 	intake,
+	snapshotCharacter,
 	template,
 	validate,
 } from "../src/content.js";
@@ -55,6 +56,25 @@ describe("Draw Steel content", () => {
 		expect(validate(new TextEncoder().encode(text))).toEqual({ ok: true });
 		expect(JSON.parse(text).name).toBe("Coda");
 		expect(text.endsWith("\n")).toBe(true);
+	});
+
+	test("nominates strings-only character sections and card content", () => {
+		const snapshot = snapshotCharacter(encode(valid()));
+		expect(snapshot.card).toMatchObject({
+			description: "Human Troubadour",
+			glyph: "◆",
+			title: "Coda",
+		});
+		expect(snapshot.sections).toContainEqual({
+			fields: [
+				{ label: "Might", value: "+10" },
+				{ label: "Agility", value: "+1" },
+				{ label: "Reason", value: "+2" },
+				{ label: "Intuition", value: "−5" },
+				{ label: "Presence", value: "+0" },
+			],
+			title: "Characteristics",
+		});
 	});
 
 	test("accepts the full schema, omitted optionals, and unknown top-level fields", () => {

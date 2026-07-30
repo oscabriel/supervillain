@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 
 import {
@@ -18,6 +19,7 @@ import {
 	MAP_DIRECTORY,
 	MAP_FILE_EXTENSION,
 	parseMapFile,
+	SNAPSHOT_ARTIFACT_TYPES,
 	validateMapFile,
 } from "@supervillain/core";
 import type {
@@ -26,6 +28,7 @@ import type {
 	GatewayRegistry,
 	HostRegistry,
 	RoomStore,
+	SnapshotArtifactType,
 } from "@supervillain/core";
 import { decide as drawSteelDecide } from "@supervillain/draw-steel/authority";
 import {
@@ -70,6 +73,7 @@ import {
 	DialTimeoutError,
 	openWsDialer,
 } from "@supervillain/transport-ws";
+import qrcode from "qrcode-terminal";
 
 import { runGatewayRole } from "./gateway-role.js";
 import {
@@ -80,11 +84,19 @@ import {
 	resolveGatewayTarget,
 } from "./gateways.js";
 import type { GatewayTarget } from "./gateways.js";
+import {
+	PublishClient,
+	PublishHttpError,
+	PublishNetworkError,
+} from "./publish-client.js";
+import { produceSnapshotDocument } from "./publish-documents.js";
 
 const USAGE = `Usage:
   supervillain create <campaign-folder> [--game <id>] [--name <room> [--gateway <addr-or-pairing-code>]]
   supervillain join <room> [--gateway <addr-or-pairing-code>] [--ssh-port <port>]
-  supervillain publish
+  supervillain publish <character|log|map> <campaign-folder> <name> [--game <id>] [--web <url>] [--json] [--qr]
+  supervillain publish revoke <character|log|map> <name> [--web <url>] [--capability <url>] [--yes] [--json]
+  supervillain publish list [--web <url>] [--json]
   supervillain key show
   supervillain key link [<code>] [--gateway <addr>]
   supervillain key revoke <key> [--gateway <addr>]
@@ -137,6 +149,7 @@ const CLI_VERSION = "0.0.0";
 /** The SSH default. A hosted gateway answers on it; a self-hosted one usually
  * does not, which is what --ssh-port is for. */
 const DEFAULT_SSH_PORT = 22;
+const DEFAULT_WEB_URL = "https://supervillain.app";
 
 const hostRegistry: HostRegistry = {
 	get: (gameId) => {
@@ -1471,6 +1484,376 @@ const key = async (args: readonly string[]): Promise<number> => {
 	return 1;
 };
 
+const isSnapshotArtifactType = (
+	value: string | undefined
+): value is SnapshotArtifactType =>
+	value !== undefined &&
+	SNAPSHOT_ARTIFACT_TYPES.includes(value as SnapshotArtifactType);
+
+const publishTarget = (
+	values: ReturnType<typeof parseArgs>["values"]
+): string =>
+	typeof values.web === "string"
+		? values.web
+		: (process.env.SUPERVILLAIN_WEB ?? DEFAULT_WEB_URL);
+
+const printQr = (url: string): void => {
+	qrcode.generate(url, { small: true }, (qr) => console.log(qr));
+};
+
+const publishErrorRecord = (
+	error: PublishHttpError
+): Readonly<Record<string, unknown>> | undefined => {
+	if (
+		typeof error.body !== "object" ||
+		error.body === null ||
+		Array.isArray(error.body)
+	) {
+		return undefined;
+	}
+	const outer = error.body as Readonly<Record<string, unknown>>;
+	const detail = outer.error;
+	return typeof detail === "object" && detail !== null && !Array.isArray(detail)
+		? (detail as Readonly<Record<string, unknown>>)
+		: undefined;
+};
+
+const shellArgument = (value: string): string =>
+	/^[A-Za-z0-9_./:@+-]+$/u.test(value)
+		? value
+		: `'${value.replaceAll("'", `'\\''`)}'`;
+
+const reportPublishHttpError = (
+	error: PublishHttpError,
+	type?: SnapshotArtifactType,
+	name?: string
+): void => {
+	const detail = publishErrorRecord(error);
+	if (error.status === 413 && detail?.code === "snapshot-too-large") {
+		console.error(
+			"This snapshot exceeds the publish service's 10 MB artifact limit. Shorten the room Log or publish a smaller artifact."
+		);
+		return;
+	}
+	if (
+		error.status === 409 &&
+		detail?.code === "linked-artifact-collision" &&
+		Array.isArray(detail.urls)
+	) {
+		console.error(
+			"Linked identities already own two live artifacts with this type and name:"
+		);
+		for (const url of detail.urls) {
+			if (typeof url === "string") {
+				console.error(`  ${url}`);
+			}
+		}
+		if (type !== undefined && name !== undefined) {
+			console.error("Revoke the one you no longer want, then publish again:");
+			for (const url of detail.urls) {
+				if (typeof url === "string") {
+					console.error(
+						`  supervillain publish revoke ${type} ${shellArgument(name)} --capability ${shellArgument(url)} --yes`
+					);
+				}
+			}
+		}
+		return;
+	}
+	const message = detail?.message;
+	console.error(
+		typeof message === "string"
+			? message
+			: `Publish service refused the request (HTTP ${error.status}).`
+	);
+};
+
+const confirmRevoke = async (
+	type: SnapshotArtifactType,
+	name: string
+): Promise<boolean> => {
+	if (!process.stdin.isTTY || !process.stdout.isTTY) {
+		console.error(
+			"publish revoke needs confirmation; re-run with --yes to skip the interactive prompt."
+		);
+		return false;
+	}
+	const readline = createInterface({
+		input: process.stdin,
+		output: process.stdout,
+	});
+	try {
+		const answer = await readline.question(
+			`Permanently revoke ${type} '${name}'? Chat apps may retain cached previews. [y/N] `
+		);
+		return answer.trim().toLowerCase() === "y";
+	} finally {
+		readline.close();
+	}
+};
+
+const publishList = async (
+	client: PublishClient,
+	json: boolean
+): Promise<number> => {
+	try {
+		const artifacts = await client.list();
+		if (json) {
+			console.log(JSON.stringify({ artifacts }));
+		} else if (artifacts.length === 0) {
+			console.log("no published artifacts.");
+		} else {
+			for (const artifact of artifacts) {
+				console.log(
+					`${artifact.type} — ${artifact.name} — ${artifact.url} — ${artifact.publishedAt}`
+				);
+			}
+		}
+		return 0;
+	} catch (error) {
+		if (error instanceof PublishHttpError) {
+			reportPublishHttpError(error);
+		} else if (error instanceof PublishNetworkError) {
+			console.error(
+				"Could not reach the publish service. publish list requires a network connection."
+			);
+		} else {
+			console.error(error instanceof Error ? error.message : String(error));
+		}
+		return 1;
+	}
+};
+
+const CAPABILITY_TOKEN = /^[A-Za-z0-9_-]{43}$/u;
+
+const capabilityTokenFrom = (value: string): string => {
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new Error("--capability must be a full capability URL.");
+	}
+	const segments = url.pathname.split("/").filter((segment) => segment !== "");
+	const token = segments.at(-1);
+	if (
+		segments.at(-2) !== "a" ||
+		token === undefined ||
+		!CAPABILITY_TOKEN.test(token)
+	) {
+		throw new Error("--capability must be a full /a/<capability> URL.");
+	}
+	return token;
+};
+
+const publishRevoke = async (
+	client: PublishClient,
+	type: SnapshotArtifactType,
+	name: string,
+	options: {
+		readonly capability?: string;
+		readonly json: boolean;
+		readonly yes: boolean;
+	}
+): Promise<number> => {
+	if (!options.yes && !(await confirmRevoke(type, name))) {
+		return 1;
+	}
+	try {
+		const message = await client.revoke({
+			...(options.capability === undefined
+				? {}
+				: { capability: capabilityTokenFrom(options.capability) }),
+			name,
+			type,
+		});
+		if (options.json) {
+			console.log(JSON.stringify({ message, name, type }));
+		} else {
+			console.log(message);
+		}
+		return 0;
+	} catch (error) {
+		if (error instanceof PublishHttpError) {
+			reportPublishHttpError(error, type, name);
+		} else if (error instanceof PublishNetworkError) {
+			console.error(error.message);
+		} else {
+			console.error(error instanceof Error ? error.message : String(error));
+		}
+		return 1;
+	}
+};
+
+const publishPush = async (
+	client: PublishClient,
+	type: SnapshotArtifactType,
+	campaignFolder: string,
+	name: string,
+	options: {
+		readonly game?: string;
+		readonly json: boolean;
+		readonly qr: boolean;
+	}
+): Promise<number> => {
+	try {
+		const document = await produceSnapshotDocument(
+			type,
+			campaignFolder,
+			name,
+			options.game
+		);
+		const result = await client.publish({ document, name, type });
+		if (options.json) {
+			console.log(JSON.stringify({ name, type, ...result }));
+		} else {
+			console.log(result.url);
+		}
+		if (options.qr) {
+			printQr(result.url);
+		}
+		return 0;
+	} catch (error) {
+		if (error instanceof PublishHttpError) {
+			reportPublishHttpError(error, type, name);
+		} else if (error instanceof PublishNetworkError) {
+			console.error(error.message);
+		} else {
+			console.error(error instanceof Error ? error.message : String(error));
+		}
+		return 1;
+	}
+};
+
+type ParsedCliArgs = ReturnType<typeof parseArgs>;
+
+const dispatchPublishList = async (
+	parsed: ParsedCliArgs,
+	positionals: readonly string[],
+	client: PublishClient,
+	json: boolean
+): Promise<number> => {
+	if (
+		parsed.values.qr === true ||
+		parsed.values.yes === true ||
+		parsed.values.capability !== undefined ||
+		parsed.values.game !== undefined
+	) {
+		console.error("publish list accepts only --web and --json.");
+		return 1;
+	}
+	if (positionals.length !== 1) {
+		console.error("publish list takes no campaign folder or name.");
+		return 1;
+	}
+	return await publishList(client, json);
+};
+
+const dispatchPublishRevoke = async (
+	parsed: ParsedCliArgs,
+	positionals: readonly string[],
+	client: PublishClient,
+	json: boolean
+): Promise<number> => {
+	const [, type, name] = positionals;
+	if (parsed.values.qr === true || parsed.values.game !== undefined) {
+		console.error("publish revoke does not accept --qr or --game.");
+		return 1;
+	}
+	if (
+		!isSnapshotArtifactType(type) ||
+		name === undefined ||
+		positionals.length !== 3
+	) {
+		console.error("publish revoke requires a type and a name.");
+		return 1;
+	}
+	return await publishRevoke(client, type, name, {
+		capability:
+			typeof parsed.values.capability === "string"
+				? parsed.values.capability
+				: undefined,
+		json,
+		yes: parsed.values.yes === true,
+	});
+};
+
+const dispatchPublishPush = async (
+	parsed: ParsedCliArgs,
+	positionals: readonly string[],
+	client: PublishClient,
+	json: boolean
+): Promise<number> => {
+	const [type, campaignFolder, name] = positionals;
+	if (parsed.values.yes === true || parsed.values.capability !== undefined) {
+		console.error("publish push does not accept --yes or --capability.");
+		return 1;
+	}
+	if (
+		!isSnapshotArtifactType(type) ||
+		campaignFolder === undefined ||
+		name === undefined ||
+		positionals.length !== 3
+	) {
+		console.error(
+			"publish requires a type, campaign folder, and artifact name; or use list/revoke."
+		);
+		return 1;
+	}
+	return await publishPush(client, type, campaignFolder, name, {
+		game:
+			typeof parsed.values.game === "string" ? parsed.values.game : undefined,
+		json,
+		qr: parsed.values.qr === true,
+	});
+};
+
+/** Publish is the local snapshot push; list/revoke read backend-owned state.
+ * No receipt is written beside campaign data (ADR-0009). */
+const publish = async (args: readonly string[]): Promise<number> => {
+	let parsed: ReturnType<typeof parseArgs>;
+	try {
+		parsed = parseArgs({
+			allowPositionals: true,
+			args: [...args],
+			options: {
+				capability: { type: "string" },
+				game: { type: "string" },
+				json: { type: "boolean" },
+				qr: { type: "boolean" },
+				web: { type: "string" },
+				yes: { type: "boolean" },
+			},
+		});
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	const positionals = parsed.positionals.filter(
+		(value): value is string => typeof value === "string"
+	);
+	const [command] = positionals;
+	const json = parsed.values.json === true;
+	if (json && parsed.values.qr === true) {
+		console.error("--json and --qr cannot be combined.");
+		return 1;
+	}
+	let client: PublishClient;
+	try {
+		const identity = await loadOrCreateIdentity(configFolder());
+		client = new PublishClient(publishTarget(parsed.values), identity);
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	if (command === "list") {
+		return await dispatchPublishList(parsed, positionals, client, json);
+	}
+	if (command === "revoke") {
+		return await dispatchPublishRevoke(parsed, positionals, client, json);
+	}
+	return await dispatchPublishPush(parsed, positionals, client, json);
+};
+
 /**
  * The `gateway` role selector — deliberately **not** a fourth verb. The pinned
  * verb set (`create` / `join` / `publish`) is the table surface: what a person
@@ -1555,8 +1938,7 @@ const main = async (args: readonly string[]): Promise<number> => {
 		return await map(rest);
 	}
 	if (verb === "publish") {
-		console.error("publish arrives with a later release.");
-		return 1;
+		return await publish(rest);
 	}
 	console.error(`Unknown command '${verb}'.`);
 	return 1;

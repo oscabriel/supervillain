@@ -189,4 +189,89 @@ export const intake = {
 	directory: "characters",
 } as const;
 
-export const content = { template, validate };
+const signed = (value: number): string =>
+	value >= 0 ? `+${value}` : `−${Math.abs(value)}`;
+
+/** Strings-only publish nomination: game knowledge is folded by the CLI and
+ * never crosses into the game-blind web process (ADR-0009). */
+export const snapshotCharacter = (bytes: Uint8Array) => {
+	const validated = validate(bytes);
+	if (!validated.ok) {
+		throw new Error(
+			validated.errors[0]?.message ?? "Character file is invalid."
+		);
+	}
+	const source = JSON.parse(new TextDecoder().decode(bytes)) as {
+		readonly abilities?: readonly {
+			readonly cost?: string;
+			readonly name: string;
+			readonly text: string;
+		}[];
+		readonly ancestry: string;
+		readonly characteristics: Readonly<Record<DsCharacteristic, number>>;
+		readonly class: string;
+		readonly heroicResource: string;
+		readonly kit?: string;
+		readonly name: string;
+		readonly recoveries: number;
+		readonly stamina: number;
+		readonly surges?: number;
+		readonly victories?: number;
+	};
+	const characteristicFields = CHARACTERISTICS.map((characteristic) => ({
+		label: terminology.characteristics[characteristic],
+		value: signed(source.characteristics[characteristic]),
+	}));
+	return {
+		card: {
+			accentHint: "accent" as const,
+			description: `${source.ancestry} ${source.class}`,
+			fields: [
+				{ label: "Stamina", value: String(source.stamina) },
+				{ label: "Recoveries", value: String(source.recoveries) },
+				{ label: "Heroic resource", value: source.heroicResource },
+			],
+			glyph: "◆",
+			title: source.name,
+		},
+		sections: [
+			{
+				fields: [
+					{ label: "Ancestry", value: source.ancestry },
+					{ label: "Class", value: source.class },
+					...(source.kit === undefined
+						? []
+						: [{ label: "Kit", value: source.kit }]),
+				],
+				title: "Identity",
+			},
+			{ fields: characteristicFields, title: "Characteristics" },
+			{
+				fields: [
+					{ label: "Stamina", value: String(source.stamina) },
+					{ label: "Recoveries", value: String(source.recoveries) },
+					{ label: "Heroic resource", value: source.heroicResource },
+					{ label: "Surges", value: String(source.surges ?? 0) },
+					{ label: "Victories", value: String(source.victories ?? 0) },
+				],
+				title: "Resources",
+			},
+			...(source.abilities === undefined || source.abilities.length === 0
+				? []
+				: [
+						{
+							fields: source.abilities.map((ability) => ({
+								label:
+									ability.cost === undefined
+										? ability.name
+										: `${ability.name} · ${ability.cost}`,
+								value: ability.text,
+							})),
+							title: "Abilities",
+						},
+					]),
+		],
+	};
+};
+
+export const content = { snapshotCharacter, template, validate };

@@ -10,6 +10,8 @@ export {
 	TABLE_CHECKPOINT_VERSION,
 } from "./checkpoint.js";
 export type { TableCheckpointPayload } from "./checkpoint.js";
+export { createTableFold } from "./fold.js";
+export type { FoldSkip, TableFold, TableFoldCheckpoint } from "./fold.js";
 
 /**
  * What holds a table open, and what ends it from outside the terminal. The
