@@ -159,6 +159,17 @@ module.exports = {
 			to: { path: "^bun:sqlite$" },
 		},
 		{
+			// The web deployable renders self-describing snapshot documents
+			// (ADR-0009): published pages must not change meaning when packaged
+			// game content changes, so apps/web imports zero game packages —
+			// tighter than the definition's original model+content ceiling.
+			// (@opentui/* is already denied to it by opentui-only-on-view-side.)
+			from: { path: "^apps/web/" },
+			name: "web-imports-no-game-packages",
+			severity: "error",
+			to: { path: GAME_PACKAGE },
+		},
+		{
 			// apps/web is the only thing touching the BACKEND's store. Drizzle's
 			// driver entrypoints reach a sqlite binding from inside node_modules,
 			// so `doNotFollow: node_modules` lets them sail past the rule above —

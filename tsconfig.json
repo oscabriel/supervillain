@@ -13,7 +13,8 @@
 		{ "path": "packages/games/draw-steel" },
 		{ "path": "packages/games/fake" },
 		{ "path": "apps/gateway" },
-		{ "path": "apps/cli" }
+		{ "path": "apps/cli" },
+		{ "path": "apps/web" }
 	],
 	"compilerOptions": {
 		"strictNullChecks": true

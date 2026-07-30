@@ -27,6 +27,7 @@
 		"test:table": "bun test packages/table/test",
 		"test:cli": "bun test apps/cli/test/*.test.ts",
 		"test:gateway": "bun test apps/gateway/test/",
+		"test:web": "bun test apps/web/test/",
 		"test:join-live": "bun test apps/gateway/test-live",
 		"test:install": "bun test smoke/install",
 		"test:room-host": "bun run --cwd packages/room-host test:bun && bun run --cwd packages/room-host test:node",

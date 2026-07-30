@@ -28,6 +28,7 @@ jobs:
       - run: bun run test:table
       - run: bun run test:cli
       - run: bun run test:gateway
+      - run: bun run test:web
       - run: bun run test:install
 
   # The dual Bun/Node lane is the standing claim that the event-sourced core stays

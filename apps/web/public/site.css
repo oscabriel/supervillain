@@ -1,0 +1,15 @@
+/* Tracer static asset (#43 spike shape). The real design system arrives
+ * with the artifact pages (#106) and the marketing surface (#37). */
+:root {
+	color-scheme: dark;
+	font-family:
+		ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, monospace;
+}
+
+body {
+	background: #0d0d11;
+	color: #e6e6e6;
+	margin: 2rem auto;
+	max-width: 60rem;
+	padding: 0 1rem;
+}
