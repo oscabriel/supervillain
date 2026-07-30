@@ -182,7 +182,11 @@ module.exports = {
 	],
 	options: {
 		doNotFollow: { path: "node_modules" },
-		exclude: { path: "(^|/)(dist|test)/|\\.test\\.ts$" },
+		exclude: {
+			// TanStack/Nitro production-smoke outputs are generated bundles. Cruise
+			// apps/web source, not its copied/transformed `.output`/`.nitro` trees.
+			path: "(^|/)(dist|test)/|^apps/web/(\\.output|\\.nitro)/|\\.test\\.ts$",
+		},
 		tsConfig: { fileName: "tsconfig.json" },
 		tsPreCompilationDeps: true,
 	},

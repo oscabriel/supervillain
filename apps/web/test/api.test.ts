@@ -1,12 +1,33 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; apps/web ships as nitro's bun preset (ADR-0020). */
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
-import { api } from "../src/server/api";
-import {
-	getArtifact,
-	ingestArtifact,
-	SEED_CAPABILITY,
-} from "../src/server/store";
+import { createApi } from "../src/server/api";
+import type { BackendStore } from "../src/server/store";
+import { openBackendStore } from "../src/server/store";
+
+let root = "";
+let store: BackendStore;
+
+beforeAll(async () => {
+	root = await mkdtemp(path.join(tmpdir(), "supervillain-web-api-"));
+	store = openBackendStore({
+		stateRoot: path.join(root, "state"),
+		tokenKeyPath: path.join(root, "secrets", "web-token-key"),
+	});
+});
+
+afterAll(async () => {
+	store.close();
+	await rm(root, { force: true, recursive: true });
+});
+
+const api = createApi({
+	ingestArtifact: (artifact) =>
+		store.ingestArtifact({ ...artifact, ownerIdentity: "tracer-owner" }),
+});
 
 const ingest = (body: unknown) =>
 	api.fetch(
@@ -26,14 +47,14 @@ describe("the mounted Hono API (tracer)", () => {
 		});
 		expect(res.status).toBe(201);
 		const payload = (await res.json()) as { capability: string; url: string };
-		expect(payload.capability.length).toBeGreaterThan(0);
+		expect(payload.capability).toMatch(/^[A-Za-z0-9_-]{43}$/u);
 		expect(payload.url).toBe(`/a/${payload.capability}`);
 	});
 
 	test("an ingested artifact is immediately readable through the store", async () => {
 		const res = await ingest({ document: {}, name: "The Vault", type: "map" });
 		const { capability } = (await res.json()) as { capability: string };
-		expect(getArtifact(capability)).toEqual({
+		expect(store.getArtifact(capability)).toEqual({
 			document: {},
 			name: "The Vault",
 			type: "map",
@@ -60,21 +81,5 @@ describe("the mounted Hono API (tracer)", () => {
 	test("unknown /api routes are 404", async () => {
 		const res = await api.fetch(new Request("http://web.test/api/whatever"));
 		expect(res.status).toBe(404);
-	});
-});
-
-describe("the in-memory store (tracer)", () => {
-	test("is seeded with one artifact", () => {
-		expect(getArtifact(SEED_CAPABILITY)?.name).toBe("Doctor Malignant");
-	});
-
-	test("mints distinct capabilities per ingest", () => {
-		const a = ingestArtifact({ document: null, name: "a", type: "character" });
-		const b = ingestArtifact({ document: null, name: "b", type: "character" });
-		expect(a).not.toBe(b);
-	});
-
-	test("unknown capabilities read as undefined", () => {
-		expect(getArtifact("nope")).toBeUndefined();
 	});
 });

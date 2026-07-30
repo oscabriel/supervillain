@@ -1,8 +1,8 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals, eslint/no-await-in-loop -- Bun-only suite; booting a real server is polled, not parallel. */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-
-import { SEED_CAPABILITY } from "../src/server/store";
 
 /**
  * The production-build-and-boot smoke — the tracer's whole point (#101,
@@ -14,6 +14,7 @@ const appDir = path.join(import.meta.dir, "..");
 const port = 4890;
 const base = `http://localhost:${port}`;
 let server: ReturnType<typeof Bun.spawn> | undefined;
+let stateParent = "";
 
 const waitForBoot = async (): Promise<void> => {
 	const deadline = Date.now() + 10_000;
@@ -30,6 +31,7 @@ const waitForBoot = async (): Promise<void> => {
 };
 
 beforeAll(async () => {
+	stateParent = await mkdtemp(path.join(tmpdir(), "supervillain-web-smoke-"));
 	const build = Bun.spawn(["bun", "run", "build"], {
 		cwd: appDir,
 		stderr: "pipe",
@@ -42,15 +44,26 @@ beforeAll(async () => {
 	}
 	server = Bun.spawn(["bun", ".output/server/index.mjs"], {
 		cwd: appDir,
-		env: { ...process.env, PORT: String(port) },
+		env: {
+			...process.env,
+			PORT: String(port),
+			SUPERVILLAIN_WEB_STATE_ROOT: path.join(stateParent, "state"),
+			SUPERVILLAIN_WEB_TOKEN_KEY_PATH: path.join(
+				stateParent,
+				"secrets",
+				"web-token-key"
+			),
+		},
 		stderr: "ignore",
 		stdout: "ignore",
 	});
 	await waitForBoot();
 }, 120_000);
 
-afterAll(() => {
+afterAll(async () => {
 	server?.kill();
+	await server?.exited;
+	await rm(stateParent, { force: true, recursive: true });
 });
 
 describe("production output under bun (tracer)", () => {
@@ -61,7 +74,17 @@ describe("production output under bun (tracer)", () => {
 	});
 
 	test("GET /a/:capability SSRs a known artifact", async () => {
-		const res = await fetch(`${base}/a/${SEED_CAPABILITY}`);
+		const ingest = await fetch(`${base}/api/ingest`, {
+			body: JSON.stringify({
+				document: {},
+				name: "Doctor Malignant",
+				type: "character",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { url } = (await ingest.json()) as { readonly url: string };
+		const res = await fetch(`${base}${url}`);
 		expect(res.status).toBe(200);
 		expect(await res.text()).toContain("Doctor Malignant");
 	});

@@ -14,6 +14,7 @@
 		"moduleResolution": "Bundler",
 		"jsx": "react-jsx",
 		"lib": ["ES2024", "DOM", "DOM.Iterable"],
+		"types": ["bun", "node"],
 		// ADR-0020's accepted concession, verified by the #43 spike: without
 		// this, `@tanstack/router-core`'s published d.ts fails on its own —
 		// `MakeRouteMatch.__beforeLoadContext` (TS2339), an upstream defect,
