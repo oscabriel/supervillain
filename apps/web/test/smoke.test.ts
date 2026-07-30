@@ -150,6 +150,19 @@ describe("production output under bun", () => {
 		const html = await res.text();
 		expect(html).toContain("Doctor Malignant");
 		expect(html).toContain('<meta content="noindex" name="robots"/>');
+		expect(html).toContain(
+			'<meta content="Doctor Malignant" property="og:title"/>'
+		);
+		expect(html).toContain(
+			'<meta content="Production smoke" property="og:description"/>'
+		);
+		expect(html).toContain(
+			`<meta content="${url}/og.png" property="og:image"/>`
+		);
+		expect(html).toContain('<meta content="website" property="og:type"/>');
+		expect(html).toContain(
+			'<meta content="summary_large_image" name="twitter:card"/>'
+		);
 	});
 
 	test("unknown and revoked capabilities share one generic protected 404", async () => {
@@ -179,6 +192,60 @@ describe("production output under bun", () => {
 		expectArtifactHeaders(unknown);
 		expectArtifactHeaders(revoked);
 		expect(await revoked.text()).toBe(await unknown.text());
+	});
+
+	test("GET /a/:capability/og.png serves the persisted protected PNG", async () => {
+		const ingest = await authenticatedFetch("/api/publish", {
+			body: JSON.stringify({
+				document: snapshot("Card Character"),
+				name: "Card Character",
+				type: "character",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { capability } = (await ingest.json()) as {
+			readonly capability: string;
+		};
+
+		const card = await fetch(`${base}/a/${capability}/og.png`);
+
+		expect(card.status).toBe(200);
+		expect(card.headers.get("content-type")).toBe("image/png");
+		expectArtifactHeaders(card);
+		const cardBytes = await card.arrayBuffer();
+		expect(cardBytes.byteLength).toBeGreaterThan(10_000);
+	});
+
+	test("unknown and revoked OG paths share the page's generic protected 404", async () => {
+		const ingest = await authenticatedFetch("/api/publish", {
+			body: JSON.stringify({
+				document: snapshot("Revoked Card"),
+				name: "Revoked Card",
+				type: "character",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { capability } = (await ingest.json()) as {
+			readonly capability: string;
+		};
+		await authenticatedFetch("/api/publish", {
+			body: JSON.stringify({ name: "Revoked Card", type: "character" }),
+			headers: { "content-type": "application/json" },
+			method: "DELETE",
+		});
+
+		const pageUnknown = await fetch(`${base}/a/no-such-capability`);
+		const unknown = await fetch(`${base}/a/no-such-capability/og.png`);
+		const revoked = await fetch(`${base}/a/${capability}/og.png`);
+		expect(unknown.status).toBe(404);
+		expect(revoked.status).toBe(404);
+		expectArtifactHeaders(unknown);
+		expectArtifactHeaders(revoked);
+		const unknownBody = await unknown.text();
+		expect(await revoked.text()).toBe(unknownBody);
+		expect(unknownBody).toBe(await pageUnknown.text());
 	});
 
 	test("POST /api/publish lands on the mounted Hono app and reads back over SSR", async () => {

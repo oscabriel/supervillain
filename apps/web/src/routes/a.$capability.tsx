@@ -1,18 +1,30 @@
+import type { SnapshotDocument } from "@supervillain/core";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 
 import { SnapshotDocumentRenderer } from "../artifact/document";
 
+export interface ArtifactLoaderData {
+	readonly document: SnapshotDocument;
+	readonly imageUrl: string;
+}
+
 const getArtifact = createServerFn({ method: "GET" })
 	.validator((capability: string) => capability)
-	.handler(async ({ data }) => {
+	.handler(async ({ data }): Promise<ArtifactLoaderData> => {
 		// Dynamic imports keep durable reads and runtime schema validation out of
 		// the client bundle; the capability exists only inside this server fence.
-		const [{ validateSnapshotDocument }, { getArtifact: read }] =
-			await Promise.all([
-				import("@supervillain/core"),
-				import("../server/store"),
-			]);
+		const [
+			{ validateSnapshotDocument },
+			{ getRequestUrl },
+			{ getArtifact: read },
+			{ fullArtifactImageUrl },
+		] = await Promise.all([
+			import("@supervillain/core"),
+			import("@tanstack/react-start/server"),
+			import("../server/store"),
+			import("../server/urls"),
+		]);
 		const artifact = read(data);
 		if (!artifact) {
 			throw notFound();
@@ -23,12 +35,15 @@ const getArtifact = createServerFn({ method: "GET" })
 				`Stored snapshot has no renderer: ${validated.errors.map(({ message }) => message).join(" ")}`
 			);
 		}
-		return validated.document;
+		return {
+			document: validated.document,
+			imageUrl: fullArtifactImageUrl(data, getRequestUrl().toString()),
+		};
 	});
 
 const ArtifactPage = () => {
 	// oxlint-disable-next-line eslint/no-use-before-define -- TanStack's route↔component shape is mutually referential; `Route` resolves lazily at render time.
-	const document = Route.useLoaderData();
+	const { document } = Route.useLoaderData();
 	return (
 		<main>
 			<SnapshotDocumentRenderer document={document} />
@@ -43,11 +58,26 @@ const ArtifactNotFound = () => (
 	</main>
 );
 
+// oxlint-disable-next-line eslint/sort-keys -- loader must precede head for TanStack's contextual loaderData inference.
 export const Route = createFileRoute("/a/$capability")({
 	component: ArtifactPage,
-	head: () => ({
-		meta: [{ content: "noindex", name: "robots" }],
+	loader: async ({ params }): Promise<ArtifactLoaderData> =>
+		await getArtifact({ data: params.capability }),
+	head: ({ loaderData }) => ({
+		meta: [
+			{ content: "noindex", name: "robots" },
+			{
+				content: loaderData?.document.card.title ?? "supervillain artifact",
+				property: "og:title",
+			},
+			{
+				content: loaderData?.document.card.description ?? "",
+				property: "og:description",
+			},
+			{ content: loaderData?.imageUrl ?? "", property: "og:image" },
+			{ content: "website", property: "og:type" },
+			{ content: "summary_large_image", name: "twitter:card" },
+		],
 	}),
-	loader: ({ params }) => getArtifact({ data: params.capability }),
 	notFoundComponent: ArtifactNotFound,
 });

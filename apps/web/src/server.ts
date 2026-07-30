@@ -6,6 +6,7 @@ import {
 import type { RequestHandler } from "@tanstack/react-start/server";
 
 import { api } from "./server/api";
+import { getDefaultStore } from "./server/store";
 
 /**
  * The server entry — where ADR-0020's "Hono mounted inside the TanStack
@@ -20,6 +21,7 @@ const startHandler: RequestHandler<Register> =
 const ARTIFACT_ROUTE_PREFIX = "/a/";
 /** The only identifier an app logger may receive for this route (ADR-0022). */
 export const ARTIFACT_ROUTE_PATTERN = "/a/:capability";
+export const ARTIFACT_OG_ROUTE_PATTERN = "/a/:capability/og.png";
 const ARTIFACT_NOT_FOUND_BODY = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Not found</title><link rel="stylesheet" href="/site.css"></head><body><main><h1>Not found</h1><p>No artifact lives at this address.</p></main></body></html>`;
 
 const protectArtifactResponse = (response: Response): Response => {
@@ -41,11 +43,36 @@ const protectArtifactResponse = (response: Response): Response => {
 	});
 };
 
+const artifactCardResponse = (pathname: string): Response | undefined => {
+	const segments = pathname.split("/");
+	if (
+		segments.length !== 4 ||
+		segments[1] !== "a" ||
+		segments[3] !== "og.png"
+	) {
+		return;
+	}
+	const capability = segments[2] ?? "";
+	const png = getDefaultStore().getArtifactCard(capability);
+	return png === undefined
+		? protectArtifactResponse(new Response(null, { status: 404 }))
+		: protectArtifactResponse(
+				new Response(Uint8Array.from(png).buffer, {
+					headers: { "Content-Type": "image/png" },
+					status: 200,
+				})
+			);
+};
+
 export default {
 	async fetch(request: Request): Promise<Response> {
 		const { pathname } = new URL(request.url);
 		if (pathname === "/api" || pathname.startsWith("/api/")) {
 			return api.fetch(request);
+		}
+		const card = artifactCardResponse(pathname);
+		if (card !== undefined) {
+			return card;
 		}
 		const response = await startHandler(request);
 		return pathname.startsWith(ARTIFACT_ROUTE_PREFIX)

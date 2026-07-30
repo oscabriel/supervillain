@@ -24,4 +24,7 @@ export default defineConfig({
 			},
 		}),
 	],
+	// resvg's platform package is a native `.node` binary. It must remain a
+	// runtime dependency rather than being parsed as JavaScript by Vite/Rollup.
+	ssr: { external: ["@resvg/resvg-js"] },
 });

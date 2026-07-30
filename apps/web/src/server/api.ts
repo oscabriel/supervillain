@@ -12,8 +12,10 @@ import type {
 	AsyncIdentityDirectory,
 	ResolvedPublishIdentity,
 } from "./identity-directory";
+import { renderArtifactCard } from "./og";
 import { getDefaultStore, isArtifactType } from "./store";
 import type { ArtifactType, BackendStore } from "./store";
+import { fullArtifactUrl } from "./urls";
 
 const AUTH_DOMAIN = "supervillain/publish-http/1\n";
 const AUTH_CHALLENGE_TTL_MS = 2 * 60 * 1000;
@@ -139,12 +141,26 @@ const documentBytes = (document: unknown): number | undefined => {
 		: Buffer.byteLength(serialized, "utf-8");
 };
 
-const fullArtifactUrl = (
+const renderAndPersistCard = async (
+	backendStore: BackendStore,
 	capability: string,
-	requestUrl: string,
-	origin?: string
-): string =>
-	new URL(`/a/${capability}`, origin ?? new URL(requestUrl).origin).toString();
+	document: unknown
+): Promise<boolean> => {
+	const validated = validateSnapshotDocument(document);
+	if (!validated.ok) {
+		backendStore.deleteArtifactCard(capability);
+		return false;
+	}
+	try {
+		const png = await renderArtifactCard(validated.document);
+		return backendStore.writeArtifactCard(capability, png);
+	} catch {
+		// #107 chooses publish-without-card: the durable artifact must survive a
+		// native renderer failure, while a stale card must not misrepresent it.
+		backendStore.deleteArtifactCard(capability);
+		return false;
+	}
+};
 
 /** ADR-0020's mounted machine-facing surface and ADR-0009's publish lifecycle. */
 // oxlint-disable-next-line eslint/max-lines-per-function -- route registration is the Hono app's cohesive public surface.
@@ -303,7 +319,8 @@ export const createApi = (options: PublishApiOptions = {}): Hono => {
 				400
 			);
 		}
-		const result = store().publishArtifact({
+		const backendStore = store();
+		const result = backendStore.publishArtifact({
 			...publish,
 			ownerIdentity: authenticated.identity.identityId,
 			ownerIdentityIds: authenticated.identity.ownerIdentityIds,
@@ -323,14 +340,57 @@ export const createApi = (options: PublishApiOptions = {}): Hono => {
 				409
 			);
 		}
+		const cardReady = await renderAndPersistCard(
+			backendStore,
+			result.capability,
+			publish.document
+		);
 		return c.json(
 			{
 				capability: result.capability,
+				card: cardReady ? "ready" : "unavailable",
 				publishedAt: result.publishedAt,
 				url: fullArtifactUrl(result.capability, c.req.url, options.origin),
 			},
 			result.created ? 201 : 200
 		);
+	});
+
+	// FLAG #107 route choice: a child of the existing publish noun, authenticated
+	// by the exact challenge/signature flow used by ingest, list, and revoke.
+	app.post("/publish/og", async (c) => {
+		const authenticated = await authenticate(c.req.raw);
+		if (!authenticated.ok) {
+			return c.json(
+				{ error: "authentication failed" },
+				authenticated.unavailable === true ? 503 : 401
+			);
+		}
+		let body: unknown;
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "body must be JSON" }, 400);
+		}
+		const request = parseRevokeBody(body);
+		if (request === undefined) {
+			return c.json({ error: "body needs type and non-empty name" }, 400);
+		}
+		const source = store().getOwnedArtifactCardSource({
+			...request,
+			ownerIdentityIds: authenticated.identity.ownerIdentityIds,
+		});
+		if (source === undefined) {
+			return c.json({ error: "artifact not found" }, 404);
+		}
+		const ready = await renderAndPersistCard(
+			store(),
+			source.capability,
+			source.artifact.document
+		);
+		return ready
+			? c.json({ card: "regenerated" })
+			: c.json({ error: "snapshot has no card renderer" }, 422);
 	});
 
 	app.get("/publish", async (c) => {

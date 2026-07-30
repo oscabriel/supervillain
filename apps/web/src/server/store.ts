@@ -83,6 +83,11 @@ export interface BackendStoreOptions {
 	readonly newSeed?: () => Buffer;
 }
 
+export interface OwnedArtifactCardSource {
+	readonly artifact: Artifact;
+	readonly capability: string;
+}
+
 export interface BackendStore {
 	/** Compatibility/store-level single-owner entry; API callers use publishArtifact. */
 	readonly ingestArtifact: (artifact: ArtifactIngest) => string;
@@ -93,6 +98,14 @@ export interface BackendStore {
 		ownerIdentityIds: readonly string[]
 	) => readonly PublishedArtifactSummary[];
 	readonly getArtifact: (capability: string) => Artifact | undefined;
+	readonly deleteArtifactCard: (capability: string) => void;
+	readonly getArtifactCard: (capability: string) => Uint8Array | undefined;
+	readonly getOwnedArtifactCardSource: (artifact: {
+		readonly ownerIdentityIds: readonly string[];
+		readonly type: ArtifactType;
+		readonly name: string;
+	}) => OwnedArtifactCardSource | undefined;
+	readonly writeArtifactCard: (capability: string, png: Uint8Array) => boolean;
 	readonly revokeArtifact: (artifact: ArtifactKey) => boolean;
 	readonly revokeOwnedArtifact: (artifact: {
 		readonly ownerIdentityIds: readonly string[];
@@ -196,6 +209,20 @@ const serializeDocument = (document: unknown): string => {
 	return serialized;
 };
 
+const writeFileAtomically = (
+	destination: string,
+	contents: string | Uint8Array
+): void => {
+	const temporary = `${destination}.${randomUUID()}.tmp`;
+	writeFileSync(temporary, contents, { flag: "wx", mode: TOKEN_KEY_MODE });
+	try {
+		renameSync(temporary, destination);
+	} catch (error) {
+		unlinkSync(temporary);
+		throw error;
+	}
+};
+
 const writeSnapshot = (
 	stateRoot: string,
 	artifactId: string,
@@ -203,18 +230,7 @@ const writeSnapshot = (
 ): string => {
 	const pointer = path.join(SNAPSHOT_DIRECTORY, `${artifactId}.json`);
 	const destination = path.join(stateRoot, pointer);
-	const temporary = `${destination}.${randomUUID()}.tmp`;
-	writeFileSync(temporary, serializeDocument(document), {
-		encoding: "utf-8",
-		flag: "wx",
-		mode: TOKEN_KEY_MODE,
-	});
-	try {
-		renameSync(temporary, destination);
-	} catch (error) {
-		unlinkSync(temporary);
-		throw error;
-	}
+	writeFileAtomically(destination, serializeDocument(document));
 	return pointer;
 };
 
@@ -339,6 +355,50 @@ export const openBackendStore = (
 		);
 	};
 
+	const readArtifactById = (artifactId: string): Artifact | undefined => {
+		const artifact = database
+			.select({
+				name: publishedArtifacts.name,
+				snapshotPath: publishedArtifacts.snapshotPath,
+				type: publishedArtifacts.type,
+			})
+			.from(publishedArtifacts)
+			.where(eq(publishedArtifacts.id, artifactId))
+			.limit(1)
+			.get();
+		if (!artifact) {
+			return;
+		}
+		return {
+			document: JSON.parse(
+				readFileSync(path.join(stateRoot, artifact.snapshotPath), "utf-8")
+			) as unknown,
+			name: artifact.name,
+			type: artifact.type,
+		};
+	};
+
+	const liveArtifactId = (capability: string): string | undefined => {
+		const tokenHash = hashCapability(capability);
+		if (!tokenHash) {
+			return;
+		}
+		// ADR-0022 requires both indexed lookups on every well-formed request.
+		const live = database
+			.select({ artifactId: capabilityTokens.artifactId })
+			.from(capabilityTokens)
+			.where(eq(capabilityTokens.tokenHash, tokenHash))
+			.limit(1)
+			.get();
+		const dead = database
+			.select({ tokenHash: deadTokenTombstones.tokenHash })
+			.from(deadTokenTombstones)
+			.where(eq(deadTokenTombstones.tokenHash, tokenHash))
+			.limit(1)
+			.get();
+		return live && !dead ? live.artifactId : undefined;
+	};
+
 	const publishArtifact = ({
 		document,
 		name,
@@ -460,47 +520,44 @@ export const openBackendStore = (
 
 	return {
 		close: () => sqlite.close(),
+		deleteArtifactCard: (capability) => {
+			const artifactId = liveArtifactId(capability);
+			if (artifactId !== undefined) {
+				unlinkIfPresent(
+					path.join(stateRoot, OG_DIRECTORY, `${artifactId}.png`)
+				);
+			}
+		},
 		getArtifact: (capability) => {
-			const tokenHash = hashCapability(capability);
-			if (!tokenHash) {
+			const artifactId = liveArtifactId(capability);
+			return artifactId === undefined
+				? undefined
+				: readArtifactById(artifactId);
+		},
+		getArtifactCard: (capability) => {
+			const artifactId = liveArtifactId(capability);
+			if (artifactId === undefined) {
 				return;
 			}
-			// ADR-0022 requires both indexed lookups on every well-formed request.
-			const live = database
-				.select({ artifactId: capabilityTokens.artifactId })
-				.from(capabilityTokens)
-				.where(eq(capabilityTokens.tokenHash, tokenHash))
-				.limit(1)
-				.get();
-			const dead = database
-				.select({ tokenHash: deadTokenTombstones.tokenHash })
-				.from(deadTokenTombstones)
-				.where(eq(deadTokenTombstones.tokenHash, tokenHash))
-				.limit(1)
-				.get();
-			if (!live || dead) {
+			const cardPath = path.join(stateRoot, OG_DIRECTORY, `${artifactId}.png`);
+			return existsSync(cardPath) ? readFileSync(cardPath) : undefined;
+		},
+		getOwnedArtifactCardSource: ({ name, ownerIdentityIds, type }) => {
+			const matches = ownedArtifacts(ownerIdentityIds, type, name);
+			if (matches.length !== 1) {
 				return;
 			}
-			const artifact = database
-				.select({
-					name: publishedArtifacts.name,
-					snapshotPath: publishedArtifacts.snapshotPath,
-					type: publishedArtifacts.type,
-				})
-				.from(publishedArtifacts)
-				.where(eq(publishedArtifacts.id, live.artifactId))
-				.limit(1)
-				.get();
-			if (!artifact) {
+			const [match] = matches;
+			if (match === undefined) {
 				return;
 			}
-			return {
-				document: JSON.parse(
-					readFileSync(path.join(stateRoot, artifact.snapshotPath), "utf-8")
-				) as unknown,
-				name: artifact.name,
-				type: artifact.type,
-			};
+			const artifact = readArtifactById(match.id);
+			return artifact === undefined
+				? undefined
+				: {
+						artifact,
+						capability: capabilityFromSeed(tokenKey, match.seed),
+					};
 		},
 		ingestArtifact: (artifact) => {
 			const result = publishArtifact({
@@ -527,6 +584,17 @@ export const openBackendStore = (
 				type,
 			}).kind === "revoked",
 		revokeOwnedArtifact,
+		writeArtifactCard: (capability, png) => {
+			const artifactId = liveArtifactId(capability);
+			if (artifactId === undefined) {
+				return false;
+			}
+			writeFileAtomically(
+				path.join(stateRoot, OG_DIRECTORY, `${artifactId}.png`),
+				png
+			);
+			return true;
+		},
 	};
 };
 

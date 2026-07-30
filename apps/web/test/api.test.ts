@@ -1,6 +1,7 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; apps/web ships as nitro's bun preset (ADR-0020). */
 import { afterEach, describe, expect, test } from "bun:test";
 import { generateKeyPairSync, sign } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -112,7 +113,7 @@ const createHarness = async () => {
 			headers: { "content-type": "application/json" },
 			method: "POST",
 		});
-	return { api, authenticated, identities, publish, request, store };
+	return { api, authenticated, identities, publish, request, root, store };
 };
 
 describe("the authenticated publish API", () => {
@@ -145,8 +146,8 @@ describe("the authenticated publish API", () => {
 		);
 	});
 
-	test("re-publishes in place with the same URL and updated content", async () => {
-		const { identities, publish, store } = await createHarness();
+	test("publish renders a card and re-publish regenerates it in place", async () => {
+		const { identities, publish, root, store } = await createHarness();
 		const key = createTestKey();
 		identities.set(key.publicKeyHex, {
 			identityId: "identity-1",
@@ -159,6 +160,10 @@ describe("the authenticated publish API", () => {
 			document: snapshot("Doctor Malignant", "Before"),
 		});
 		const firstBody = (await first.json()) as { readonly url: string };
+		const ogDirectory = path.join(root, "state", "og");
+		const [ogName] = readdirSync(ogDirectory);
+		expect(ogName).toMatch(/^[0-9a-f-]+\.png$/u);
+		const firstPng = readFileSync(path.join(ogDirectory, ogName ?? ""));
 
 		const second = await publish(key, {
 			...artifact,
@@ -174,10 +179,15 @@ describe("the authenticated publish API", () => {
 		expect(store.getArtifact(secondBody.capability)?.document).toEqual(
 			snapshot("Doctor Malignant", "After")
 		);
+		expect(readdirSync(ogDirectory)).toEqual([ogName]);
+		expect(
+			readFileSync(path.join(ogDirectory, ogName ?? "")).equals(firstPng)
+		).toBe(false);
 	});
 
-	test("revoke tombstones the URL, deletes its files, and never resurrects it", async () => {
-		const { authenticated, identities, publish, store } = await createHarness();
+	test("revoke tombstones the URL, deletes its snapshot and card, and never resurrects it", async () => {
+		const { authenticated, identities, publish, root, store } =
+			await createHarness();
 		const key = createTestKey();
 		identities.set(key.publicKeyHex, {
 			identityId: "identity-1",
@@ -192,6 +202,7 @@ describe("the authenticated publish API", () => {
 		const firstBody = (await first.json()) as {
 			readonly capability: string;
 		};
+		expect(readdirSync(path.join(root, "state", "og"))).toHaveLength(1);
 
 		const revoked = await authenticated(key, "/api/publish", {
 			body: JSON.stringify(artifact),
@@ -204,6 +215,7 @@ describe("the authenticated publish API", () => {
 				"Revoked. Chat apps may retain unfurl previews already rendered in chat history.",
 		});
 		expect(store.getArtifact(firstBody.capability)).toBeUndefined();
+		expect(readdirSync(path.join(root, "state", "og"))).toHaveLength(0);
 
 		const republished = await publish(key, {
 			...artifact,
@@ -214,6 +226,82 @@ describe("the authenticated publish API", () => {
 		};
 		expect(republishedBody.capability).not.toBe(firstBody.capability);
 		expect(store.getArtifact(firstBody.capability)).toBeUndefined();
+	});
+
+	test("authenticated owners can regenerate a missing card", async () => {
+		const { authenticated, identities, publish, root } = await createHarness();
+		const key = createTestKey();
+		identities.set(key.publicKeyHex, {
+			identityId: "identity-1",
+			ownerIdentityIds: ["identity-1"],
+			revoked: false,
+		});
+		await publish(key, {
+			document: snapshot("Doctor Malignant"),
+			name: "Doctor Malignant",
+			type: "character",
+		});
+		const ogDirectory = path.join(root, "state", "og");
+		const [ogName] = readdirSync(ogDirectory);
+		await rm(path.join(ogDirectory, ogName ?? ""));
+
+		const regenerated = await authenticated(key, "/api/publish/og", {
+			body: JSON.stringify({ name: "Doctor Malignant", type: "character" }),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+
+		expect(regenerated.status).toBe(200);
+		expect(await regenerated.json()).toEqual({ card: "regenerated" });
+		expect(readdirSync(ogDirectory)).toEqual([ogName]);
+	});
+
+	test("regeneration authenticates and hides unknown or non-owned artifacts", async () => {
+		const { authenticated, identities, publish, request } =
+			await createHarness();
+		const owner = createTestKey();
+		const outsider = createTestKey();
+		identities.set(owner.publicKeyHex, {
+			identityId: "identity-owner",
+			ownerIdentityIds: ["identity-owner"],
+			revoked: false,
+		});
+		identities.set(outsider.publicKeyHex, {
+			identityId: "identity-outsider",
+			ownerIdentityIds: ["identity-outsider"],
+			revoked: false,
+		});
+		await publish(owner, {
+			document: snapshot("Private Character"),
+			name: "Private Character",
+			type: "character",
+		});
+		const unknownBody = JSON.stringify({ name: "missing", type: "character" });
+		const nonOwnedBody = JSON.stringify({
+			name: "Private Character",
+			type: "character",
+		});
+
+		const unauthenticated = await request("/api/publish/og", {
+			body: unknownBody,
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const unknown = await authenticated(outsider, "/api/publish/og", {
+			body: unknownBody,
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const nonOwned = await authenticated(outsider, "/api/publish/og", {
+			body: nonOwnedBody,
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+
+		expect(unauthenticated.status).toBe(401);
+		expect(unknown.status).toBe(404);
+		expect(nonOwned.status).toBe(404);
+		expect(await nonOwned.json()).toEqual(await unknown.json());
 	});
 
 	test("lists every live artifact and reconstructs its full URL", async () => {
