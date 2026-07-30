@@ -23,6 +23,7 @@
 		"test:draw-steel": "bun test packages/games/draw-steel/test",
 		"test:identity": "bun test packages/identity/test",
 		"test:session": "bun test packages/session/test",
+		"test:atlas": "bun test packages/atlas/test",
 		"test:table": "bun test packages/table/test",
 		"test:cli": "bun test apps/cli/test/*.test.ts",
 		"test:gateway": "bun test apps/gateway/test/",

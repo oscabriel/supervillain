@@ -1,0 +1,20 @@
+{
+	"name": "@supervillain/atlas",
+	"version": "0.0.0",
+	"private": true,
+	"description": "glyph atlas — build-time-baked MEKMODE bitmaps and the octant table (ADR-0007/0021); data-only, render side",
+	"license": "MIT",
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"test:bun": "bun test test"
+	}
+}

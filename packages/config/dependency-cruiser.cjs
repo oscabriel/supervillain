@@ -88,6 +88,24 @@ module.exports = {
 			to: { path: `^bun:|${OPENTUI_PACKAGE}` },
 		},
 		{
+			// The glyph atlas is data-only on the render side (ADR-0007/0021):
+			// the host, the gateway, and the node-compat set never see it.
+			from: {
+				path: "^apps/gateway/|^packages/(core|room-host|room-wire|transport-ws|session|identity)/",
+			},
+			name: "atlas-is-render-side-only",
+			severity: "error",
+			to: { path: "^packages/atlas/|^@supervillain/atlas$" },
+		},
+		{
+			// Data-only means data-only: the atlas package imports nothing
+			// outside itself — no fonts, no OpenTUI, no runtime dependency.
+			from: { path: "^packages/atlas/src/" },
+			name: "atlas-imports-nothing",
+			severity: "error",
+			to: { pathNot: "^packages/atlas/src/" },
+		},
+		{
 			from: { path: "^packages/room-wire/" },
 			name: "room-wire-never-imports-room-host",
 			severity: "error",
