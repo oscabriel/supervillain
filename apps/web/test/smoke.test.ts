@@ -32,6 +32,12 @@ const snapshot = (title: string) => ({
 	sections: [],
 });
 
+const expectArtifactHeaders = (response: Response): void => {
+	expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+	expect(response.headers.get("cache-control")).toBe("private, no-store");
+	expect(response.headers.get("x-robots-tag")).toBe("noindex");
+};
+
 const authenticatedFetch = async (
 	pathname: string,
 	init?: RequestInit
@@ -140,12 +146,39 @@ describe("production output under bun", () => {
 		const { url } = (await ingest.json()) as { readonly url: string };
 		const res = await fetch(url);
 		expect(res.status).toBe(200);
-		expect(await res.text()).toContain("Doctor Malignant");
+		expectArtifactHeaders(res);
+		const html = await res.text();
+		expect(html).toContain("Doctor Malignant");
+		expect(html).toContain('<meta content="noindex" name="robots"/>');
 	});
 
-	test("GET /a/:capability is 404 for an unknown capability", async () => {
-		const res = await fetch(`${base}/a/no-such-capability`);
-		expect(res.status).toBe(404);
+	test("unknown and revoked capabilities share one generic protected 404", async () => {
+		const ingest = await authenticatedFetch("/api/publish", {
+			body: JSON.stringify({
+				document: snapshot("Revoked Character"),
+				name: "Revoked Character",
+				type: "character",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { capability } = (await ingest.json()) as {
+			readonly capability: string;
+		};
+		const revoke = await authenticatedFetch("/api/publish", {
+			body: JSON.stringify({ name: "Revoked Character", type: "character" }),
+			headers: { "content-type": "application/json" },
+			method: "DELETE",
+		});
+		expect(revoke.status).toBe(200);
+
+		const unknown = await fetch(`${base}/a/no-such-capability`);
+		const revoked = await fetch(`${base}/a/${capability}`);
+		expect(unknown.status).toBe(404);
+		expect(revoked.status).toBe(404);
+		expectArtifactHeaders(unknown);
+		expectArtifactHeaders(revoked);
+		expect(await revoked.text()).toBe(await unknown.text());
 	});
 
 	test("POST /api/publish lands on the mounted Hono app and reads back over SSR", async () => {

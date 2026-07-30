@@ -1,5 +1,13 @@
-/* Tracer static asset (#43 spike shape). The real design system arrives
- * with the artifact pages (#106) and the marketing surface (#37). */
+/* MonoMEK v1.2 is CC0 by MEK.txt. The deploy asset is intentionally named
+ * after the upstream OTF; see ADR-0009. */
+@font-face {
+	font-display: swap;
+	font-family: "MonoMek";
+	font-style: normal;
+	font-weight: 400;
+	src: url("/fonts/MonoMEK.otf") format("opentype");
+}
+
 :root {
 	color-scheme: dark;
 	font-family:
@@ -9,7 +17,128 @@
 body {
 	background: #0d0d11;
 	color: #e6e6e6;
+	line-height: 1.6;
 	margin: 2rem auto;
 	max-width: 60rem;
 	padding: 0 1rem;
+}
+
+h1,
+h2,
+p {
+	margin-block: 0 0.75rem;
+}
+
+.artifact-header,
+.character-section,
+.log-entry,
+.map-content {
+	margin-block-end: 2rem;
+}
+
+.artifact-fields,
+.map-legend {
+	display: grid;
+	gap: 0.5rem;
+	margin: 0;
+}
+
+.artifact-field,
+.map-legend-entry {
+	display: grid;
+	gap: 1rem;
+	grid-template-columns: minmax(8rem, 1fr) 2fr;
+}
+
+dd {
+	margin: 0;
+}
+
+.day-break {
+	border-block-end: 1px solid #3b3b48;
+	font-size: 1rem;
+	padding-block-end: 0.25rem;
+}
+
+.log-block p {
+	white-space: pre-wrap;
+}
+
+details {
+	border: 1px solid #3b3b48;
+	padding: 0.75rem;
+}
+
+summary {
+	cursor: pointer;
+	font-weight: 700;
+}
+
+.map-content {
+	margin-block-start: 1rem;
+}
+
+.map-grid {
+	font-family: "MonoMek", ui-monospace, monospace;
+	line-height: 1;
+	overflow-x: auto;
+}
+
+.map-legend {
+	font-size: 0.875rem;
+	grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+}
+
+.map-legend-entry {
+	gap: 0.5rem;
+	grid-template-columns: 1.5rem 1fr;
+}
+
+/* Each theme token carries its color as a custom property so text-reverse
+ * can swap foreground and background without knowing the token (currentColor
+ * in background would resolve to the reversed foreground, not the token). */
+.theme-accent {
+	--run-color: #d99cff;
+	color: var(--run-color);
+}
+
+.theme-danger {
+	--run-color: #ff8f94;
+	color: var(--run-color);
+}
+
+.theme-muted {
+	--run-color: #a3a3ad;
+	color: var(--run-color);
+}
+
+.theme-primary {
+	--run-color: #e6e6e6;
+	color: var(--run-color);
+}
+
+.theme-success {
+	--run-color: #8fe0ae;
+	color: var(--run-color);
+}
+
+.text-bold {
+	font-weight: 700;
+}
+
+.text-dim {
+	opacity: 0.7;
+}
+
+.text-italic {
+	font-style: italic;
+}
+
+.text-reverse {
+	background: var(--run-color, #e6e6e6);
+	color: #0d0d11;
+}
+
+.text-underline {
+	text-decoration: underline;
 }

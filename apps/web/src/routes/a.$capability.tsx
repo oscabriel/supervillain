@@ -1,38 +1,37 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 
-/**
- * The tracer's SSR artifact route: 200 with a server-rendered body for a
- * known capability, 404 for anything else — the #43 spike's shape. The real
- * page (#106: the generic document renderer, day-break anchors, MonoMek)
- * replaces the body; the capability-safety headers and indistinguishable
- * 404 semantics are #102's spec.
- */
+import { SnapshotDocumentRenderer } from "../artifact/document";
+
 const getArtifact = createServerFn({ method: "GET" })
 	.validator((capability: string) => capability)
 	.handler(async ({ data }) => {
-		// Dynamic import keeps the store out of the client bundle: this
-		// handler body runs only on the server after serverFn extraction.
-		const { getArtifact: read } = await import("../server/store");
+		// Dynamic imports keep durable reads and runtime schema validation out of
+		// the client bundle; the capability exists only inside this server fence.
+		const [{ validateSnapshotDocument }, { getArtifact: read }] =
+			await Promise.all([
+				import("@supervillain/core"),
+				import("../server/store"),
+			]);
 		const artifact = read(data);
 		if (!artifact) {
 			throw notFound();
 		}
-		// Only the fields the page renders: the opaque `document` is #100's
-		// schema and doesn't satisfy the serverFn serializability constraint
-		// (nor should the tracer pretend to render it).
-		return { name: artifact.name, type: artifact.type };
+		const validated = validateSnapshotDocument(artifact.document);
+		if (!validated.ok) {
+			throw new Error(
+				`Stored snapshot has no renderer: ${validated.errors.map(({ message }) => message).join(" ")}`
+			);
+		}
+		return validated.document;
 	});
 
 const ArtifactPage = () => {
 	// oxlint-disable-next-line eslint/no-use-before-define -- TanStack's route↔component shape is mutually referential; `Route` resolves lazily at render time.
-	const artifact = Route.useLoaderData();
+	const document = Route.useLoaderData();
 	return (
 		<main>
-			<h1>{artifact.name}</h1>
-			<p>
-				Published <strong>{artifact.type}</strong> artifact.
-			</p>
+			<SnapshotDocumentRenderer document={document} />
 		</main>
 	);
 };
@@ -46,6 +45,9 @@ const ArtifactNotFound = () => (
 
 export const Route = createFileRoute("/a/$capability")({
 	component: ArtifactPage,
+	head: () => ({
+		meta: [{ content: "noindex", name: "robots" }],
+	}),
 	loader: ({ params }) => getArtifact({ data: params.capability }),
 	notFoundComponent: ArtifactNotFound,
 });
