@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { createServer } from "@opentui/ssh";
+import { createServer, DenyError } from "@opentui/ssh";
 import type { Session as SshSession } from "@opentui/ssh";
 import type { GatewayRegistry } from "@supervillain/core";
 import {
@@ -195,6 +195,29 @@ interface DoorIo {
 	readonly input: NodeJS.ReadStream;
 	readonly onClose: (listener: () => void) => () => void;
 }
+
+interface ShellGateSession {
+	readonly hasPty: boolean;
+	readonly write: (data: Buffer | string) => void;
+	readonly end: () => void;
+}
+
+const NO_PTY_NOTICE =
+	"this door is interactive; run ssh -t, or use the CLI for scripts";
+
+/** Keeps a PTY-less shell on the main screen, then uses the library's denial
+ * signal only to unwind before the renderer-backed Lobby handler. */
+export const requireInteractiveShell = <Handoff>(
+	session: ShellGateSession,
+	next: () => Handoff
+): Handoff => {
+	if (!session.hasPty) {
+		session.write(`${NO_PTY_NOTICE}\r\n`);
+		session.end();
+		throw new DenyError();
+	}
+	return next();
+};
 
 /** Resolves the session's identity state from what the library verified. A key
  * resolves to an actor at connect — the key *is* the identity, nothing is
@@ -792,6 +815,7 @@ export const startGateway = async (
 		},
 		startupBanner: false,
 	})
+		.use((session, next) => requireInteractiveShell(session, next))
 		.use((session, next) => {
 			// Per-IP rate limiting is on from the lobby's first commit: the lobby
 			// is an unauthenticated held session (ADR-0008). Refused silently,
