@@ -1,0 +1,46 @@
+diff --git a/node_modules/@opentui/ssh/.bun-tag-4bf226661debcc62 b/.bun-tag-4bf226661debcc62
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/index.js b/index.js
+index a9212b248ab04f0ae8f04baeeec4df37374c4ea3..e70039da16306ae34b62ebf6ebe0ca7cd1f0f1a2 100644
+--- a/index.js
++++ b/index.js
+@@ -547,6 +547,7 @@ function createConnectionHandler(dependencies) {
+     clients.add(client);
+     let connected = true;
+     let connectionSessions = 0;
++    const connectionBridges = new Set;
+     let identity = { method: "none", username: "unknown" };
+     const remoteAddress = toRemoteAddress(info.ip, info.port);
+     client.on("authentication", async (ctx) => {
+@@ -605,8 +606,10 @@ function createConnectionHandler(dependencies) {
+             });
+             activeBridge = shellBridge;
+             bridges.set(shellBridge, release);
++            connectionBridges.add(shellBridge);
+             shellBridge.session.onClose(() => {
+               shellBridge.destroy().finally(() => {
++                connectionBridges.delete(shellBridge);
+                 bridges.delete(shellBridge);
+                 release();
+               });
+@@ -622,9 +625,19 @@ function createConnectionHandler(dependencies) {
+         });
+       });
+     });
++    const destroyConnectionBridges = () => {
++      for (const bridge of [...connectionBridges]) {
++        ignoreErrors(() => bridge.destroy());
++      }
++      connectionBridges.clear();
++    };
++    client.on("end", () => {
++      destroyConnectionBridges();
++    });
+     client.on("close", () => {
+       connected = false;
+       clients.delete(client);
++      destroyConnectionBridges();
+     });
+     client.on("error", (err) => safe.report(err));
+   };
