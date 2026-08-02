@@ -10,6 +10,8 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Seat**: A position at the table held by an identity; the core owns seats, presence, and who holds the GM seat. The seat belongs to the actor, not the connection: an actor joining a room where it already holds a seat — a GM `join`ing their own table included — gets a second **view** of that one seat, never a second seat _(pinned 2026-07-25, grilling session, after [#63](https://github.com/oscabriel/supervillain/issues/63))_. _Avoid_: slot (reserved for layout), player object
 
+**Spectator**: A seatless, read-only view of a live room, admitted only while the GM's `/spectate` toggle is on (default off, dies with the session, `off` ejects everyone). Spectators claim no seat, never touch the log, and surface only as a gateway-side presence count in the table chrome _(pinned 2026-07-30, [ADR-0027](./adr/0027-general-spectating-seatless-views-behind-a-gm-admission-mode-toggle.md); support access is its first use case)_. _Avoid_: observer, viewer (reserved connotations: a seat's view), audience seat
+
 **GM**: The person with authority over a room; every supported game has one. The GM's machine hosts the room by default. _Avoid_: mastermind (rejected theming), dungeon master, admin
 
 **Door**: A way for a player to reach a room. v0 ships one: `ssh <room>@supervillain.app` through the gateway; `supervillain join` is its thin CLI front (an ordinary SSH session with the CLI-managed key) _(correction 2026-07-24, [#54](https://github.com/oscabriel/supervillain/issues/54), ADR-0012: the direct-iroh second door is deleted; a native local-render join is trigger-gated future work)_. _Avoid_: entry point (reserved for game-module facets), login method
