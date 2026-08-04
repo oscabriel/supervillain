@@ -34,6 +34,6 @@ The glossary gains **Spectator**. The room's admission path gains a mode check (
 - Selective audience: a real GM want for gated spectating (password / invite code / per-spectator approval) reopens the no-password decision.
 - The two-command late-player dance drawing real complaints — builds the promotion command.
 - Spectator scale: if rooms attract audiences large enough that spectator fan-out dominates gateway cost (streamed one-shots), the render-stream sharing shape and cap policy reopen against R9-style measurements, per NQ-10.
-- Named/identified spectators (showing *who* watches, not just how many) — a privacy-facing decision deliberately not made today; the count is the v1 contract.
+- Named/identified spectators (showing _who_ watches, not just how many) — a privacy-facing decision deliberately not made today; the count is the v1 contract.
 
 **Presentation amendment 2026-08-04, [ADR-0030](./0030-closed-pane-frames-tab-traversal-side-rails-and-contextual-key-help.md):** the anonymous `watching: N` count remains in the expanded Table's unboxed state/status row. When Sidebar is a Rail, the same anonymous value survives as `+N` beneath the per-Seat presence marks; collapse never grows spectator identity.
