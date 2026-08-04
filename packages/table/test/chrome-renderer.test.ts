@@ -70,6 +70,42 @@ const contextualEntry: ViewEntry<unknown, unknown, unknown> = {
 	},
 };
 
+const tabbedEntry = (
+	actions: string[]
+): ViewEntry<unknown, unknown, unknown> => ({
+	...entry,
+	view: {
+		...entry.view,
+		createPanels: () => [
+			{
+				id: "first",
+				onKey: (key) => {
+					actions.push(`first:key:${key.name}`);
+					return true;
+				},
+				onRowClick: (row) => {
+					actions.push(`first:row:${row}`);
+					return true;
+				},
+				render: () => [
+					{ runs: [{ text: "first panel", token: "primary" }] },
+					{ runs: [{ text: "action row", token: "primary" }] },
+				],
+				slot: "sidebar",
+			},
+			{
+				id: "second",
+				onKey: (key) => {
+					actions.push(`second:key:${key.name}`);
+					return true;
+				},
+				render: () => [{ runs: [{ text: "second panel", token: "primary" }] }],
+				slot: "sidebar",
+			},
+		],
+	},
+});
+
 const wireEntry: ViewEntry<unknown, unknown, unknown> = {
 	...entry,
 	view: {
@@ -391,6 +427,84 @@ describe("table renderer injection", () => {
 			expect(Math.floor(pane.borderColor.buffer[0] / 256)).toBe(8);
 			expect(Math.floor(pane.focusedBorderColor.buffer[0] / 256)).toBe(6);
 		}
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("renders one active Panel and gives tabs, keys, and rows click parity", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const actions: string[] = [];
+		const { exited } = await mountTable(
+			setup,
+			probe,
+			store.store,
+			undefined,
+			{ focusMarker: true },
+			tabbedEntry(actions)
+		);
+
+		const initial = setup.captureCharFrame();
+		expect(initial).toContain("[first]  second");
+		expect(initial).toContain("first panel");
+		expect(initial).not.toContain("second panel");
+
+		setup.mockInput.pressTab();
+		await setup.waitForFrame((frame) => frame.includes("┌─> sidebar"));
+		setup.mockInput.pressArrow("down");
+		await setup.mockInput.pressKey("c");
+		expect(actions).toEqual(["first:key:down"]);
+
+		setup.mockInput.pressArrow("right");
+		await setup.waitForFrame(
+			(frame) =>
+				frame.includes("first  [second]") &&
+				frame.includes("second panel") &&
+				!frame.includes("first panel") &&
+				frame.includes("panel: second")
+		);
+		await setup.mockInput.typeText("]");
+		expect(actions).toContain("second:key:]");
+		setup.mockInput.pressArrow("right");
+		await setup.waitForFrame((frame) => frame.includes("[first]  second"));
+
+		const screenRoot = setup.renderer.root.getChildren().at(0);
+		if (!(screenRoot instanceof BoxRenderable)) {
+			throw new Error("Table root was not mounted.");
+		}
+		const main = screenRoot.getChildren().at(1);
+		if (!(main instanceof BoxRenderable)) {
+			throw new Error("Table main row was not mounted.");
+		}
+		const sidebar = main.getChildren().at(2);
+		if (!(sidebar instanceof BoxRenderable)) {
+			throw new Error("Sidebar Pane was not mounted.");
+		}
+		const tabs = sidebar.getChildren().at(1);
+		const panel = sidebar.getChildren().at(2);
+		if (
+			!(tabs instanceof TextRenderable) ||
+			!(panel instanceof BoxRenderable)
+		) {
+			throw new Error("Sidebar tab strip and Panel were not mounted.");
+		}
+		// The strip renders "[first]  second": "second" spans columns 9-14,
+		// so column 10 lands inside the inactive tab's label.
+		setup.mockMouse.click(tabs.x + 10, tabs.y);
+		await setup.waitForFrame((frame) => frame.includes("first  [second]"));
+		expect(setup.captureCharFrame()).toContain("┌─> sidebar");
+
+		setup.mockInput.pressArrow("left");
+		await setup.waitForFrame((frame) => frame.includes("[first]  second"));
+		const actionRow = panel.getChildren().at(1);
+		if (!(actionRow instanceof TextRenderable)) {
+			throw new Error("Active Panel row was not mounted.");
+		}
+		setup.mockMouse.click(actionRow.x, actionRow.y);
+		await setup.waitForFrame((frame) => frame.includes("┌─> sidebar"));
+		expect(actions).toContain("first:row:1");
 
 		setup.renderer.destroy();
 		await exited;

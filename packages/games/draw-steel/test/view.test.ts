@@ -126,6 +126,39 @@ describe("Draw Steel view", () => {
 		).toBe("muted");
 		expect(active.map(text)).toContain("M+2 A+1 R+0 I+1 P+2 · stamina 20");
 		expect(active.map(text)).toContain("↑/↓ select · s/e · t · a/m · r");
+		expect(
+			panel.onRowClick?.(3, {
+				dispatch: () => {},
+				focused: true,
+				requestMessageTask: () => {},
+				state: stateWithRoster(),
+				table,
+			})
+		).toBe(true);
+		expect(
+			panel
+				.render({
+					dispatch: () => {},
+					focused: true,
+					requestMessageTask: () => {},
+					state: stateWithRoster(),
+					table,
+				})
+				.map(text)
+		).toContain("▸ · Goblin [E]");
+		// Roll setup freezes the selection for keyboard and mouse alike:
+		// clicks may not exceed keyboard reach (progressive enhancement).
+		const rollInput: GamePanelInput<DsState, DsCommand> = {
+			dispatch: () => {},
+			focused: true,
+			requestMessageTask: () => {},
+			state: stateWithRoster(),
+			table,
+		};
+		expect(panel.onKey?.({ name: "r", text: "r" }, rollInput)).toBe(true);
+		expect(panel.onRowClick?.(2, rollInput)).toBe(false);
+		expect(panel.onKey?.({ name: "escape" }, rollInput)).toBe(true);
+		expect(panel.onRowClick?.(2, rollInput)).toBe(true);
 		expect(inactive.map(text)).not.toContain("↑/↓ select · s/e · t · a/m · r");
 	});
 
@@ -612,6 +645,14 @@ describe("Draw Steel view", () => {
 		});
 		expect(panel.onKey({ name: "z", text: "z" }, input)).toBe(false);
 		expect(panel.render(input).map(text)).not.toContain("add hero: z_");
+		expect(panel.onKey({ name: "s", text: "s" }, input)).toBe(true);
+		expect(panel.onKey({ name: "e", text: "e" }, input)).toBe(true);
+		expect(panel.onKey({ name: "t", text: "t" }, input)).toBe(true);
+		expect(dispatched).toEqual([
+			{ type: "ds.start-encounter" },
+			{ type: "ds.end-encounter" },
+			{ combatantId: "c1", type: "ds.take-turn" },
+		]);
 		expect(panel.onKey({ name: "m", text: "m" }, input)).toBe(true);
 		expect(tasks[1]?.title).toBe("add enemy");
 		expect(tasks[1]?.submit("Goblin")).toEqual({

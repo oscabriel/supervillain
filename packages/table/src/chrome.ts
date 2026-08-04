@@ -170,6 +170,12 @@ const ignoreClick = (): void => {
 	// Deliberately nothing: no capability may depend on the mouse.
 };
 
+/** Pre-wiring placeholder for closures assigned after their declaration
+ * cycle resolves (the lint lattice forbids forward references). */
+const notYetWired = (): void => {
+	// Deliberately nothing: replaced during runChrome setup.
+};
+
 /** A FeedLine's one crossing into OpenTUI: token → indexed color, named
  * attributes → packed bitmask. A plain run stays attribute-free. */
 export const styledLine = (line: FeedLine): StyledText =>
@@ -221,6 +227,60 @@ export const forwardPanelKey = <S, C>(
 	panel: GamePanel<S, C>,
 	input: GamePanelInput<S, C>
 ): boolean => panel.onKey?.(key, input) ?? false;
+
+interface PanelTab {
+	readonly id: string;
+}
+
+const panelTabLayout = (
+	panels: readonly PanelTab[],
+	activeIndex: number
+): readonly {
+	readonly index: number;
+	readonly start: number;
+	readonly text: string;
+}[] => {
+	let start = 0;
+	return panels.map((panel, index) => {
+		const text = index === activeIndex ? `[${panel.id}]` : panel.id;
+		const tab = { index, start, text };
+		start += displayWidth(text) + 2;
+		return tab;
+	});
+};
+
+export const formatPanelTabs = (
+	panels: readonly PanelTab[],
+	activeIndex: number
+): string =>
+	panelTabLayout(panels, activeIndex)
+		.map(({ text }) => text)
+		.join("  ");
+
+export const panelTabAtColumn = (
+	panels: readonly PanelTab[],
+	activeIndex: number,
+	column: number
+): number | null => {
+	const tab = panelTabLayout(panels, activeIndex).find(
+		({ start, text }) => column >= start && column < start + displayWidth(text)
+	);
+	return tab?.index ?? null;
+};
+
+export const nextPanelIndex = (
+	current: number,
+	panelCount: number,
+	direction: -1 | 1
+): number => {
+	if (panelCount === 0) {
+		return -1;
+	}
+	return (
+		(((Math.max(0, current) + direction) % panelCount) + panelCount) %
+		panelCount
+	);
+};
 
 /** How long the stream must stay quiet before the table calls the initial
  * replay finished and flushes its collapsed skip warning (ADR-0010). The
@@ -380,12 +440,25 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		title: "sidebar",
 		width: SIDEBAR_WIDTH,
 	});
-	const sidebarText = new TextRenderable(renderer, {
+	const sidebarSeats = new TextRenderable(renderer, {
 		content: "",
 		fg: resolveThemeToken("primary"),
 		width: "100%",
 	});
-	sidebarPane.add(sidebarText);
+	const sidebarTabs = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("muted"),
+		height: 1,
+		width: "100%",
+	});
+	const sidebarPanel = new BoxRenderable(renderer, {
+		flexDirection: "column",
+		flexGrow: 1,
+		width: "100%",
+	});
+	sidebarPane.add(sidebarSeats);
+	sidebarPane.add(sidebarTabs);
+	sidebarPane.add(sidebarPanel);
 	const status = new TextRenderable(renderer, {
 		content: "",
 		fg: resolveThemeToken("muted"),
@@ -438,7 +511,10 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	// no capability detection, no persistence at v1 (ADR-0007/0021).
 	let mapMode: MapRenderMode = "pixel";
 	let lastMapName: string | null = null;
-	const activePanel = panels.find((panel) => panel.onKey !== undefined);
+	let activePanelIndex = panels.length === 0 ? -1 : 0;
+	let focusSidebar = notYetWired;
+	const activePanel = (): GamePanel<unknown, unknown> | undefined =>
+		panels[activePanelIndex];
 	const mapIsPresent = (): boolean =>
 		fold.map() !== null && layout !== "no-map";
 	const mapFocused = (): boolean => focusedPane === "map";
@@ -503,9 +579,10 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 				"map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text mode";
 			return;
 		}
+		const panel = activePanel();
 		status.content =
-			focusedPane === "sidebar" && activePanel !== undefined
-				? `panel: ${activePanel.id}`
+			focusedPane === "sidebar" && panel !== undefined
+				? `panel: ${panel.id}`
 				: "";
 	};
 	/** Redraws the region from the folded map and the local cursor. The whole
@@ -630,26 +707,51 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		state: fold.state(),
 		table: fold.table(),
 	});
+	const panelRows: TextRenderable[] = [];
+	let repaintSidebar = notYetWired;
+	const createPanelRow = (row: number): TextRenderable => {
+		const renderable = new TextRenderable(renderer, {
+			content: "",
+			fg: resolveThemeToken("primary"),
+			width: "100%",
+		});
+		renderable.onMouseDown = (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			focusSidebar();
+			const clickedPanel = activePanel();
+			if (clickedPanel?.onRowClick?.(row, panelInput(true)) === true) {
+				repaintSidebar();
+			}
+		};
+		panelRows.push(renderable);
+		sidebarPanel.add(renderable);
+		return renderable;
+	};
 	const renderSidebar = (): void => {
 		if (done) {
 			return;
 		}
-		const seats = formatSeatList(
+		sidebarSeats.content = formatSeatList(
 			fold.table(),
 			options.session.actor,
 			fold.sameActor
 		);
-		const panelLines = panels.flatMap((panel) =>
-			panel
-				.render(panelInput(focusedPane === "sidebar" && panel === activePanel))
-				.map((line) => line.runs.map((run) => run.text).join(""))
-		);
-		sidebarText.content = [
-			seats,
-			...(seats === "" || panelLines.length === 0 ? [] : [""]),
-			...panelLines,
-		].join("\n");
+		sidebarTabs.content = formatPanelTabs(panels, activePanelIndex);
+		sidebarTabs.visible = panels.length > 0;
+		const panel = activePanel();
+		const panelLines =
+			panel?.render(panelInput(focusedPane === "sidebar")) ?? [];
+		for (const [row, panelLine] of panelLines.entries()) {
+			const renderable = panelRows[row] ?? createPanelRow(row);
+			renderable.content = panelLine.runs.map((run) => run.text).join("");
+			renderable.visible = true;
+		}
+		for (const renderable of panelRows.slice(panelLines.length)) {
+			renderable.visible = false;
+		}
 	};
+	repaintSidebar = renderSidebar;
 	const focusPane = (requested: TablePane, interacted = true): void => {
 		const hasMap = mapIsPresent();
 		const next =
@@ -674,6 +776,22 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		renderMap();
 		if (previous === "sidebar" || next === "sidebar") {
 			renderSidebar();
+		}
+	};
+	focusSidebar = (): void => focusPane("sidebar");
+	sidebarTabs.onMouseDown = (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+		focusSidebar();
+		const clickedIndex = panelTabAtColumn(
+			panels,
+			activePanelIndex,
+			event.x - sidebarTabs.x
+		);
+		if (clickedIndex !== null && clickedIndex !== activePanelIndex) {
+			activePanelIndex = clickedIndex;
+			renderSidebar();
+			renderStatus();
 		}
 	};
 	feedPane.onMouseDown = (event) => {
@@ -854,13 +972,23 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 		key.preventDefault();
 		key.stopPropagation();
-		if (key.name === "escape") {
-			focusInput();
+		if (key.name === "left" || key.name === "right") {
+			activePanelIndex = nextPanelIndex(
+				activePanelIndex,
+				panels.length,
+				key.name === "left" ? -1 : 1
+			);
+			renderSidebar();
+			renderStatus();
 			return;
 		}
+		if (key.name === "c") {
+			return;
+		}
+		const panel = activePanel();
 		if (
-			activePanel !== undefined &&
-			forwardPanelKey(adaptPanelKey(key), activePanel, panelInput(true))
+			panel !== undefined &&
+			forwardPanelKey(adaptPanelKey(key), panel, panelInput(true))
 		) {
 			renderSidebar();
 		}

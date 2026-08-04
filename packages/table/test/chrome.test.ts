@@ -5,9 +5,12 @@ import type { GamePanel, GamePanelInput } from "@supervillain/core";
 
 import {
 	adaptPanelKey,
+	formatPanelTabs,
 	formatSeatList,
 	forwardPanelKey,
 	initialFeedLines,
+	nextPanelIndex,
+	panelTabAtColumn,
 	styledLine,
 } from "../src/chrome.js";
 
@@ -53,6 +56,24 @@ describe("table sidebar", () => {
 		};
 		expect(initialFeedLines([notice])).toEqual([notice]);
 		expect(initialFeedLines()).toEqual([]);
+	});
+
+	test("formats and hit-tests module tabs in declaration order", () => {
+		const panels = [{ id: "initiative" }, { id: "sheet" }];
+		expect(formatPanelTabs(panels, 0)).toBe("[initiative]  sheet");
+		expect(formatPanelTabs(panels, 1)).toBe("initiative  [sheet]");
+		expect(panelTabAtColumn(panels, 0, 2)).toBe(0);
+		expect(panelTabAtColumn(panels, 0, 12)).toBeNull();
+		expect(panelTabAtColumn(panels, 0, 15)).toBe(1);
+	});
+
+	test("wraps tab traversal and handles one or zero Panels", () => {
+		expect(nextPanelIndex(0, 2, -1)).toBe(1);
+		expect(nextPanelIndex(1, 2, 1)).toBe(0);
+		expect(nextPanelIndex(0, 1, 1)).toBe(0);
+		expect(nextPanelIndex(-1, 0, 1)).toBe(-1);
+		expect(formatPanelTabs([], -1)).toBe("");
+		expect(formatPanelTabs([{ id: "only" }], 0)).toBe("[only]");
 	});
 
 	test("adapts printable keys and forwards them to a panel", () => {

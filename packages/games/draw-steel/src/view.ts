@@ -145,6 +145,23 @@ const createInitiativePanel = (): GamePanel<DsState, DsCommand> => {
 		return lines;
 	};
 
+	const onRowClick = (
+		row: number,
+		input: GamePanelInput<DsState, DsCommand>
+	): boolean => {
+		// Click is progressive enhancement: during roll setup the keyboard
+		// cannot retarget the selection, so neither may the mouse.
+		if (mode.kind !== "normal" || !input.state.encounter.active) {
+			return false;
+		}
+		const combatantIndex = row - 2;
+		if (input.state.encounter.combatants[combatantIndex] === undefined) {
+			return false;
+		}
+		selectedIndex = combatantIndex;
+		return true;
+	};
+
 	// oxlint-disable-next-line eslint/complexity -- branches directly implement the pinned modal key grammar.
 	const onKey = (
 		key: PanelKey,
@@ -233,7 +250,13 @@ const createInitiativePanel = (): GamePanel<DsState, DsCommand> => {
 		return false;
 	};
 
-	return { id: "ds-initiative", onKey, render, slot: "sidebar" };
+	return {
+		id: "ds-initiative",
+		onKey,
+		onRowClick,
+		render,
+		slot: "sidebar",
+	};
 };
 
 const boundSheets = (input: GamePanelInput<DsState, DsCommand>) =>

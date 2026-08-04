@@ -347,6 +347,8 @@ export interface GamePanel<S, C> {
 	readonly slot: LayoutSlot;
 	readonly render: (input: GamePanelInput<S, C>) => readonly FeedLine[];
 	readonly onKey?: (key: PanelKey, input: GamePanelInput<S, C>) => boolean;
+	/** Handles a click on the corresponding zero-based line returned by render. */
+	readonly onRowClick?: (row: number, input: GamePanelInput<S, C>) => boolean;
 }
 
 export interface GameView<S, C, E> {
