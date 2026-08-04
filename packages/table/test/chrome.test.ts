@@ -69,6 +69,7 @@ describe("table sidebar", () => {
 		const input: GamePanelInput<unknown, unknown> = {
 			dispatch: () => {},
 			focused: true,
+			requestMessageTask: () => {},
 			state: {},
 			table: { actor: "viewer", gmSeatId: "gm", seats: [] },
 		};

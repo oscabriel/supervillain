@@ -15,6 +15,7 @@ import type {
 	FeedLine,
 	GamePanel,
 	GamePanelInput,
+	MessageTask,
 	PanelKey,
 	RoomSubmission,
 	TableView,
@@ -75,6 +76,12 @@ export const clipPaneTitle = (title: string, width: number): string => {
 
 /** The stable Table Pane vocabulary and traversal order from ADR-0030. */
 export type TablePane = "feed" | "map" | "message" | "sidebar";
+
+/** A contextual text task currently borrowing the Message Pane. */
+type ActiveMessageTask = MessageTask<unknown> & {
+	readonly origin: TablePane;
+	readonly preservedDraft: string;
+};
 
 const TABLE_PANE_ORDER: readonly TablePane[] = [
 	"feed",
@@ -419,6 +426,8 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	renderer.root.add(root);
 
 	let focusedPane: TablePane = initialPaneFocus(layout, false);
+	let messageOrigin: TablePane = focusedPane;
+	let messageTask: ActiveMessageTask | null = null;
 	let focusInteracted = false;
 	let replaying = true;
 	let idleStatusContent = "";
@@ -452,7 +461,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	const renderPaneTitles = (): void => {
 		feedPane.title = paneTitle("feed", "feed");
 		sidebarPane.title = paneTitle("sidebar", "sidebar");
-		messagePane.title = paneTitle("message", "message");
+		messagePane.title = paneTitle("message", messageTask?.title ?? "message");
 		const map = fold.map();
 		const mapLabel = map === null ? "map" : `map · ${map.name}`;
 		const mapTitleWidth =
@@ -585,17 +594,39 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 		renderStatus();
 	};
+	const dispatchPanelCommand = (command: unknown): void => {
+		void options.store
+			.submit({
+				actor: options.session.actor,
+				command,
+			})
+			.then(showSubmission)
+			.catch(showConnectionLost);
+	};
 	const panelInput = (focused: boolean): GamePanelInput<unknown, unknown> => ({
-		dispatch: (command: unknown) => {
-			void options.store
-				.submit({
-					actor: options.session.actor,
-					command,
-				})
-				.then(showSubmission)
-				.catch(showConnectionLost);
-		},
+		dispatch: dispatchPanelCommand,
 		focused,
+		requestMessageTask: (task) => {
+			// A re-request while a task is pending abandons the stale task but
+			// must carry its preserved ordinary draft forward — the input holds
+			// the stale task's contextual text, never the ordinary draft.
+			messageTask = {
+				...task,
+				origin: focusedPane,
+				preservedDraft: messageTask?.preservedDraft ?? input.value,
+			};
+			// Inlined focus move (focusPane is lexically later; the lint lattice
+			// forbids the forward reference). The sidebar repaint is owned by the
+			// keypress call site: forwardPanelKey returning true triggers
+			// renderSidebar, and render() never invokes requestMessageTask.
+			focusedPane = "message";
+			focusInteracted = true;
+			input.value = "";
+			input.focus();
+			renderPaneTitles();
+			renderStatus();
+			renderMap();
+		},
 		state: fold.state(),
 		table: fold.table(),
 	});
@@ -627,6 +658,9 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 				: requested;
 		const previous = focusedPane;
 		focusedPane = next;
+		if (next === "message" && previous !== "message" && messageTask === null) {
+			messageOrigin = previous;
+		}
 		focusInteracted ||= interacted;
 		if (next === "message") {
 			input.focus();
@@ -700,14 +734,43 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 		await dispatchCore(result.command);
 	};
+	const returnFromMessage = (origin: TablePane): void => {
+		const available = paneFocusOrder(mapIsPresent());
+		focusPane(
+			available.includes(origin)
+				? origin
+				: initialPaneFocus(layout, mapIsPresent())
+		);
+	};
+	const finishMessageTask = (): TablePane | null => {
+		const task = messageTask;
+		if (task === null) {
+			return null;
+		}
+		messageTask = null;
+		input.value = task.preservedDraft;
+		renderPaneTitles();
+		return task.origin;
+	};
 	const submitInput = async (value: unknown): Promise<void> => {
 		if (typeof value !== "string") {
+			return;
+		}
+		const task = messageTask;
+		if (task !== null) {
+			const command = task.submit(value);
+			const origin = finishMessageTask();
+			if (origin !== null) {
+				returnFromMessage(origin);
+			}
+			dispatchPanelCommand(command);
 			return;
 		}
 		// Clear before the async submit: keystrokes that arrive while the
 		// submission is in flight must land in an empty field, not on the
 		// already-submitted text.
 		input.value = "";
+		returnFromMessage(messageOrigin);
 		const parsed = parseInput(value);
 		if (parsed.kind === "quit") {
 			settle();
@@ -769,6 +832,12 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			return;
 		}
 		if (focusedPane === "message") {
+			if (key.name === "escape") {
+				key.preventDefault();
+				key.stopPropagation();
+				const taskOrigin = finishMessageTask();
+				returnFromMessage(taskOrigin ?? messageOrigin);
+			}
 			return;
 		}
 		if (focusedPane === "map") {

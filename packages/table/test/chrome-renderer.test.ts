@@ -31,6 +31,11 @@ import type { TableHold, TableViewOptions } from "../src/index.js";
 import { runLobby } from "../src/lobby.js";
 
 const ACTOR = "actor-key";
+const sleep = (ms: number): Promise<void> =>
+	// oxlint-disable-next-line promise/avoid-new -- a bare timer flushes OpenTUI's ambiguous bare-Esc parser input.
+	new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
 
 const entry: ViewEntry<unknown, unknown, unknown> = {
 	model: { apply: (state) => state, init: () => ({}) },
@@ -38,6 +43,30 @@ const entry: ViewEntry<unknown, unknown, unknown> = {
 		createPanels: () => [],
 		notices: [{ runs: [{ text: "notice line", token: "muted" }] }],
 		renderEvent: () => null,
+	},
+};
+
+const contextualEntry: ViewEntry<unknown, unknown, unknown> = {
+	...entry,
+	view: {
+		...entry.view,
+		createPanels: () => [
+			{
+				id: "tasks",
+				onKey: (key, input) => {
+					if (key.name !== "a") {
+						return false;
+					}
+					input.requestMessageTask({
+						submit: (name) => ({ name, type: "fake.add" }),
+						title: "add fixture",
+					});
+					return true;
+				},
+				render: () => [],
+				slot: "sidebar",
+			},
+		],
 	},
 };
 
@@ -163,10 +192,11 @@ const mountTable = async (
 	probe: SessionProbe,
 	store: RoomStore,
 	hold?: TableHold,
-	viewOptions?: TableViewOptions
+	viewOptions?: TableViewOptions,
+	tableEntry: ViewEntry<unknown, unknown, unknown> = entry
 ): Promise<{ readonly exited: Promise<void> }> => {
 	const exited = runChrome({
-		entry,
+		entry: tableEntry,
 		gameId: "fake",
 		hold,
 		renderer: setup.renderer,
@@ -366,6 +396,168 @@ describe("table renderer injection", () => {
 		await exited;
 	});
 
+	test("opens, submits, and cancels contextual Message tasks", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const stream = fakeStore();
+		const commands: unknown[] = [];
+		const store: RoomStore = {
+			stream: stream.store.stream,
+			submit: (submission) => {
+				commands.push(submission.command);
+				return Promise.resolve({ accepted: true, envelopes: [] });
+			},
+		};
+		const { exited } = await mountTable(
+			setup,
+			probe,
+			store,
+			undefined,
+			{ focusMarker: true },
+			contextualEntry
+		);
+
+		setup.mockInput.pressTab();
+		setup.mockInput.pressTab();
+		await setup.mockInput.typeText("ordinary draft");
+		setup.mockInput.pressTab({ shift: true });
+		await setup.mockInput.typeText("a");
+		await setup.waitForFrame((frame) => frame.includes("┌─> add fixture"));
+		await setup.mockInput.typeText("New Hero");
+		setup.mockInput.pressEnter();
+		await setup.waitForFrame((frame) => frame.includes("┌─> sidebar"));
+		expect(commands).toEqual([{ name: "New Hero", type: "fake.add" }]);
+
+		await setup.mockInput.typeText("a");
+		await setup.waitForFrame((frame) => frame.includes("┌─> add fixture"));
+		await setup.mockInput.typeText("discard me");
+		setup.mockInput.pressEscape();
+		await sleep(40);
+		await setup.waitForFrame((frame) => frame.includes("┌─> sidebar"));
+		expect(commands).toHaveLength(1);
+		setup.mockInput.pressTab();
+		await setup.waitForFrame(
+			(frame) =>
+				frame.includes("┌─> message") &&
+				frame.includes("ordinary draft") &&
+				!frame.includes("discard me")
+		);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("carries the ordinary draft through a task re-request", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const { exited } = await mountTable(
+			setup,
+			probe,
+			store.store,
+			undefined,
+			{ focusMarker: true },
+			contextualEntry
+		);
+
+		setup.mockInput.pressTab();
+		setup.mockInput.pressTab();
+		await setup.mockInput.typeText("ordinary draft");
+		setup.mockInput.pressTab({ shift: true });
+		await setup.mockInput.typeText("a");
+		await setup.waitForFrame((frame) => frame.includes("┌─> add fixture"));
+		await setup.mockInput.typeText("stale half-name");
+		// Tab away: the task stays pending with its contextual draft in the
+		// input. Re-requesting from the sidebar must abandon the stale task
+		// while carrying the original ordinary draft forward.
+		setup.mockInput.pressTab();
+		await setup.waitForFrame((frame) => frame.includes("┌─> feed"));
+		setup.mockInput.pressTab();
+		await setup.waitForFrame((frame) => frame.includes("┌─> sidebar"));
+		await setup.mockInput.typeText("a");
+		await setup.waitForFrame(
+			(frame) =>
+				frame.includes("┌─> add fixture") && !frame.includes("stale half-name")
+		);
+		setup.mockInput.pressEscape();
+		await sleep(40);
+		await setup.waitForFrame((frame) => frame.includes("┌─> sidebar"));
+		setup.mockInput.pressTab();
+		await setup.waitForFrame(
+			(frame) =>
+				frame.includes("┌─> message") &&
+				frame.includes("ordinary draft") &&
+				!frame.includes("stale half-name")
+		);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("preserves ordinary Message drafts across Tab and Esc", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const { exited } = await mountTable(setup, probe, store.store, undefined, {
+			focusMarker: true,
+		});
+
+		setup.mockInput.pressTab();
+		setup.mockInput.pressTab();
+		await setup.mockInput.typeText("draft?v");
+		setup.mockInput.pressTab();
+		setup.mockInput.pressTab();
+		setup.mockInput.pressTab();
+		await setup.waitForFrame(
+			(frame) => frame.includes("┌─> message") && frame.includes("draft?v")
+		);
+		setup.mockInput.pressEscape();
+		await sleep(40);
+		await setup.waitForFrame((frame) => frame.includes("┌─> sidebar"));
+		setup.mockInput.pressTab();
+		await setup.waitForFrame(
+			(frame) => frame.includes("┌─> message") && frame.includes("draft?v")
+		);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test.each(["send", "cancel"] as const)(
+		"repairs a vanished Message origin on %s",
+		async (action) => {
+			const setup = await createTestRenderer({ height: 24, width: 80 });
+			const probe = fakeSession();
+			const store = fakeStore();
+			const { exited } = await mountTable(
+				setup,
+				probe,
+				store.store,
+				undefined,
+				{
+					focusMarker: true,
+				}
+			);
+			store.push(mapEnvelope());
+			await setup.waitForFrame((frame) => frame.includes("┌─> map · Hall"));
+			setup.mockMouse.click(10, 21);
+			await setup.waitForFrame((frame) => frame.includes("┌─> message"));
+			store.push(mapClearedEnvelope());
+			await setup.waitForFrame((frame) => !frame.includes("map · Hall"));
+			if (action === "send") {
+				await setup.mockInput.typeText("hello");
+				setup.mockInput.pressEnter();
+			} else {
+				setup.mockInput.pressEscape();
+				await sleep(40);
+			}
+			await setup.waitForFrame((frame) => frame.includes("┌─> feed"));
+
+			setup.renderer.destroy();
+			await exited;
+		}
+	);
+
 	test("adds Map as its own titled Pane between Feed and Sidebar", async () => {
 		const setup = await createTestRenderer({ height: 16, width: 60 });
 		const probe = fakeSession();
@@ -541,6 +733,7 @@ describe("table renderer injection", () => {
 		await setup.mockInput.typeText("hello");
 		setup.mockInput.pressEnter();
 		expect(submissions).toBe(1);
+		setup.mockInput.pressTab();
 		await setup.mockInput.typeText("/quit");
 		setup.mockInput.pressEnter();
 		await exited;

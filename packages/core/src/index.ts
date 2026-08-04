@@ -322,11 +322,19 @@ export interface GameAuthority<S, C, E> {
 
 export type LayoutSlot = "sidebar";
 
+/** A Panel's request to borrow the Table's Message Pane for contextual text. */
+export interface MessageTask<C> {
+	readonly title: string;
+	/** Converts submitted text into the game command the Table dispatches. */
+	readonly submit: (value: string) => C;
+}
+
 export interface GamePanelInput<S, C> {
 	readonly state: Readonly<S>;
 	readonly table: TableView;
 	readonly focused: boolean;
 	readonly dispatch: (command: C) => void;
+	readonly requestMessageTask: (task: MessageTask<C>) => void;
 }
 
 export interface PanelKey {

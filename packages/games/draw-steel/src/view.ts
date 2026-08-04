@@ -72,7 +72,6 @@ const nextSideText = (state: Readonly<DsState>): string => {
 
 type PanelMode =
 	| { readonly kind: "normal" }
-	| { readonly kind: "add"; readonly side: DsSide }
 	| {
 			readonly kind: "roll";
 			readonly characteristic: DsCharacteristic;
@@ -83,13 +82,8 @@ type PanelMode =
 const createInitiativePanel = (): GamePanel<DsState, DsCommand> => {
 	let selectedIndex = 0;
 	let mode: PanelMode = { kind: "normal" };
-	let buffer = "";
 
 	const renderHints = (): FeedLine => {
-		if (mode.kind === "add") {
-			const side = mode.side === "heroes" ? "hero" : "enemy";
-			return line({ text: `add ${side}: ${buffer}_`, token: "muted" });
-		}
 		if (mode.kind === "roll") {
 			return line({
 				text: `roll ${mode.characteristic} e${mode.edges} b${mode.banes} — enter rolls`,
@@ -156,32 +150,6 @@ const createInitiativePanel = (): GamePanel<DsState, DsCommand> => {
 		key: PanelKey,
 		input: GamePanelInput<DsState, DsCommand>
 	): boolean => {
-		if (mode.kind === "add") {
-			if (key.name === "backspace") {
-				buffer = buffer.slice(0, -1);
-				return true;
-			}
-			if (key.name === "return") {
-				input.dispatch({
-					name: buffer.trim(),
-					side: mode.side,
-					type: "ds.add-combatant",
-				});
-				buffer = "";
-				mode = { kind: "normal" };
-				return true;
-			}
-			if (key.name === "escape") {
-				buffer = "";
-				mode = { kind: "normal" };
-				return true;
-			}
-			if (key.text !== undefined) {
-				buffer += key.text;
-				return true;
-			}
-			return false;
-		}
 		if (mode.kind === "roll") {
 			const selectedCharacteristic = {
 				a: "agility",
@@ -247,8 +215,15 @@ const createInitiativePanel = (): GamePanel<DsState, DsCommand> => {
 			return true;
 		}
 		if (key.name === "a" || key.name === "m") {
-			buffer = "";
-			mode = { kind: "add", side: key.name === "a" ? "heroes" : "enemies" };
+			const side: DsSide = key.name === "a" ? "heroes" : "enemies";
+			input.requestMessageTask({
+				submit: (name) => ({
+					name: name.trim(),
+					side,
+					type: "ds.add-combatant",
+				}),
+				title: side === "heroes" ? "add hero" : "add enemy",
+			});
 			return true;
 		}
 		if (key.name === "r") {

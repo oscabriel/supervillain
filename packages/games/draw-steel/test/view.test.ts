@@ -1,7 +1,12 @@
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-only suite; the runner is the runtime claim. */
 import { describe, expect, test } from "bun:test";
 
-import type { FeedLine, GamePanelInput, TableView } from "@supervillain/core";
+import type {
+	FeedLine,
+	GamePanelInput,
+	MessageTask,
+	TableView,
+} from "@supervillain/core";
 
 import { apply, init } from "../src/model.js";
 import type { DsCommand, DsEvent, DsState } from "../src/model.js";
@@ -402,6 +407,7 @@ describe("Draw Steel view", () => {
 		const ownInput: GamePanelInput<DsState, DsCommand> = {
 			dispatch: () => {},
 			focused: false,
+			requestMessageTask: () => {},
 			state,
 			table: boundTable,
 		};
@@ -480,6 +486,7 @@ describe("Draw Steel view", () => {
 		const input: GamePanelInput<DsState, DsCommand> = {
 			dispatch: () => {},
 			focused: true,
+			requestMessageTask: () => {},
 			state: stateWithCharacters(["A", "B", "C"]),
 			table: threeCharacterTable,
 		};
@@ -513,6 +520,7 @@ describe("Draw Steel view", () => {
 		const input: GamePanelInput<DsState, DsCommand> = {
 			dispatch: () => {},
 			focused: true,
+			requestMessageTask: () => {},
 			state: stateWithCharacters(["A", "B", "C"]),
 			table: threeCharacterTable,
 		};
@@ -567,6 +575,7 @@ describe("Draw Steel view", () => {
 		const input: GamePanelInput<DsState, DsCommand> = {
 			dispatch: () => {},
 			focused: true,
+			requestMessageTask: () => {},
 			state,
 			table: boundTable,
 		};
@@ -580,28 +589,34 @@ describe("Draw Steel view", () => {
 		);
 	});
 
-	test("dispatches add and roll builder flows with and without a character match", () => {
+	test("requests add tasks and keeps only roll setup as an internal mode", () => {
 		const [panel] = view.createPanels();
 		if (panel?.onKey === undefined) {
 			throw new Error("interactive panel missing");
 		}
 		const dispatched: DsCommand[] = [];
+		const tasks: MessageTask<DsCommand>[] = [];
 		const input: GamePanelInput<DsState, DsCommand> = {
 			dispatch: (command) => dispatched.push(command),
 			focused: true,
+			requestMessageTask: (task) => tasks.push(task),
 			state: stateWithRoster(),
 			table,
 		};
 		expect(panel.onKey({ name: "a", text: "a" }, input)).toBe(true);
-		for (const character of " New Hero ") {
-			panel.onKey({ name: character.toLowerCase(), text: character }, input);
-		}
-		expect(panel.render(input).map(text)).toContain("add hero:  New Hero _");
-		panel.onKey({ name: "backspace" }, input);
-		panel.onKey({ name: "return" }, input);
-		expect(dispatched.at(-1)).toEqual({
+		expect(tasks[0]?.title).toBe("add hero");
+		expect(tasks[0]?.submit(" New Hero ")).toEqual({
 			name: "New Hero",
 			side: "heroes",
+			type: "ds.add-combatant",
+		});
+		expect(panel.onKey({ name: "z", text: "z" }, input)).toBe(false);
+		expect(panel.render(input).map(text)).not.toContain("add hero: z_");
+		expect(panel.onKey({ name: "m", text: "m" }, input)).toBe(true);
+		expect(tasks[1]?.title).toBe("add enemy");
+		expect(tasks[1]?.submit("Goblin")).toEqual({
+			name: "Goblin",
+			side: "enemies",
 			type: "ds.add-combatant",
 		});
 
