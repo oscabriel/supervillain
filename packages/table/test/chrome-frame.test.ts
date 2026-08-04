@@ -2,97 +2,49 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-	bandHeader,
-	ruleHeader,
-	ruleJunction,
-	verticalBandDivider,
-} from "../src/chrome-frame.js";
+	clipPaneTitle,
+	initialPaneFocus,
+	nextPaneFocus,
+	paneFocusOrder,
+} from "../src/chrome.js";
 
-const text = (line: {
-	readonly runs: readonly { readonly text: string }[];
-}): string => line.runs.map((run) => run.text).join("");
-
-describe("ruleJunction", () => {
-	test("computes every legal light-rule meeting", () => {
-		for (const [connections, glyph] of [
-			[{ left: true, right: true }, "─"],
-			[{ down: true, up: true }, "│"],
-			[{ down: true, right: true }, "┌"],
-			[{ down: true, left: true }, "┐"],
-			[{ right: true, up: true }, "└"],
-			[{ left: true, up: true }, "┘"],
-			[{ down: true, right: true, up: true }, "├"],
-			[{ down: true, left: true, up: true }, "┤"],
-			[{ down: true, left: true, right: true }, "┬"],
-			[{ left: true, right: true, up: true }, "┴"],
-			[{ down: true, left: true, right: true, up: true }, "┼"],
-		] as const) {
-			expect(ruleJunction(connections)).toBe(glyph);
-		}
+describe("Table Pane focus", () => {
+	test("uses the stable ring and omits an absent Map Pane", () => {
+		expect(paneFocusOrder(true)).toEqual(["feed", "map", "sidebar", "message"]);
+		expect(paneFocusOrder(false)).toEqual(["feed", "sidebar", "message"]);
 	});
 
-	test("refuses marks that are not meetings", () => {
-		expect(() => ruleJunction({ right: true })).toThrow(
-			"A rule junction needs at least two connections."
-		);
+	test("traverses forward and backward with wrapping", () => {
+		expect(nextPaneFocus("feed", true)).toBe("map");
+		expect(nextPaneFocus("message", true)).toBe("feed");
+		expect(nextPaneFocus("feed", true, true)).toBe("message");
+		expect(nextPaneFocus("feed", false)).toBe("sidebar");
+		expect(nextPaneFocus("sidebar", false, true)).toBe("feed");
+	});
+
+	test("derives initial focus from layout and never chooses Message", () => {
+		expect(initialPaneFocus("map-focused", true)).toBe("map");
+		expect(initialPaneFocus("map-focused", false)).toBe("feed");
+		expect(initialPaneFocus("feed-focused", true)).toBe("feed");
+		expect(initialPaneFocus("no-map", false)).toBe("feed");
 	});
 });
 
-describe("ruleHeader", () => {
-	test("fills the requested width with a label in one light rule", () => {
-		const header = ruleHeader("seats", 14);
-		expect(text(header)).toBe("─┤ seats ├────");
-		expect(header.runs).toEqual([
-			{ attrs: ["dim"], text: "─┤ ", token: "muted" },
-			{ attrs: ["bold"], text: "seats", token: "primary" },
-			{ attrs: ["dim"], text: " ├────", token: "muted" },
-		]);
+describe("Pane title clipping", () => {
+	test("returns a title that already fits unchanged", () => {
+		expect(clipPaneTitle("map · Hall", 10)).toBe("map · Hall");
 	});
 
-	test("clips by terminal cells without splitting graphemes", () => {
-		expect(text(ruleHeader("seat assignments", 9))).toBe("─┤ sea… ├");
-		const wide = text(ruleHeader("界域", 8));
-		expect(wide).toBe("─┤ 界… ├");
-		expect(Bun.stringWidth(wide)).toBe(8);
-	});
-
-	test("demotes to an unbroken rule when no label fits", () => {
-		expect(text(ruleHeader("feed", 6))).toBe("──────");
-		expect(text(ruleHeader("feed", 5))).toBe("─────");
-		expect(text(ruleHeader("feed", 1))).toBe("─");
-		expect(text(ruleHeader("feed", 0))).toBe("");
-	});
-});
-
-describe("band frame", () => {
-	test("joins the table and sidebar headers to the divider below", () => {
-		expect(
-			text(
-				bandHeader({
-					leftLabel: "room",
-					rightLabel: "seats",
-					rightWidth: 10,
-					vertical: "down",
-					width: 24,
-				})
-			)
-		).toBe("─┤ room ├────┬─┤ seats ├");
-	});
-
-	test("ends the sidebar divider at the state band", () => {
-		const header = text(
-			bandHeader({
-				leftLabel: "state",
-				rightLabel: "",
-				rightWidth: 10,
-				vertical: "up",
-				width: 24,
-			})
+	test("clips an overlong title on a grapheme boundary with an ellipsis", () => {
+		expect(clipPaneTitle("map · The Sunken Cathedral", 12)).toBe(
+			"map · The S…"
 		);
-		expect(header).toBe("─┤ state ├───┴──────────");
 	});
 
-	test("marks internal headers where they meet the sidebar divider", () => {
-		expect(verticalBandDivider(5, [0, 3])).toBe("┤\n│\n│\n┤\n│");
+	test("counts wide graphemes as two cells and never splits one", () => {
+		// 界 and 域 each occupy two cells: "map · 界域" is ten cells wide.
+		expect(clipPaneTitle("map · 界域", 10)).toBe("map · 界域");
+		// A nine-cell budget cannot hold half of 域: the clip ends after 界.
+		expect(clipPaneTitle("map · 界域", 9)).toBe("map · 界…");
 	});
 });

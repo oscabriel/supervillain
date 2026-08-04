@@ -28,6 +28,15 @@ export interface TableHold {
 	readonly until: Promise<void>;
 }
 
+export type TableLayout = "feed-focused" | "map-focused" | "no-map";
+
+/** Render-side choices supplied by the surface. Persistence belongs to the
+ * gateway preference adapter, not to Table chrome. */
+export interface TableViewOptions {
+	readonly focusMarker?: boolean;
+	readonly layout?: TableLayout;
+}
+
 export interface TableOptions {
 	readonly session: Session;
 	readonly store: RoomStore;
@@ -40,6 +49,8 @@ export interface TableOptions {
 	readonly renderer: CliRenderer;
 	/** An outside signal that may notice at, and close, this table. */
 	readonly hold?: TableHold;
+	/** Resolved presentation choices for this view. */
+	readonly viewOptions?: TableViewOptions;
 }
 
 export { createLocalTtyRenderer, createSessionRenderer } from "./renderer.js";

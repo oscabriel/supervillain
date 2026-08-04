@@ -28,15 +28,14 @@ import { resolveThemeToken } from "./theme.js";
  * per-session toggle, and no capability detection sits between them. */
 export type MapRenderMode = "pixel" | "text";
 
-/** Rows outside the main band, plus the map's title/status and the feed's
- * header/one-line floor. The feed is non-negotiable; everything left is the
- * map grid's live terminal-cell budget. */
-const MAP_VIEWPORT_RESERVED_ROWS = 8;
+/** Header, state/status, Message Pane, keybind bar, Map frame, and Map
+ * status consume nine rows outside the grid. Feed is beside Map now, so it
+ * spends no Map rows (ADR-0030). */
+const MAP_VIEWPORT_RESERVED_ROWS = 9;
 
 /** The map grid's terminal-row budget at a terminal height. This is dynamic:
- * 80×24 retains the feed beneath a 15-row pixel grid, while 188×60 can spend
- * 51 rows on 17 whole 4×3 tiles instead of carrying the text tier's old
- * 16-row ceiling into pixel mode. */
+ * 80×24 retains a 15-row pixel grid, while 188×60 can spend 51 rows on 17
+ * whole 4×3 tiles instead of carrying a text-tier ceiling into pixel mode. */
 export const mapViewportCellRows = (terminalRows: number): number =>
 	Math.max(1, Math.floor(terminalRows) - MAP_VIEWPORT_RESERVED_ROWS);
 

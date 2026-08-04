@@ -221,16 +221,16 @@ describe("pixel viewport arithmetic", () => {
 
 	test.each([
 		{
-			expectedOrigin: { originX: 161, originY: 83 },
-			expectedRegion: { height: 51, width: 156 },
-			expectedViewport: { height: 17, width: 39 },
+			expectedOrigin: { originX: 168, originY: 83 },
+			expectedRegion: { height: 51, width: 128 },
+			expectedViewport: { height: 17, width: 32 },
 			label: "188x60",
 			terminal: { height: 60, width: 188 },
 		},
 		{
-			expectedOrigin: { originX: 188, originY: 95 },
-			expectedRegion: { height: 15, width: 48 },
-			expectedViewport: { height: 5, width: 12 },
+			expectedOrigin: { originX: 195, originY: 95 },
+			expectedRegion: { height: 15, width: 20 },
+			expectedViewport: { height: 5, width: 5 },
 			label: "80x24",
 			terminal: { height: 24, width: 80 },
 		},

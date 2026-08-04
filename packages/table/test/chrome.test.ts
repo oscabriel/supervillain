@@ -8,8 +8,6 @@ import {
 	formatSeatList,
 	forwardPanelKey,
 	initialFeedLines,
-	nextPanelFocus,
-	rerenderOnPanelFocusTransition,
 	styledLine,
 } from "../src/chrome.js";
 
@@ -47,26 +45,6 @@ describe("table sidebar", () => {
 				"player-key"
 			)
 		).toBe("○ gm\n● player-1");
-	});
-
-	test("cycles input focus through interactive panels and back", () => {
-		expect(nextPanelFocus(-1, 2)).toBe(0);
-		expect(nextPanelFocus(0, 2)).toBe(1);
-		expect(nextPanelFocus(1, 2)).toBe(-1);
-		expect(nextPanelFocus(-1, 0)).toBe(-1);
-	});
-
-	test("rerenders panels when they gain and lose focus", () => {
-		const transitions: string[] = [];
-		const rerender = (): void => {
-			transitions.push("render");
-		};
-
-		rerenderOnPanelFocusTransition(-1, 0, rerender);
-		rerenderOnPanelFocusTransition(0, -1, rerender);
-		rerenderOnPanelFocusTransition(-1, -1, rerender);
-
-		expect(transitions).toEqual(["render", "render"]);
 	});
 
 	test("starts the feed with module notices", () => {

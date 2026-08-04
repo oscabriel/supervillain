@@ -4,6 +4,7 @@ import { PassThrough } from "node:stream";
 
 /* oxlint-disable vitest/prefer-importing-vitest-globals -- Bun-lane suite. */
 import {
+	BoxRenderable,
 	CliRenderEvents,
 	createCliRenderer,
 	RendererControlState,
@@ -12,7 +13,11 @@ import {
 import type { CliRenderer } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { TestRendererSetup } from "@opentui/core/testing";
-import { CORE_CHAT_POSTED, CORE_MAP_LOADED } from "@supervillain/core";
+import {
+	CORE_CHAT_POSTED,
+	CORE_MAP_CLEARED,
+	CORE_MAP_LOADED,
+} from "@supervillain/core";
 import type {
 	Envelope,
 	RoomStore,
@@ -22,7 +27,7 @@ import type {
 import type { Session, TerminalSize } from "@supervillain/session";
 
 import { runChrome } from "../src/chrome.js";
-import type { TableHold } from "../src/index.js";
+import type { TableHold, TableViewOptions } from "../src/index.js";
 import { runLobby } from "../src/lobby.js";
 
 const ACTOR = "actor-key";
@@ -142,13 +147,23 @@ const mapEnvelope = (): Envelope => ({
 	type: CORE_MAP_LOADED,
 });
 
+const mapClearedEnvelope = (): Envelope => ({
+	actor: ACTOR,
+	payload: {},
+	roomId: "room",
+	seq: 2,
+	ts: 0,
+	type: CORE_MAP_CLEARED,
+});
+
 /** Mounts the table on the injected renderer and draws one frame. The exit
  * promise is wrapped so awaiting the mount never adopts it. */
 const mountTable = async (
 	setup: TestRendererSetup,
 	probe: SessionProbe,
 	store: RoomStore,
-	hold?: TableHold
+	hold?: TableHold,
+	viewOptions?: TableViewOptions
 ): Promise<{ readonly exited: Promise<void> }> => {
 	const exited = runChrome({
 		entry,
@@ -158,6 +173,7 @@ const mountTable = async (
 		roomLabel: "the table",
 		session: probe.session,
 		store,
+		viewOptions,
 	});
 	await setup.waitForFrame((frame) => frame.includes("the table"));
 	return { exited };
@@ -282,49 +298,120 @@ describe("table renderer injection", () => {
 		}
 	});
 
-	test("draws exact wide and narrow character-frame bands", async () => {
+	test("draws independent Pane frames and leaves passive bands open", async () => {
 		const setup = await createTestRenderer({ height: 12, width: 60 });
 		const probe = fakeSession();
 		const store = fakeStore();
 		const { exited } = await mountTable(setup, probe, store.store);
 
 		const wide = setup.captureCharFrame().split("\n");
-		expect(wide[0]).toBe(
-			"─┤ the table · fake ├──────────┬─┤ seats ├──────────────────"
-		);
-		expect(wide[1]).toBe("─┤ feed ├──────────────────────┤".padEnd(60));
-		expect(wide[4]?.at(31)).toBe("│");
-		expect(wide[9]).toBe(
-			"─┤ state ├─────────────────────┴────────────────────────────"
-		);
+		expect(wide[0]).toBe("the table · fake".padEnd(60));
+		expect(wide[1]).toStartWith("┌─feed");
+		expect(wide[1]).toContain("┐ ┌─sidebar");
+		expect(wide[6]).toContain("┘ └");
+		expect(wide[8]).toStartWith("┌─message");
+		expect(wide[10]).toStartWith("└");
+		expect(wide[11]).toStartWith("feed  [tab] pane");
 
 		probe.resize({ columns: 40, rows: 8 });
-		await setup.waitForFrame((frame) =>
-			frame.startsWith("─┤ the t… ├┬─┤ seats ├──────────────────")
-		);
+		await setup.waitForFrame((frame) => frame.startsWith("the table · fake"));
 		const narrow = setup.captureCharFrame().split("\n");
-		expect(narrow[0]).toBe("─┤ the t… ├┬─┤ seats ├──────────────────");
-		expect(narrow[1]).toBe("─┤ feed ├──┤".padEnd(40));
-		expect(narrow[5]).toBe("─┤ state ├─┴────────────────────────────");
+		expect(narrow[0]).toBe("the table · fake".padEnd(40));
+		expect(narrow[1]).toContain("┐ ┌─sidebar");
+		expect(narrow[4]).toStartWith("┌─message");
+		expect(narrow[7]).toStartWith("feed  [tab] pane");
 
 		setup.renderer.destroy();
 		await exited;
 	});
 
-	test("turns the existing map title row into a band-header junction", async () => {
-		// 16 rows, not 12: the default pixel tier spends 4×3 cells per tile
-		// (ADR-0021), and the feed rule this test asserts must stay on screen.
+	test("click and Tab traverse real Pane focus with the optional marker", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const { exited } = await mountTable(setup, probe, store.store, undefined, {
+			focusMarker: true,
+		});
+
+		expect(setup.captureCharFrame()).toContain("┌─> feed");
+		setup.mockMouse.click(60, 3);
+		await setup.waitForFrame((frame) => frame.includes("┌─> sidebar"));
+		setup.mockInput.pressTab();
+		await setup.waitForFrame((frame) => frame.includes("┌─> message"));
+		setup.mockInput.pressTab();
+		await setup.waitForFrame((frame) => frame.includes("┌─> feed"));
+		setup.mockInput.pressTab({ shift: true });
+		await setup.waitForFrame((frame) => frame.includes("┌─> message"));
+
+		const screenRoot = setup.renderer.root.getChildren().at(0);
+		if (!(screenRoot instanceof BoxRenderable)) {
+			throw new Error("Table root was not mounted.");
+		}
+		const main = screenRoot.getChildren().at(1);
+		if (!(main instanceof BoxRenderable)) {
+			throw new Error("Table main row was not mounted.");
+		}
+		const messagePane = screenRoot.getChildren().at(3);
+		const panes = [...main.getChildren(), messagePane];
+		for (const pane of panes) {
+			if (!(pane instanceof BoxRenderable)) {
+				throw new Error("Table Pane was not a BoxRenderable.");
+			}
+			expect(pane.focusable).toBe(true);
+			expect(Math.floor(pane.borderColor.buffer[0] / 256)).toBe(8);
+			expect(Math.floor(pane.focusedBorderColor.buffer[0] / 256)).toBe(6);
+		}
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("adds Map as its own titled Pane between Feed and Sidebar", async () => {
 		const setup = await createTestRenderer({ height: 16, width: 60 });
 		const probe = fakeSession();
 		const store = fakeStore();
 		const { exited } = await mountTable(setup, probe, store.store);
 
 		store.push(mapEnvelope());
-		await setup.waitForFrame((frame) => frame.includes("map · Hall 2×2"));
+		await setup.waitForFrame((frame) => frame.includes("map · Hall"));
 		const frame = setup.captureCharFrame().split("\n");
-		expect(frame[1]).toBe("─┤ map · Hall 2×2 ├────────────┤".padEnd(60));
-		const feedRule = frame.find((row) => row.startsWith("─┤ feed ├"));
-		expect(feedRule?.at(31)).toBe("┤");
+		expect(frame[1]).toStartWith("┌─feed");
+		expect(frame[1]).toContain("┐ ┌─map · Hall");
+		expect(frame[1]).toContain("┐ ┌─sidebar");
+
+		// The repair below is only exercised if Map actually held focus first —
+		// without this wait a slow run could pass without testing the repair.
+		await setup.waitForFrame((next) => next.includes("map  [tab] pane"));
+
+		store.push(mapClearedEnvelope());
+		await setup.waitForFrame(
+			(next) =>
+				!next.includes("map · Hall") && next.includes("feed  [tab] pane")
+		);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("a Map in a batched replay tail receives layout-derived initial focus", async () => {
+		const setup = await createTestRenderer({ height: 16, width: 60 });
+		const probe = fakeSession();
+		const tail = fakeStore();
+		tail.push(mapEnvelope());
+		// A checkpointing store replays a frozen tail in one batch (RoomStore
+		// .replay()); the map arriving inside that tail must still take the
+		// map-focused layout's initial focus once the batch renders.
+		const store: RoomStore = {
+			...tail.store,
+			replay: () =>
+				Promise.resolve({ stream: tail.store.stream(1), throughSeq: 1 }),
+		};
+		const { exited } = await mountTable(setup, probe, store);
+
+		await setup.waitForFrame(
+			(frame) =>
+				frame.includes("map · Hall") && frame.includes("map  [tab] pane")
+		);
 
 		setup.renderer.destroy();
 		await exited;
@@ -444,11 +531,13 @@ describe("table renderer injection", () => {
 		if (screenRoot === undefined || !("getChildren" in screenRoot)) {
 			throw new Error("table screen root was not mounted");
 		}
-		const status = screenRoot.getChildren().at(3);
+		const status = screenRoot.getChildren().at(2);
 		if (!(status instanceof TextRenderable)) {
 			throw new Error("table status line was not mounted");
 		}
 
+		setup.mockInput.pressTab();
+		setup.mockInput.pressTab();
 		await setup.mockInput.typeText("hello");
 		setup.mockInput.pressEnter();
 		expect(submissions).toBe(1);

@@ -149,14 +149,13 @@ describe("the chrome map region", () => {
 		// Pixel is the default (ADR-0007/0021): the title paints, the legend
 		// characters do not — the grid is octant blocks, 4×3 cells per tile.
 		const pixel = await setup.waitForFrame((text) =>
-			text.includes("map · Hall 5×4")
+			text.includes("map · Hall")
 		);
 		expect(pixel).not.toContain("#####");
 
 		// The toggle is a keystroke on the focused region, and the text tier is
 		// ADR-0006's rendering unchanged: terrain reads as the author wrote it,
 		// the token sits on top of it.
-		setup.mockInput.pressKey("\t");
 		await setup.waitForFrame((text) => text.includes("map: arrows/hjkl"));
 		setup.mockInput.pressKey("t");
 		const text = await setup.waitForFrame((frame) => frame.includes("#K..#"));
@@ -167,7 +166,7 @@ describe("the chrome map region", () => {
 		// And back: the toggle round-trips within the session.
 		setup.mockInput.pressKey("t");
 		const again = await setup.waitForFrame((frame) => !frame.includes("#####"));
-		expect(again).toContain("map · Hall 5×4");
+		expect(again).toContain("map · Hall");
 
 		setup.renderer.destroy();
 		await exited;
@@ -180,12 +179,12 @@ describe("the chrome map region", () => {
 		for (const next of MAP_EVENTS) {
 			store.push(next);
 		}
-		await setup.waitForFrame((text) => text.includes("map · Hall 5×4"));
+		await setup.waitForFrame((text) => text.includes("map · Hall"));
 
-		// Row 0 of the chrome is the header, row 1 the map title, so the grid
-		// starts at row 2. In the default pixel tier one tile is 4×3 cells: a
-		// click at (10,7) is local (10,5), which is tile 2,1 — a floor cell.
-		setup.mockMouse.click(10, 7);
+		// Feed occupies the left 12 columns and the gutter is column 12, so the
+		// Map grid starts at (14,2). In pixel mode a click at (24,7) is local
+		// (10,5), which is tile 2,1 — a floor cell.
+		setup.mockMouse.click(24, 7);
 		await setup.waitForFrame((text) => text.includes("2,1 floor"));
 
 		// Clicking never submits: the mouse reaches only what the keys reach.

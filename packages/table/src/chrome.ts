@@ -22,9 +22,8 @@ import type {
 } from "@supervillain/core";
 
 import { readTableCheckpoint } from "./checkpoint.js";
-import { bandHeader, ruleHeader, verticalBandDivider } from "./chrome-frame.js";
 import { createTableFold } from "./fold.js";
-import type { TableOptions } from "./index.js";
+import type { TableLayout, TableOptions } from "./index.js";
 import { parseInput } from "./input.js";
 import type { ParsedInput } from "./input.js";
 import { mapCommandFor, mapKeyAction } from "./map-interaction.js";
@@ -35,30 +34,104 @@ import {
 	mapViewportCellRows,
 } from "./map-region.js";
 import type { MapRenderMode } from "./map-region.js";
-import { mapStatusLine, mapTitleLine } from "./map.js";
+import { mapStatusLine } from "./map.js";
 import type { MapCursor } from "./map.js";
 import { resolveTextAttributes, resolveThemeToken } from "./theme.js";
 
 const SIDEBAR_WIDTH = 28;
-const FRAME_DIVIDER_WIDTH = 1;
-const FIXED_BAND_ROWS = 4;
-
-/** The map grid's terminal-cell budget inside the table chrome. Width leaves
- * the fixed sidebar and its rule; height leaves the fixed bands, the map's
- * own title/status, and the feed's non-negotiable one-line floor. */
-export const tableMapRegionAvailable = (terminal: {
-	readonly width: number;
-	readonly height: number;
-}): { readonly width: number; readonly height: number } => ({
-	height: mapViewportCellRows(terminal.height),
-	width: Math.max(1, terminal.width - SIDEBAR_WIDTH - FRAME_DIVIDER_WIDTH),
+const MAP_FOCUSED_FEED_WIDTH = 26;
+const MINIMUM_FEED_PANE_WIDTH = 12;
+const MINIMUM_MAP_PANE_WIDTH = 18;
+const FEED_FOCUSED_FEED_RATIO = 0.42;
+const MAIN_PANE_GUTTERS = 2;
+const PANE_HORIZONTAL_BORDER_CELLS = 2;
+const MESSAGE_PANE_ROWS = 3;
+const MAP_STATUS_ROWS = 1;
+const PANE_TITLE_END_CELLS = 4;
+const TITLE_GRAPHEMES = new Intl.Segmenter(undefined, {
+	granularity: "grapheme",
 });
+const displayWidth = (
+	globalThis as typeof globalThis & {
+		readonly Bun: { readonly stringWidth: (text: string) => number };
+	}
+).Bun.stringWidth;
 
-/** The map region's own focus stop, ahead of the module panels: chrome's
- * region is chrome's, and a module panel can never claim it. */
-const MAP_FOCUS = "map";
+/** Clips a Pane title to a cell budget, grapheme- and wide-cell-aware, so a
+ * player-named map never breaks the frame. Exported for direct test coverage. */
+export const clipPaneTitle = (title: string, width: number): string => {
+	if (displayWidth(title) <= width) {
+		return title;
+	}
+	let clipped = "";
+	for (const { segment } of TITLE_GRAPHEMES.segment(title)) {
+		if (displayWidth(`${clipped}${segment}…`) > width) {
+			break;
+		}
+		clipped += segment;
+	}
+	return `${clipped}…`;
+};
 
-type FocusTarget = typeof MAP_FOCUS | GamePanel<unknown, unknown>;
+/** The stable Table Pane vocabulary and traversal order from ADR-0030. */
+export type TablePane = "feed" | "map" | "message" | "sidebar";
+
+const TABLE_PANE_ORDER: readonly TablePane[] = [
+	"feed",
+	"map",
+	"sidebar",
+	"message",
+];
+
+export const paneFocusOrder = (hasMap: boolean): readonly TablePane[] =>
+	hasMap ? TABLE_PANE_ORDER : TABLE_PANE_ORDER.filter((pane) => pane !== "map");
+
+export const initialPaneFocus = (
+	layout: TableLayout,
+	hasMap: boolean
+): TablePane => (layout === "map-focused" && hasMap ? "map" : "feed");
+
+export const nextPaneFocus = (
+	current: TablePane,
+	hasMap: boolean,
+	reverse = false
+): TablePane => {
+	const order = paneFocusOrder(hasMap);
+	const currentIndex = order.indexOf(current);
+	const step = reverse ? -1 : 1;
+	const nextIndex =
+		(Math.max(0, currentIndex) + step + order.length) % order.length;
+	return order[nextIndex] ?? "feed";
+};
+
+const feedPaneWidth = (layout: TableLayout, terminalWidth: number): number => {
+	const preferred =
+		layout === "feed-focused"
+			? Math.max(
+					MAP_FOCUSED_FEED_WIDTH,
+					Math.floor(terminalWidth * FEED_FOCUSED_FEED_RATIO)
+				)
+			: MAP_FOCUSED_FEED_WIDTH;
+	const fit =
+		terminalWidth - SIDEBAR_WIDTH - MAIN_PANE_GUTTERS - MINIMUM_MAP_PANE_WIDTH;
+	return Math.max(MINIMUM_FEED_PANE_WIDTH, Math.min(preferred, fit));
+};
+
+/** The map grid's terminal-cell budget inside its Pane frame. */
+export const tableMapRegionAvailable = (
+	terminal: { readonly width: number; readonly height: number },
+	layout: TableLayout = "map-focused"
+): { readonly width: number; readonly height: number } => ({
+	height: mapViewportCellRows(terminal.height),
+	width: Math.max(
+		1,
+		terminal.width -
+			SIDEBAR_WIDTH -
+			feedPaneWidth(layout, terminal.width) -
+			MAIN_PANE_GUTTERS -
+			PANE_HORIZONTAL_BORDER_CELLS
+	),
+});
 
 /** The map commands the typed line can produce — the rest are chat and dice. */
 type MapParsedInput = Extract<
@@ -134,19 +207,6 @@ export const adaptPanelKey = (
 	return printable
 		? { name: key.name.toLowerCase(), text: key.sequence }
 		: { name: key.name.toLowerCase() };
-};
-
-export const nextPanelFocus = (current: number, count: number): number =>
-	count === 0 || current >= count - 1 ? -1 : current + 1;
-
-export const rerenderOnPanelFocusTransition = (
-	previousPanelIndex: number,
-	nextPanelIndex: number,
-	rerender: () => void
-): void => {
-	if (previousPanelIndex !== nextPanelIndex) {
-		rerender();
-	}
 };
 
 export const forwardPanelKey = <S, C>(
@@ -233,30 +293,36 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		...(checkpoint?.feed ?? []),
 	];
 	const panels = options.entry.view.createPanels();
+	const layout = options.viewOptions?.layout ?? "map-focused";
+	const focusMarker = options.viewOptions?.focusMarker ?? false;
+	const paneFrame = {
+		borderColor: resolveThemeToken("muted"),
+		borderStyle: "single" as const,
+		focusable: true,
+		focusedBorderColor: resolveThemeToken("accent"),
+	};
 	const root = new BoxRenderable(renderer, {
 		flexDirection: "column",
 		height: "100%",
 		width: "100%",
 	});
 	const header = new TextRenderable(renderer, {
-		content: "",
+		content: `${options.roomLabel} · ${options.gameId}`,
 		fg: resolveThemeToken("muted"),
 		height: 1,
 		width: "100%",
 	});
 	const main = new BoxRenderable(renderer, {
+		columnGap: 1,
 		flexDirection: "row",
 		flexGrow: 1,
+		width: "100%",
 	});
-	const center = new BoxRenderable(renderer, {
+	const feedPane = new BoxRenderable(renderer, {
+		...paneFrame,
 		flexDirection: "column",
 		flexGrow: 1,
-	});
-	const feedHeader = new TextRenderable(renderer, {
-		content: "",
-		fg: resolveThemeToken("muted"),
-		height: 1,
-		width: "100%",
+		title: "feed",
 	});
 	const feed = new ScrollBoxRenderable(renderer, {
 		flexGrow: 1,
@@ -275,59 +341,21 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		width: "100%",
 	});
 	feed.add(feedText);
-	const mainDivider = new TextRenderable(renderer, {
-		content: "",
-		fg: resolveThemeToken("muted"),
-		flexShrink: 0,
-		height: "100%",
-		width: FRAME_DIVIDER_WIDTH,
-	});
-	const sidebar = new BoxRenderable(renderer, {
+	feedPane.add(feed);
+	// The battle map is core chrome's own Pane — not a layout Slot. Slots place
+	// module Panels, so a game can never claim this core surface (ADR-0006).
+	const mapPane = new BoxRenderable(renderer, {
+		...paneFrame,
 		flexDirection: "column",
-		width: SIDEBAR_WIDTH,
-	});
-	const sidebarText = new TextRenderable(renderer, {
-		content: "",
-		fg: resolveThemeToken("primary"),
-		width: "100%",
-	});
-	sidebar.add(sidebarText);
-	const stateHeader = new TextRenderable(renderer, {
-		content: "",
-		fg: resolveThemeToken("muted"),
-		height: 1,
-		width: "100%",
-	});
-	const status = new TextRenderable(renderer, {
-		content: "",
-		fg: resolveThemeToken("muted"),
-		height: 1,
-	});
-	const input = new InputRenderable(renderer, {
-		cursorColor: resolveThemeToken("accent"),
-		focusedTextColor: resolveThemeToken("primary"),
-		maxLength: 1100,
-		placeholder: "Message, /roll NdS+M, /map load <name>, /token place <glyph>",
-		placeholderColor: resolveThemeToken("muted"),
-		textColor: resolveThemeToken("primary"),
-	});
-	// The battle map is core chrome's own region — not a layout slot. Slots
-	// place *module* panels, and `LayoutSlot` keeps its single member precisely
-	// so a module can never claim this surface (ADR-0006).
-	const mapRegion = new BoxRenderable(renderer, {
-		flexDirection: "column",
-		flexShrink: 0,
+		flexGrow: 1,
+		title: "map",
 		visible: false,
-	});
-	const mapTitle = new TextRenderable(renderer, {
-		content: "",
-		fg: resolveThemeToken("primary"),
-		height: 1,
 	});
 	const mapStatus = new TextRenderable(renderer, {
 		content: "",
 		fg: resolveThemeToken("primary"),
-		height: 1,
+		height: MAP_STATUS_ROWS,
+		width: "100%",
 	});
 	// The click handler is wired once the cursor state below exists; until then
 	// a click is simply ignored, which is exactly what click promises anyway.
@@ -337,23 +365,62 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		{ height: 1, width: 1 },
 		(cell) => onMapClick(cell)
 	);
-	mapRegion.add(mapTitle);
-	mapRegion.add(mapSurface);
-	mapRegion.add(mapStatus);
-	center.add(mapRegion);
-	center.add(feedHeader);
-	center.add(feed);
-	main.add(center);
-	main.add(mainDivider);
-	main.add(sidebar);
+	mapPane.add(mapSurface);
+	mapPane.add(mapStatus);
+	const sidebarPane = new BoxRenderable(renderer, {
+		...paneFrame,
+		flexDirection: "column",
+		title: "sidebar",
+		width: SIDEBAR_WIDTH,
+	});
+	const sidebarText = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("primary"),
+		width: "100%",
+	});
+	sidebarPane.add(sidebarText);
+	const status = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("muted"),
+		height: 1,
+		width: "100%",
+	});
+	const messagePane = new BoxRenderable(renderer, {
+		...paneFrame,
+		flexDirection: "column",
+		height: MESSAGE_PANE_ROWS,
+		title: "message",
+		width: "100%",
+	});
+	const input = new InputRenderable(renderer, {
+		cursorColor: resolveThemeToken("accent"),
+		focusedTextColor: resolveThemeToken("primary"),
+		maxLength: 1100,
+		placeholder: "Message, /roll NdS+M, /map load <name>, /token place <glyph>",
+		placeholderColor: resolveThemeToken("muted"),
+		textColor: resolveThemeToken("primary"),
+		width: "100%",
+	});
+	messagePane.add(input);
+	const keybindBar = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("muted"),
+		height: 1,
+		width: "100%",
+	});
+	main.add(feedPane);
+	main.add(mapPane);
+	main.add(sidebarPane);
 	root.add(header);
 	root.add(main);
-	root.add(stateHeader);
 	root.add(status);
-	root.add(input);
+	root.add(messagePane);
+	root.add(keybindBar);
 	renderer.root.add(root);
 
-	let focusedPanelIndex = -1;
+	let focusedPane: TablePane = initialPaneFocus(layout, false);
+	let focusInteracted = false;
+	let replaying = true;
 	let idleStatusContent = "";
 	let idleStatusToken: "danger" | "muted" = "muted";
 	let cursor: MapCursor = { x: 0, y: 0 };
@@ -362,15 +429,10 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	// no capability detection, no persistence at v1 (ADR-0007/0021).
 	let mapMode: MapRenderMode = "pixel";
 	let lastMapName: string | null = null;
-	let mapRegionRows = 0;
-	const interactivePanels = panels.filter((panel) => panel.onKey !== undefined);
-	/** The focus ring: chrome's map region first when one is loaded, then the
-	 * module's interactive panels, then back to the input line. */
-	const focusTargets = (): readonly FocusTarget[] =>
-		fold.map() === null ? interactivePanels : [MAP_FOCUS, ...interactivePanels];
-	const focusedTarget = (): FocusTarget | undefined =>
-		focusTargets()[focusedPanelIndex];
-	const mapFocused = (): boolean => focusedTarget() === MAP_FOCUS;
+	const activePanel = panels.find((panel) => panel.onKey !== undefined);
+	const mapIsPresent = (): boolean =>
+		fold.map() !== null && layout !== "no-map";
+	const mapFocused = (): boolean => focusedPane === "map";
 	const ownSeatId = (): string | null =>
 		fold
 			.table()
@@ -385,74 +447,57 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			? null
 			: { cursor, map, selectedTokenId, tokens: fold.tokens() };
 	};
-	const centerWidth = (): number =>
-		tableMapRegionAvailable({
-			height: renderer.terminalHeight,
-			width: renderer.terminalWidth,
-		}).width;
-	/** Reflows every rule from live terminal dimensions. One vertical rule marks
-	 * the sidebar; center-region headers compute real meetings against it. */
-	const renderFrame = (): void => {
-		const width = renderer.terminalWidth;
-		header.content = styledLine(
-			bandHeader({
-				leftLabel: `${options.roomLabel} · ${options.gameId}`,
-				rightLabel: "seats",
-				rightWidth: SIDEBAR_WIDTH,
-				vertical: "down",
-				width,
-			})
-		);
-		feedHeader.content = styledLine(ruleHeader("feed", centerWidth()));
-		stateHeader.content = styledLine(
-			bandHeader({
-				leftLabel: "state",
-				rightLabel: "",
-				rightWidth: SIDEBAR_WIDTH,
-				vertical: "up",
-				width,
-			})
-		);
+	const paneTitle = (pane: TablePane, label: string): string =>
+		focusMarker && focusedPane === pane ? `> ${label}` : label;
+	const renderPaneTitles = (): void => {
+		feedPane.title = paneTitle("feed", "feed");
+		sidebarPane.title = paneTitle("sidebar", "sidebar");
+		messagePane.title = paneTitle("message", "message");
 		const map = fold.map();
-		if (map !== null) {
-			// The map producer owns this copy; the chrome grammar deliberately
-			// normalizes every region title to the same header styling.
-			const label = mapTitleLine(map)
-				.runs.map((run) => run.text)
-				.join("");
-			mapTitle.content = styledLine(ruleHeader(label, centerWidth()));
+		const mapLabel = map === null ? "map" : `map · ${map.name}`;
+		const mapTitleWidth =
+			renderer.terminalWidth -
+			feedPaneWidth(layout, renderer.terminalWidth) -
+			SIDEBAR_WIDTH -
+			MAIN_PANE_GUTTERS -
+			PANE_TITLE_END_CELLS;
+		mapPane.title = clipPaneTitle(
+			paneTitle("map", mapLabel),
+			Math.max(1, mapTitleWidth)
+		);
+		keybindBar.content = `${focusedPane}  [tab] pane`;
+	};
+	const applyPaneLayout = (): void => {
+		const hasMap = mapIsPresent();
+		mapPane.visible = hasMap;
+		if (hasMap) {
+			feedPane.flexGrow = 0;
+			feedPane.width = feedPaneWidth(layout, renderer.terminalWidth);
+			return;
 		}
-		const junctionRows = map === null ? [0] : [0, mapRegionRows];
-		mainDivider.content = styledLine({
-			runs: [
-				{
-					attrs: ["dim"],
-					text: verticalBandDivider(
-						Math.max(0, renderer.terminalHeight - FIXED_BAND_ROWS),
-						junctionRows
-					),
-					token: "muted",
-				},
-			],
-		});
+		feedPane.width = "auto";
+		feedPane.flexGrow = 1;
 	};
 	const renderStatus = (): void => {
 		if (done) {
 			return;
 		}
-		const focused = focusedTarget();
 		status.fg = resolveThemeToken(
-			focused === undefined ? idleStatusToken : "muted"
+			idleStatusContent === "" ? "muted" : idleStatusToken
 		);
-		if (focused === MAP_FOCUS) {
+		if (idleStatusContent !== "") {
+			status.content = idleStatusContent;
+			return;
+		}
+		if (focusedPane === "map") {
 			status.content =
-				"map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text mode · Esc returns";
+				"map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text mode";
 			return;
 		}
 		status.content =
-			focused === undefined
-				? idleStatusContent
-				: `panel: ${focused.id} — Esc to return`;
+			focusedPane === "sidebar" && activePanel !== undefined
+				? `panel: ${activePanel.id}`
+				: "";
 	};
 	/** Redraws the region from the folded map and the local cursor. The whole
 	 * surface is one cell grid, so this is the only place map pixels are set. */
@@ -461,13 +506,22 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			return;
 		}
 		const map = fold.map();
-		if (map === null) {
-			mapRegion.visible = false;
-			mapRegionRows = 0;
+		applyPaneLayout();
+		if (map === null || layout === "no-map") {
 			lastMapName = null;
 			selectedTokenId = null;
-			renderFrame();
+			if (focusedPane === "map") {
+				focusedPane = initialPaneFocus(layout, false);
+				feedPane.focus();
+				renderStatus();
+			}
+			renderPaneTitles();
 			return;
+		}
+		if (!focusInteracted && replaying && layout === "map-focused") {
+			focusedPane = initialPaneFocus(layout, true);
+			mapPane.focus();
+			renderStatus();
 		}
 		if (map.name !== lastMapName) {
 			lastMapName = map.name;
@@ -476,23 +530,18 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 		const size = mapRegionSize(
 			map,
-			// The map gets the live main-band remainder after the feed's
-			// non-negotiable one-line floor, rather than the text tier's old
-			// fixed 16-row cap. Pixel mode rounds this to whole 4×3 tiles.
-			tableMapRegionAvailable({
-				height: renderer.terminalHeight,
-				width: renderer.terminalWidth,
-			}),
+			tableMapRegionAvailable(
+				{
+					height: renderer.terminalHeight,
+					width: renderer.terminalWidth,
+				},
+				layout
+			),
 			mapMode
 		);
 		mapSurface.width = size.width;
 		mapSurface.height = size.height;
-		// The title and status lines ride above and below the grid; naming the
-		// region's height keeps the feed from being laid out over it.
-		mapRegionRows = size.height + 2;
-		mapRegion.height = mapRegionRows;
-		mapRegion.visible = true;
-		renderFrame();
+		renderPaneTitles();
 		mapStatus.content = styledLine(
 			mapStatusLine({
 				cursor: mapFocused() ? cursor : null,
@@ -559,10 +608,9 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			options.session.actor,
 			fold.sameActor
 		);
-		const focusedPanel = focusedTarget();
 		const panelLines = panels.flatMap((panel) =>
 			panel
-				.render(panelInput(panel === focusedPanel))
+				.render(panelInput(focusedPane === "sidebar" && panel === activePanel))
 				.map((line) => line.runs.map((run) => run.text).join(""))
 		);
 		sidebarText.content = [
@@ -570,6 +618,45 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			...(seats === "" || panelLines.length === 0 ? [] : [""]),
 			...panelLines,
 		].join("\n");
+	};
+	const focusPane = (requested: TablePane, interacted = true): void => {
+		const hasMap = mapIsPresent();
+		const next =
+			requested === "map" && !hasMap
+				? initialPaneFocus(layout, false)
+				: requested;
+		const previous = focusedPane;
+		focusedPane = next;
+		focusInteracted ||= interacted;
+		if (next === "message") {
+			input.focus();
+		} else {
+			(({ feed: feedPane, map: mapPane, sidebar: sidebarPane }) as const)[
+				next
+			].focus();
+		}
+		renderPaneTitles();
+		renderStatus();
+		renderMap();
+		if (previous === "sidebar" || next === "sidebar") {
+			renderSidebar();
+		}
+	};
+	feedPane.onMouseDown = (event) => {
+		event.preventDefault();
+		focusPane("feed");
+	};
+	mapPane.onMouseDown = (event) => {
+		event.preventDefault();
+		focusPane("map");
+	};
+	sidebarPane.onMouseDown = (event) => {
+		event.preventDefault();
+		focusPane("sidebar");
+	};
+	messagePane.onMouseDown = (event) => {
+		event.preventDefault();
+		focusPane("message");
 	};
 	const showNotice = (message: string): void => {
 		idleStatusToken = "muted";
@@ -598,11 +685,8 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	const moveCursorTo = (cell: MapCursor): void => {
 		cursor = cell;
 		if (!mapFocused()) {
-			const index = focusTargets().indexOf(MAP_FOCUS);
-			if (index !== -1) {
-				focusedPanelIndex = index;
-				input.blur();
-			}
+			focusPane("map");
+			return;
 		}
 		renderStatus();
 		renderMap();
@@ -653,18 +737,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	input.on(InputRenderableEvents.ENTER, (value: unknown) => {
 		void submitInput(value);
 	});
-	const focusInput = (): void => {
-		const previousPanelIndex = focusedPanelIndex;
-		focusedPanelIndex = -1;
-		input.focus();
-		renderStatus();
-		renderMap();
-		rerenderOnPanelFocusTransition(
-			previousPanelIndex,
-			focusedPanelIndex,
-			renderSidebar
-		);
-	};
+	const focusInput = (): void => focusPane("message");
 	/** Applies one map action. Every branch is reachable by keyboard alone. */
 	const applyMapAction = (state: MapInteraction, key: PanelKey): void => {
 		const action = mapKeyAction(state, key);
@@ -692,45 +765,33 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		if (key.name === "tab") {
 			key.preventDefault();
 			key.stopPropagation();
-			const previousPanelIndex = focusedPanelIndex;
-			focusedPanelIndex = nextPanelFocus(
-				focusedPanelIndex,
-				focusTargets().length
-			);
-			if (focusedPanelIndex === -1) {
-				input.focus();
-			} else {
-				input.blur();
-			}
-			renderStatus();
-			renderMap();
-			rerenderOnPanelFocusTransition(
-				previousPanelIndex,
-				focusedPanelIndex,
-				renderSidebar
-			);
+			focusPane(nextPaneFocus(focusedPane, mapIsPresent(), key.shift));
 			return;
 		}
-		if (focusedPanelIndex === -1) {
+		if (focusedPane === "message") {
 			return;
 		}
-		key.preventDefault();
-		key.stopPropagation();
-		const focused = focusedTarget();
-		if (focused === MAP_FOCUS) {
+		if (focusedPane === "map") {
+			key.preventDefault();
+			key.stopPropagation();
 			const state = interaction();
 			if (state !== null) {
 				applyMapAction(state, adaptPanelKey(key));
 			}
 			return;
 		}
+		if (focusedPane !== "sidebar") {
+			return;
+		}
+		key.preventDefault();
+		key.stopPropagation();
 		if (key.name === "escape") {
 			focusInput();
 			return;
 		}
 		if (
-			focused !== undefined &&
-			forwardPanelKey(adaptPanelKey(key), focused, panelInput(true))
+			activePanel !== undefined &&
+			forwardPanelKey(adaptPanelKey(key), activePanel, panelInput(true))
 		) {
 			renderSidebar();
 		}
@@ -752,7 +813,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	feedText.content = feedContent(lines);
 	renderSidebar();
 	renderMap();
-	input.focus();
+	focusPane(initialPaneFocus(layout, mapIsPresent()), false);
 
 	const iterator = (replay?.stream ?? options.store.stream(1))[
 		Symbol.asyncIterator
@@ -778,20 +839,21 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	void (async () => {
 		const batchInitialReplay = replay !== undefined;
 		const replayThroughSeq = replay?.throughSeq;
-		let replaying = true;
 		let pending: Promise<IteratorResult<Envelope>> | null = null;
 		const finishReplay = (): void => {
 			if (!replaying) {
 				return;
 			}
-			replaying = false;
 			const warning = fold.endReplay();
 			if (warning !== null) {
 				lines.push(warning);
 			}
 			// Initial replay is one projection update, not one redraw per Envelope.
 			// The latter made join CPU grow quadratically with history length.
+			// `replaying` flips only after this render so a map that arrived in a
+			// batched replay tail still receives layout-derived initial focus.
 			renderFold();
+			replaying = false;
 		};
 		if (replayThroughSeq === 0) {
 			finishReplay();
