@@ -2,7 +2,7 @@
 
 exports[`80x24, without Map, focus marker off 1`] = `
 "snapshot table · fake                                                           
-┌─feed────────────────────────────────────────────┐ ┌─sidebar──────────────────┐
+┌─feed [−]────────────────────────────────────────┐ ┌─sidebar [−]──────────────┐
 │the room is quiet                               █│ │                          │
 │waiting for the next move                       █│ │                          │
 │                                                █│ │                          │
@@ -30,7 +30,7 @@ feed  [tab] pane
 
 exports[`80x24, without Map, focus marker on 1`] = `
 "snapshot table · fake                                                           
-┌─> feed──────────────────────────────────────────┐ ┌─sidebar──────────────────┐
+┌─> feed [−]──────────────────────────────────────┐ ┌─sidebar [−]──────────────┐
 │the room is quiet                               █│ │                          │
 │waiting for the next move                       █│ │                          │
 │                                                █│ │                          │
@@ -58,7 +58,7 @@ feed  [tab] pane
 
 exports[`80x24, with Map, focus marker off 1`] = `
 "snapshot table · fake                                                           
-┌─feed───────────────────┐ ┌─map · snapshot hall──┐ ┌─sidebar──────────────────┐
+┌─feed [−]───────────────┐ ┌─map · snapshot hall──┐ ┌─sidebar [−]──────────────┐
 │the room is quiet       │ │𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠  │ │                          │
 │waiting for the next    │ │𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐  │ │                          │
 │move                    │ │ ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫  │ │                          │
@@ -86,7 +86,7 @@ map  [tab] pane
 
 exports[`80x24, with Map, focus marker on 1`] = `
 "snapshot table · fake                                                           
-┌─feed───────────────────┐ ┌─> map · snapshot ha…─┐ ┌─sidebar──────────────────┐
+┌─feed [−]───────────────┐ ┌─> map · snapshot ha…─┐ ┌─sidebar [−]──────────────┐
 │the room is quiet       │ │𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠  │ │                          │
 │waiting for the next    │ │𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐  │ │                          │
 │move                    │ │ ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫  │ │                          │
@@ -114,7 +114,7 @@ map  [tab] pane
 
 exports[`120x40, without Map, focus marker off 1`] = `
 "snapshot table · fake                                                                                                   
-┌─feed────────────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar──────────────────┐
+┌─feed [−]────────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar [−]──────────────┐
 │the room is quiet                                                                       █│ │                          │
 │waiting for the next move                                                               █│ │                          │
 │                                                                                        █│ │                          │
@@ -158,7 +158,7 @@ feed  [tab] pane
 
 exports[`120x40, without Map, focus marker on 1`] = `
 "snapshot table · fake                                                                                                   
-┌─> feed──────────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar──────────────────┐
+┌─> feed [−]──────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar [−]──────────────┐
 │the room is quiet                                                                       █│ │                          │
 │waiting for the next move                                                               █│ │                          │
 │                                                                                        █│ │                          │
@@ -202,7 +202,7 @@ feed  [tab] pane
 
 exports[`120x40, with Map, focus marker off 1`] = `
 "snapshot table · fake                                                                                                   
-┌─feed───────────────────┐ ┌─map · snapshot hall──────────────────────────────────────────┐ ┌─sidebar──────────────────┐
+┌─feed [−]───────────────┐ ┌─map · snapshot hall──────────────────────────────────────────┐ ┌─sidebar [−]──────────────┐
 │the room is quiet       │ │𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠                                      │ │                          │
 │waiting for the next    │ │𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐                                      │ │                          │
 │move                    │ │ ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫                                      │ │                          │
@@ -246,7 +246,7 @@ map  [tab] pane
 
 exports[`120x40, with Map, focus marker on 1`] = `
 "snapshot table · fake                                                                                                   
-┌─feed───────────────────┐ ┌─> map · snapshot hall────────────────────────────────────────┐ ┌─sidebar──────────────────┐
+┌─feed [−]───────────────┐ ┌─> map · snapshot hall────────────────────────────────────────┐ ┌─sidebar [−]──────────────┐
 │the room is quiet       │ │𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠                                      │ │                          │
 │waiting for the next    │ │𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐                                      │ │                          │
 │move                    │ │ ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫                                      │ │                          │
@@ -290,7 +290,7 @@ map  [tab] pane
 
 exports[`160x30-wide, without Map, focus marker off 1`] = `
 "snapshot table · fake                                                                                                                                           
-┌─feed────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar──────────────────┐
+┌─feed [−]────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar [−]──────────────┐
 │the room is quiet                                                                                                               █│ │                          │
 │waiting for the next move                                                                                                       █│ │                          │
 │                                                                                                                                █│ │                          │
@@ -324,7 +324,7 @@ feed  [tab] pane
 
 exports[`160x30-wide, without Map, focus marker on 1`] = `
 "snapshot table · fake                                                                                                                                           
-┌─> feed──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar──────────────────┐
+┌─> feed [−]──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar [−]──────────────┐
 │the room is quiet                                                                                                               █│ │                          │
 │waiting for the next move                                                                                                       █│ │                          │
 │                                                                                                                                █│ │                          │
@@ -358,7 +358,7 @@ feed  [tab] pane
 
 exports[`160x30-wide, with Map, focus marker off 1`] = `
 "snapshot table · fake                                                                                                                                           
-┌─feed───────────────────┐ ┌─map · snapshot hall──────────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar──────────────────┐
+┌─feed [−]───────────────┐ ┌─map · snapshot hall──────────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar [−]──────────────┐
 │the room is quiet       │ │𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠                                                                              │ │                          │
 │waiting for the next    │ │𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐                                                                              │ │                          │
 │move                    │ │ ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫                                                                              │ │                          │
@@ -392,7 +392,7 @@ map  [tab] pane
 
 exports[`160x30-wide, with Map, focus marker on 1`] = `
 "snapshot table · fake                                                                                                                                           
-┌─feed───────────────────┐ ┌─> map · snapshot hall────────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar──────────────────┐
+┌─feed [−]───────────────┐ ┌─> map · snapshot hall────────────────────────────────────────────────────────────────────────────────┐ ┌─sidebar [−]──────────────┐
 │the room is quiet       │ │𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠𜺠𜷣▙𜺠                                                                              │ │                          │
 │waiting for the next    │ │𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐𜴡𜵜𜶫▐                                                                              │ │                          │
 │move                    │ │ ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫 ▐𜶘𜺫                                                                              │ │                          │

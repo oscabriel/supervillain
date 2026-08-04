@@ -24,7 +24,11 @@ import type {
 
 import { readTableCheckpoint } from "./checkpoint.js";
 import { createTableFold } from "./fold.js";
-import type { TableLayout, TableOptions } from "./index.js";
+import type {
+	TableLayout,
+	TableOptions,
+	TablePreferenceChange,
+} from "./index.js";
 import { parseInput } from "./input.js";
 import type { ParsedInput } from "./input.js";
 import { mapCommandFor, mapKeyAction } from "./map-interaction.js";
@@ -37,18 +41,26 @@ import {
 import type { MapRenderMode } from "./map-region.js";
 import { mapStatusLine } from "./map.js";
 import type { MapCursor } from "./map.js";
+import {
+	FEED_FOCUSED_FEED_RATIO,
+	formatFeedRail,
+	formatSidebarRail,
+	MAIN_PANE_GUTTERS,
+	MAP_FOCUSED_FEED_WIDTH,
+	MAP_STATUS_ROWS,
+	MESSAGE_PANE_ROWS,
+	MINIMUM_FEED_PANE_WIDTH,
+	MINIMUM_MAP_PANE_WIDTH,
+	PANE_HORIZONTAL_BORDER_CELLS,
+	PANE_TITLE_END_CELLS,
+	RAIL_WIDTH,
+	resolveTableFit,
+	SIDEBAR_WIDTH,
+} from "./rails.js";
+import type { TableFit } from "./rails.js";
 import { resolveTextAttributes, resolveThemeToken } from "./theme.js";
 
-const SIDEBAR_WIDTH = 28;
-const MAP_FOCUSED_FEED_WIDTH = 26;
-const MINIMUM_FEED_PANE_WIDTH = 12;
-const MINIMUM_MAP_PANE_WIDTH = 18;
-const FEED_FOCUSED_FEED_RATIO = 0.42;
-const MAIN_PANE_GUTTERS = 2;
-const PANE_HORIZONTAL_BORDER_CELLS = 2;
-const MESSAGE_PANE_ROWS = 3;
-const MAP_STATUS_ROWS = 1;
-const PANE_TITLE_END_CELLS = 4;
+const COLLAPSE_MARK = "[−]";
 const TITLE_GRAPHEMES = new Intl.Segmenter(undefined, {
 	granularity: "grapheme",
 });
@@ -57,6 +69,34 @@ const displayWidth = (
 		readonly Bun: { readonly stringWidth: (text: string) => number };
 	}
 ).Bun.stringWidth;
+
+const explicitRailPreferences = (
+	options: TableOptions
+): { readonly feedRail: boolean; readonly sidebarRail: boolean } => ({
+	feedRail: options.viewOptions?.feedRail ?? false,
+	sidebarRail: options.viewOptions?.sidebarRail ?? false,
+});
+
+const titleMarkWasClicked = (
+	pane: BoxRenderable,
+	event: { readonly x: number; readonly y: number }
+): boolean => {
+	const title = pane.title ?? "";
+	const markIndex = title.indexOf(COLLAPSE_MARK);
+	if (markIndex === -1 || event.y !== pane.y) {
+		return false;
+	}
+	const start = pane.x + 2 + displayWidth(title.slice(0, markIndex));
+	return event.x >= start && event.x < start + displayWidth(COLLAPSE_MARK);
+};
+
+const railMarkWasClicked = (
+	pane: BoxRenderable,
+	event: { readonly x: number; readonly y: number }
+): boolean =>
+	event.y === pane.y + 1 &&
+	event.x >= pane.x + 1 &&
+	event.x < pane.x + RAIL_WIDTH - 1;
 
 /** Clips a Pane title to a cell budget, grapheme- and wide-cell-aware, so a
  * player-named map never breaks the frame. Exported for direct test coverage. */
@@ -111,7 +151,11 @@ export const nextPaneFocus = (
 	return order[nextIndex] ?? "feed";
 };
 
-const feedPaneWidth = (layout: TableLayout, terminalWidth: number): number => {
+const feedPaneWidth = (
+	layout: TableLayout,
+	terminalWidth: number,
+	sidebarWidth = SIDEBAR_WIDTH
+): number => {
 	const preferred =
 		layout === "feed-focused"
 			? Math.max(
@@ -120,25 +164,33 @@ const feedPaneWidth = (layout: TableLayout, terminalWidth: number): number => {
 				)
 			: MAP_FOCUSED_FEED_WIDTH;
 	const fit =
-		terminalWidth - SIDEBAR_WIDTH - MAIN_PANE_GUTTERS - MINIMUM_MAP_PANE_WIDTH;
+		terminalWidth - sidebarWidth - MAIN_PANE_GUTTERS - MINIMUM_MAP_PANE_WIDTH;
 	return Math.max(MINIMUM_FEED_PANE_WIDTH, Math.min(preferred, fit));
 };
 
 /** The map grid's terminal-cell budget inside its Pane frame. */
 export const tableMapRegionAvailable = (
 	terminal: { readonly width: number; readonly height: number },
-	layout: TableLayout = "map-focused"
-): { readonly width: number; readonly height: number } => ({
-	height: mapViewportCellRows(terminal.height),
-	width: Math.max(
-		1,
-		terminal.width -
-			SIDEBAR_WIDTH -
-			feedPaneWidth(layout, terminal.width) -
-			MAIN_PANE_GUTTERS -
-			PANE_HORIZONTAL_BORDER_CELLS
-	),
-});
+	layout: TableLayout = "map-focused",
+	explicit: { readonly feedRail?: boolean; readonly sidebarRail?: boolean } = {}
+): { readonly width: number; readonly height: number } => {
+	const fit = resolveTableFit(terminal, layout, explicit);
+	const sidebarWidth = fit.sidebarRail ? RAIL_WIDTH : SIDEBAR_WIDTH;
+	const feedWidth = fit.feedRail
+		? RAIL_WIDTH
+		: feedPaneWidth(layout, terminal.width, sidebarWidth);
+	return {
+		height: mapViewportCellRows(terminal.height),
+		width: Math.max(
+			1,
+			terminal.width -
+				sidebarWidth -
+				feedWidth -
+				MAIN_PANE_GUTTERS -
+				PANE_HORIZONTAL_BORDER_CELLS
+		),
+	};
+};
 
 /** The map commands the typed line can produce — the rest are chat and dice. */
 type MapParsedInput = Extract<
@@ -362,6 +414,15 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	const panels = options.entry.view.createPanels();
 	const layout = options.viewOptions?.layout ?? "map-focused";
 	const focusMarker = options.viewOptions?.focusMarker ?? false;
+	const initialRails = explicitRailPreferences(options);
+	let explicitFeedRail = initialRails.feedRail;
+	let explicitSidebarRail = initialRails.sidebarRail;
+	let fit: TableFit = resolveTableFit(
+		{ height: renderer.terminalHeight, width: renderer.terminalWidth },
+		layout,
+		{ feedRail: explicitFeedRail, sidebarRail: explicitSidebarRail }
+	);
+	let feedRailActivity = 0;
 	const paneFrame = {
 		borderColor: resolveThemeToken("muted"),
 		borderStyle: "single" as const,
@@ -409,6 +470,13 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	});
 	feed.add(feedText);
 	feedPane.add(feed);
+	const feedRailSummary = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("primary"),
+		visible: false,
+		width: "100%",
+	});
+	feedPane.add(feedRailSummary);
 	// The battle map is core chrome's own Pane — not a layout Slot. Slots place
 	// module Panels, so a game can never claim this core surface (ADR-0006).
 	const mapPane = new BoxRenderable(renderer, {
@@ -459,6 +527,13 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	sidebarPane.add(sidebarSeats);
 	sidebarPane.add(sidebarTabs);
 	sidebarPane.add(sidebarPanel);
+	const sidebarRailSummary = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("primary"),
+		visible: false,
+		width: "100%",
+	});
+	sidebarPane.add(sidebarRailSummary);
 	const status = new TextRenderable(renderer, {
 		content: "",
 		fg: resolveThemeToken("muted"),
@@ -496,6 +571,15 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	root.add(status);
 	root.add(messagePane);
 	root.add(keybindBar);
+	const tooSmallSurface = new TextRenderable(renderer, {
+		content:
+			"terminal too small\n\nincrease the terminal size to show feed, sidebar, message, status, and keys.",
+		fg: resolveThemeToken("primary"),
+		height: "100%",
+		visible: false,
+		width: "100%",
+	});
+	root.add(tooSmallSurface);
 	renderer.root.add(root);
 
 	let focusedPane: TablePane = initialPaneFocus(layout, false);
@@ -535,15 +619,23 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	const paneTitle = (pane: TablePane, label: string): string =>
 		focusMarker && focusedPane === pane ? `> ${label}` : label;
 	const renderPaneTitles = (): void => {
-		feedPane.title = paneTitle("feed", "feed");
-		sidebarPane.title = paneTitle("sidebar", "sidebar");
+		feedPane.title = fit.feedRail
+			? ""
+			: paneTitle("feed", `feed ${COLLAPSE_MARK}`);
+		sidebarPane.title = fit.sidebarRail
+			? ""
+			: paneTitle("sidebar", `sidebar ${COLLAPSE_MARK}`);
 		messagePane.title = paneTitle("message", messageTask?.title ?? "message");
 		const map = fold.map();
 		const mapLabel = map === null ? "map" : `map · ${map.name}`;
+		const sidebarWidth = fit.sidebarRail ? RAIL_WIDTH : SIDEBAR_WIDTH;
+		const currentFeedWidth = fit.feedRail
+			? RAIL_WIDTH
+			: feedPaneWidth(layout, renderer.terminalWidth, sidebarWidth);
 		const mapTitleWidth =
 			renderer.terminalWidth -
-			feedPaneWidth(layout, renderer.terminalWidth) -
-			SIDEBAR_WIDTH -
+			currentFeedWidth -
+			sidebarWidth -
 			MAIN_PANE_GUTTERS -
 			PANE_TITLE_END_CELLS;
 		mapPane.title = clipPaneTitle(
@@ -552,14 +644,53 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		);
 		keybindBar.content = `${focusedPane}  [tab] pane`;
 	};
+	const recomputeFit = (): void => {
+		const previousFeedRail = fit.feedRail;
+		fit = resolveTableFit(
+			{ height: renderer.terminalHeight, width: renderer.terminalWidth },
+			layout,
+			{ feedRail: explicitFeedRail, sidebarRail: explicitSidebarRail }
+		);
+		if (previousFeedRail && !fit.feedRail) {
+			feedRailActivity = 0;
+		}
+	};
 	const applyPaneLayout = (): void => {
-		const hasMap = mapIsPresent();
-		mapPane.visible = hasMap;
-		if (hasMap) {
-			feedPane.flexGrow = 0;
-			feedPane.width = feedPaneWidth(layout, renderer.terminalWidth);
+		recomputeFit();
+		const normalSurfaceVisible = !fit.tooSmall;
+		header.visible = normalSurfaceVisible;
+		main.visible = normalSurfaceVisible;
+		status.visible = normalSurfaceVisible;
+		messagePane.visible = normalSurfaceVisible;
+		keybindBar.visible = normalSurfaceVisible;
+		tooSmallSurface.visible = fit.tooSmall;
+		if (fit.tooSmall) {
 			return;
 		}
+		const hasMap = mapIsPresent();
+		mapPane.visible = hasMap;
+		feed.visible = !fit.feedRail;
+		feedRailSummary.visible = fit.feedRail;
+		sidebarSeats.visible = !fit.sidebarRail;
+		sidebarTabs.visible = !fit.sidebarRail && panels.length > 0;
+		sidebarPanel.visible = !fit.sidebarRail;
+		sidebarRailSummary.visible = fit.sidebarRail;
+		sidebarPane.width = fit.sidebarRail ? RAIL_WIDTH : SIDEBAR_WIDTH;
+		if (fit.feedRail) {
+			feedPane.flexGrow = 0;
+			feedPane.width = RAIL_WIDTH;
+			return;
+		}
+		if (hasMap) {
+			feedPane.flexGrow = 0;
+			feedPane.width = feedPaneWidth(
+				layout,
+				renderer.terminalWidth,
+				fit.sidebarRail ? RAIL_WIDTH : SIDEBAR_WIDTH
+			);
+			return;
+		}
+		feedPane.flexShrink = 1;
 		feedPane.width = "auto";
 		feedPane.flexGrow = 1;
 	};
@@ -621,7 +752,8 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 					height: renderer.terminalHeight,
 					width: renderer.terminalWidth,
 				},
-				layout
+				layout,
+				{ feedRail: explicitFeedRail, sidebarRail: explicitSidebarRail }
 			),
 			mapMode
 		);
@@ -728,8 +860,22 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		sidebarPanel.add(renderable);
 		return renderable;
 	};
+	const renderRailSummaries = (): void => {
+		feedRailSummary.content = formatFeedRail(
+			feedRailActivity,
+			Math.max(0, feedPane.height - PANE_HORIZONTAL_BORDER_CELLS)
+		).join("\n");
+		sidebarRailSummary.content = formatSidebarRail(
+			fold.table().seats,
+			Math.max(0, sidebarPane.height - PANE_HORIZONTAL_BORDER_CELLS)
+		).join("\n");
+	};
 	const renderSidebar = (): void => {
 		if (done) {
+			return;
+		}
+		renderRailSummaries();
+		if (fit.sidebarRail) {
 			return;
 		}
 		sidebarSeats.content = formatSeatList(
@@ -779,6 +925,41 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 	};
 	focusSidebar = (): void => focusPane("sidebar");
+	const notifyPreference = (change: TablePreferenceChange): void => {
+		options.onPreferenceChange?.(change);
+	};
+	const toggleRail = (pane: "feed" | "sidebar"): void => {
+		if (fit.tooSmall) {
+			return;
+		}
+		const nextFeedRail = pane === "feed" ? !explicitFeedRail : explicitFeedRail;
+		const nextSidebarRail =
+			pane === "sidebar" ? !explicitSidebarRail : explicitSidebarRail;
+		const nextFit = resolveTableFit(
+			{ height: renderer.terminalHeight, width: renderer.terminalWidth },
+			layout,
+			{ feedRail: nextFeedRail, sidebarRail: nextSidebarRail }
+		);
+		const visiblyChanges =
+			pane === "feed"
+				? nextFit.feedRail !== fit.feedRail
+				: nextFit.sidebarRail !== fit.sidebarRail;
+		if (!visiblyChanges) {
+			return;
+		}
+		if (pane === "feed") {
+			explicitFeedRail = nextFeedRail;
+			notifyPreference({ preference: "feedRail", value: explicitFeedRail });
+		} else {
+			explicitSidebarRail = nextSidebarRail;
+			notifyPreference({
+				preference: "sidebarRail",
+				value: explicitSidebarRail,
+			});
+		}
+		renderMap();
+		renderSidebar();
+	};
 	sidebarTabs.onMouseDown = (event) => {
 		event.preventDefault();
 		event.stopPropagation();
@@ -796,7 +977,14 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	};
 	feedPane.onMouseDown = (event) => {
 		event.preventDefault();
+		event.stopPropagation();
+		const toggles = fit.feedRail
+			? railMarkWasClicked(feedPane, event)
+			: titleMarkWasClicked(feedPane, event);
 		focusPane("feed");
+		if (toggles) {
+			toggleRail("feed");
+		}
 	};
 	mapPane.onMouseDown = (event) => {
 		event.preventDefault();
@@ -804,7 +992,14 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	};
 	sidebarPane.onMouseDown = (event) => {
 		event.preventDefault();
+		event.stopPropagation();
+		const toggles = fit.sidebarRail
+			? railMarkWasClicked(sidebarPane, event)
+			: titleMarkWasClicked(sidebarPane, event);
 		focusPane("sidebar");
+		if (toggles) {
+			toggleRail("sidebar");
+		}
 	};
 	messagePane.onMouseDown = (event) => {
 		event.preventDefault();
@@ -954,6 +1149,12 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			}
 			return;
 		}
+		if (focusedPane === "feed" && key.name === "c") {
+			key.preventDefault();
+			key.stopPropagation();
+			toggleRail("feed");
+			return;
+		}
 		if (focusedPane === "map") {
 			key.preventDefault();
 			key.stopPropagation();
@@ -979,6 +1180,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			return;
 		}
 		if (key.name === "c") {
+			toggleRail("sidebar");
 			return;
 		}
 		const panel = activePanel();
@@ -993,6 +1195,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	const unsubscribeResize = options.session.onResize(({ columns, rows }) => {
 		renderer.resize(columns, rows);
 		renderMap();
+		renderSidebar();
 	});
 	const unsubscribeClose = options.session.onClose(settle);
 	// The hold is the caller's honesty channel: a line to show while the table
@@ -1026,6 +1229,9 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	const showFeed = (line: FeedLine | null): void => {
 		if (line !== null) {
 			lines.push(line);
+			if (fit.feedRail) {
+				feedRailActivity += 1;
+			}
 		}
 		renderFold();
 	};

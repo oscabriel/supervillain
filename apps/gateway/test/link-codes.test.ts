@@ -277,6 +277,7 @@ describe("derived linking facts", () => {
 			"identity_aliases",
 			"identity_keys",
 			"link_codes",
+			"presentation_preferences",
 			"rooms",
 		]);
 	});

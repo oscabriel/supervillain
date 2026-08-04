@@ -95,6 +95,12 @@ const MIGRATIONS: readonly string[] = [
 		former_identity_id TEXT PRIMARY KEY,
 		current_identity_id TEXT NOT NULL REFERENCES identities(id)
 	) STRICT`,
+	`CREATE TABLE presentation_preferences (
+		identity_id TEXT PRIMARY KEY REFERENCES identities(id),
+		focus_marker INTEGER CHECK (focus_marker IN (0, 1)),
+		feed_rail INTEGER CHECK (feed_rail IN (0, 1)),
+		sidebar_rail INTEGER CHECK (sidebar_rail IN (0, 1))
+	) STRICT`,
 ];
 
 /** Both machines are at hand, so a device code lives only as long as it takes
@@ -140,6 +146,14 @@ export interface RoomRegistryOptions {
 
 export type LinkCodeKind = "adoption" | "device";
 
+export interface PresentationPreferences {
+	readonly feedRail?: boolean;
+	readonly focusMarker?: boolean;
+	readonly sidebarRail?: boolean;
+}
+
+export type PresentationPreference = keyof PresentationPreferences;
+
 /**
  * The gateway's store. It is ADR-0013's **local** {@link IdentityDirectory}
  * implementation: `identityOf` and `isRevoked` are synchronous because they are
@@ -176,6 +190,14 @@ export interface GatewayRoomRegistry
 	/** What this Door session's matched key resolves to. Undefined means the
 	 * keyless guest path; no key is silently invented for it (#90). */
 	readonly whoAmI: (key: string | undefined) => WhoAmIResult;
+	readonly presentationPreferences: (
+		identityId: string
+	) => PresentationPreferences;
+	readonly setPresentationPreference: (
+		identityId: string,
+		preference: PresentationPreference,
+		value: boolean
+	) => void;
 	readonly close: () => void;
 }
 
@@ -201,6 +223,12 @@ interface FormerIdentityRow {
 
 interface CountRow {
 	readonly count: number;
+}
+
+interface PresentationPreferencesRow {
+	readonly feed_rail: number | null;
+	readonly focus_marker: number | null;
+	readonly sidebar_rail: number | null;
 }
 
 interface LinkCodeRow {
@@ -302,6 +330,25 @@ export const openRoomRegistry = (
 	const selectIdentityAliases = db.query(
 		`SELECT former_identity_id FROM identity_aliases
 		 WHERE current_identity_id = $identityId ORDER BY former_identity_id`
+	);
+	const selectPresentationPreferences = db.query(
+		`SELECT feed_rail, focus_marker, sidebar_rail
+		 FROM presentation_preferences WHERE identity_id = $identityId`
+	);
+	const setFeedRail = db.query(
+		`INSERT INTO presentation_preferences (identity_id, feed_rail)
+		 VALUES ($identityId, $value)
+		 ON CONFLICT(identity_id) DO UPDATE SET feed_rail = excluded.feed_rail`
+	);
+	const setFocusMarker = db.query(
+		`INSERT INTO presentation_preferences (identity_id, focus_marker)
+		 VALUES ($identityId, $value)
+		 ON CONFLICT(identity_id) DO UPDATE SET focus_marker = excluded.focus_marker`
+	);
+	const setSidebarRail = db.query(
+		`INSERT INTO presentation_preferences (identity_id, sidebar_rail)
+		 VALUES ($identityId, $value)
+		 ON CONFLICT(identity_id) DO UPDATE SET sidebar_rail = excluded.sidebar_rail`
 	);
 	const deleteIdentity = db.query("DELETE FROM identities WHERE id = $id");
 	const upsertRoom = db.query(
@@ -432,6 +479,42 @@ export const openRoomRegistry = (
 	const ownerOf = (name: string): string | undefined => {
 		const row = selectOwner.get({ name }) as OwnerRow | null;
 		return row?.owner_id;
+	};
+
+	const presentationPreferences = (
+		identityId: string
+	): PresentationPreferences => {
+		const row = selectPresentationPreferences.get({
+			identityId,
+		}) as PresentationPreferencesRow | null;
+		return row === null
+			? {}
+			: {
+					...(row.feed_rail === null ? {} : { feedRail: row.feed_rail !== 0 }),
+					...(row.focus_marker === null
+						? {}
+						: { focusMarker: row.focus_marker !== 0 }),
+					...(row.sidebar_rail === null
+						? {}
+						: { sidebarRail: row.sidebar_rail !== 0 }),
+				};
+	};
+
+	const setPresentationPreference = (
+		identityId: string,
+		preference: PresentationPreference,
+		value: boolean
+	): void => {
+		const parameters = { identityId, value: value ? 1 : 0 };
+		if (preference === "feedRail") {
+			setFeedRail.run(parameters);
+			return;
+		}
+		if (preference === "focusMarker") {
+			setFocusMarker.run(parameters);
+			return;
+		}
+		setSidebarRail.run(parameters);
 	};
 
 	const whoAmI = (key: string | undefined): WhoAmIResult => {
@@ -636,6 +719,7 @@ export const openRoomRegistry = (
 			),
 		ownerIdentitiesOf,
 		ownerOf,
+		presentationPreferences,
 		redeemLinkCode: (
 			code: string,
 			key: string
@@ -648,6 +732,7 @@ export const openRoomRegistry = (
 		resolveIdentity,
 		revokeKey: (target: string, byKey: string): Promise<RevocationOutcome> =>
 			Promise.resolve(db.transaction(() => revoke(target, byKey))()),
+		setPresentationPreference,
 		whoAmI,
 	};
 };

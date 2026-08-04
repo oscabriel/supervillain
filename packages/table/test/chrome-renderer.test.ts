@@ -27,7 +27,11 @@ import type {
 import type { Session, TerminalSize } from "@supervillain/session";
 
 import { runChrome } from "../src/chrome.js";
-import type { TableHold, TableViewOptions } from "../src/index.js";
+import type {
+	TableHold,
+	TablePreferenceChange,
+	TableViewOptions,
+} from "../src/index.js";
 import { runLobby } from "../src/lobby.js";
 
 const ACTOR = "actor-key";
@@ -194,11 +198,11 @@ const fakeStore = (): StoreProbe => {
 	};
 };
 
-const chatEnvelope = (text: string): Envelope => ({
+const chatEnvelope = (text: string, seq = 1): Envelope => ({
 	actor: ACTOR,
 	payload: { text },
 	roomId: "room",
-	seq: 1,
+	seq,
 	ts: 0,
 	type: CORE_CHAT_POSTED,
 });
@@ -229,12 +233,14 @@ const mountTable = async (
 	store: RoomStore,
 	hold?: TableHold,
 	viewOptions?: TableViewOptions,
-	tableEntry: ViewEntry<unknown, unknown, unknown> = entry
+	tableEntry: ViewEntry<unknown, unknown, unknown> = entry,
+	onPreferenceChange?: (change: TablePreferenceChange) => void
 ): Promise<{ readonly exited: Promise<void> }> => {
 	const exited = runChrome({
 		entry: tableEntry,
 		gameId: "fake",
 		hold,
+		onPreferenceChange,
 		renderer: setup.renderer,
 		roomLabel: "the table",
 		session: probe.session,
@@ -380,12 +386,8 @@ describe("table renderer injection", () => {
 		expect(wide[11]).toStartWith("feed  [tab] pane");
 
 		probe.resize({ columns: 40, rows: 8 });
-		await setup.waitForFrame((frame) => frame.startsWith("the table · fake"));
-		const narrow = setup.captureCharFrame().split("\n");
-		expect(narrow[0]).toBe("the table · fake".padEnd(40));
-		expect(narrow[1]).toContain("┐ ┌─sidebar");
-		expect(narrow[4]).toStartWith("┌─message");
-		expect(narrow[7]).toStartWith("feed  [tab] pane");
+		await setup.waitForFrame((frame) => frame.startsWith("terminal too small"));
+		expect(setup.captureCharFrame()).toContain("increase the terminal size");
 
 		setup.renderer.destroy();
 		await exited;
@@ -432,6 +434,255 @@ describe("table renderer injection", () => {
 		await exited;
 	});
 
+	test("toggles both Rails with c while preserving the Pane focus ring", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const changes: TablePreferenceChange[] = [];
+		const { exited } = await mountTable(
+			setup,
+			probe,
+			store.store,
+			undefined,
+			{ focusMarker: true },
+			entry,
+			(change) => changes.push(change)
+		);
+
+		await setup.mockInput.typeText("c");
+		await setup.waitForFrame(
+			(frame) => frame.includes("┌───┐") && frame.includes("│[+]│")
+		);
+		expect(setup.captureCharFrame()).toContain("feed  [tab] pane");
+		setup.mockInput.pressTab();
+		await setup.waitForFrame((frame) => frame.includes("sidebar  [tab] pane"));
+		await setup.mockInput.typeText("c");
+		await setup.waitForFrame((frame) =>
+			frame.split("\n")[1]?.includes("┌───┐ ┌───┐")
+		);
+
+		const screenRoot = setup.renderer.root.getChildren().at(0);
+		if (!(screenRoot instanceof BoxRenderable)) {
+			throw new Error("Table root was not mounted.");
+		}
+		const main = screenRoot.getChildren().at(1);
+		if (!(main instanceof BoxRenderable)) {
+			throw new Error("Table main row was not mounted.");
+		}
+		for (const pane of [main.getChildren().at(0), main.getChildren().at(2)]) {
+			if (!(pane instanceof BoxRenderable)) {
+				throw new Error("Rail was not the original focusable Pane.");
+			}
+			expect(pane.focusable).toBe(true);
+		}
+		expect(changes).toEqual([
+			{ preference: "feedRail", value: true },
+			{ preference: "sidebarRail", value: true },
+		]);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("gives title [−] and Rail [+] clicks keyboard parity", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const changes: TablePreferenceChange[] = [];
+		const { exited } = await mountTable(
+			setup,
+			probe,
+			store.store,
+			undefined,
+			undefined,
+			entry,
+			(change) => changes.push(change)
+		);
+		const screenRoot = setup.renderer.root.getChildren().at(0);
+		const main =
+			screenRoot instanceof BoxRenderable
+				? screenRoot.getChildren().at(1)
+				: undefined;
+		const feedPane =
+			main instanceof BoxRenderable ? main.getChildren().at(0) : undefined;
+		const sidebarPane =
+			main instanceof BoxRenderable ? main.getChildren().at(2) : undefined;
+		if (
+			!(feedPane instanceof BoxRenderable) ||
+			!(sidebarPane instanceof BoxRenderable)
+		) {
+			throw new Error("Side Panes were not mounted.");
+		}
+
+		setup.mockMouse.click(feedPane.x + 8, feedPane.y);
+		await setup.waitForFrame((frame) => frame.includes("│[+]│"));
+		setup.mockMouse.click(feedPane.x + 2, feedPane.y + 1);
+		await setup.waitForFrame((frame) => frame.includes("feed [−]"));
+		setup.mockMouse.click(sidebarPane.x + 11, sidebarPane.y);
+		await setup.waitForFrame((frame) => frame.includes("│[+]│"));
+		setup.mockMouse.click(sidebarPane.x + 2, sidebarPane.y + 1);
+		await setup.waitForFrame((frame) => frame.includes("sidebar [−]"));
+		expect(changes).toEqual([
+			{ preference: "feedRail", value: true },
+			{ preference: "feedRail", value: false },
+			{ preference: "sidebarRail", value: true },
+			{ preference: "sidebarRail", value: false },
+		]);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("counts FeedLines received while railed and clears on expansion", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const { exited } = await mountTable(setup, probe, store.store, undefined, {
+			feedRail: true,
+		});
+
+		store.push(chatEnvelope("first", 1));
+		await setup.waitForFrame(
+			(frame) => frame.includes("│ ● │") && frame.includes("│1  │")
+		);
+		store.push(chatEnvelope("second", 2));
+		await setup.waitForFrame((frame) => frame.includes("│2  │"));
+		await setup.mockInput.typeText("c");
+		await setup.waitForFrame((frame) => frame.includes("feed [−]"));
+		await setup.mockInput.typeText("c");
+		await setup.waitForFrame(
+			(frame) => frame.includes("│[+]│") && !frame.includes("│2  │")
+		);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("forces Rails in map-focused order and restores them on grow", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const changes: TablePreferenceChange[] = [];
+		const { exited } = await mountTable(
+			setup,
+			probe,
+			store.store,
+			undefined,
+			undefined,
+			entry,
+			(change) => changes.push(change)
+		);
+		store.push(mapEnvelope());
+		await setup.waitForFrame(
+			(frame) =>
+				frame.includes("feed [−]") &&
+				frame.includes("map · Hall") &&
+				frame.includes("sidebar [−]")
+		);
+
+		probe.resize({ columns: 59, rows: 24 });
+		await setup.waitForFrame(
+			(frame) => frame.includes("│[+]│") && frame.includes("sidebar [−]")
+		);
+		store.push(chatEnvelope("while forced", 2));
+		await setup.waitForFrame((frame) => frame.includes("│1  │"));
+		setup.mockInput.pressTab({ shift: true });
+		await setup.waitForFrame((frame) => frame.includes("feed  [tab] pane"));
+		await setup.mockInput.typeText("c");
+		expect(setup.captureCharFrame()).toContain("│1  │");
+		expect(changes).toEqual([]);
+		probe.resize({ columns: 52, rows: 24 });
+		await setup.waitForFrame((frame) =>
+			frame.split("\n")[1]?.includes("┌───┐")
+		);
+		probe.resize({ columns: 80, rows: 24 });
+		await setup.waitForFrame(
+			(frame) => frame.includes("feed [−]") && frame.includes("sidebar [−]")
+		);
+		probe.resize({ columns: 59, rows: 24 });
+		await setup.waitForFrame(
+			(frame) =>
+				frame.includes("│[+]│") &&
+				frame.includes("sidebar [−]") &&
+				!frame.includes("│1  │")
+		);
+		expect(changes).toEqual([]);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("holds an explicit Rail inert until visible expansion can occur", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const changes: TablePreferenceChange[] = [];
+		const { exited } = await mountTable(
+			setup,
+			probe,
+			store.store,
+			undefined,
+			{ feedRail: true },
+			entry,
+			(change) => changes.push(change)
+		);
+		store.push(mapEnvelope());
+		await setup.waitForFrame((frame) => frame.includes("map · Hall"));
+		probe.resize({ columns: 59, rows: 24 });
+		await setup.waitForFrame((frame) => frame.includes("│[+]│"));
+		store.push(chatEnvelope("unseen", 2));
+		await setup.waitForFrame((frame) => frame.includes("│2  │"));
+		setup.mockInput.pressTab({ shift: true });
+		await setup.waitForFrame((frame) => frame.includes("feed  [tab] pane"));
+
+		await setup.mockInput.typeText("c");
+		expect(setup.captureCharFrame()).toContain("│2  │");
+		expect(changes).toEqual([]);
+		probe.resize({ columns: 80, rows: 24 });
+		await setup.waitForFrame((frame) => frame.includes("│2  │"));
+		await setup.mockInput.typeText("c");
+		await setup.waitForFrame(
+			(frame) => frame.includes("feed [−]") && !frame.includes("│2  │")
+		);
+		expect(changes).toEqual([{ preference: "feedRail", value: false }]);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("shows and recovers from the honest no-map too-small surface", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 17 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const changes: TablePreferenceChange[] = [];
+		const exited = runChrome({
+			entry,
+			gameId: "fake",
+			onPreferenceChange: (change) => changes.push(change),
+			renderer: setup.renderer,
+			roomLabel: "the table",
+			session: probe.session,
+			store: store.store,
+			viewOptions: { layout: "no-map" },
+		});
+		await setup.waitForFrame(
+			(frame) =>
+				frame.includes("terminal too") && frame.includes("increase the")
+		);
+		await setup.mockInput.typeText("c");
+		expect(changes).toEqual([]);
+		await Promise.resolve();
+		expect(probe.resizeListeners()).toBe(1);
+		probe.resize({ columns: 80, rows: 24 });
+		await setup.waitForFrame(
+			(frame) =>
+				frame.includes("the table · fake") && frame.includes("feed [−]")
+		);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
 	test("renders one active Panel and gives tabs, keys, and rows click parity", async () => {
 		const setup = await createTestRenderer({ height: 24, width: 80 });
 		const probe = fakeSession();
@@ -454,7 +705,6 @@ describe("table renderer injection", () => {
 		setup.mockInput.pressTab();
 		await setup.waitForFrame((frame) => frame.includes("┌─> sidebar"));
 		setup.mockInput.pressArrow("down");
-		await setup.mockInput.pressKey("c");
 		expect(actions).toEqual(["first:key:down"]);
 
 		setup.mockInput.pressArrow("right");

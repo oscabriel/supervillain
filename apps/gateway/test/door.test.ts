@@ -265,6 +265,12 @@ describe("the door, live", () => {
 			await waitFor("both seats at the table", () =>
 				[slow, fast].every((visit) => visit.transcript().includes(ROOM_LABEL))
 			);
+			// Feed owns printable `c` now. Put the pressure writer at Sidebar so
+			// each batch can Tab into Message; submission then returns to Sidebar.
+			fast.send("\t");
+			await waitFor("the fast seat's Sidebar focus", () =>
+				fast.transcript().includes("sidebar  [tab] pane")
+			);
 			slow.pause();
 			const slowTranscriptAtPause = slow.transcript().length;
 			let previousBuffered = -1;
@@ -276,6 +282,8 @@ describe("the door, live", () => {
 				const bufferedBefore = previousBuffered;
 				const fastBefore = fast.transcript().length;
 				const marker = `pressure-${currentBatch}-`.repeat(15);
+				fast.send("\t");
+				await sleep(10);
 				fast.send(`${marker}\r`);
 				await waitFor(
 					"a fast-seat submission",
@@ -304,6 +312,8 @@ describe("the door, live", () => {
 			expect(slow.transcript().length).toBe(slowTranscriptAtPause);
 			const fastBefore = fast.transcript().length;
 			const submissionsBefore = submissions.length;
+			fast.send("\t");
+			await sleep(10);
 			fast.send("still-responsive\r");
 			await waitFor(
 				"the fast seat after the slow stall",

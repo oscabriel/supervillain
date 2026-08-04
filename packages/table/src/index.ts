@@ -33,8 +33,15 @@ export type TableLayout = "feed-focused" | "map-focused" | "no-map";
 /** Render-side choices supplied by the surface. Persistence belongs to the
  * gateway preference adapter, not to Table chrome. */
 export interface TableViewOptions {
+	readonly feedRail?: boolean;
 	readonly focusMarker?: boolean;
 	readonly layout?: TableLayout;
+	readonly sidebarRail?: boolean;
+}
+
+export interface TablePreferenceChange {
+	readonly preference: "feedRail" | "focusMarker" | "sidebarRail";
+	readonly value: boolean;
 }
 
 export interface TableOptions {
@@ -51,7 +58,17 @@ export interface TableOptions {
 	readonly hold?: TableHold;
 	/** Resolved presentation choices for this view. */
 	readonly viewOptions?: TableViewOptions;
+	/** Persists explicit preference actions. Fit-forced Rails never call it. */
+	readonly onPreferenceChange?: (change: TablePreferenceChange) => void;
 }
+
+export {
+	formatFeedRail,
+	formatSidebarRail,
+	resolveTableFit,
+	TABLE_DEMOTION_STAGES,
+} from "./rails.js";
+export type { RailPreferences, TableFit } from "./rails.js";
 
 export { createLocalTtyRenderer, createSessionRenderer } from "./renderer.js";
 export type { TableRendererFactory } from "./renderer.js";

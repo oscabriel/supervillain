@@ -24,7 +24,11 @@ import type {
 } from "@supervillain/room-wire";
 import type { TerminalConnection } from "@supervillain/session";
 import { createTableCheckpointProducer, runTable } from "@supervillain/table";
-import type { TableHold } from "@supervillain/table";
+import type {
+	TableHold,
+	TablePreferenceChange,
+	TableViewOptions,
+} from "@supervillain/table";
 import { runLobby } from "@supervillain/table/lobby";
 import type { LobbyNotice, LobbyOutcome } from "@supervillain/table/lobby";
 import { startWsListener } from "@supervillain/transport-ws/server";
@@ -51,7 +55,10 @@ import { startIdentityConduit } from "./identity-conduit.js";
 import { createOfflineMetrics } from "./offline-metrics.js";
 import type { OfflineCounts, OfflineMetrics } from "./offline-metrics.js";
 import { openRoomRegistry } from "./registry.js";
-import type { GatewayRoomRegistry } from "./registry.js";
+import type {
+	GatewayRoomRegistry,
+	PresentationPreferences,
+} from "./registry.js";
 import {
 	createKeyedSessions,
 	doorRefusal,
@@ -280,12 +287,20 @@ const awaitKeypress = (door: DoorIo): Promise<void> =>
 		detach.push(() => door.input.off("data", finish), door.onClose(finish));
 	});
 
+export interface SessionPresentationPreferences {
+	feedRail?: boolean;
+	focusMarker?: boolean;
+	sidebarRail?: boolean;
+}
+
 interface RoomEntryContext {
 	/** The durable half — it answers whether a name is claimed at all. */
 	readonly registry: GatewayRoomRegistry;
 	/** The live half — which Host pipe currently carries a name (ADR-0012). */
 	readonly pipes: HostPipeServer;
 	readonly identity: SessionIdentity;
+	/** Guest-only preferences, retained across room hops in this Door session. */
+	readonly sessionPreferences: SessionPresentationPreferences;
 	/** The one renderer this session draws on, minted and destroyed by
 	 * `serveShell` and borrowed by every lobby and table round (ADR-0016). */
 	readonly renderer: SshRenderer;
@@ -305,6 +320,46 @@ type RoomEntryResult =
 	| { readonly kind: "entered" }
 	| { readonly kind: "notice"; readonly notice: LobbyNotice }
 	| { readonly kind: "failed"; readonly message: string };
+
+export interface TablePreferenceAdapter {
+	readonly onPreferenceChange: (change: TablePreferenceChange) => void;
+	readonly viewOptions: TableViewOptions;
+}
+
+/** Resolves the Door session's presentation seam. Keyed sessions read and
+ * write by resolved identity; Guests share only the mutable session object. */
+export const tablePreferenceAdapter = (options: {
+	readonly actor: string;
+	readonly keyed: boolean;
+	readonly registry: Pick<
+		GatewayRoomRegistry,
+		"presentationPreferences" | "resolveIdentity" | "setPresentationPreference"
+	>;
+	readonly sessionPreferences: SessionPresentationPreferences;
+}): TablePreferenceAdapter => {
+	let identityId: string | undefined;
+	let preferences: PresentationPreferences;
+	if (options.keyed) {
+		identityId = options.registry.resolveIdentity(options.actor);
+		preferences = options.registry.presentationPreferences(identityId);
+	} else {
+		preferences = options.sessionPreferences;
+	}
+	return {
+		onPreferenceChange: (change) => {
+			if (identityId !== undefined) {
+				options.registry.setPresentationPreference(
+					identityId,
+					change.preference,
+					change.value
+				);
+				return;
+			}
+			options.sessionPreferences[change.preference] = change.value;
+		},
+		viewOptions: { ...preferences },
+	};
+};
 
 const runRoomTable = async (
 	connection: TerminalConnection,
@@ -333,6 +388,12 @@ const runRoomTable = async (
 		door.write(guestUpgradeBox("accepted" in minted ? minted.code : undefined));
 		await awaitKeypress(door);
 	}
+	const preferences = tablePreferenceAdapter({
+		actor: assumed.actor,
+		keyed: context.identity.keyed,
+		registry: context.registry,
+		sessionPreferences: context.sessionPreferences,
+	});
 	const claim = await store.submit({
 		actor: assumed.actor,
 		command: { type: "core.claim-seat" },
@@ -347,10 +408,12 @@ const runRoomTable = async (
 		// The session's one renderer, borrowed for this round (ADR-0016) and
 		// drawn on demand: an ambient render loop here is a cost paid once per
 		// seat (ADR-0012, NQ-14).
+		onPreferenceChange: preferences.onPreferenceChange,
 		renderer: context.renderer,
 		roomLabel: info.label,
 		session: sessionForActor(connection, assumed.actor),
 		store,
+		viewOptions: preferences.viewOptions,
 	});
 	return { kind: "entered" };
 };
@@ -638,6 +701,7 @@ const shellRounds = async (
 		pipes: options.rooms.pipes,
 		registry: options.rooms.registry,
 		renderer,
+		sessionPreferences: {},
 	};
 	// A name that resolves to a live table goes straight to the table. The lobby
 	// is where you land when there is nothing to land in — which is also where
