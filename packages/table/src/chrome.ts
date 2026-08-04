@@ -918,7 +918,6 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	input.on(InputRenderableEvents.ENTER, (value: unknown) => {
 		void submitInput(value);
 	});
-	const focusInput = (): void => focusPane("message");
 	/** Applies one map action. Every branch is reachable by keyboard alone. */
 	const applyMapAction = (state: MapInteraction, key: PanelKey): void => {
 		const action = mapKeyAction(state, key);
@@ -929,9 +928,6 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			({ cursor } = action);
 		} else if (action.kind === "select") {
 			selectedTokenId = action.tokenId;
-		} else if (action.kind === "unfocus") {
-			focusInput();
-			return;
 		} else if (action.kind === "notice") {
 			showNotice(action.message);
 		} else if (action.kind === "toggle-render-mode") {

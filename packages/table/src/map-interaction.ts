@@ -24,7 +24,6 @@ export type MapAction =
 	| { readonly kind: "select"; readonly tokenId: string | null }
 	| { readonly kind: "command"; readonly command: CoreCommand }
 	| { readonly kind: "toggle-render-mode" }
-	| { readonly kind: "unfocus" }
 	| { readonly kind: "notice"; readonly message: string };
 
 export interface MapInteraction {
@@ -74,9 +73,12 @@ export const mapKeyAction = (
 	if (moved !== null) {
 		return { cursor: moved, kind: "cursor" };
 	}
+	// Esc only deselects. With nothing held the Map claims no Esc: ADR-0030's
+	// key table grants no Esc→Message row (#126) — Tab and click are the paths
+	// into Message.
 	if (key.name === "escape") {
 		return state.selectedTokenId === null
-			? { kind: "unfocus" }
+			? null
 			: { kind: "select", tokenId: null };
 	}
 	if (SELECT_KEYS.has(key.name)) {

@@ -66,13 +66,13 @@ describe("map keys", () => {
 		});
 	});
 
-	test("Escape drops what is held, then gives the region back", () => {
+	test("Escape drops what is held, and claims nothing when nothing is held", () => {
 		expect(
 			mapKeyAction(state({ selectedTokenId: "token-1" }), { name: "escape" })
 		).toEqual({ kind: "select", tokenId: null });
-		expect(mapKeyAction(state(), { name: "escape" })).toEqual({
-			kind: "unfocus",
-		});
+		// #126: no Esc→Message row exists in ADR-0030's key table; the key falls
+		// through unclaimed.
+		expect(mapKeyAction(state(), { name: "escape" })).toBeNull();
 	});
 
 	test("x removes the token under the cursor", () => {
