@@ -23,14 +23,16 @@ Resolved 2026-07-30, grilling of [#89](https://github.com/oscabriel/supervillain
 
 **The GM deletes the campaign folder.** *Deletion is local, and nothing we hold dies silently.* What dies: the game — the folder is canonical state and no future session of that campaign can run; that is the point of deletion. What survives, explicitly: live capability URLs (copies we hold on the GM's behalf; killing them as a side effect of a local `rm -rf` would violate the header law) and the name registration (it belongs to the identity, not the folder). The corollary out loud: **deleting the folder is not a delete-my-stuff-everywhere act** — publishes are removed by explicit revocation (`publish` revoke exists); vanishing entirely means doing both. A real "forget me entirely" want (GDPR-shaped or grief-shaped) is a new transition needing its own row, not an inference from file deletion.
 
+**An operator takes down a published Artifact.** *Reach dies permanently; ownership does not move.* The Capability URL joins the same forever-dead tombstone set as an owner revoke, the snapshot and OG card are deleted, `publish list` no longer shows it, and every request receives ADR-0022's generic 404. The operator may act without notice; no reliable publisher contact exists. The GM still owns the underlying content and may immediately Publish the same `(type, name)` to mint a fresh URL — takedown is Artifact-specific, not an identity sanction. The right is pinned in [ADR-0029](./0029-publish-authority-automation-consent-and-operator-takedown.md); its operator surface is follow-up work. Any future identity-wide publish suspension or service termination adds a separate row before shipping.
+
 **Identities are linked** *(pre-existing row, incorporated).* Linking two identities merges reach and must never kill a capability URL — ADR-0009's worked example, the row that proved the checklist pays.
 
 ## Consequences
 
-Reach questions now have one home; ADRs and issues answer them by adding or amending rows here. Pricing work inherits two obligations before it can ship (the floor law; the stops-paying row's blanks). Kick/ban, name recycling, and account erasure are named as future transitions that cannot ship rowless.
+Reach questions now have one home; ADRs and issues answer them by adding or amending rows here. Pricing work inherits two obligations before it can ship (the floor law; the stops-paying row's blanks). Kick/ban, name recycling, account erasure, and identity-wide publish suspension or service termination are named as future transitions that cannot ship rowless.
 
 ## Revisit triggers
 
 - Pricing lands — fills the stops-paying row's decided-when-pricing-lands blanks.
 - Stolen-key panic in the wild — upgrades key revocation with immediate session teardown.
-- Any feature touching the named future transitions (kick/ban, name release/expiry/transfer, forget-me-entirely) — adds its row before shipping, per the standing rule.
+- Any feature touching the named future transitions (kick/ban, name release/expiry/transfer, forget-me-entirely, identity-wide publish suspension or service termination) — adds its row before shipping, per the standing rule.

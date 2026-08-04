@@ -18,7 +18,7 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Campaign folder**: A folder of plain, hand-editable files on the GM's disk — the JSONL event log plus sidecar character files. The canonical durable data; portability is moving the folder. _Avoid_: save file, database, workspace
 
-**Agent surface**: The property that the campaign folder's plain files are directly operable by any coding agent the user points at them — by construction, not by feature. Agents edit under the GM's hand-edit contract (between sessions, validated by `content`/core validators); the log is read-only to everything but the host; replay never reads files, so agent edits can't corrupt history. Never paywalled — paid AI means features we operate. _Avoid_: AI integration, agent API (there is no separate API — the file is the API)
+**Agent surface**: The property that the campaign folder's plain files are directly operable by any coding agent the user points at them — by construction, not by feature. Agents edit under the GM's hand-edit contract (between sessions, validated by `content`/core validators); the log is read-only to everything but the host; replay never reads files, so agent edits can't corrupt history. Agent authorization belongs to the user's harness — supervillain has no propose-versus-run list or human-versus-agent permission boundary. Never paywalled — paid AI means features we operate. _Avoid_: AI integration, agent API (there is no separate API — the file is the API)
 
 **Guest**: A keyless player identity. Guest progress is adopted on upgrade by appending a linking event — historical attribution stays immutable while progress becomes reachable. _Avoid_: anonymous user, temp account
 
@@ -109,6 +109,10 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 **Publish**: Snapshot push: `supervillain publish` copies an artifact's data out of the campaign folder to the web backend, minting a capability URL. Re-publish updates; revoke deletes. _Avoid_: share, upload, sync
 
 **Artifact**: A publishable snapshot of campaign data — character sheets, session logs, and battle maps (terrain-only) at launch. Keyed by (owner identity, type, name); its capability URL is stable across re-publishes and dies permanently on revoke. _Avoid_: document, export, page
+
+**Publisher warranty**: The GM's affirmation, made by publishing, that they own the content or hold every permission and consent needed to publish it, including content concerning or contributed by other people. It is responsibility assigned to the publisher, not a player-consent mechanism. _Avoid_: consent flag, platform approval
+
+**Operator takedown**: The service operator's discretionary, permanent removal of a published Artifact without changing who owns its content. It kills that Capability URL like an owner revoke but does not prevent a fresh Publish. _Avoid_: suspension, moderation hold, operator revoke
 
 **Snapshot document**: The self-describing, core-owned, integer-versioned payload `supervillain publish` pushes — semantic sections/fields (sheets), FeedLine-style entries (logs), legend + grid (maps) — built by the CLI from its own game packages so web artifact pages import zero game code. The backend renders every version it ever accepted. _Avoid_: export format, render output, JSON blob
 
