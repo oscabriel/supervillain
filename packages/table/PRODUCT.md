@@ -19,7 +19,7 @@ Deadpan, honest, competent. The voice is dry understatement ("no accounts, no do
 ## Anti-references
 
 - **Neon hacker-terminal aesthetic** — green-on-black matrix rain, glitch effects, CRT scanline cosplay. The saturated AI reflex for "terminal app."
-- **Enterprise dashboard chrome** — status bars dense with widgets, borders around everything, tab bars mimicking a web IDE.
+- **Enterprise dashboard density** — nested frames, passive facts boxed as widgets, status bars crowded with indicators, and tab strips that mimic a web IDE. The Table's one light frame per focusable Pane is navigation, not permission to box every datum.
 - **Roll20 / Foundry translated to text** — cramming a browser VTT's panel count into 80×24.
 - **The current Nethack-bare state as an endpoint** — unstyled text dumps are the starting point, not the register.
 - **Camp villain theming** — skulls, lairs, evil-laugh copy. The name is deadpan, not a costume.

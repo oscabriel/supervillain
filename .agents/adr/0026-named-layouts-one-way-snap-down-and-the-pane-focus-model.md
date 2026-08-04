@@ -5,6 +5,8 @@ date: 2026-07-30
 
 # Named layouts: three presets, one-way snap-down, identity-keyed persistence, and the pane focus model
 
+> **Amended 2026-08-04 by [ADR-0030](./0030-closed-pane-frames-tab-traversal-side-rails-and-contextual-key-help.md):** the three presets, explicit-choice persistence, size-derived fit, and one-way named-layout snap-down stand. The original main geometry, direct pane-letter focus model, and “Feed and Seat list are never hidden” guarantees are replaced by closed Feed–Map–Sidebar panes, Tab traversal, independently collapsible informative Rails, and the complete key table below.
+
 Resolved 2026-07-30, grilling of [#97](https://github.com/oscabriel/supervillain/issues/97). `packages/table/DESIGN.md` § Layout proposed the table's screen-real-estate answer — named layouts, not resizable panes — and the definition said nothing about layout presets as a player-facing surface. This ADR pins the preset set, the auto-select/resize rule, persistence, the key mechanism (which forced the table's focus model onto the record), and where the demotion ladder lives.
 
 **Decision: three presets — `map-focused`, `feed-focused`, `no-map` — ratified as proposed.** All three use the same regions in the same relative positions; only sizes change, and nothing moves when cycling. Three is deliberate: the set covers the actual modes of a session (combat / conversation / no encounter — and `no-map` is the common case pre-map-load and in non-combat play), and a one-key cycle stays usable at three. The names describe what they do and need no teaching.
@@ -34,4 +36,8 @@ The gateway prefs table gains a layout row (identity-keyed, guests amnesiac — 
 - A fourth preset earning existence (the one-key cycle degrades past three — would force reconsidering direct selection).
 - Players demonstrably fighting the no-auto-upgrade rule after a snap-down (telemetry-free product, so this arrives as playtest feedback, not numbers).
 - The opt-in input line failing playtest — if players' first instinct is to type and their words vanish into hotkeys, the default-focus decision reopens (#84's affordances are the first line of defense).
-- Anything wanting to hide the feed or seat list — reopens here, by design.
+- Anything wanting to hide the Feed Rail or Sidebar Rail entirely — reopens ADR-0030's replacement guarantee.
+
+## Amendment: the complete core key table from #84
+
+ADR-0030 resolves the literal assignment this ADR deferred. There are **no pane-focus letters**: click focuses directly, `Tab` traverses `feed → map → sidebar → message`, and `Shift+Tab` reverses it. Outside Message, `v` is the sole globally reserved bare letter and cycles `map-focused → feed-focused → no-map`; `?` opens contextual key help. Inside Message, both are ordinary text. Feed and Sidebar use pane-local `c` for Rail state; Sidebar chrome owns Left/Right for module tabs. Map keeps local `h`/`j`/`k`/`l`, `t`, and `x`; Feed keeps local `j`/`k`. Game Panels retain contextual letters except that they may not claim top-level `v`. The full modal and Draw Steel table is normative in ADR-0030.

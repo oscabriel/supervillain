@@ -84,9 +84,13 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 ## Rendering
 
-**Panel**: A one-way-data-flow view component placed by a core layout slot: receives a read-only `S` snapshot plus `TableView`, emits only `dispatch(command)`. _Avoid_: widget, window, component (unqualified)
+**Pane**: A focusable region of Table chrome. The stable set is Feed, Map (when present), Sidebar, and Message (the opt-in input line); a game Panel lives inside Sidebar and never becomes a Pane. _Avoid_: panel, slot, window
 
-**Slot**: The core layout's placement vocabulary for panels; v0 needs only a sidebar slot. _Avoid_: seat (reserved), region, pane
+**Rail**: The collapsed-but-still-present state of the Feed or Sidebar Pane, retaining compact activity or presence and a way back to the open Pane. A Rail is not hidden. _Avoid_: hidden pane, minimized window
+
+**Panel**: A one-way-data-flow view component placed by a core layout slot: receives a read-only `S` snapshot plus `TableView`, emits only `dispatch(command)`. _Avoid_: pane, widget, window, component (unqualified)
+
+**Slot**: The core layout's placement vocabulary for panels; v0 needs only a sidebar slot. _Avoid_: seat (reserved), pane
 
 **FeedLine**: The semantic value `renderEvent` returns for the shared feed: text runs tagged with theme tokens, never ANSI. _Avoid_: log line, message, output
 
