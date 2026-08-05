@@ -4,6 +4,7 @@ import {
 	CliRenderEvents,
 	InputRenderable,
 	InputRenderableEvents,
+	RGBA,
 	ScrollBoxRenderable,
 	StyledText,
 	TextRenderable,
@@ -31,6 +32,8 @@ import type {
 } from "./index.js";
 import { parseInput } from "./input.js";
 import type { ParsedInput } from "./input.js";
+import { deriveKeybindBar, deriveKeySheet, formatBinding } from "./keymap.js";
+import type { KeybindBar, TablePane } from "./keymap.js";
 import { mapCommandFor, mapKeyAction } from "./map-interaction.js";
 import type { MapInteraction } from "./map-interaction.js";
 import {
@@ -114,8 +117,7 @@ export const clipPaneTitle = (title: string, width: number): string => {
 	return `${clipped}…`;
 };
 
-/** The stable Table Pane vocabulary and traversal order from ADR-0030. */
-export type TablePane = "feed" | "map" | "message" | "sidebar";
+export type { TablePane } from "./keymap.js";
 
 /** A contextual text task currently borrowing the Message Pane. */
 type ActiveMessageTask = MessageTask<unknown> & {
@@ -128,6 +130,11 @@ const TABLE_PANE_ORDER: readonly TablePane[] = [
 	"map",
 	"sidebar",
 	"message",
+];
+const TABLE_LAYOUT_ORDER: readonly TableLayout[] = [
+	"map-focused",
+	"feed-focused",
+	"no-map",
 ];
 
 export const paneFocusOrder = (hasMap: boolean): readonly TablePane[] =>
@@ -228,6 +235,11 @@ const notYetWired = (): void => {
 	// Deliberately nothing: replaced during runChrome setup.
 };
 
+const consumeKey = (key: KeyEvent): void => {
+	key.preventDefault();
+	key.stopPropagation();
+};
+
 /** A FeedLine's one crossing into OpenTUI: token → indexed color, named
  * attributes → packed bitmask. A plain run stays attribute-free. */
 export const styledLine = (line: FeedLine): StyledText =>
@@ -278,7 +290,26 @@ export const forwardPanelKey = <S, C>(
 	key: PanelKey,
 	panel: GamePanel<S, C>,
 	input: GamePanelInput<S, C>
-): boolean => panel.onKey?.(key, input) ?? false;
+): boolean => key.name !== "v" && (panel.onKey?.(key, input) ?? false);
+
+/** Indexed-token keybar realization. Disabled permanent actions are retained
+ * as DIM chunks while Message owns printable text. */
+export const styledKeybindBar = (bar: KeybindBar): StyledText => {
+	const chunks: TextChunk[] = [
+		{ __isChunk: true, fg: resolveThemeToken("muted"), text: `${bar.pane}  ` },
+	];
+	for (const [index, binding] of bar.entries.entries()) {
+		chunks.push({
+			__isChunk: true,
+			...(binding.disabled
+				? { attributes: resolveTextAttributes(["dim"] as const) }
+				: {}),
+			fg: resolveThemeToken("muted"),
+			text: `${index === 0 ? "" : "  "}${formatBinding(binding)}`,
+		});
+	}
+	return new StyledText(chunks);
+};
 
 interface PanelTab {
 	readonly id: string;
@@ -364,10 +395,21 @@ export const initialFeedLines = (
 	notices: readonly FeedLine[] | undefined
 ): FeedLine[] => [...(notices ?? [])];
 
-const feedContent = (lines: readonly FeedLine[]): StyledText => {
+const feedContent = (
+	lines: readonly FeedLine[],
+	dimmed = false
+): StyledText => {
 	const chunks: TextChunk[] = [];
 	for (const [index, line] of lines.entries()) {
-		chunks.push(...styledLine(line).chunks);
+		const styled = styledLine(line);
+		chunks.push(
+			...(dimmed
+				? styled.chunks.map((chunk) => ({
+						...chunk,
+						fg: resolveThemeToken("muted"),
+					}))
+				: styled.chunks)
+		);
 		if (index < lines.length - 1) {
 			chunks.push({ __isChunk: true, text: "\n" });
 		}
@@ -412,8 +454,8 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		...(checkpoint?.feed ?? []),
 	];
 	const panels = options.entry.view.createPanels();
-	const layout = options.viewOptions?.layout ?? "map-focused";
-	const focusMarker = options.viewOptions?.focusMarker ?? false;
+	let layout = options.viewOptions?.layout ?? "map-focused";
+	let focusMarker = options.viewOptions?.focusMarker ?? false;
 	const initialRails = explicitRailPreferences(options);
 	let explicitFeedRail = initialRails.feedRail;
 	let explicitSidebarRail = initialRails.sidebarRail;
@@ -580,9 +622,50 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		width: "100%",
 	});
 	root.add(tooSmallSurface);
+	const keySheetInputLayer = new BoxRenderable(renderer, {
+		bottom: 0,
+		left: 0,
+		position: "absolute",
+		right: 0,
+		top: 0,
+		visible: false,
+		zIndex: 99,
+	});
+	keySheetInputLayer.onMouseDown = (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+	};
+	root.add(keySheetInputLayer);
+	const keySheet = new BoxRenderable(renderer, {
+		backgroundColor: RGBA.defaultBackground(),
+		borderColor: resolveThemeToken("accent"),
+		borderStyle: "single",
+		bottom: 2,
+		flexDirection: "column",
+		left: 2,
+		position: "absolute",
+		right: 2,
+		title: "keys",
+		titleColor: resolveThemeToken("accent"),
+		top: 2,
+		visible: false,
+		zIndex: 100,
+	});
+	const keySheetText = new TextRenderable(renderer, {
+		content: "",
+		fg: resolveThemeToken("muted"),
+		width: "100%",
+	});
+	keySheet.add(keySheetText);
+	keySheet.onMouseDown = (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+	};
+	root.add(keySheet);
 	renderer.root.add(root);
 
 	let focusedPane: TablePane = initialPaneFocus(layout, false);
+	let keySheetOpen = false;
 	let messageOrigin: TablePane = focusedPane;
 	let messageTask: ActiveMessageTask | null = null;
 	let focusInteracted = false;
@@ -642,7 +725,13 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			paneTitle("map", mapLabel),
 			Math.max(1, mapTitleWidth)
 		);
-		keybindBar.content = `${focusedPane}  [tab] pane`;
+		keybindBar.content = styledKeybindBar(
+			deriveKeybindBar(
+				focusedPane,
+				focusedPane === "message",
+				renderer.terminalWidth
+			)
+		);
 	};
 	const recomputeFit = (): void => {
 		const previousFeedRail = fit.feedRail;
@@ -699,7 +788,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			return;
 		}
 		status.fg = resolveThemeToken(
-			idleStatusContent === "" ? "muted" : idleStatusToken
+			keySheetOpen || idleStatusContent === "" ? "muted" : idleStatusToken
 		);
 		if (idleStatusContent !== "") {
 			status.content = idleStatusContent;
@@ -770,6 +859,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		);
 		mapSurface.update({
 			cursor: mapFocused() ? cursor : null,
+			dimmed: keySheetOpen,
 			map,
 			mode: mapMode,
 			ownSeatId: ownSeatId(),
@@ -874,6 +964,12 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		if (done) {
 			return;
 		}
+		const tableToken = keySheetOpen ? "muted" : "primary";
+		sidebarSeats.fg = resolveThemeToken(tableToken);
+		sidebarRailSummary.fg = resolveThemeToken(tableToken);
+		for (const row of panelRows) {
+			row.fg = resolveThemeToken(tableToken);
+		}
 		renderRailSummaries();
 		if (fit.sidebarRail) {
 			return;
@@ -898,6 +994,30 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 	};
 	repaintSidebar = renderSidebar;
+	const setUnderlyingDimmed = (dimmed: boolean): void => {
+		const frameColor = resolveThemeToken(dimmed ? "muted" : "accent");
+		for (const pane of [feedPane, mapPane, sidebarPane, messagePane]) {
+			pane.focusedBorderColor = frameColor;
+		}
+		const contentToken = resolveThemeToken(dimmed ? "muted" : "primary");
+		feedRailSummary.fg = contentToken;
+		mapStatus.fg = contentToken;
+		input.textColor = contentToken;
+		input.focusedTextColor = contentToken;
+		feedText.content = feedContent(lines, dimmed);
+		renderStatus();
+		renderSidebar();
+		renderMap();
+	};
+	const setKeySheetOpen = (open: boolean): void => {
+		keySheetOpen = open;
+		keySheetInputLayer.visible = open;
+		keySheet.visible = open;
+		if (open) {
+			keySheetText.content = deriveKeySheet(focusedPane);
+		}
+		setUnderlyingDimmed(open);
+	};
 	const focusPane = (requested: TablePane, interacted = true): void => {
 		const hasMap = mapIsPresent();
 		const next =
@@ -1113,11 +1233,16 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	input.on(InputRenderableEvents.ENTER, (value: unknown) => {
 		void submitInput(value);
 	});
-	/** Applies one map action. Every branch is reachable by keyboard alone. */
-	const applyMapAction = (state: MapInteraction, key: PanelKey): void => {
+	const toggleMapMode = (): void => {
+		mapMode = mapMode === "pixel" ? "text" : "pixel";
+		renderMap();
+	};
+	/** Applies one map action. Every branch is reachable by keyboard alone;
+	 * false means the Map did not claim the key (notably inert Esc, #126). */
+	const applyMapAction = (state: MapInteraction, key: PanelKey): boolean => {
 		const action = mapKeyAction(state, key);
 		if (action === null) {
-			return;
+			return false;
 		}
 		if (action.kind === "cursor") {
 			({ cursor } = action);
@@ -1126,50 +1251,101 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		} else if (action.kind === "notice") {
 			showNotice(action.message);
 		} else if (action.kind === "toggle-render-mode") {
-			mapMode = mapMode === "pixel" ? "text" : "pixel";
+			toggleMapMode();
 		} else {
 			selectedTokenId = null;
 			void dispatchCore(action.command).then(renderMap, renderMap);
 		}
 		renderMap();
+		return true;
 	};
+	const cycleLayout = (): void => {
+		const current = TABLE_LAYOUT_ORDER.indexOf(layout);
+		layout =
+			TABLE_LAYOUT_ORDER[(current + 1) % TABLE_LAYOUT_ORDER.length] ??
+			"map-focused";
+		renderMap();
+		renderSidebar();
+	};
+	const handleFeedKey = (key: KeyEvent): boolean => {
+		if (key.name === "c") {
+			toggleRail("feed");
+			return true;
+		}
+		if (key.name === "up" || key.name === "k") {
+			feed.scrollBy(-1);
+			return true;
+		}
+		if (key.name === "down" || key.name === "j") {
+			feed.scrollBy(1);
+			return true;
+		}
+		if (key.name === "pageup" || key.name === "pagedown") {
+			feed.scrollBy(key.name === "pageup" ? -1 : 1, "viewport");
+			return true;
+		}
+		if (key.name === "home" || key.name === "end") {
+			feed.scrollTo(key.name === "home" ? 0 : Number.MAX_SAFE_INTEGER);
+			return true;
+		}
+		return false;
+	};
+	// oxlint-disable-next-line eslint/complexity -- branches directly implement ADR-0030's complete layered key grammar.
 	const onKeypress = (key: KeyEvent): void => {
+		if (keySheetOpen) {
+			consumeKey(key);
+			if (key.name === "?" || key.name === "escape") {
+				setKeySheetOpen(false);
+			} else if (key.name === "f") {
+				focusMarker = !focusMarker;
+				notifyPreference({ preference: "focusMarker", value: focusMarker });
+				renderPaneTitles();
+			} else if (key.name === "t") {
+				toggleMapMode();
+			}
+			return;
+		}
 		if (key.name === "tab") {
-			key.preventDefault();
-			key.stopPropagation();
+			consumeKey(key);
 			focusPane(nextPaneFocus(focusedPane, mapIsPresent(), key.shift));
 			return;
 		}
 		if (focusedPane === "message") {
 			if (key.name === "escape") {
-				key.preventDefault();
-				key.stopPropagation();
+				consumeKey(key);
 				const taskOrigin = finishMessageTask();
 				returnFromMessage(taskOrigin ?? messageOrigin);
 			}
 			return;
 		}
-		if (focusedPane === "feed" && key.name === "c") {
-			key.preventDefault();
-			key.stopPropagation();
-			toggleRail("feed");
+		if (key.name === "?" && !key.ctrl && !key.meta) {
+			consumeKey(key);
+			setKeySheetOpen(true);
+			return;
+		}
+		if (key.name === "v" && !key.ctrl && !key.meta && !key.shift) {
+			consumeKey(key);
+			cycleLayout();
+			return;
+		}
+		if (focusedPane === "feed") {
+			if (handleFeedKey(key)) {
+				consumeKey(key);
+			}
 			return;
 		}
 		if (focusedPane === "map") {
-			key.preventDefault();
-			key.stopPropagation();
 			const state = interaction();
-			if (state !== null) {
-				applyMapAction(state, adaptPanelKey(key));
+			if (state !== null && applyMapAction(state, adaptPanelKey(key))) {
+				consumeKey(key);
 			}
 			return;
 		}
 		if (focusedPane !== "sidebar") {
 			return;
 		}
-		key.preventDefault();
-		key.stopPropagation();
 		if (key.name === "left" || key.name === "right") {
+			consumeKey(key);
 			activePanelIndex = nextPanelIndex(
 				activePanelIndex,
 				panels.length,
@@ -1180,6 +1356,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			return;
 		}
 		if (key.name === "c") {
+			consumeKey(key);
 			toggleRail("sidebar");
 			return;
 		}
@@ -1188,6 +1365,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 			panel !== undefined &&
 			forwardPanelKey(adaptPanelKey(key), panel, panelInput(true))
 		) {
+			consumeKey(key);
 			renderSidebar();
 		}
 	};
@@ -1206,7 +1384,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		renderStatus();
 	});
 	options.hold?.until.then(settle, settle);
-	feedText.content = feedContent(lines);
+	feedText.content = feedContent(lines, keySheetOpen);
 	renderSidebar();
 	renderMap();
 	focusPane(initialPaneFocus(layout, mapIsPresent()), false);
@@ -1221,7 +1399,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		if (done || renderer.isDestroyed) {
 			return;
 		}
-		feedText.content = feedContent(lines);
+		feedText.content = feedContent(lines, keySheetOpen);
 		feed.scrollTo({ x: 0, y: Number.MAX_SAFE_INTEGER });
 		renderSidebar();
 		renderMap();

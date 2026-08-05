@@ -434,6 +434,44 @@ describe("table renderer injection", () => {
 		await exited;
 	});
 
+	test("renders the inset key sheet and lets its top layer consume all input", async () => {
+		const setup = await createTestRenderer({ height: 24, width: 80 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const actions: string[] = [];
+		const changes: TablePreferenceChange[] = [];
+		const { exited } = await mountTable(
+			setup,
+			probe,
+			store.store,
+			undefined,
+			undefined,
+			tabbedEntry(actions),
+			(change) => changes.push(change)
+		);
+
+		await setup.mockInput.typeText("?");
+		await setup.waitForFrame(
+			(frame) => frame.includes("keys") && frame.includes("key sheet")
+		);
+		await setup.mockInput.typeText("cv");
+		setup.mockInput.pressTab();
+		await setup.mockInput.typeText("f");
+		await setup.waitForFrame((frame) => frame.includes("┌─keys"));
+		expect(actions).toEqual([]);
+		expect(changes).toEqual([{ preference: "focusMarker", value: true }]);
+		expect(setup.captureCharFrame()).toContain("feed [−]");
+
+		setup.mockInput.pressEscape();
+		await sleep(40);
+		await setup.waitForFrame(
+			(frame) => frame.includes("┌─> feed") && !frame.includes("┌─keys")
+		);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
 	test("toggles both Rails with c while preserving the Pane focus ring", async () => {
 		const setup = await createTestRenderer({ height: 24, width: 80 });
 		const probe = fakeSession();
@@ -704,6 +742,8 @@ describe("table renderer injection", () => {
 
 		setup.mockInput.pressTab();
 		await setup.waitForFrame((frame) => frame.includes("┌─> sidebar"));
+		await setup.mockInput.typeText("v");
+		expect(actions).toEqual([]);
 		setup.mockInput.pressArrow("down");
 		expect(actions).toEqual(["first:key:down"]);
 

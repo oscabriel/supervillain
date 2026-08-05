@@ -24,7 +24,7 @@ exports[`80x24, without Map, focus marker off 1`] = `
 ┌─message──────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                  │
 └──────────────────────────────────────────────────────────────────────────────┘
-feed  [tab] pane                                                                
+feed  [tab] pane  [v] layout  [?] keys  [↑↓/jk] line  [pgup/pgdn] page          
 "
 `;
 
@@ -52,7 +52,7 @@ exports[`80x24, without Map, focus marker on 1`] = `
 ┌─message──────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                  │
 └──────────────────────────────────────────────────────────────────────────────┘
-feed  [tab] pane                                                                
+feed  [tab] pane  [v] layout  [?] keys  [↑↓/jk] line  [pgup/pgdn] page          
 "
 `;
 
@@ -80,7 +80,7 @@ map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text
 ┌─message──────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                  │
 └──────────────────────────────────────────────────────────────────────────────┘
-map  [tab] pane                                                                 
+map  [tab] pane  [v] layout  [?] keys                                           
 "
 `;
 
@@ -108,7 +108,7 @@ map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text
 ┌─message──────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                  │
 └──────────────────────────────────────────────────────────────────────────────┘
-map  [tab] pane                                                                 
+map  [tab] pane  [v] layout  [?] keys                                           
 "
 `;
 
@@ -152,7 +152,7 @@ exports[`120x40, without Map, focus marker off 1`] = `
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                          │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-feed  [tab] pane                                                                                                        
+feed  [tab] pane  [v] layout  [?] keys  [↑↓/jk] line  [pgup/pgdn] page                                                  
 "
 `;
 
@@ -196,7 +196,7 @@ exports[`120x40, without Map, focus marker on 1`] = `
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                          │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-feed  [tab] pane                                                                                                        
+feed  [tab] pane  [v] layout  [?] keys  [↑↓/jk] line  [pgup/pgdn] page                                                  
 "
 `;
 
@@ -240,7 +240,7 @@ map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                          │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-map  [tab] pane                                                                                                         
+map  [tab] pane  [v] layout  [?] keys  [arrows/hjkl] move  [enter/space] hold / drop                                    
 "
 `;
 
@@ -284,7 +284,7 @@ map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                          │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-map  [tab] pane                                                                                                         
+map  [tab] pane  [v] layout  [?] keys  [arrows/hjkl] move  [enter/space] hold / drop                                    
 "
 `;
 
@@ -318,7 +318,7 @@ exports[`160x30-wide, without Map, focus marker off 1`] = `
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-feed  [tab] pane                                                                                                                                                
+feed  [tab] pane  [v] layout  [?] keys  [↑↓/jk] line  [pgup/pgdn] page                                                                                          
 "
 `;
 
@@ -352,7 +352,7 @@ exports[`160x30-wide, without Map, focus marker on 1`] = `
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-feed  [tab] pane                                                                                                                                                
+feed  [tab] pane  [v] layout  [?] keys  [↑↓/jk] line  [pgup/pgdn] page                                                                                          
 "
 `;
 
@@ -386,7 +386,7 @@ map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-map  [tab] pane                                                                                                                                                 
+map  [tab] pane  [v] layout  [?] keys  [arrows/hjkl] move  [enter/space] hold / drop                                                                            
 "
 `;
 
@@ -420,6 +420,6 @@ map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-map  [tab] pane                                                                                                                                                 
+map  [tab] pane  [v] layout  [?] keys  [arrows/hjkl] move  [enter/space] hold / drop                                                                            
 "
 `;

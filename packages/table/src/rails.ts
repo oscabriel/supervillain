@@ -25,8 +25,8 @@ const NO_MAP_PANE_GUTTERS = 1;
 export const TABLE_DEMOTION_STAGES = [
 	{
 		id: "compact-keybar",
-		implemented: false,
-		note: "#119 owns the keybar 5→3 demotion",
+		implemented: true,
+		note: "derived key hints demote from five entries to the three permanent entries on width fit",
 	},
 	{
 		id: "compact-sidebar-rows",

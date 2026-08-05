@@ -12,6 +12,20 @@ export {
 export type { TableCheckpointPayload } from "./checkpoint.js";
 export { createTableFold } from "./fold.js";
 export type { FoldSkip, TableFold, TableFoldCheckpoint } from "./fold.js";
+export {
+	deriveKeybindBar,
+	deriveKeySheet,
+	formatBinding,
+	keybindBarText,
+	TABLE_KEYBINDINGS,
+} from "./keymap.js";
+export type {
+	KeybindBar,
+	KeybindBarEntry,
+	KeybindingScope,
+	TableKeybinding,
+	TablePane,
+} from "./keymap.js";
 
 /**
  * What holds a table open, and what ends it from outside the terminal. The

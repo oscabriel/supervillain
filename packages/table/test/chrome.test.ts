@@ -9,10 +9,18 @@ import {
 	formatSeatList,
 	forwardPanelKey,
 	initialFeedLines,
+	styledKeybindBar,
 	nextPanelIndex,
 	panelTabAtColumn,
 	styledLine,
 } from "../src/chrome.js";
+import {
+	deriveKeybindBar,
+	deriveKeySheet,
+	formatBinding,
+	keybindBarText,
+	TABLE_KEYBINDINGS,
+} from "../src/keymap.js";
 import {
 	formatFeedRail,
 	formatSidebarRail,
@@ -36,6 +44,80 @@ describe("styledLine", () => {
 	test("a plain run's chunk carries no attributes", () => {
 		const line = styledLine({ runs: [{ text: "quiet", token: "muted" }] });
 		expect(line.chunks[0]?.attributes).toBeUndefined();
+	});
+});
+
+describe("live Table keymap", () => {
+	test("derives both bar and sheet from the complete binding source", () => {
+		const bar = deriveKeybindBar("feed", false, 200);
+		const sheet = deriveKeySheet("feed");
+		expect(bar.entries).toHaveLength(5);
+		for (const entry of bar.entries) {
+			expect(TABLE_KEYBINDINGS).toContainEqual(
+				expect.objectContaining({ keys: entry.keys, label: entry.label })
+			);
+			expect(sheet).toContain(formatBinding(entry));
+		}
+		expect(
+			TABLE_KEYBINDINGS.map(({ keys, scope }) => `${scope}:${keys}`)
+		).toEqual(
+			expect.arrayContaining([
+				"core:v",
+				"core:?",
+				"map:arrows/hjkl",
+				"feed:home/end",
+				"sidebar:←/→",
+			])
+		);
+	});
+
+	test("formats display separately from binding identity", () => {
+		expect(
+			formatBinding({
+				display: " / ",
+				keys: "bound-sheet-pages",
+				label: "other sheets",
+			})
+		).toBe("[ / ] other sheets");
+	});
+
+	test("includes Message Tab traversal without advertising v or ?", () => {
+		const sheet = deriveKeySheet("message");
+		expect(sheet).toContain("[tab] pane · keep draft");
+		expect(sheet).not.toContain("[v] layout");
+		expect(sheet).not.toContain("[?] keys");
+	});
+
+	test("demotes five entries to the three permanent entries on fit", () => {
+		const expanded = deriveKeybindBar("map", false, 200);
+		const compact = deriveKeybindBar("map", false, 50);
+		expect(expanded.entries).toHaveLength(5);
+		expect(expanded.compact).toBe(false);
+		expect(compact.entries).toHaveLength(3);
+		expect(compact.compact).toBe(true);
+		expect(keybindBarText(compact)).toBe(
+			"map  [tab] pane  [v] layout  [?] keys"
+		);
+	});
+
+	test("keeps v and ? visible but DIM-disabled while Message owns text", () => {
+		const bar = deriveKeybindBar("message", true, 200);
+		expect(
+			bar.entries.map(({ disabled, keys }) => ({ disabled, keys }))
+		).toEqual([
+			{ disabled: false, keys: "tab" },
+			{ disabled: true, keys: "v" },
+			{ disabled: true, keys: "?" },
+			{ disabled: false, keys: "enter" },
+			{ disabled: false, keys: "esc" },
+		]);
+		const { chunks } = styledKeybindBar(bar);
+		expect(chunks.find((chunk) => chunk.text.includes("[v]"))?.attributes).toBe(
+			2
+		);
+		expect(chunks.find((chunk) => chunk.text.includes("[?]"))?.attributes).toBe(
+			2
+		);
 	});
 });
 
@@ -194,6 +276,8 @@ describe("table sidebar", () => {
 			sequence: "a",
 		});
 		expect(forwardPanelKey(key, panel, input)).toBe(true);
+		expect(captured).toEqual([{ name: "a", text: "a" }]);
+		expect(forwardPanelKey({ name: "v", text: "v" }, panel, input)).toBe(false);
 		expect(captured).toEqual([{ name: "a", text: "a" }]);
 		expect(
 			adaptPanelKey({

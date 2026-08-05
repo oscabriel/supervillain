@@ -294,7 +294,7 @@ const createSheetPanel = (): GamePanel<DsState, DsCommand> => {
 			return [
 				line({ text: "no character bound", token: "muted" }),
 				...(input.focused
-					? [line({ text: "[/] other sheets", token: "muted" })]
+					? [line({ text: "[ / ] other sheets", token: "muted" })]
 					: []),
 			];
 		}
@@ -350,7 +350,7 @@ const createSheetPanel = (): GamePanel<DsState, DsCommand> => {
 			);
 		}
 		if (input.focused) {
-			lines.push(line({ text: "[/] other sheets", token: "muted" }));
+			lines.push(line({ text: "[ / ] other sheets", token: "muted" }));
 		}
 		return lines;
 	};
@@ -363,9 +363,9 @@ const createSheetPanel = (): GamePanel<DsState, DsCommand> => {
 			return false;
 		}
 		let direction = 0;
-		if (key.name === "]" || key.name === "right") {
+		if (key.name === "]") {
 			direction = 1;
-		} else if (key.name === "[" || key.name === "left") {
+		} else if (key.name === "[") {
 			direction = -1;
 		}
 		if (direction === 0) {

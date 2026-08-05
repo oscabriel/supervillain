@@ -46,6 +46,7 @@ const BLANK_BG = RGBA.defaultBackground();
 const BLANK_GLYPH = " ";
 
 export interface MapRegionState {
+	readonly dimmed?: boolean;
 	readonly mode: MapRenderMode;
 	readonly map: BattleMap;
 	readonly tokens: readonly MapToken[];
@@ -166,8 +167,8 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 					column,
 					row,
 					cell.glyph,
-					resolveThemeToken(cell.fg),
-					resolveThemeToken(cell.bg)
+					resolveThemeToken(state.dimmed === true ? "muted" : cell.fg),
+					state.dimmed === true ? BLANK_BG : resolveThemeToken(cell.bg)
 				);
 			}
 		}

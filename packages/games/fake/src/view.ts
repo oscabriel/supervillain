@@ -8,7 +8,7 @@ export const view: GameView<FakeState, FakeCommand, FakeEvent> = {
 		{
 			id: "fake-visits",
 			onKey(key, input) {
-				if (key.name !== "v") {
+				if (key.name !== "q") {
 					return false;
 				}
 				const seat = input.table.seats.find(
@@ -20,7 +20,7 @@ export const view: GameView<FakeState, FakeCommand, FakeEvent> = {
 				return true;
 			},
 			render({ focused, state }) {
-				const hint = focused ? " · v to visit" : "";
+				const hint = focused ? " · q to visit" : "";
 				return [
 					{
 						runs: [

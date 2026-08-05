@@ -151,10 +151,10 @@ describe("game module seam", () => {
 			{ runs: [{ text: "Visits: 0", token: "primary" }] },
 		]);
 		expect(panel.render({ ...input, focused: true })).toEqual([
-			{ runs: [{ text: "Visits: 0 · v to visit", token: "primary" }] },
+			{ runs: [{ text: "Visits: 0 · q to visit", token: "primary" }] },
 		]);
 		expect(
-			panel.onKey?.({ name: "v", text: "v" }, { ...input, focused: true })
+			panel.onKey?.({ name: "q", text: "q" }, { ...input, focused: true })
 		).toBe(true);
 		expect(dispatched).toEqual([{ seatId: "guest", type: "fake.visit" }]);
 	});

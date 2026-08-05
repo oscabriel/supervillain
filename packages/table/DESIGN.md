@@ -51,7 +51,7 @@ Explicit open/Rail choices are applied first. Keyed choices persist by resolved 
 | `feed-focused` | Sidebar | Feed remains open; if Map misses its floor, snap to `no-map` |
 | `no-map` | Sidebar | Feed remains open; if its readable minimum cannot fit, use the too-small surface |
 
-The ladder is encoded as one ordered table-side engine. Its Sidebar compact stage is named, not yet live: no shipped Panel emits two-line rows; the first such rows must add their real (likely height-based) trigger at this stage rather than invent another fit policy. The keybar stage remains a named no-op owned by #119, and the Map-floor/snap stage remains a named no-op owned by #117.
+The ladder is encoded as one ordered table-side engine. Its Sidebar compact stage is named, not yet live: no shipped Panel emits two-line rows; the first such rows must add their real (likely height-based) trigger at this stage rather than invent another fit policy. The keybar stage derives five entries from the live keymap and drops its two contextual entries when the resulting line does not fit; the Map-floor/snap stage remains a named no-op owned by #117.
 
 Map minima are game knowledge declared by the game `view` entry as width×height in Map cells. Table converts them without taste: pixel tier costs 4×3 terminal cells per Map cell; text tier costs 1×1. Draw Steel's literal dimensions require an ability-corpus justification. Failure never auto-switches tiers: `?` always offers `[t] map tier`, including from `no-map`, and `v` retries a Map layout. `80×24` is a required acceptance shape; other thresholds derive from declared minima and measured content rather than magic breakpoints.
 

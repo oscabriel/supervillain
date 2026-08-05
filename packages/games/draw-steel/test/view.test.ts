@@ -455,7 +455,7 @@ describe("Draw Steel view", () => {
 			"surges 0",
 			"victories 0",
 		]);
-		expect(ownRows.map(text)).not.toContain("[/] other sheets");
+		expect(ownRows.map(text)).not.toContain("[ / ] other sheets");
 
 		const fallbackRows = sheetPanel.render({
 			...ownInput,
@@ -491,7 +491,7 @@ describe("Draw Steel view", () => {
 		expect(text(pagedRows[0] ?? null)).toBe("Rook — Orc Fury · Panther");
 		expect(pagedRows.map(text)).toContain("Driving Pounce · 3 discipline");
 		expect(pagedRows.map(text)).toContain("Leap into the fray.");
-		expect(pagedRows.map(text).at(-1)).toBe("[/] other sheets");
+		expect(pagedRows.map(text).at(-1)).toBe("[ / ] other sheets");
 		expect(
 			sheetPanel.onKey({ name: "left" }, { ...focusedInput, focused: false })
 		).toBe(false);
@@ -526,7 +526,7 @@ describe("Draw Steel view", () => {
 		expect(text(sheetPanel.render(input)[0] ?? null)).toBe(
 			"B — Human Troubadour"
 		);
-		expect(sheetPanel.onKey({ name: "right" }, input)).toBe(true);
+		expect(sheetPanel.onKey({ name: "]", text: "]" }, input)).toBe(true);
 		expect(text(sheetPanel.render(input)[0] ?? null)).toBe(
 			"C — Human Troubadour"
 		);
@@ -557,7 +557,7 @@ describe("Draw Steel view", () => {
 			state: stateWithCharacters(["A", "B", "C"]),
 			table: threeCharacterTable,
 		};
-		expect(sheetPanel.onKey({ name: "right" }, input)).toBe(true);
+		expect(sheetPanel.onKey({ name: "]", text: "]" }, input)).toBe(true);
 
 		const selectedUnbound = {
 			...input,
@@ -613,7 +613,7 @@ describe("Draw Steel view", () => {
 			table: boundTable,
 		};
 
-		expect(firstSheetPanel.onKey({ name: "right" }, input)).toBe(true);
+		expect(firstSheetPanel.onKey({ name: "]", text: "]" }, input)).toBe(true);
 		expect(text(firstSheetPanel.render(input)[0] ?? null)).toBe(
 			"Rook — Orc Fury"
 		);
