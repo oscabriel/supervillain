@@ -288,3 +288,43 @@ describe("openRoomRegistry", () => {
 		await rm(file, { force: true });
 	});
 });
+
+describe("per-identity tables (#127 fold guard)", () => {
+	/**
+	 * `joinIdentity` deletes an identities row, so every table referencing
+	 * identities(id) must state what happens to its rows when an identity
+	 * folds (ADR-0008, amended 2026-08-05). The classified set:
+	 *
+	 * - identity_keys — repointed (the moving key) before the delete
+	 * - identity_aliases — repointed (lineage flattens onto the destination)
+	 * - rooms — guarded (the rooms=0 TANGLED refusal; never reached with rows)
+	 * - presentation_preferences — merged per-field into the destination, then
+	 *   deleted
+	 *
+	 * A new referencing table fails this test until it gains fold handling in
+	 * `joinIdentity` and a classification line here. Foreign-key enforcement
+	 * is ON, so "forgot about joinIdentity" would otherwise surface as a
+	 * production throw — this test moves it to CI.
+	 */
+	test("every table referencing identities(id) is classified for folding", async () => {
+		const file = `${tmpdir()}/supervillain-schema-${randomUUID()}.db`;
+		const registry = openRoomRegistry({ path: file });
+		registry.close();
+		const raw = new Database(file, { strict: true });
+		const tables = raw
+			.query(
+				`SELECT name FROM sqlite_master
+				 WHERE type = 'table' AND sql LIKE '%REFERENCES identities%'
+				 ORDER BY name`
+			)
+			.all() as readonly { name: string }[];
+		raw.close();
+		expect(tables.map((table) => table.name)).toEqual([
+			"identity_aliases",
+			"identity_keys",
+			"presentation_preferences",
+			"rooms",
+		]);
+		await rm(file, { force: true });
+	});
+});

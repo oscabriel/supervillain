@@ -101,6 +101,12 @@ const MIGRATIONS: readonly string[] = [
 		feed_rail INTEGER CHECK (feed_rail IN (0, 1)),
 		sidebar_rail INTEGER CHECK (sidebar_rail IN (0, 1))
 	) STRICT`,
+	// Before #127, `joinIdentity` deleted the folded identity but left its prefs
+	// row behind, referencing a dead identities.id. Purge that litter — prefs are
+	// re-creatable trivia, so deletion beats archaeology through identity_aliases
+	// (ADR-0008, amended 2026-08-05) — so foreign-key enforcement can turn on.
+	`DELETE FROM presentation_preferences
+	 WHERE identity_id NOT IN (SELECT id FROM identities)`,
 ];
 
 /** Both machines are at hand, so a device code lives only as long as it takes
@@ -280,6 +286,12 @@ export const openRoomRegistry = (
 ): GatewayRoomRegistry => {
 	const db = new Database(options.path, { create: true, strict: true });
 	migrate(db, MIGRATIONS);
+	// Enforcement is per-connection and deliberately follows the migrations:
+	// early steps copy/drop/rename tables in ways checks would refuse, and the
+	// orphan-purge step above needs to see the litter before the gate closes.
+	// From here, a write that would orphan a per-identity row throws at the
+	// write site instead of planting a landmine (#127, ADR-0008).
+	db.run("PRAGMA foreign_keys = ON");
 	const clock = options.clock ?? (() => new Date().toISOString());
 	const newIdentityId = options.newIdentityId ?? (() => randomUUID());
 	const newLinkCode = options.newLinkCode ?? randomCode;
@@ -349,6 +361,23 @@ export const openRoomRegistry = (
 		`INSERT INTO presentation_preferences (identity_id, sidebar_rail)
 		 VALUES ($identityId, $value)
 		 ON CONFLICT(identity_id) DO UPDATE SET sidebar_rail = excluded.sidebar_rail`
+	);
+	// The fold merge (#127, ADR-0008 amended 2026-08-05): an explicit choice
+	// beats an unset one, and the destination wins true conflicts — so the
+	// outcome depends on what the person chose, never on which machine minted
+	// the link code. If the destination has no row, the source's values land.
+	const mergePresentationPreferences = db.query(
+		`INSERT INTO presentation_preferences
+		 (identity_id, feed_rail, focus_marker, sidebar_rail)
+		 SELECT $identityId, feed_rail, focus_marker, sidebar_rail
+		 FROM presentation_preferences WHERE identity_id = $formerIdentityId
+		 ON CONFLICT(identity_id) DO UPDATE SET
+		 feed_rail = coalesce(presentation_preferences.feed_rail, excluded.feed_rail),
+		 focus_marker = coalesce(presentation_preferences.focus_marker, excluded.focus_marker),
+		 sidebar_rail = coalesce(presentation_preferences.sidebar_rail, excluded.sidebar_rail)`
+	);
+	const deletePresentationPreferences = db.query(
+		"DELETE FROM presentation_preferences WHERE identity_id = $formerIdentityId"
 	);
 	const deleteIdentity = db.query("DELETE FROM identities WHERE id = $id");
 	const upsertRoom = db.query(
@@ -612,6 +641,12 @@ export const openRoomRegistry = (
 		});
 		insertIdentityAlias.run({ formerIdentityId: current, identityId });
 		repointIdentityKey.run({ identityId, key });
+		// The folded identity's presentation prefs merge rather than orphan
+		// (#127, ADR-0008 amended 2026-08-05): the row must die before its
+		// identity does, or FK enforcement refuses the fold. Presentation rows
+		// only — this is no precedent for merging tangled identities.
+		mergePresentationPreferences.run({ formerIdentityId: current, identityId });
+		deletePresentationPreferences.run({ formerIdentityId: current });
 		deleteIdentity.run({ id: current });
 		return { accepted: true, identityId, linked: anchor };
 	};
