@@ -200,11 +200,14 @@ const waitForSeated = async (seats: readonly Seat[]): Promise<void> => {
 	}
 };
 
-const waitForClosedSeats = async (seats: readonly Seat[]): Promise<void> => {
+const waitForClosedSeats = async (
+	seats: readonly Seat[],
+	timeoutMessage = "Timed out waiting for SSH sessions to close."
+): Promise<void> => {
 	const deadline = performance.now() + CLOSE_TIMEOUT_MS;
 	while (seats.some((seat) => !seat.closed())) {
 		if (performance.now() >= deadline) {
-			throw new Error("Timed out waiting for SSH sessions to close.");
+			throw new Error(timeoutMessage);
 		}
 		await sleep(10);
 	}
@@ -238,10 +241,10 @@ const exercise = async (
 		await sleep(seconds * 1000);
 		return;
 	}
-	for (const seat of seats) {
-		seat.type("\t");
-	}
-	await sleep(250);
+	// ADR-0030: the map-focused layout already gives the Map pane initial
+	// focus, so the arrows below pan it directly. A leading Tab (the pre-#115
+	// gesture) would traverse focus onward to the Sidebar and exercise the
+	// wrong pane.
 	let step = 0;
 	const timer = setInterval(() => {
 		const arrow = ARROWS[step % ARROWS.length] ?? ARROWS[0];
@@ -305,12 +308,21 @@ const runRound = async (input: {
 		const closeStarted = performance.now();
 		for (const seat of seats) {
 			if (input.quit && input.surface === "table") {
-				seat.type("/quit\r");
+				// The honest player gesture per ADR-0030: Tab traverses the pane
+				// ring to Message before typing. Two Tabs reach Message from the
+				// workload's resting focus in every shape this bench runs — Map →
+				// Sidebar → Message with a map, Feed → Sidebar → Message without.
+				seat.type("\t\t/quit\r");
 			} else {
 				seat.close();
 			}
 		}
-		await waitForClosedSeats(seats);
+		await waitForClosedSeats(
+			seats,
+			input.quit && input.surface === "table"
+				? "The /quit control produced no session close within the timeout — the quit line most likely never reached the Message pane (another pane still held focus when the harness typed it; ADR-0030 routes bare keys to the focused pane)."
+				: undefined
+		);
 		await host?.close();
 		host = undefined;
 		const closeMs = performance.now() - closeStarted;
