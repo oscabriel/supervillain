@@ -240,7 +240,17 @@ describe("supervillain join through a live gateway", () => {
 			// The SSH key is the account: the gateway stamps the key it verified.
 		).toBe(playerIdentity.publicKeyHex);
 
-		player.stdin.write("hello through the door\r");
+		// The seat claim is submitted by the gateway BEFORE the table starts
+		// (runTable attaches the key handler after the claim lands), so give the
+		// table a moment to come up — bytes typed before the keypress listener
+		// attaches are dropped, not buffered.
+		await sleep(2000);
+		// ADR-0030: Message is opt-in — bare printables route to the focused
+		// pane (Feed on this mapless table). The honest player gesture is
+		// Shift+Tab (\x1b[Z): the reverse ring reaches Message from Feed in one
+		// step, and a send returns focus to the pane it came from — so every
+		// typed line below is the same idempotent Feed → Message gesture.
+		player.stdin.write("\u001B[Zhello through the door\r");
 		await waitFor("the player's chat envelope", () =>
 			eventsMatching(
 				logFile,
@@ -250,12 +260,13 @@ describe("supervillain join through a live gateway", () => {
 					event.payload.text === "hello through the door"
 			)
 		);
-		gm.stdin.write("/roll 2d6\r");
+		// Same gesture on the GM's table.
+		gm.stdin.write("\u001B[Z/roll 2d6\r");
 		await waitFor("the GM's dice envelope", () =>
 			eventsMatching(logFile, (event) => event.type === "core.dice-rolled")
 		);
-		player.stdin.write("/quit\r");
-		gm.stdin.write("/quit\r");
+		player.stdin.write("\u001B[Z/quit\r");
+		gm.stdin.write("\u001B[Z/quit\r");
 		player.stdin.end();
 		gm.stdin.end();
 		// A clean quit is a clean exit on both sides: the gateway sends an
