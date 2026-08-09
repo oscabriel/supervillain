@@ -115,10 +115,15 @@ describe("supervillain create", () => {
 	test("creates with a generated room name and no gateway", async () => {
 		const scratch = await mkdtemp(path.join(tmpdir(), "supervillain-cli-"));
 		folders.push(scratch);
+		// ADR-0030: Message is opt-in — bare printables route to the focused
+		// pane (Feed on these mapless tables), so every typed line below leads
+		// with Shift+Tab (\x1b[Z), the reverse-ring Feed → Message gesture. A
+		// send returns focus to the pane it came from, so the per-line gesture
+		// is idempotent (#132).
 		const result = await runCli(
 			path.join(scratch, "campaign"),
 			path.join(scratch, "config"),
-			["/quit\r"],
+			["\u001B[Z/quit\r"],
 			[]
 		);
 
@@ -147,7 +152,7 @@ describe("supervillain create", () => {
 		const result = await runCli(
 			path.join(scratch, "campaign"),
 			path.join(scratch, "config"),
-			["/quit\r"],
+			["\u001B[Z/quit\r"],
 			["--gateway", gateway.pairingCode ?? gateway.url]
 		);
 
@@ -202,7 +207,7 @@ describe("supervillain create", () => {
 		});
 		gateways.push(gateway);
 		await waitForOutput("your table is live. summon your players:");
-		process.stdin.write("/quit\r");
+		process.stdin.write("\u001B[Z/quit\r");
 		process.stdin.end();
 		expect(await process.exited).toBe(0);
 		await outputDone;
@@ -249,7 +254,7 @@ describe("supervillain create", () => {
 		const first = await runCli(
 			campaign,
 			config,
-			["hello table\r", "/roll 2d6+1\r", "/quit\r"],
+			["\u001B[Zhello table\r", "\u001B[Z/roll 2d6+1\r", "\u001B[Z/quit\r"],
 			createArgs
 		);
 		expect(first.code).toBe(0);
@@ -296,7 +301,12 @@ describe("supervillain create", () => {
 		);
 		expect(dice.total).toBe(dice.rolls[0] + dice.rolls[1] + 1);
 
-		const resumed = await runCli(campaign, config, ["/quit\r"], createArgs);
+		const resumed = await runCli(
+			campaign,
+			config,
+			["\u001B[Z/quit\r"],
+			createArgs
+		);
 		expect(resumed.code).toBe(0);
 		expect(await readFile(path.join(campaign, "events.jsonl"))).toEqual(bytes);
 	}, 40_000);
