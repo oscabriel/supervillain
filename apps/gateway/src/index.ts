@@ -69,7 +69,12 @@ import type { KeyedSessions } from "./revocation.js";
 import { GATEWAY_ROLE_USAGE, parseGatewayRoleArgs } from "./role.js";
 import { holdRoom } from "./room-hold.js";
 import type { RoomHoldEnd } from "./room-hold.js";
-import { attachDoorConnection, sessionForActor } from "./ssh-session.js";
+import {
+	attachDoorConnection,
+	holdDoorInput,
+	sessionForActor,
+} from "./ssh-session.js";
+import type { DoorInputHold } from "./ssh-session.js";
 import { pipePairingCode, resolveGatewayTls } from "./tls.js";
 import type { GatewayTlsOptions } from "./tls.js";
 
@@ -366,7 +371,8 @@ const runRoomTable = async (
 	door: DoorIo,
 	store: RoomView,
 	context: RoomEntryContext,
-	hold: TableHold
+	hold: TableHold,
+	heldInput: DoorInputHold
 ): Promise<RoomEntryResult> => {
 	const info = await store.info();
 	const entry = gatewayRegistry.get(info.gameId);
@@ -387,6 +393,9 @@ const runRoomTable = async (
 		door.write(CLEAR_SCREEN);
 		door.write(guestUpgradeBox("accepted" in minted ? minted.code : undefined));
 		await awaitKeypress(door);
+		// The box legitimately consumed input (awaitKeypress resumed the stream);
+		// re-engage #130's hold for the stretch to Table readiness.
+		heldInput.hold();
 	}
 	const preferences = tablePreferenceAdapter({
 		actor: assumed.actor,
@@ -405,6 +414,10 @@ const runRoomTable = async (
 		entry,
 		gameId: info.gameId,
 		hold,
+		// #130's internal readiness handoff: the Door holds client bytes by
+		// stream backpressure until the Table's input routes and initial Pane
+		// focus exist; release hands them over in arrival order.
+		onInputReady: heldInput.release,
 		// The session's one renderer, borrowed for this round (ADR-0016) and
 		// drawn on demand: an ambient render loop here is a cost paid once per
 		// seat (ADR-0012, NQ-14).
@@ -492,8 +505,13 @@ const enterRoom = async (
 	context: RoomEntryContext
 ): Promise<RoomEntryResult> => {
 	let attempt = 0;
+	// #130: preservation starts when entry — or re-entry, on a later pass —
+	// begins. After a Lobby selection this runs only once the Lobby consumed
+	// the selecting key, so that key is never replayed.
+	const heldInput = holdDoorInput(door.input);
 	// oxlint-disable-next-line eslint/no-unreachable-loop -- a Host that returns inside the grace window continues this loop onto its new fold.
 	for (;;) {
+		heldInput.hold();
 		const live = context.pipes.live(roomName);
 		if (attempt === 0 && context.registry.isClaimed(roomName)) {
 			// The tripwire's denominator counts attempts at names that exist; a
@@ -505,6 +523,7 @@ const enterRoom = async (
 		// disconnect. The synchronous reservation is the capacity check and the
 		// acquire, so concurrent arrivals cannot all pass one stale count.
 		if (live === undefined) {
+			heldInput.discard();
 			return {
 				kind: "notice",
 				notice: noticeForMissingRoom(roomName, context.registry),
@@ -517,6 +536,7 @@ const enterRoom = async (
 			context.limits
 		);
 		if (arrival.kind !== "admitted") {
+			heldInput.discard();
 			return { kind: "notice", notice: arrival };
 		}
 		let connectionClosed = false;
@@ -563,13 +583,23 @@ const enterRoom = async (
 		let result: RoomEntryResult;
 		try {
 			// oxlint-disable-next-line eslint/no-await-in-loop -- one seat at a time: the next attempt only exists because this one ended.
-			result = await runRoomTable(connection, door, store, context, hold);
+			result = await runRoomTable(
+				connection,
+				door,
+				store,
+				context,
+				hold,
+				heldInput
+			);
 		} finally {
 			hold.stop();
 			// oxlint-disable-next-line eslint/no-await-in-loop -- the view is released before the next one opens.
 			await store.close();
 		}
 		if (result.kind !== "entered") {
+			// Entry ended before the Table was ready (#130): the held input dies
+			// with the attempt — never replayed at the lobby or the closing door.
+			heldInput.discard();
 			return result;
 		}
 		const end = hold.end();

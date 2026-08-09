@@ -9,7 +9,11 @@ import {
 	keyedIdentity,
 	mintGuestActor,
 } from "../src/guest.js";
-import { attachDoorConnection, sessionForActor } from "../src/ssh-session.js";
+import {
+	attachDoorConnection,
+	holdDoorInput,
+	sessionForActor,
+} from "../src/ssh-session.js";
 import type { DoorChannel } from "../src/ssh-session.js";
 
 const CAP = { columns: 300, rows: 100 };
@@ -74,6 +78,27 @@ const fakeChannel = (cols = 120, rows = 40): ChannelProbe => {
 
 const input = (): NodeJS.ReadStream =>
 	new PassThrough() as unknown as NodeJS.ReadStream;
+
+interface HoldProbe {
+	readonly held: ReturnType<typeof holdDoorInput>;
+	readonly seen: string[];
+	readonly stream: PassThrough;
+}
+
+/** A stream with the renderer's posture: one 'data' consumer attached before
+ * any hold exists, exactly like setupTerminal's stdinListener. */
+const holdProbe = (): HoldProbe => {
+	const stream = new PassThrough();
+	const seen: string[] = [];
+	stream.on("data", (chunk: Buffer) => {
+		seen.push(chunk.toString());
+	});
+	return {
+		held: holdDoorInput(stream as unknown as NodeJS.ReadStream),
+		seen,
+		stream,
+	};
+};
 
 describe("attachDoorConnection", () => {
 	test("borrows the library's input and writes straight back to the channel", () => {
@@ -219,6 +244,58 @@ describe("attachDoorConnection", () => {
 		// The channel itself is still the library's to end.
 		connection.output.write("goodbye");
 		expect(probe.written()).toBe("goodbye");
+	});
+});
+
+describe("holdDoorInput", () => {
+	test("holds typed bytes from the consumer and releases them in arrival order", async () => {
+		const probe = holdProbe();
+		probe.held.hold();
+		probe.stream.write("\u001B[Z");
+		probe.stream.write("hello\r");
+		await Bun.sleep(0);
+		// The seat claim may already be on the log here (#130): nothing reaches
+		// the consumer until the Table's routes exist.
+		expect(probe.seen).toEqual([]);
+		probe.held.release();
+		await Bun.sleep(0);
+		expect(probe.seen.join("")).toBe("\u001B[Zhello\r");
+	});
+
+	test("discard drops what the hold caught and hands the stream back flowing", async () => {
+		const probe = holdProbe();
+		probe.held.hold();
+		probe.stream.write("typed at a table that never became ready");
+		await Bun.sleep(0);
+		probe.held.discard();
+		await Bun.sleep(0);
+		// Never delivered late, never replayed at the next screen (#130).
+		expect(probe.seen).toEqual([]);
+		// The drain detached the consumer to keep read() from emitting to it;
+		// the hand-back must leave the same consumer attached and flowing.
+		probe.stream.write("a lobby key");
+		await Bun.sleep(0);
+		expect(probe.seen.join("")).toBe("a lobby key");
+	});
+
+	test("re-engages after an entry interlude legitimately consumed a key", async () => {
+		const probe = holdProbe();
+		probe.held.hold();
+		probe.stream.write("x");
+		// The guest upgrade box's awaitKeypress resumes the stream itself and
+		// takes the dismissing key; that consumption is the box's right.
+		probe.stream.resume();
+		await Bun.sleep(0);
+		expect(probe.seen.join("")).toBe("x");
+		probe.seen.length = 0;
+		// runRoomTable re-engages the hold for the stretch to Table readiness.
+		probe.held.hold();
+		probe.stream.write("for the table");
+		await Bun.sleep(0);
+		expect(probe.seen).toEqual([]);
+		probe.held.release();
+		await Bun.sleep(0);
+		expect(probe.seen.join("")).toBe("for the table");
 	});
 });
 

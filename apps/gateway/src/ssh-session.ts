@@ -115,6 +115,52 @@ export const attachDoorConnection = (
 	};
 };
 
+/** The Door's grip on one Room entry's input (#130). `hold` may re-engage
+ * after an entry interlude (the guest upgrade box) legitimately consumed a
+ * key; `release` and `discard` are the two honest ends of one hold. */
+export interface DoorInputHold {
+	/** (Re-)engages the hold. Idempotent while already held. */
+	readonly hold: () => void;
+	/** The Table's input routes and initial Pane focus exist: the held bytes
+	 * flow to it in arrival order. */
+	readonly release: () => void;
+	/** Room entry ended before the Table was ready: drop what the hold caught,
+	 * then hand the stream back flowing for whatever screen comes next. */
+	readonly discard: () => void;
+}
+
+/**
+ * Holds Door input across one Room entry by stream backpressure (#130).
+ * Pausing the session's stdin makes the library's bridge stop pushing, and a
+ * full stream buffer answers with `channel.pause()` — so the bound on held
+ * input is SSH flow control, never a queue this Door grows. The renderer's
+ * `suspend()`/`resume()` pair is deliberately not used here: its resume path
+ * drains buffered stdin, which is exactly what `release` must preserve.
+ */
+export const holdDoorInput = (input: NodeJS.ReadStream): DoorInputHold => ({
+	discard: () => {
+		// `read()` emits pulled chunks to 'data' listeners, so the drain detaches
+		// them first — the same idiom the renderer's own resume path uses.
+		const listeners = input.rawListeners("data");
+		for (const listener of listeners) {
+			input.off("data", listener as (chunk: unknown) => void);
+		}
+		while (input.read() !== null) {
+			// Dropped: input typed at a Table that never became ready.
+		}
+		for (const listener of listeners) {
+			input.on("data", listener as (chunk: unknown) => void);
+		}
+		input.resume();
+	},
+	hold: () => {
+		input.pause();
+	},
+	release: () => {
+		input.resume();
+	},
+});
+
 /** Binds an actor to the connection, producing the session a table needs. The
  * connection outlives it: a guest hops rooms on one minted actor, and the same
  * terminal is handed back to the lobby afterwards. */

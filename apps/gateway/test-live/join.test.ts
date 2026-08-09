@@ -1,15 +1,35 @@
 /* oxlint-disable promise/avoid-new, eslint/no-await-in-loop, vitest/prefer-importing-vitest-globals -- bounded PTY polling and sequential live actions are the E2E protocol. */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import * as table from "@supervillain/table";
 import { utils } from "ssh2";
 
 import { startGateway } from "../src/index.js";
 import type { RunningGateway } from "../src/index.js";
 
 const ROOM = "iron-keep";
+
+/** #130's controlled Table-start delay. The gateway runs in-process, so this
+ * spec can hold the player's Table at the exact gateway→table boundary the
+ * Door hands input across — seat claim already on the log, no Table input
+ * routes yet. `undefined` passes straight through: only the spec that arms
+ * the gate exercises the interval. */
+let tableStart: PromiseWithResolvers<boolean> | undefined;
+let tableHeld = false;
+const realRunTable = table.runTable;
+mock.module("@supervillain/table", () => ({
+	...table,
+	runTable: async (options: table.TableOptions): Promise<void> => {
+		if (tableStart !== undefined) {
+			tableHeld = true;
+			await tableStart.promise;
+		}
+		return realRunTable(options);
+	},
+}));
 
 const folders: string[] = [];
 const processes: Bun.Subprocess[] = [];
@@ -175,6 +195,11 @@ const openDoor = async (): Promise<LiveDoor> => {
 };
 
 afterEach(async () => {
+	// A failed spec must not leave a Table gated: release it before teardown so
+	// the in-process session can unwind with the door.
+	tableStart?.resolve(true);
+	tableStart = undefined;
+	tableHeld = false;
 	for (const childProcess of processes.splice(0)) {
 		if (childProcess.exitCode === null) {
 			childProcess.kill();
@@ -210,6 +235,10 @@ describe("supervillain join through a live gateway", () => {
 			return attached.has(ROOM) ? ROOM : undefined;
 		});
 
+		// Arm the hold before the join: the player's Table must not start until
+		// this spec has typed into the interval the seat claim opens (#130).
+		const tableGate = Promise.withResolvers<boolean>();
+		tableStart = tableGate;
 		const player = spawnPty(
 			`join ${ROOM} --ssh-port ${sshPort}`,
 			{ SUPERVILLAIN_GATEWAY: gateway.url, XDG_CONFIG_HOME: playerConfig },
@@ -240,17 +269,24 @@ describe("supervillain join through a live gateway", () => {
 			// The SSH key is the account: the gateway stamps the key it verified.
 		).toBe(playerIdentity.publicKeyHex);
 
-		// The seat claim is submitted by the gateway BEFORE the table starts
-		// (runTable attaches the key handler after the claim lands), so give the
-		// table a moment to come up — bytes typed before the keypress listener
-		// attaches are dropped, not buffered.
-		await sleep(2000);
+		// #130: the seat claim on the log was never Table input readiness — the
+		// Door is still holding the Table right now, and the pinned contract says
+		// input typed in this interval is preserved in order, not dropped.
+		await waitFor("the Table held at the Door", () =>
+			Promise.resolve(tableHeld ? true : undefined)
+		);
 		// ADR-0030: Message is opt-in — bare printables route to the focused
 		// pane (Feed on this mapless table). The honest player gesture is
 		// Shift+Tab (\x1b[Z): the reverse ring reaches Message from Feed in one
 		// step, and a send returns focus to the pane it came from — so every
 		// typed line below is the same idempotent Feed → Message gesture.
 		player.stdin.write("\u001B[Zhello through the door\r");
+		// A one-sided margin, not a settle: it only widens the held interval so
+		// the bytes above provably cross PTY → ssh → Door while the Table is
+		// still down, even on a slow runner. Delivery never depends on it — the
+		// gate below, not time, is what starts the Table (#130).
+		await sleep(1000);
+		tableGate.resolve(true);
 		await waitFor("the player's chat envelope", () =>
 			eventsMatching(
 				logFile,

@@ -1388,6 +1388,11 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	renderSidebar();
 	renderMap();
 	focusPane(initialPaneFocus(layout, mapIsPresent()), false);
+	// #130's readiness boundary, honestly placed: every input route above is
+	// attached and the initial Pane focus is chosen, so the Door may now hand
+	// over the input it preserved. An internal handoff — no Log event, no
+	// Door-protocol signal.
+	options.onInputReady?.();
 
 	const iterator = (replay?.stream ?? options.store.stream(1))[
 		Symbol.asyncIterator

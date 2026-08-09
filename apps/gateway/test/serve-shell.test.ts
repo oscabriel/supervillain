@@ -299,6 +299,47 @@ test("a link-delivery failure releases the reserved arrival", async () => {
 	expect(reserved.opens()).toBe(0);
 });
 
+test("input typed while entry is failing is discarded, never replayed at the next screen", async () => {
+	const sessions = createKeyedSessions();
+	const probe = shellProbe(120, 40);
+	const stdin = probe.session.renderer.stdin as unknown as PassThrough;
+	const seen: string[] = [];
+	// The renderer's posture: one 'data' consumer attached before entry begins,
+	// exactly like setupTerminal's stdinListener.
+	stdin.on("data", (chunk: Buffer) => {
+		seen.push(chunk.toString());
+	});
+	const links = Promise.withResolvers<boolean>();
+	const store = {
+		close: () => Promise.resolve(),
+		info: () => Promise.resolve({ gameId: "not-a-game", label: "the-kitchen" }),
+	} as unknown as RoomView;
+	const serving = serveShell(
+		probe.session,
+		withLiveRoom(sessions, {
+			deliverLinks: () => links.promise,
+			reserveStore: () => ({ open: () => store, release: () => {} }),
+		})
+	);
+
+	// Entry is parked on link delivery, so the Door holds the input (#130).
+	await Bun.sleep(0);
+	stdin.write("\u001B[Zghost words\r");
+	await Bun.sleep(0);
+	expect(seen).toEqual([]);
+	links.resolve(true);
+	await serving;
+
+	// Entry failed before the Table was ready: the held bytes died with the
+	// attempt — never delivered late, never replayed at the closing door.
+	expect(seen).toEqual([]);
+	expect(probe.transcript()).toContain("Unknown game 'not-a-game'.");
+	// The hand-back left the same consumer attached and the stream flowing.
+	stdin.write("after the door closed");
+	await Bun.sleep(0);
+	expect(seen.join("")).toBe("after the door closed");
+});
+
 test("a table failure says the collapse message and still rejects", async () => {
 	const sessions = createKeyedSessions();
 	const probe = shellProbe(120, 40);

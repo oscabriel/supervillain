@@ -70,6 +70,11 @@ export interface TableOptions {
 	readonly renderer: CliRenderer;
 	/** An outside signal that may notice at, and close, this table. */
 	readonly hold?: TableHold;
+	/** #130's internal readiness handoff: called once, when this table's input
+	 * routes are installed and the initial focused Pane is selected — the moment
+	 * input the Door preserved may flow. Internal by contract: never a Log
+	 * event, never a public Door-protocol signal. */
+	readonly onInputReady?: () => void;
 	/** Resolved presentation choices for this view. */
 	readonly viewOptions?: TableViewOptions;
 	/** Persists explicit preference actions. Fit-forced Rails never call it. */
