@@ -30,6 +30,11 @@ jobs:
       - run: bun run test:gateway
       - run: bun run test:web
       - run: bun run test:install
+      # The #108 backup drill is real, so it needs the real binary: restic is
+      # apt's (litestream self-provisions, sqlite3 ships with the runner). A
+      # command -v guard was rejected — it would make this check decorative
+      # on the one surface that runs it every push (#133).
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq restic
       - run: sh infra/scripts/validate-local
 
   # The dual Bun/Node lane is the standing claim that the event-sourced core stays
