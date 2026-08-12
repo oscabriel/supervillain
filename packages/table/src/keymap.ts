@@ -1,3 +1,6 @@
+import { RESERVED_PANEL_KEYS } from "@supervillain/core";
+import type { PanelKeyBinding, PanelKeyGroup } from "@supervillain/core";
+
 export type TablePane = "feed" | "map" | "message" | "sidebar";
 
 export type KeybindingScope =
@@ -120,7 +123,6 @@ export const deriveKeybindBar = (
 	};
 };
 
-// Game-module key surfaces await the nomination seam tracked by #128.
 const SHEET_SCOPES: Readonly<Record<TablePane, readonly KeybindingScope[]>> = {
 	feed: ["core", "feed", "key-sheet"],
 	map: ["core", "map", "key-sheet"],
@@ -137,14 +139,54 @@ const SCOPE_LABEL: Readonly<Record<KeybindingScope, string>> = {
 	sidebar: "sidebar chrome",
 };
 
-/** The expanded focused-Pane sheet, grouped but still selected from the same
- * binding records as the bar. */
-export const deriveKeySheet = (pane: TablePane): string =>
-	SHEET_SCOPES[pane]
-		.map((scope) => {
-			const bindings = TABLE_KEYBINDINGS.filter(
-				(binding) => binding.scope === scope
-			).map(formatBinding);
-			return `${SCOPE_LABEL[scope]}\n  ${bindings.join("  ")}`;
-		})
-		.join("\n\n");
+interface PanelKeySurface {
+	readonly id: string;
+	readonly keySurface?: readonly PanelKeyGroup[];
+}
+
+const formatPanelBinding = (binding: PanelKeyBinding): string =>
+	`[${binding.display ?? binding.keys.join("/")}] ${binding.label}`;
+
+const formatPanelKeyGroup = (panelId: string, group: PanelKeyGroup): string => {
+	const bindings: string[] = [];
+	const warnings: string[] = [];
+	for (const binding of group.bindings) {
+		const offendingKeys = binding.keys.filter((key) =>
+			RESERVED_PANEL_KEYS.has(key)
+		);
+		if (offendingKeys.length > 0) {
+			warnings.push(
+				`! panel ${panelId} nominated reserved ${offendingKeys.join("/")}; binding skipped`
+			);
+			continue;
+		}
+		bindings.push(formatPanelBinding(binding));
+	}
+	return [
+		group.title,
+		...(bindings.length === 0 ? [] : [`  ${bindings.join("  ")}`]),
+		...warnings.map((warning) => `  ${warning}`),
+	].join("\n");
+};
+
+/** The expanded focused-Pane sheet. Core/chrome groups come from the binding
+ * source shared with the bar; ADR-0031 appends only the active Sidebar Panel's
+ * strings-only nominations. */
+export const deriveKeySheet = (
+	pane: TablePane,
+	activePanel?: PanelKeySurface
+): string => {
+	const chromeGroups = SHEET_SCOPES[pane].map((scope) => {
+		const bindings = TABLE_KEYBINDINGS.filter(
+			(binding) => binding.scope === scope
+		).map(formatBinding);
+		return `${SCOPE_LABEL[scope]}\n  ${bindings.join("  ")}`;
+	});
+	const panelGroups =
+		pane === "sidebar" && activePanel !== undefined
+			? (activePanel.keySurface ?? []).map((group) =>
+					formatPanelKeyGroup(activePanel.id, group)
+				)
+			: [];
+	return [...chromeGroups, ...panelGroups].join("\n\n");
+};

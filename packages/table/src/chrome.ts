@@ -1014,7 +1014,10 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		keySheetInputLayer.visible = open;
 		keySheet.visible = open;
 		if (open) {
-			keySheetText.content = deriveKeySheet(focusedPane);
+			keySheetText.content = deriveKeySheet(
+				focusedPane,
+				focusedPane === "sidebar" ? activePanel() : undefined
+			);
 		}
 		setUnderlyingDimmed(open);
 	};

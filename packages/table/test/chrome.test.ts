@@ -88,6 +88,54 @@ describe("live Table keymap", () => {
 		expect(sheet).not.toContain("[?] keys");
 	});
 
+	test("appends the active Sidebar Panel's verbatim groups after chrome", () => {
+		const sheet = deriveKeySheet("sidebar", {
+			id: "panel-one",
+			keySurface: [
+				{
+					bindings: [{ display: "↑/↓", keys: ["up", "down"], label: "choose" }],
+					title: "Module Actions",
+				},
+			],
+		});
+		expect(sheet).toContain("Module Actions\n  [↑/↓] choose");
+		expect(sheet.indexOf("Module Actions")).toBeGreaterThan(
+			sheet.indexOf("key sheet")
+		);
+	});
+
+	test("skips a binding containing a reserved key and renders a warning", () => {
+		const sheet = deriveKeySheet("sidebar", {
+			id: "panel-one",
+			keySurface: [
+				{
+					bindings: [
+						{ keys: ["z", "v"], label: "invalid action" },
+						{ keys: ["q"], label: "valid action" },
+					],
+					title: "actions",
+				},
+			],
+		});
+		expect(sheet).not.toContain("[z/v] invalid action");
+		expect(sheet).toContain("[q] valid action");
+		expect(sheet).toContain(
+			"! panel panel-one nominated reserved v; binding skipped"
+		);
+	});
+
+	test("ignores Panel nominations outside the Sidebar sheet", () => {
+		const panel = {
+			id: "panel-one",
+			keySurface: [
+				{ bindings: [{ keys: ["q"], label: "action" }], title: "actions" },
+			],
+		};
+		for (const pane of ["feed", "map", "message"] as const) {
+			expect(deriveKeySheet(pane, panel)).toBe(deriveKeySheet(pane));
+		}
+	});
+
 	test("demotes five entries to the three permanent entries on fit", () => {
 		const expanded = deriveKeybindBar("map", false, 200);
 		const compact = deriveKeybindBar("map", false, 50);

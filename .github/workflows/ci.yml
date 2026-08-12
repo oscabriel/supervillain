@@ -23,6 +23,7 @@ jobs:
       - run: bun run depcruise
       - run: bun run test:conformance
       - run: bun run test:draw-steel
+      - run: bun run test:fake
       - run: bun run test:identity
       - run: bun run test:session
       - run: bun run test:table

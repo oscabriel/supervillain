@@ -342,10 +342,39 @@ export interface PanelKey {
 	readonly text?: string;
 }
 
+/** A strings-only Panel key nomination consumed by the expanded key sheet
+ * (ADR-0031). `keys` contains the real `PanelKey.name` values claimed by
+ * `onKey`; `display` is presentation only. */
+export interface PanelKeyBinding {
+	readonly keys: readonly string[];
+	readonly display?: string;
+	readonly label: string;
+}
+
+/** A module-titled group of static Panel key nominations (ADR-0031). */
+export interface PanelKeyGroup {
+	readonly title: string;
+	readonly bindings: readonly PanelKeyBinding[];
+}
+
+/** Reserved `PanelKey.name` values shared by the sheet merge and module-side
+ * conformance specs as their one source of truth (ADR-0031). */
+export const RESERVED_PANEL_KEYS: ReadonlySet<string> = new Set([
+	"v",
+	"tab",
+	"?",
+	"c",
+	"left",
+	"right",
+]);
+
 export interface GamePanel<S, C> {
 	readonly id: string;
 	readonly slot: LayoutSlot;
 	readonly render: (input: GamePanelInput<S, C>) => readonly FeedLine[];
+	/** Static strings-only key-surface nomination for the expanded sheet
+	 * (ADR-0031); behavior remains in `onKey`. */
+	readonly keySurface?: readonly PanelKeyGroup[];
 	readonly onKey?: (key: PanelKey, input: GamePanelInput<S, C>) => boolean;
 	/** Handles a click on the corresponding zero-based line returned by render. */
 	readonly onRowClick?: (row: number, input: GamePanelInput<S, C>) => boolean;

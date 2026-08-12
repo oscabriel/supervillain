@@ -83,6 +83,12 @@ const tabbedEntry = (
 		createPanels: () => [
 			{
 				id: "first",
+				keySurface: [
+					{
+						bindings: [{ keys: ["z"], label: "first action" }],
+						title: "first controls",
+					},
+				],
 				onKey: (key) => {
 					actions.push(`first:key:${key.name}`);
 					return true;
@@ -99,6 +105,12 @@ const tabbedEntry = (
 			},
 			{
 				id: "second",
+				keySurface: [
+					{
+						bindings: [{ keys: ["x"], label: "second action" }],
+						title: "second controls",
+					},
+				],
 				onKey: (key) => {
 					actions.push(`second:key:${key.name}`);
 					return true;
@@ -467,6 +479,38 @@ describe("table renderer injection", () => {
 		await setup.waitForFrame(
 			(frame) => frame.includes("┌─> feed") && !frame.includes("┌─keys")
 		);
+
+		setup.renderer.destroy();
+		await exited;
+	});
+
+	test("shows only the active Sidebar tab's nominated key groups", async () => {
+		const setup = await createTestRenderer({ height: 30, width: 100 });
+		const probe = fakeSession();
+		const store = fakeStore();
+		const actions: string[] = [];
+		const { exited } = await mountTable(
+			setup,
+			probe,
+			store.store,
+			undefined,
+			undefined,
+			tabbedEntry(actions)
+		);
+
+		setup.mockInput.pressTab();
+		await setup.waitForFrame((frame) => frame.includes("sidebar  [tab] pane"));
+		await setup.mockInput.typeText("?");
+		await setup.waitForFrame((frame) => frame.includes("first controls"));
+		expect(setup.captureCharFrame()).not.toContain("second controls");
+
+		setup.mockInput.pressEscape();
+		await sleep(40);
+		setup.mockInput.pressArrow("right");
+		await setup.waitForFrame((frame) => frame.includes("[second]"));
+		await setup.mockInput.typeText("?");
+		await setup.waitForFrame((frame) => frame.includes("second controls"));
+		expect(setup.captureCharFrame()).not.toContain("first controls");
 
 		setup.renderer.destroy();
 		await exited;

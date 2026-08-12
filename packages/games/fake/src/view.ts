@@ -7,6 +7,12 @@ export const view: GameView<FakeState, FakeCommand, FakeEvent> = {
 	createPanels: () => [
 		{
 			id: "fake-visits",
+			keySurface: [
+				{
+					bindings: [{ keys: ["q"], label: "visit" }],
+					title: "visits",
+				},
+			],
 			onKey(key, input) {
 				if (key.name !== "q") {
 					return false;

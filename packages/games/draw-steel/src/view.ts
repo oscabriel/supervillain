@@ -4,6 +4,7 @@ import type {
 	GamePanelInput,
 	GameView,
 	PanelKey,
+	PanelKeyGroup,
 	TextRun,
 } from "@supervillain/core";
 
@@ -25,6 +26,48 @@ const CHARACTERISTICS: readonly DsCharacteristic[] = [
 	"intuition",
 	"presence",
 ];
+
+const INITIATIVE_KEY_SURFACE = [
+	{
+		bindings: [
+			{ display: "↑/↓", keys: ["up", "down"], label: "select" },
+			{ keys: ["s"], label: "start" },
+			{ keys: ["e"], label: "end" },
+			{ keys: ["t"], label: "take turn" },
+			{ keys: ["a"], label: "add hero" },
+			{ keys: ["m"], label: "add enemy" },
+			{ keys: ["r"], label: "roll setup" },
+		],
+		title: "initiative",
+	},
+	{
+		bindings: [
+			{
+				display: "a/i/m/p/r",
+				keys: ["a", "i", "m", "p", "r"],
+				label: "characteristic",
+			},
+			{ keys: ["e"], label: "edges" },
+			{ keys: ["b"], label: "banes" },
+			{ display: "enter", keys: ["return"], label: "roll" },
+			{ display: "esc", keys: ["escape"], label: "cancel" },
+		],
+		title: "roll setup",
+	},
+] as const satisfies readonly PanelKeyGroup[];
+
+const SHEET_KEY_SURFACE = [
+	{
+		bindings: [
+			{
+				display: " / ",
+				keys: ["[", "]"],
+				label: "previous / next bound character",
+			},
+		],
+		title: "sheets",
+	},
+] as const satisfies readonly PanelKeyGroup[];
 
 const line = (...runs: readonly TextRun[]): FeedLine => ({ runs });
 const nameRun = (text: string): TextRun => ({
@@ -252,6 +295,7 @@ const createInitiativePanel = (): GamePanel<DsState, DsCommand> => {
 
 	return {
 		id: "ds-initiative",
+		keySurface: INITIATIVE_KEY_SURFACE,
 		onKey,
 		onRowClick,
 		render,
@@ -382,7 +426,13 @@ const createSheetPanel = (): GamePanel<DsState, DsCommand> => {
 		return true;
 	};
 
-	return { id: "sheet", onKey, render, slot: "sidebar" };
+	return {
+		id: "sheet",
+		keySurface: SHEET_KEY_SURFACE,
+		onKey,
+		render,
+		slot: "sidebar",
+	};
 };
 
 const tierToken = (tier: 1 | 2 | 3) => {
