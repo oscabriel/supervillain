@@ -43,7 +43,7 @@ import {
 } from "./map-region.js";
 import type { MapRenderMode } from "./map-region.js";
 import { mapStatusLine } from "./map.js";
-import type { MapCursor } from "./map.js";
+import type { MapCursor, MapSize } from "./map.js";
 import {
 	FEED_FOCUSED_FEED_RATIO,
 	formatFeedRail,
@@ -73,9 +73,7 @@ const displayWidth = (
 	}
 ).Bun.stringWidth;
 
-const explicitRailPreferences = (
-	options: TableOptions
-): { readonly feedRail: boolean; readonly sidebarRail: boolean } => ({
+const explicitRailPreferences = (options: TableOptions) => ({
 	feedRail: options.viewOptions?.feedRail ?? false,
 	sidebarRail: options.viewOptions?.sidebarRail ?? false,
 });
@@ -177,10 +175,10 @@ const feedPaneWidth = (
 
 /** The map grid's terminal-cell budget inside its Pane frame. */
 export const tableMapRegionAvailable = (
-	terminal: { readonly width: number; readonly height: number },
+	terminal: MapSize,
 	layout: TableLayout = "map-focused",
 	explicit: { readonly feedRail?: boolean; readonly sidebarRail?: boolean } = {}
-): { readonly width: number; readonly height: number } => {
+): MapSize => {
 	const fit = resolveTableFit(terminal, layout, explicit);
 	const sidebarWidth = fit.sidebarRail ? RAIL_WIDTH : SIDEBAR_WIDTH;
 	const feedWidth = fit.feedRail
@@ -246,12 +244,15 @@ export const styledLine = (line: FeedLine): StyledText =>
 	new StyledText(
 		line.runs.map((run) => {
 			const attributes = resolveTextAttributes(run.attrs);
-			return {
-				__isChunk: true as const,
+			const chunk: TextChunk = {
+				__isChunk: true,
 				fg: resolveThemeToken(run.token),
 				text: run.text,
-				...(attributes === 0 ? {} : { attributes }),
 			};
+			if (attributes !== 0) {
+				chunk.attributes = attributes;
+			}
+			return chunk;
 		})
 	);
 
@@ -299,14 +300,15 @@ export const styledKeybindBar = (bar: KeybindBar): StyledText => {
 		{ __isChunk: true, fg: resolveThemeToken("muted"), text: `${bar.pane}  ` },
 	];
 	for (const [index, binding] of bar.entries.entries()) {
-		chunks.push({
+		const chunk: TextChunk = {
 			__isChunk: true,
-			...(binding.disabled
-				? { attributes: resolveTextAttributes(["dim"] as const) }
-				: {}),
 			fg: resolveThemeToken("muted"),
 			text: `${index === 0 ? "" : "  "}${formatBinding(binding)}`,
-		});
+		};
+		if (binding.disabled) {
+			chunk.attributes = resolveTextAttributes(["dim"] as const);
+		}
+		chunks.push(chunk);
 	}
 	return new StyledText(chunks);
 };

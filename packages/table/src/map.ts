@@ -31,6 +31,18 @@ export interface MapCell {
 	readonly bg: ThemeToken;
 }
 
+/** A cell extent with no origin — the size half of a viewport window. */
+export interface MapSize {
+	readonly width: number;
+	readonly height: number;
+}
+
+/** Where a viewport's window starts, in map cells. */
+export interface MapOrigin {
+	readonly originX: number;
+	readonly originY: number;
+}
+
 /** The window of the map the region currently shows. */
 export interface MapViewport {
 	readonly originX: number;
@@ -52,13 +64,13 @@ interface TileStyle {
 /** Terrain as background plus the author's own glyph in the foreground. The
  * legend carries the semantics; this table is the only place they become
  * color, and it spends nothing outside the five theme tokens. */
-const TILE_STYLE: Readonly<Record<MapTile, TileStyle>> = {
+const TILE_STYLE = {
 	difficult: { bg: "muted", fg: "success" },
 	door: { bg: "muted", fg: "accent" },
 	floor: { bg: "muted", fg: "primary" },
 	hazard: { bg: "muted", fg: "danger" },
 	wall: { bg: "primary", fg: "muted" },
-};
+} satisfies Readonly<Record<MapTile, TileStyle>>;
 
 /** The style an unlegended character falls back to. Validation makes this
  * unreachable for a map that came through `parseMapFile`; a fold that ever
@@ -73,8 +85,11 @@ const SELECTED_STYLE: TileStyle = { bg: "success", fg: "primary" };
 const OWN_TOKEN_FG: ThemeToken = "success";
 const OTHER_TOKEN_FG: ThemeToken = "accent";
 
+/** Key name → cursor step, for arrow keys and vi keys alike. */
+type CursorStepTable = Readonly<Record<string, readonly [number, number]>>;
+
 /** Cursor steps, arrow keys and vi keys alike. Keyboard-first everywhere. */
-const CURSOR_STEPS: Readonly<Record<string, readonly [number, number]>> = {
+const CURSOR_STEPS: CursorStepTable = {
 	down: [0, 1],
 	h: [-1, 0],
 	j: [0, 1],

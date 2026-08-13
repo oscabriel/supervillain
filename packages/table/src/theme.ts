@@ -1,26 +1,26 @@
 import { RGBA, TextAttributes } from "@opentui/core";
 import type { TextAttribute, ThemeToken } from "@supervillain/core";
 
-const ANSI_INDEX: Readonly<Record<ThemeToken, number>> = {
+const ANSI_INDEX = {
 	accent: 6,
 	danger: 1,
 	muted: 8,
 	primary: 7,
 	success: 2,
-};
+} satisfies Readonly<Record<ThemeToken, number>>;
 
 /** Resolves semantic tokens to indexed ANSI-16 colors, preserving palette intent. */
 export const resolveThemeToken = (token: ThemeToken): RGBA =>
 	RGBA.fromIndex(ANSI_INDEX[token]);
 
-const ATTRIBUTE_BIT: Readonly<Record<TextAttribute, number>> = {
+const ATTRIBUTE_BIT = {
 	bold: TextAttributes.BOLD,
 	dim: TextAttributes.DIM,
 	italic: TextAttributes.ITALIC,
 	// DESIGN.md's "reverse" is OpenTUI's INVERSE bit.
 	reverse: TextAttributes.INVERSE,
 	underline: TextAttributes.UNDERLINE,
-};
+} satisfies Readonly<Record<TextAttribute, number>>;
 
 /** Resolves a run's named attributes to OpenTUI's packed bitmask. */
 export const resolveTextAttributes = (

@@ -24,7 +24,7 @@ import {
 } from "@supervillain/atlas";
 
 import { mapCellSemantics } from "./map.js";
-import type { MapCell, MapComposition } from "./map.js";
+import type { MapCell, MapComposition, MapSize } from "./map.js";
 
 export { TILE_COLUMNS, TILE_ROWS } from "@supervillain/atlas";
 
@@ -41,10 +41,7 @@ const glyphBitmap = (glyph: string): Uint8Array => {
 };
 
 /** How many whole tiles fit a terminal-cell budget, never fewer than one. */
-export const pixelViewportSize = (cells: {
-	readonly width: number;
-	readonly height: number;
-}): { readonly width: number; readonly height: number } => ({
+export const pixelViewportSize = (cells: MapSize): MapSize => ({
 	height: Math.max(1, Math.floor(cells.height / TILE_ROWS)),
 	width: Math.max(1, Math.floor(cells.width / TILE_COLUMNS)),
 });

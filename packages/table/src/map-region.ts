@@ -21,7 +21,7 @@ import {
 	TILE_ROWS,
 } from "./map-pixel.js";
 import { composeMapCells, mapCellAt, scrollViewport } from "./map.js";
-import type { MapCursor, MapViewport } from "./map.js";
+import type { MapCursor, MapOrigin, MapSize, MapViewport } from "./map.js";
 import { resolveThemeToken } from "./theme.js";
 
 /** The two render tiers (ADR-0007/0021): pixel is the default, text is the
@@ -64,7 +64,7 @@ export type MapClickHandler = (cell: MapCursor) => void;
  */
 export class MapSurfaceRenderable extends FrameBufferRenderable {
 	#state: MapRegionState | null = null;
-	#origin: { originX: number; originY: number } = { originX: 0, originY: 0 };
+	#origin: MapOrigin = { originX: 0, originY: 0 };
 	#viewport: MapViewport = { height: 1, originX: 0, originY: 0, width: 1 };
 
 	constructor(
@@ -181,9 +181,9 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
  * tile multiples so no partial tile ever paints. */
 export const mapRegionSize = (
 	map: BattleMap,
-	available: { readonly width: number; readonly height: number },
+	available: MapSize,
 	mode: MapRenderMode
-): { readonly width: number; readonly height: number } => {
+): MapSize => {
 	const { height, width } = mapDimensions(map);
 	if (mode === "text") {
 		return {

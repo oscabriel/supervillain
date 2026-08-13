@@ -88,21 +88,21 @@ export const SPLASH_TAGLINE =
 /** Deadpan beat two of two (ADR-0008): the offline-table empty state. */
 export const OFFLINE_TAGLINE = "GMs sleep. allegedly.";
 
-export const LOBBY_TITLES: Readonly<Record<LobbyScreenId, string>> = {
+export const LOBBY_TITLES = {
 	"become-gm": "become a GM",
 	join: "join a room",
 	settings: "settings",
 	splash: "the lobby",
 	whoami: "whoami",
-};
+} satisfies Readonly<Record<LobbyScreenId, string>>;
 
-export const LOBBY_HINTS: Readonly<Record<LobbyScreenId, string>> = {
+export const LOBBY_HINTS = {
 	"become-gm": "esc to go back",
 	join: "enter to join · esc to go back",
 	settings: "esc to go back",
 	splash: "up/down to move · enter to choose · ctrl-c to leave",
 	whoami: "esc to go back",
-};
+} satisfies Readonly<Record<LobbyScreenId, string>>;
 
 export const initialLobbyState = (notice?: LobbyNotice): LobbyState => ({
 	menuIndex: 0,

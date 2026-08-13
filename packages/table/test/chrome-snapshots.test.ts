@@ -3,8 +3,7 @@ import { expect, test } from "bun:test";
 
 import { createTestRenderer } from "@opentui/core/testing";
 import { CORE_MAP_LOADED } from "@supervillain/core";
-import type { Envelope, RoomStore, ViewEntry } from "@supervillain/core";
-import type { Session } from "@supervillain/session";
+import type { Envelope, ViewEntry } from "@supervillain/core";
 
 import { runChrome } from "../src/chrome.js";
 
@@ -35,11 +34,7 @@ const mapEnvelope: Envelope = {
 	type: CORE_MAP_LOADED,
 };
 
-const fixture = (): {
-	readonly session: Session;
-	readonly store: RoomStore;
-	readonly push: (envelope: Envelope) => void;
-} => {
+const fixture = () => {
 	const pending: Envelope[] = [];
 	let wake: (() => void) | undefined;
 	const stream = async function* stream(): AsyncGenerator<Envelope> {
@@ -56,7 +51,7 @@ const fixture = (): {
 		}
 	};
 	return {
-		push(envelope) {
+		push(envelope: Envelope) {
 			pending.push(envelope);
 			wake?.();
 			wake = undefined;
@@ -77,29 +72,29 @@ const fixture = (): {
 	};
 };
 
-const SHAPES = [
+const TERMINAL_SIZES = [
 	{ height: 24, label: "80x24", width: 80 },
 	{ height: 40, label: "120x40", width: 120 },
 	{ height: 30, label: "160x30-wide", width: 160 },
 ] as const;
 
-const SNAPSHOT_CASES = SHAPES.flatMap((shape) =>
+const SNAPSHOT_CASES = TERMINAL_SIZES.flatMap((size) =>
 	[false, true].flatMap((hasMap) =>
 		[false, true].map((focusMarker) => ({
-			description: `${shape.label}, ${hasMap ? "with" : "without"} Map, focus marker ${focusMarker ? "on" : "off"}`,
+			description: `${size.label}, ${hasMap ? "with" : "without"} Map, focus marker ${focusMarker ? "on" : "off"}`,
 			focusMarker,
 			hasMap,
-			shape,
+			size,
 		}))
 	)
 );
 
 test.each(SNAPSHOT_CASES)(
 	"$description",
-	async ({ focusMarker, hasMap, shape }) => {
+	async ({ focusMarker, hasMap, size }) => {
 		const setup = await createTestRenderer({
-			height: shape.height,
-			width: shape.width,
+			height: size.height,
+			width: size.width,
 		});
 		const probe = fixture();
 		const exited = runChrome({

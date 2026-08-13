@@ -123,21 +123,21 @@ export const deriveKeybindBar = (
 	};
 };
 
-const SHEET_SCOPES: Readonly<Record<TablePane, readonly KeybindingScope[]>> = {
+const SHEET_SCOPES = {
 	feed: ["core", "feed", "key-sheet"],
 	map: ["core", "map", "key-sheet"],
 	message: ["message", "key-sheet"],
 	sidebar: ["core", "sidebar", "key-sheet"],
-};
+} satisfies Readonly<Record<TablePane, readonly KeybindingScope[]>>;
 
-const SCOPE_LABEL: Readonly<Record<KeybindingScope, string>> = {
+const SCOPE_LABEL = {
 	core: "table",
 	feed: "feed",
 	"key-sheet": "key sheet",
 	map: "map",
 	message: "message",
 	sidebar: "sidebar chrome",
-};
+} satisfies Readonly<Record<KeybindingScope, string>>;
 
 interface PanelKeySurface {
 	readonly id: string;

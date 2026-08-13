@@ -85,13 +85,12 @@ export interface LobbyOptions extends LobbyChromeContext {
 const LOBBY_LEFT_PADDING = 2;
 const WORDMARK_GAP_ROWS = 1;
 
-const NOTICE_TOKEN: Readonly<Record<LobbyNotice["kind"], "danger" | "muted">> =
-	{
-		"dropped-behind": "danger",
-		"full-room": "muted",
-		"offline-room": "muted",
-		"unknown-room": "danger",
-	};
+const NOTICE_TOKEN = {
+	"dropped-behind": "danger",
+	"full-room": "muted",
+	"offline-room": "muted",
+	"unknown-room": "danger",
+} satisfies Readonly<Record<LobbyNotice["kind"], "danger" | "muted">>;
 
 /** Holds the lobby on the connection's terminal and resolves once the visitor
  * picks a room or leaves. One visit per call: the caller drives the loop, so a
