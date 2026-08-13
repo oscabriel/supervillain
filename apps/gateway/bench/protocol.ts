@@ -54,9 +54,7 @@ export const encodeLine = (value: unknown): string =>
 
 /** Splits a growing buffer into whole lines, returning the remainder. Neither
  * half of this protocol may assume one chunk is one line. */
-export const takeLines = (
-	buffer: string
-): { readonly lines: readonly string[]; readonly rest: string } => {
+export const takeLines = (buffer: string) => {
 	const parts = buffer.split("\n");
 	const rest = parts.pop() ?? "";
 	return { lines: parts.filter((line) => line.length > 0), rest };

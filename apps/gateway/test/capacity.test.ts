@@ -26,10 +26,8 @@ import {
 	PTY_LIBRARY_CEILING,
 } from "../src/index.js";
 
-const claimed = (
-	...names: readonly string[]
-): { isClaimed: (n: string) => boolean } => ({
-	isClaimed: (name) => names.includes(name),
+const claimed = (...names: readonly string[]) => ({
+	isClaimed: (name: string) => names.includes(name),
 });
 
 const quietStream = (): AsyncIterable<never> => ({

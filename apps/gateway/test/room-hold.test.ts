@@ -44,7 +44,7 @@ describe("the grace window", () => {
 		const attached = { name: "keep" };
 		const notices: string[] = [];
 		const metrics = createOfflineMetrics();
-		let live: unknown = attached;
+		let live: typeof attached | undefined = attached;
 		const hold = holdRoom({
 			attached,
 			graceMs: 25,
@@ -72,7 +72,7 @@ describe("the grace window", () => {
 		const attached = { name: "keep" };
 		const notices: string[] = [];
 		const metrics = createOfflineMetrics();
-		let live: unknown = attached;
+		let live: typeof attached | undefined = attached;
 		const hold = holdRoom({
 			attached,
 			graceMs: 5000,
@@ -119,7 +119,7 @@ describe("the grace window", () => {
 	test("stops watching once the table is gone", async () => {
 		const attached = { name: "keep" };
 		const notices: string[] = [];
-		let live: unknown = attached;
+		let live: typeof attached | undefined = attached;
 		const hold = holdRoom({
 			attached,
 			graceMs: 5,

@@ -28,10 +28,10 @@ export const DEFAULT_LOBBY_LIMITS: LobbyLimits = {
 
 export type LobbyExpiry = "idle" | "max";
 
-export const LOBBY_EXPIRY_MESSAGE: Readonly<Record<LobbyExpiry, string>> = {
+export const LOBBY_EXPIRY_MESSAGE = {
 	idle: "the lobby went quiet, so we closed it. ssh back any time.",
 	max: "the lobby has a time limit. ssh back any time.",
-};
+} satisfies Readonly<Record<LobbyExpiry, string>>;
 
 export interface ConnectionRateLimiter {
 	/** True when this IP may open another connection right now; recording the

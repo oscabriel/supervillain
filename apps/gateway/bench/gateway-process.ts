@@ -28,7 +28,7 @@ const say = (reply: BenchReply): void => {
 	process.stdout.write(encodeLine(reply));
 };
 
-const activeResources = (): Readonly<Record<string, number>> => {
+const activeResources = () => {
 	const counts: Record<string, number> = {};
 	for (const resource of process.getActiveResourcesInfo()) {
 		counts[resource] = (counts[resource] ?? 0) + 1;

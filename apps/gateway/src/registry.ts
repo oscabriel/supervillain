@@ -160,6 +160,12 @@ export interface PresentationPreferences {
 
 export type PresentationPreference = keyof PresentationPreferences;
 
+/** The store's writable draft while it reads preference columns; the readonly
+ * contract is what leaves the registry. */
+type PresentationPreferencesDraft = {
+	-readonly [K in keyof PresentationPreferences]: PresentationPreferences[K];
+};
+
 /**
  * The gateway's store. It is ADR-0013's **local** {@link IdentityDirectory}
  * implementation: `identityOf` and `isRevoked` are synchronous because they are
@@ -516,17 +522,20 @@ export const openRoomRegistry = (
 		const row = selectPresentationPreferences.get({
 			identityId,
 		}) as PresentationPreferencesRow | null;
-		return row === null
-			? {}
-			: {
-					...(row.feed_rail === null ? {} : { feedRail: row.feed_rail !== 0 }),
-					...(row.focus_marker === null
-						? {}
-						: { focusMarker: row.focus_marker !== 0 }),
-					...(row.sidebar_rail === null
-						? {}
-						: { sidebarRail: row.sidebar_rail !== 0 }),
-				};
+		if (row === null) {
+			return {};
+		}
+		const preferences: PresentationPreferencesDraft = {};
+		if (row.feed_rail !== null) {
+			preferences.feedRail = row.feed_rail !== 0;
+		}
+		if (row.focus_marker !== null) {
+			preferences.focusMarker = row.focus_marker !== 0;
+		}
+		if (row.sidebar_rail !== null) {
+			preferences.sidebarRail = row.sidebar_rail !== 0;
+		}
+		return preferences;
 	};
 
 	const setPresentationPreference = (
