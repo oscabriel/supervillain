@@ -1,0 +1,14 @@
+diff --git a/package.json b/package.json
+index ad5f9709c3210011e2b1f638867054349f35988b..1faef6b58d4460b2ea7ba2635f974e3c485475f8 100644
+--- a/package.json
++++ b/package.json
+@@ -25,7 +25,8 @@
+       "import": "./wrapper.mjs",
+       "require": "./index.js"
+     },
+-    "./package.json": "./package.json"
++    "./package.json": "./package.json",
++    "./lib/websocket.js": "./lib/websocket.js"
+   },
+   "browser": "browser.js",
+   "engines": {

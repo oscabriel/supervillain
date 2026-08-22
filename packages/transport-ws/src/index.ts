@@ -2,7 +2,9 @@ import type {
 	TransportConnection,
 	TransportDialer,
 } from "@supervillain/room-wire";
-import { WebSocket as WsClient } from "ws";
+// The file subpath, not the bare specifier: Bun aliases `"ws"` to its native
+// shim, whose 1.4 client ignores `checkServerIdentity` — see ws-client.d.ts.
+import WsClient from "ws/lib/websocket.js";
 
 import { WsChannel } from "./channel.js";
 import type { WebSocketLike } from "./channel.js";
@@ -95,21 +97,20 @@ const parseUrl = (url: string): string => {
 
 /** The trust the socket is opened with. A pinned gateway is trusted through the
  * certificate the pin just verified and nothing else — not the machine's CA
- * store, and not a waived check. Bun and Node's `ws` read the same options under
- * different names, so both spellings are supplied. */
+ * store, and not a waived check. Both lanes run the real `ws` client, so one
+ * spelling of the options serves both. */
 const tlsOptions = (
 	certificatePem: string | undefined
 ): Record<string, unknown> => {
 	if (certificatePem === undefined) {
 		return {};
 	}
-	const trust = {
+	return {
 		ca: certificatePem,
 		// There is no domain to check — NQ-9's whole point. Identity is the
 		// fingerprint, already verified against the pin above.
 		checkServerIdentity: (): undefined => undefined,
 	};
-	return { ...trust, tls: trust };
 };
 
 /**

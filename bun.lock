@@ -179,6 +179,7 @@
     },
   },
   "patchedDependencies": {
+    "ws@8.21.1": "patches/ws@8.21.1.patch",
     "@opentui/ssh@0.4.3": "patches/@opentui%2Fssh@0.4.3.patch",
   },
   "packages": {
