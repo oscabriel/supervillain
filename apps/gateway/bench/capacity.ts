@@ -6,7 +6,10 @@
  * This harness gates numbers. No cap number and no public capacity claim
  * precedes it; every number in `apps/gateway/src/capacity.ts` is chosen from a
  * run of this file, and the run that chose the current ones is written down in
- * `.agents/benchmarks/2026-07-25-r9-capacity.md`.
+ * `.agents/benchmarks/2026-07-25-r9-capacity.md`. The current baseline the
+ * caps are checked against is `.agents/benchmarks/2026-08-20-r9-capacity-bun-1.4.md`
+ * (the Bun 1.4 rerun, which also fixed this harness's workloads for
+ * ADR-0030's chrome and re-confirmed every cap).
  *
  * The matrix: **1 / 10 / 50 / 100 concurrent sessions** × **idle / chat /
  * map-pan / slow-reader**.
@@ -324,6 +327,14 @@ const driveWorkload = async (
 	let kind: CellResult["latencyKind"] = "none";
 	if (input.workload === "chat") {
 		kind = "key-to-frame";
+		// ADR-0030's chrome: a fresh seat on a mapped Room focuses the Map Pane,
+		// and Message is the sole text-capture surface. Two tabs reach it
+		// (feed → map → sidebar → message from map; feed → sidebar → message
+		// without one), so the typed lines land in the input they post from.
+		for (const seat of seats) {
+			seat.type("\t\t");
+		}
+		await sleep(250);
 		let round = 0;
 		timers.push(
 			setInterval(() => {
@@ -339,10 +350,8 @@ const driveWorkload = async (
 	}
 	if (input.workload === "map-pan") {
 		kind = "key-to-frame";
-		for (const seat of seats) {
-			// Tab once to hand focus to chrome's map region, then pan.
-			seat.type("\t");
-		}
+		// No tab: since ADR-0030, a seat joining a Room with a loaded map is
+		// focused on the Map Pane already; a tab would pan the sidebar instead.
 		await sleep(250);
 		let step = 0;
 		timers.push(
