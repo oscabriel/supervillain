@@ -46,8 +46,10 @@ import {
 import {
 	deleteImageSequence,
 	transmitSequences,
+	placementSequence,
 	Framebuffer,
 } from "../src/map-kitty.ts";
+import { rawWriteChannelFor } from "../src/map-kitty-channel.ts";
 
 // ---------------------------------------------------------------------------
 // Kitty Unicode-placeholder encoding (small-ID spelling): U+10EEEE with the
@@ -296,9 +298,10 @@ async function headless(): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// TTY leg: transmit image 1, then drive the placeholder grid live. You answer
-// the only question bytes cannot: does your terminal paint the image *under*
-// U+10EEEE cells and restore cleanly as the occluder moves.
+// TTY leg: transmit image 1 *through* the running renderer's guarded writeOut
+// — production's proven mid-session path — then drive the placeholder grid
+// live. You answer the only question bytes cannot: does your terminal paint
+// the image *under* U+10EEEE cells and restore cleanly as the occluder moves.
 // ---------------------------------------------------------------------------
 
 async function live(): Promise<void> {
@@ -313,9 +316,24 @@ async function live(): Promise<void> {
 			fb.pixels[(y * fb.width + x) * 4 + 3] = 255;
 		}
 	}
-	process.stdout.write(transmitSequences(IMAGE_ID, fb).join(""));
 
-	const renderer = await createCliRenderer();
+	// Renderer FIRST — its terminal setup runs the altscreen switch, which is
+	// exactly where a transmit written before setup would get lost. The APC
+	// then goes out through the SAME cast-and-guarded private writeOut the
+	// product uses, so it rides the same stdout the frames do.
+	const renderer = await createCliRenderer({ consoleMode: "disabled" });
+	const write = rawWriteChannelFor(renderer);
+	write(transmitSequences(IMAGE_ID, fb).join(""));
+
+	const grid = new PlaceholderMap(renderer, {
+		width: GRID.w,
+		height: GRID.h,
+		zIndex: 1,
+	});
+	grid.position = "absolute";
+	grid.x = GRID.x;
+	grid.y = GRID.y;
+	renderer.root.add(grid);
 
 	const box = new BoxRenderable(renderer, {
 		width: GRID.w / 2,
@@ -328,16 +346,16 @@ async function live(): Promise<void> {
 	box.x = GRID.x;
 	box.y = GRID.y;
 	renderer.root.add(box);
-	renderer.root.add(
-		new PlaceholderMap(renderer, { width: GRID.w, height: GRID.h, zIndex: 1 })
-	);
 
 	console.log(
-		"\x1b[2J\x1b[HPlaceholders live: arrows move the occluder, q quits.\r\n"
-		+ "Verdict to eyeball: does the striped image show under the U+10EEEE cells,\r\n"
-		+ "and does uncovering restore it without artifacts?"
+		"\x1b[2J\x1b[HPlaceholders live.\r\n"
+		+ "arrows move the occluder · i re-transmits the image · p adds a classic\r\n"
+		+ "placement beside the grid (comparison) · q quits\r\n"
+		+ "Eyeball: does the striped image show under the U+10EEEE cells, and does\r\n"
+		+ "uncovering restore it without artifacts?"
 	);
 
+	let classicPlaced = false;
 	await new Promise<void>((resolve) => {
 		if (!process.stdin.isTTY) {
 			resolve();
@@ -356,11 +374,29 @@ async function live(): Promise<void> {
 			else if (key === "\x1b[D") step(-2, 0);
 			else if (key === "\x1b[B") step(0, 1);
 			else if (key === "\x1b[A") step(0, -1);
-			else if (key === "q" || key === "\x03") resolve();
+			else if (key === "i")
+				write(transmitSequences(IMAGE_ID, fb).join(""));
+			else if (key === "p") {
+				// A CLASSIC a=p placement beside the grid: if the image shows
+				// here but not under the placeholders, the transmit is fine
+				// and placeholders are the problem; if neither shows, the
+				// image never landed.
+				classicPlaced = !classicPlaced;
+				write(
+					classicPlaced
+						? placementSequence(
+								IMAGE_ID,
+								99,
+								{ x: GRID.x + GRID.w + 2, y: GRID.y, w: 6, h: 3 },
+								7,
+							)
+						: deleteImageSequence(IMAGE_ID, 99)
+				);
+			} else if (key === "q" || key === "\x03") resolve();
 		});
 	});
 
-	process.stdout.write(deleteImageSequence(IMAGE_ID));
+	write(deleteImageSequence(IMAGE_ID));
 	await renderer.destroy();
 	if (process.stdin.isTTY) process.stdin.setRawMode(false);
 	process.stdout.write("\x1b[2J\x1b[Hdone\r\n");
