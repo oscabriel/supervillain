@@ -15,6 +15,11 @@ import type { BattleMap, MapToken } from "@supervillain/core";
 import { mapDimensions } from "@supervillain/core";
 
 import {
+	FALLBACK_CELL_METRICS,
+	rasterizeCells,
+} from "./map-kitty.js";
+import type { Framebuffer } from "./map-kitty.js";
+import {
 	composePixelCells,
 	pixelViewportSize,
 	TILE_COLUMNS,
@@ -24,9 +29,13 @@ import { composeMapCells, mapCellAt, scrollViewport } from "./map.js";
 import type { MapCursor, MapOrigin, MapSize, MapViewport } from "./map.js";
 import { resolveThemeToken } from "./theme.js";
 
-/** The two render tiers (ADR-0007/0021): pixel is the default, text is the
- * per-session toggle, and no capability detection sits between them. */
-export type MapRenderMode = "pixel" | "text";
+/**
+ * The three render tiers (ADR-0007/0021/0032): the ladder is bitmap →
+ * pixel-glyph → text. Bitmap exists only when the connect-time capability
+ * check confirms kitty graphics and no multiplexer stands in the way; the
+ * lower two are always available with no detection between them.
+ */
+export type MapRenderMode = "bitmap" | "pixel" | "text";
 
 /** Header, state/status, Message Pane, keybind bar, Map frame, and Map
  * status consume nine rows outside the grid. Feed is beside Map now, so it
@@ -80,16 +89,17 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 			if (map === undefined) {
 				return;
 			}
-			// In pixel mode a click lands somewhere in a tile's 4×3 block; the
-			// division makes both tiers resolve through the same hit-test.
-			const pixel = this.#state?.mode === "pixel";
+			// In the tiled tiers (pixel and bitmap alike — one tile is 4×3
+			// cells, ADR-0021/0032) a click lands somewhere in a tile's block;
+			// the division makes every tier resolve through the same hit-test.
+			const tiled = this.#state?.mode !== "text";
 			const cell = mapCellAt(
 				map,
 				this.#viewport,
-				pixel
+				tiled
 					? Math.floor((event.x - this.x) / TILE_COLUMNS)
 					: event.x - this.x,
-				pixel ? Math.floor((event.y - this.y) / TILE_ROWS) : event.y - this.y
+				tiled ? Math.floor((event.y - this.y) / TILE_ROWS) : event.y - this.y
 			);
 			if (cell !== null) {
 				event.preventDefault();
@@ -102,6 +112,15 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 	get viewport(): MapViewport {
 		return this.#viewport;
 	}
+
+	/**
+	 * The bitmap tier's frame hook, assigned by the chrome that owns the
+	 * kitty emitter. Called from `renderSelf` — after layout, so the absolute
+	 * coordinates are real — with the rasterized frame; emission itself stays
+	 * outside the paint (the emitter writes escape bytes through its own
+	 * channel).
+	 */
+	onBitmapFrame: ((frame: Framebuffer) => void) | null = null;
 
 	/** Hands the region new state and asks for the one frame that shows it. */
 	update(state: MapRegionState): void {
@@ -123,10 +142,11 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 			height: this.frameBuffer.height,
 			width: this.frameBuffer.width,
 		};
-		// The viewport is always in map cells; the pixel tier just fits fewer
-		// of them into the same terminal budget. Scrolling, cursor following,
-		// and hit-testing never learn which tier is drawing.
-		const size = state.mode === "pixel" ? pixelViewportSize(cells) : cells;
+		// The viewport is always in map cells; the tiled tiers (pixel, bitmap)
+		// fit fewer of them into the same terminal budget. Scrolling, cursor
+		// following, and hit-testing never learn which tier is drawing.
+		const size =
+			state.mode === "text" ? cells : pixelViewportSize(cells);
 		this.#viewport = scrollViewport(
 			state.map,
 			size,
@@ -137,6 +157,10 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 			originX: this.#viewport.originX,
 			originY: this.#viewport.originY,
 		};
+		if (state.mode === "bitmap") {
+			this.#paintBitmap(state);
+			return;
+		}
 		const compose =
 			state.mode === "pixel" ? composePixelCells : composeMapCells;
 		const rows = compose({
@@ -173,12 +197,46 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 			}
 		}
 	}
+	/**
+	 * The bitmap rung: the image is the map, so the cell grid blanks itself
+	 * (default-background spaces add no SGR and let the below-text image show)
+	 * while the same composed rows rasterize into RGBA for the emitter. The
+	 * dimmed flag is deliberately unused here — chrome over the map is an
+	 * emitter-side occluder, not a repaint.
+	 */
+	#paintBitmap(state: MapRegionState): void {
+		const cells = {
+			height: this.frameBuffer.height,
+			width: this.frameBuffer.width,
+		};
+		const rows = composeMapCells({
+			cursor: state.cursor,
+			map: state.map,
+			ownSeatId: state.ownSeatId,
+			selectedTokenId: state.selectedTokenId,
+			tokens: state.tokens,
+			viewport: this.#viewport,
+		});
+		for (let row = 0; row < cells.height; row += 1) {
+			for (let column = 0; column < cells.width; column += 1) {
+				this.frameBuffer.setCell(
+					column,
+					row,
+					BLANK_GLYPH,
+					BLANK_FG,
+					BLANK_BG
+				);
+			}
+		}
+		this.onBitmapFrame?.(rasterizeCells(rows, FALLBACK_CELL_METRICS));
+	}
 }
 
 /** The region's size for a map: as wide as the grid or the space, whichever is
  * smaller, and never taller than the rows the region is allowed to spend. In
- * pixel mode the same budget holds whole 4×3 tiles — the size is rounded to
- * tile multiples so no partial tile ever paints. */
+ * the tiled tiers (pixel and bitmap alike) the same budget holds whole 4×3
+ * tiles — the size is rounded to tile multiples so no partial tile ever
+ * paints. */
 export const mapRegionSize = (
 	map: BattleMap,
 	available: MapSize,

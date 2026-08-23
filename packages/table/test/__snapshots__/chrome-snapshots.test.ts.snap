@@ -76,7 +76,7 @@ exports[`80x24, with Map, focus marker off 1`] = `
 │                        │ │                      │ │                          │
 │                        │ │                      │ │                          │
 └────────────────────────┘ └──────────────────────┘ └──────────────────────────┘
-map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text   
+map: arrows/hjkl move · Enter picks up and drops · x removes · t cycles map tier
 ┌─message──────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                  │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -104,7 +104,7 @@ exports[`80x24, with Map, focus marker on 1`] = `
 │                        │ │                      │ │                          │
 │                        │ │                      │ │                          │
 └────────────────────────┘ └──────────────────────┘ └──────────────────────────┘
-map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text   
+map: arrows/hjkl move · Enter picks up and drops · x removes · t cycles map tier
 ┌─message──────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                  │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -236,7 +236,7 @@ exports[`120x40, with Map, focus marker off 1`] = `
 │                        │ │                                                              │ │                          │
 │                        │ │                                                              │ │                          │
 └────────────────────────┘ └──────────────────────────────────────────────────────────────┘ └──────────────────────────┘
-map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text mode                                      
+map: arrows/hjkl move · Enter picks up and drops · x removes · t cycles map tier                                        
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                          │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -280,7 +280,7 @@ exports[`120x40, with Map, focus marker on 1`] = `
 │                        │ │                                                              │ │                          │
 │                        │ │                                                              │ │                          │
 └────────────────────────┘ └──────────────────────────────────────────────────────────────┘ └──────────────────────────┘
-map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text mode                                      
+map: arrows/hjkl move · Enter picks up and drops · x removes · t cycles map tier                                        
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                          │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -382,7 +382,7 @@ exports[`160x30-wide, with Map, focus marker off 1`] = `
 │                        │ │                                                                                                      │ │                          │
 │                        │ │                                                                                                      │ │                          │
 └────────────────────────┘ └──────────────────────────────────────────────────────────────────────────────────────────────────────┘ └──────────────────────────┘
-map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text mode                                                                              
+map: arrows/hjkl move · Enter picks up and drops · x removes · t cycles map tier                                                                                
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -416,7 +416,7 @@ exports[`160x30-wide, with Map, focus marker on 1`] = `
 │                        │ │                                                                                                      │ │                          │
 │                        │ │                                                                                                      │ │                          │
 └────────────────────────┘ └──────────────────────────────────────────────────────────────────────────────────────────────────────┘ └──────────────────────────┘
-map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text mode                                                                              
+map: arrows/hjkl move · Enter picks up and drops · x removes · t cycles map tier                                                                                
 ┌─message──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Message, /roll NdS+M, /map load <name>, /token place <glyph>                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

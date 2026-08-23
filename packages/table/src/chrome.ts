@@ -9,7 +9,11 @@ import {
 	StyledText,
 	TextRenderable,
 } from "@opentui/core";
-import type { KeyEvent, TextChunk } from "@opentui/core";
+import type {
+	CliRenderer,
+	KeyEvent,
+	TextChunk,
+} from "@opentui/core";
 import type {
 	CoreCommand,
 	Envelope,
@@ -36,6 +40,9 @@ import { deriveKeybindBar, deriveKeySheet, formatBinding } from "./keymap.js";
 import type { KeybindBar, TablePane } from "./keymap.js";
 import { mapCommandFor, mapKeyAction } from "./map-interaction.js";
 import type { MapInteraction } from "./map-interaction.js";
+import { bitmapSupportedFor, rawWriteChannelFor } from "./map-kitty-channel.js";
+import type { Framebuffer, CellRect } from "./map-kitty.js";
+import { KittyMapSurface } from "./map-kitty.js";
 import {
 	MapSurfaceRenderable,
 	mapRegionSize,
@@ -77,6 +84,77 @@ const explicitRailPreferences = (options: TableOptions) => ({
 	feedRail: options.viewOptions?.feedRail ?? false,
 	sidebarRail: options.viewOptions?.sidebarRail ?? false,
 });
+
+/** The map surface's on-screen extent as a kitty placement rect: absolute
+ * renderable coordinates are 0-based; the protocol's cell grid is 1-based. */
+const mapSurfaceCellRect = (
+	surface: MapSurfaceRenderable
+): CellRect => ({
+	h: surface.height,
+	w: surface.width,
+	x: surface.x + 1,
+	y: surface.y + 1,
+});
+
+/** An open key sheet punches its own rect out of the bitmap placements; closed, nothing is occluded. */
+const keySheetOccluder = (sheet: BoxRenderable, open: boolean): CellRect | null =>
+	open
+		? {
+				h: Math.max(0, sheet.height - 2),
+				w: Math.max(0, sheet.width - 2),
+				x: sheet.x + 1,
+				y: sheet.y + 1,
+			}
+		: null;
+
+/** Everything the bitmap frame hook touches, resolved at call time. */
+interface BitmapEmission {
+	channel: KittyMapSurface | null;
+	surface: MapSurfaceRenderable;
+	occluder: () => CellRect | null;
+	blocked: () => boolean;
+}
+
+/** Builds the surface's frame hook: rasterized frames go to the emitter only when the session is live and the channel exists. */
+const wireBitmapHook = (
+	emission: BitmapEmission,
+	markActive: () => void
+): ((frame: Framebuffer) => void) =>
+	(frame) => {
+		if (emission.channel === null || emission.blocked()) {
+			return;
+		}
+		markActive();
+		emission.channel.render(
+			frame,
+			mapSurfaceCellRect(emission.surface),
+			emission.occluder()
+		);
+	};
+
+const createBitmapChannel = (renderer: CliRenderer): KittyMapSurface | null =>
+	bitmapSupportedFor(renderer, process.env)
+		? new KittyMapSurface(rawWriteChannelFor(renderer))
+		: null;
+
+/** Frees the emitter's image slots when this cycle won't show a bitmap frame; returns the resulting active flag. */
+const retireBitmapTier = (
+	channel: KittyMapSurface | null,
+	active: boolean,
+	wanted: boolean
+): boolean => {
+	if (!active || wanted) {
+		return active;
+	}
+	channel?.clear();
+	return false;
+};
+
+const teardownBitmapTier = (channel: KittyMapSurface | null): void => {
+	if (channel !== null) {
+		channel.clear();
+	}
+};
 
 const titleMarkWasClicked = (
 	pane: BoxRenderable,
@@ -419,6 +497,7 @@ const feedContent = (
 	return new StyledText(chunks);
 };
 
+// oxlint-disable-next-line eslint/complexity -- one screen, one stateful closure: ADR-0030's layered key grammar plus ADR-0032's bitmap rung; splitting further would scatter the very state these branches guard.
 export const runChrome = async (options: TableOptions): Promise<void> => {
 	// The renderer is the surface's: the CLI mints one over the local TTY, the
 	// Door lends the one it owns for the session (ADR-0016). The table only
@@ -427,12 +506,24 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	const { renderer } = options;
 	let done = false;
 	let finish: (() => void) | undefined;
+	// The bitmap tier's channel: capability verdict at connect, multiplexer
+	// guard, guarded raw writes. Null means this session never has a bitmap
+	// rung — the ladder is pixel↔text exactly as ADR-0007 pinned it. Declared
+	// before `settle` because teardown frees its image slots.
+	const bitmapChannel = createBitmapChannel(renderer);
+	/** Whether the emitter currently holds images on the terminal — the flag that makes leaving bitmap mode a teardown, not a leak. */
+	let bitmapActive = false;
 	// oxlint-disable-next-line promise/avoid-new -- a screen's exit is an event, not a promise-returning API.
 	const exited = new Promise<void>((resolve) => {
 		finish = resolve;
 	});
 	const settle = (): void => {
 		done = true;
+		// The bitmap tier's image slots outlive the renderer's cell teardown —
+		// free them so a session end never leaves images baked into the
+		// player's terminal. The channel no-ops once the renderer is destroyed.
+		teardownBitmapTier(bitmapChannel);
+		bitmapActive = false;
 		finish?.();
 	};
 	// The backstop for exits the table does not decide: the surface tearing the
@@ -676,9 +767,39 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	let idleStatusToken: "danger" | "muted" = "muted";
 	let cursor: MapCursor = { x: 0, y: 0 };
 	let selectedTokenId: string | null = null;
-	// Pixel is the default and the toggle is the whole ceremony: per-session,
-	// no capability detection, no persistence at v1 (ADR-0007/0021).
-	let mapMode: MapRenderMode = "pixel";
+	// Bitmap is the default when the connect-time check confirmed kitty
+	// graphics (ADR-0032); otherwise the ladder is pixel↔text with no
+	// detection anywhere near it (ADR-0007/0021). The toggle stays
+	// per-session, keyboard-only, and never persists.
+	let mapMode: MapRenderMode =
+		bitmapChannel === null ? "pixel" : "bitmap";
+	const tierLadder: readonly MapRenderMode[] =
+		bitmapChannel === null ? ["pixel", "text"] : ["bitmap", "pixel", "text"];
+	// The frame hook fires from the surface's paint, after layout, so absolute
+	// coordinates are real there. Occlusion is chrome knowledge: an open key
+	// sheet punches its own rect out of the placements (the validated dialog
+	// lesson — strips ignore occluders, so occluded updates take the full path).
+	mapSurface.onBitmapFrame = wireBitmapHook(
+		{
+			// Renderer destroy routes through `settle` (the DESTROY listener),
+			// so `done` alone covers the destroyed-renderer case too.
+			blocked: () => done,
+			channel: bitmapChannel,
+			occluder: () => keySheetOccluder(keySheet, keySheetOpen),
+			surface: mapSurface,
+		},
+		() => {
+			bitmapActive = true;
+		}
+	);
+	/** Tears the bitmap rung down when this cycle won't render one. */
+	const retireBitmapIfIdle = (mapPresent: boolean): void => {
+		bitmapActive = retireBitmapTier(
+			bitmapChannel,
+			bitmapActive,
+			mapMode === "bitmap" && mapPresent && !fit.tooSmall
+		);
+	};
 	let lastMapName: string | null = null;
 	let activePanelIndex = panels.length === 0 ? -1 : 0;
 	let focusSidebar = notYetWired;
@@ -798,7 +919,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 		if (focusedPane === "map") {
 			status.content =
-				"map: arrows/hjkl move · Enter picks up and drops · x removes · t toggles text mode";
+				"map: arrows/hjkl move · Enter picks up and drops · x removes · t cycles map tier";
 			return;
 		}
 		const panel = activePanel();
@@ -815,6 +936,7 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		}
 		const map = fold.map();
 		applyPaneLayout();
+		retireBitmapIfIdle(map !== null && layout !== "no-map");
 		if (map === null || layout === "no-map") {
 			lastMapName = null;
 			selectedTokenId = null;
@@ -1238,8 +1360,15 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 	input.on(InputRenderableEvents.ENTER, (value: unknown) => {
 		void submitInput(value);
 	});
+	/** Cycles the available tiers along ADR-0032's ladder — bitmap → pixel →
+	 * text, bitmap only present when the connect check confirmed it. Leaving
+	 * bitmap mode frees the terminal's image slots; the next paint repaints
+	 * real cells over the region. */
 	const toggleMapMode = (): void => {
-		mapMode = mapMode === "pixel" ? "text" : "pixel";
+		const next =
+			tierLadder[(tierLadder.indexOf(mapMode) + 1) % tierLadder.length];
+		mapMode = next ?? "pixel";
+		// renderMap retires the bitmap rung itself when the new tier isn't it.
 		renderMap();
 	};
 	/** Applies one map action. Every branch is reachable by keyboard alone;

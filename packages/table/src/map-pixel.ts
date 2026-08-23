@@ -30,8 +30,12 @@ export { TILE_COLUMNS, TILE_ROWS } from "@supervillain/atlas";
 
 const UNKNOWN_GLYPH_KEY = "?";
 
-/** The bitmap a map character renders as: ding first, text second, `?` last. */
-const glyphBitmap = (glyph: string): Uint8Array => {
+/**
+ * The bitmap a map character renders as: ding first, text second, `?` last.
+ * Shared with the bitmap tier (`map-kitty.ts`) — one lookup chain is what
+ * keeps all three tiers drawing the same cell semantics.
+ */
+export const glyphBitmap = (glyph: string): Uint8Array => {
 	const entry =
 		DINGS_ATLAS[glyph] ?? TEXT_ATLAS[glyph] ?? TEXT_ATLAS[UNKNOWN_GLYPH_KEY];
 	if (entry === undefined) {
