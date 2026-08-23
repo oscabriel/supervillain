@@ -2,6 +2,8 @@
 
 > **Amended 2026-07-30 by [ADR-0021](./0021-mekmode-atlas-octant-packing-and-4x3-tiles.md):** atlas source MonoMek → MEKMODE, quadrant → octant packing, one tile 4×4 → 4×3 cells. The tier decision, defaults, scope, and everything below the renderer stand.
 >
+> **Amended 2026-08-20 by [ADR-0032](./0032-bitmap-map-tier-kitty-graphics-probe-gated.md):** the map surface gains a probe-gated bitmap tier above this one, via the kitty graphics protocol — "no image protocols" no longer holds at the top of the ladder, and the no-capability-detection stance gains one scoped exception (that protocol has a real query/response probe; the no-probe argument below still governs the pixel-glyph and text tiers). Pixel-glyph remains the default wherever the probe fails or is absent. Everything else stands.
+>
 > **Scope fence added 2026-08-04 by [ADR-0030](./0030-closed-pane-frames-tab-traversal-side-rails-and-contextual-key-help.md):** the Table's closed Pane frames are tier-neutral one-cell light box drawing. The ornamental-chrome allowance does not license 4×3 atlas dings in Pane borders or titles; pixel ornament remains Map plus isolated threshold art such as the Lobby wordmark.
 
 Resolved 2026-07-21, in-session grilling following [#39](https://github.com/oscabriel/supervillain/issues/39)/[ADR-0006](./0006-core-owned-battle-maps-and-inline-map-capture.md). The product wants the Caves-of-Qud / MonoMek "enhanced ASCII" identity without shipping a font — an unrealistic ask over ssh. Technical grounding (OpenTUI clone @ `a0b9064`, MonoMek metrics, geometry math) lives in the local research doc `.agents/research/monomek-pixel-glyph-rendering.md`; wire and buffer facts inherit from the [#38](https://github.com/oscabriel/supervillain/issues/38) FrameBuffer research.
