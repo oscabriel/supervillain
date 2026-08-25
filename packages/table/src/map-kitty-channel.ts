@@ -37,9 +37,20 @@ export const environmentIsMultiplexed = (
 const neverWrite = (): void => undefined;
 
 /**
+ * Terminals verified to render Unicode placeholders, matched against the
+ * renderer-reported XTVERSION name (research A5, re-checked on #134's
+ * matrix). Dated policy like the multiplexer guard: Konsole answers the
+ * graphics probe but lacks placeholders; iTerm2 is unverified. Both answer
+ * XTVERSION, so a name miss is a correct exclusion, not a detection gap.
+ */
+const PLACEHOLDER_TERMINALS = /kitty|ghostty|wezterm/iu;
+
+/**
  * Whether this session may emit kitty graphics at all: the renderer's own
- * detection says yes, and no multiplexer stands in the way. A failed or
- * absent check is silently false — no nag, no error (ADR-0032).
+ * detection says yes, the reported terminal renders Unicode placeholders
+ * (ADR-0032's placeholder-support condition), and no multiplexer stands in
+ * the way. A failed or absent check is silently false — no nag, no error
+ * (ADR-0032).
  */
 export const bitmapSupportedFor = (
 	renderer: Pick<CliRenderer, "capabilities">,
@@ -47,7 +58,8 @@ export const bitmapSupportedFor = (
 ): boolean =>
 	environmentIsMultiplexed(env)
 		? false
-		: renderer.capabilities?.kitty_graphics === true;
+		: renderer.capabilities?.kitty_graphics === true &&
+			PLACEHOLDER_TERMINALS.test(renderer.capabilities.terminal?.name ?? "");
 
 /** What the guarded channel needs of the renderer, cast surface included. */
 interface RawWriteSurface {

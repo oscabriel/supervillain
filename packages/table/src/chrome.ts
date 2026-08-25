@@ -41,7 +41,7 @@ import type { KeybindBar, TablePane } from "./keymap.js";
 import { mapCommandFor, mapKeyAction } from "./map-interaction.js";
 import type { MapInteraction } from "./map-interaction.js";
 import { bitmapSupportedFor, rawWriteChannelFor } from "./map-kitty-channel.js";
-import type { Framebuffer, CellRect } from "./map-kitty.js";
+import type { Framebuffer, PlaceholderLayout } from "./map-kitty.js";
 import { KittyMapSurface } from "./map-kitty.js";
 import {
 	MapSurfaceRenderable,
@@ -85,51 +85,32 @@ const explicitRailPreferences = (options: TableOptions) => ({
 	sidebarRail: options.viewOptions?.sidebarRail ?? false,
 });
 
-/** The map surface's on-screen extent as a kitty placement rect: absolute
- * renderable coordinates are 0-based; the protocol's cell grid is 1-based. */
-const mapSurfaceCellRect = (
-	surface: MapSurfaceRenderable
-): CellRect => ({
-	h: surface.height,
-	w: surface.width,
-	x: surface.x + 1,
-	y: surface.y + 1,
-});
-
-/** An open key sheet punches its own rect out of the bitmap placements; closed, nothing is occluded. */
-const keySheetOccluder = (sheet: BoxRenderable, open: boolean): CellRect | null =>
-	open
-		? {
-				h: Math.max(0, sheet.height - 2),
-				w: Math.max(0, sheet.width - 2),
-				x: sheet.x + 1,
-				y: sheet.y + 1,
-			}
-		: null;
-
 /** Everything the bitmap frame hook touches, resolved at call time. */
 interface BitmapEmission {
 	channel: KittyMapSurface | null;
-	surface: MapSurfaceRenderable;
-	occluder: () => CellRect | null;
 	blocked: () => boolean;
 }
 
-/** Builds the surface's frame hook: rasterized frames go to the emitter only when the session is live and the channel exists. */
+/**
+ * Builds the surface's frame hook: rasterized frames go to the emitter only
+ * when the session is live and the channel exists, and the emitter's
+ * placeholder layout flows back for the region to spell into its cells.
+ * Occlusion needs no wiring at all — placeholders are ordinary text, so
+ * chrome over the map (key sheet, dialogs) rides OpenTUI's own z-order.
+ */
 const wireBitmapHook = (
 	emission: BitmapEmission,
 	markActive: () => void
-): ((frame: Framebuffer) => void) =>
-	(frame) => {
+): ((frame: Framebuffer, grid: MapSize) => PlaceholderLayout | null) =>
+	(frame, grid) => {
 		if (emission.channel === null || emission.blocked()) {
-			return;
+			return null;
 		}
-		markActive();
-		emission.channel.render(
-			frame,
-			mapSurfaceCellRect(emission.surface),
-			emission.occluder()
-		);
+		const layout = emission.channel.render(frame, grid);
+		if (layout !== null) {
+			markActive();
+		}
+		return layout;
 	};
 
 const createBitmapChannel = (renderer: CliRenderer): KittyMapSurface | null =>
@@ -775,18 +756,16 @@ export const runChrome = async (options: TableOptions): Promise<void> => {
 		bitmapChannel === null ? "pixel" : "bitmap";
 	const tierLadder: readonly MapRenderMode[] =
 		bitmapChannel === null ? ["pixel", "text"] : ["bitmap", "pixel", "text"];
-	// The frame hook fires from the surface's paint, after layout, so absolute
-	// coordinates are real there. Occlusion is chrome knowledge: an open key
-	// sheet punches its own rect out of the placements (the validated dialog
-	// lesson — strips ignore occluders, so occluded updates take the full path).
+	// The frame hook fires from the surface's paint; the emitter answers with
+	// the placeholder layout the surface spells into its own cells. No
+	// occluder wiring exists: chrome over the map is ordinary higher-z text
+	// over ordinary placeholder text (the #134-validated mechanism).
 	mapSurface.onBitmapFrame = wireBitmapHook(
 		{
 			// Renderer destroy routes through `settle` (the DESTROY listener),
 			// so `done` alone covers the destroyed-renderer case too.
 			blocked: () => done,
 			channel: bitmapChannel,
-			occluder: () => keySheetOccluder(keySheet, keySheetOpen),
-			surface: mapSurface,
 		},
 		() => {
 			bitmapActive = true;

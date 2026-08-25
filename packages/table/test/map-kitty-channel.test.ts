@@ -16,14 +16,28 @@ interface FakeChannel {
 	writeOut?: (chunk: string) => boolean;
 }
 
-const rendererWith = (kittyGraphics: boolean | null): CapabilitySource =>
+const rendererWith = (
+	kittyGraphics: boolean | null,
+	terminalName = "ghostty"
+): CapabilitySource =>
 	({
 		capabilities:
-			kittyGraphics === null ? null : { kitty_graphics: kittyGraphics },
+			kittyGraphics === null
+				? null
+				: {
+						kitty_graphics: kittyGraphics,
+						terminal: {
+							from_xtversion: true,
+							name: terminalName,
+							version: "1.0.0",
+						},
+					},
 	}) as CapabilitySource;
 
 /** Wraps a plain fake as the channel's renderer: FakeChannel's shape is a subset of CliRenderer's, so one explicit step suffices. */
-const asChannel = (fake: FakeChannel): Parameters<typeof rawWriteChannelFor>[0] =>
+const asChannel = (
+	fake: FakeChannel
+): Parameters<typeof rawWriteChannelFor>[0] =>
 	fake as Parameters<typeof rawWriteChannelFor>[0];
 
 describe("the multiplexer guard", () => {
@@ -58,6 +72,20 @@ describe("the capability verdict", () => {
 		expect(bitmapSupportedFor(rendererWith(false), {})).toBe(false);
 		// Capabilities not yet known: silently unsupported — no nag (ADR-0032).
 		expect(bitmapSupportedFor(rendererWith(null), {})).toBe(false);
+	});
+
+	test("graphics without placeholder support is still a no (ADR-0032's shrunk list)", () => {
+		// Konsole speaks classic placements but not Unicode placeholders;
+		// iTerm2 is unverified. Both answer XTVERSION, so the renderer-reported
+		// name is the gate — no env sniffing.
+		expect(bitmapSupportedFor(rendererWith(true, "Konsole"), {})).toBe(false);
+		expect(bitmapSupportedFor(rendererWith(true, "iTerm2"), {})).toBe(false);
+		expect(bitmapSupportedFor(rendererWith(true, ""), {})).toBe(false);
+		expect(bitmapSupportedFor(rendererWith(true, "kitty(0.40.1)"), {})).toBe(
+			true
+		);
+		expect(bitmapSupportedFor(rendererWith(true, "WezTerm"), {})).toBe(true);
+		expect(bitmapSupportedFor(rendererWith(true, "ghostty"), {})).toBe(true);
 	});
 
 	test("the environment guard overrides even a reported yes", () => {

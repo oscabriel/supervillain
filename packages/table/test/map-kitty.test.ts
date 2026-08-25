@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { inflateSync } from "node:zlib";
 
+import { PLACEHOLDER_GRID_LIMIT } from "../src/map-kitty-placeholder.js";
 import {
 	BITMAP_THEME_RGB,
 	deleteImageSequence,
@@ -15,11 +16,10 @@ import {
 	placementSequence,
 	rasterizeCells,
 	spanBounds,
-	subtractRect,
 	transmitSequences,
+	virtualPlacementSequence,
 } from "../src/map-kitty.js";
-import type { CellRect } from "../src/map-kitty.js";
-import type { MapCell } from "../src/map.js";
+import type { MapCell, MapSize } from "../src/map.js";
 
 const px = (w: number, h: number): Framebuffer => {
 	const fb = new Framebuffer(w, h);
@@ -37,17 +37,6 @@ const payloadsOf = (sequences: readonly string[]): string[] =>
 		expect(match).not.toBeNull();
 		return match?.groups?.payload ?? "";
 	});
-
-const area = (rect: CellRect): number => rect.w * rect.h;
-
-/** Deterministic small-state PRNG, so property failures reproduce exactly. */
-const lcg = (seed: number): (() => number) => {
-	let state = seed;
-	return () => {
-		state = (state * 1_103_515_245 + 12_345) % 2_147_483_648;
-		return state / 2_147_483_648;
-	};
-};
 
 interface CapturingSurface {
 	surface: KittyMapSurface;
@@ -81,9 +70,7 @@ describe("transmit framing", () => {
 				continue;
 			}
 			expect(sequence).toMatch(
-				index === sequences.length - 1
-					? /^\x1b_Gm=0;/u
-					: /^\x1b_Gm=1;/u
+				index === sequences.length - 1 ? /^\x1b_Gm=0;/u : /^\x1b_Gm=1;/u
 			);
 		}
 	});
@@ -99,15 +86,21 @@ describe("transmit framing", () => {
 describe("placement and deletion", () => {
 	test("a placement saves, moves, places with crop, and restores", () => {
 		expect(
-			placementSequence(
-				3100,
-				42,
-				{ x: 5, y: 7, w: 12, h: 9 },
-				-1,
-				{ x: 0, y: 36, w: 96, h: 72 }
-			)
+			placementSequence(3100, 42, { x: 5, y: 7, w: 12, h: 9 }, -1, {
+				x: 0,
+				y: 36,
+				w: 96,
+				h: 72,
+			})
 		).toBe(
 			"\x1b[s\x1b[7;5H\x1b_Ga=p,i=3100,p=42,q=2,c=12,r=9,z=-1,C=1,x=0,y=36,w=96,h=72\x1b\\\x1b[u"
+		);
+	});
+
+	test("a virtual placement pins the grid without touching the cursor", () => {
+		// U=1: shown by placeholder cells, so no save/move/restore wrapper.
+		expect(virtualPlacementSequence(3100, 48, 15)).toBe(
+			"\x1b_Ga=p,U=1,i=3100,c=48,r=15,q=2\x1b\\"
 		);
 	});
 
@@ -116,65 +109,6 @@ describe("placement and deletion", () => {
 		expect(deleteImageSequence(3200, 51)).toBe(
 			"\x1b_Ga=d,d=I,i=3200,p=51,q=2\x1b\\"
 		);
-	});
-});
-
-describe("rectangle subtraction", () => {
-	test("no hole is the whole rect; a swallowing hole is empty", () => {
-		const whole = { x: 2, y: 3, w: 10, h: 6 };
-		expect(subtractRect(whole, null)).toEqual([whole]);
-		expect(subtractRect(whole, { x: 0, y: 0, w: 30, h: 30 })).toEqual([]);
-	});
-
-	test("property: fragments plus hole tile the whole exactly", () => {
-		const random = lcg(20_260_822);
-		for (let trial = 0; trial < 500; trial += 1) {
-			const whole = {
-				x: Math.floor(random() * 20),
-				y: Math.floor(random() * 20),
-				w: 1 + Math.floor(random() * 30),
-				h: 1 + Math.floor(random() * 30),
-			};
-			const hole = {
-				x: whole.x + Math.floor(random() * whole.w),
-				y: whole.y + Math.floor(random() * whole.h),
-				w: Math.floor(random() * whole.w),
-				h: Math.floor(random() * whole.h),
-			};
-			const fragments = subtractRect(whole, hole);
-			// No overlap: the area sum equals the count of distinct covered cells.
-			let covered = 0;
-			const cells = new Set<string>();
-			for (const fragment of [...fragments, hole]) {
-				covered += area(fragment);
-				for (let dy = 0; dy < fragment.h; dy += 1) {
-					for (let dx = 0; dx < fragment.w; dx += 1) {
-						cells.add(`${fragment.x + dx},${fragment.y + dy}`);
-					}
-				}
-			}
-			expect(covered).toBe(cells.size);
-			// Full coverage: every cell of the whole is covered by exactly one piece.
-			let wholeCells = 0;
-			for (let dy = 0; dy < whole.h; dy += 1) {
-				for (let dx = 0; dx < whole.w; dx += 1) {
-					if (cells.has(`${whole.x + dx},${whole.y + dy}`)) {
-						wholeCells += 1;
-					}
-				}
-			}
-			expect(wholeCells).toBe(area(whole));
-			for (const fragment of fragments) {
-				expect(fragment.x).toBeGreaterThanOrEqual(whole.x);
-				expect(fragment.y).toBeGreaterThanOrEqual(whole.y);
-				expect(fragment.x + fragment.w).toBeLessThanOrEqual(
-					whole.x + whole.w
-				);
-				expect(fragment.y + fragment.h).toBeLessThanOrEqual(
-					whole.y + whole.h
-				);
-			}
-		}
 	});
 });
 
@@ -271,68 +205,81 @@ describe("span bounds and rasterization", () => {
 });
 
 describe("the kitty map surface", () => {
-	// Two tiles square.
-	const MAP_RECT: CellRect = { x: 3, y: 4, w: 8, h: 6 };
+	// Two tiles square: 8×6 cells over a 96×72 px frame (12×12 px per cell
+	// — the surface derives scale from frame÷grid, never from metrics).
+	const GRID: MapSize = { width: 8, height: 6 };
 
-	test("the first render transmits and places below text, deleting nothing", () => {
+	test("the first render transmits, places virtually, and deletes nothing", () => {
 		const { surface, writes } = surfaceOn();
-		surface.render(px(96, 72), MAP_RECT, null);
+		const layout = surface.render(px(96, 72), GRID);
 		const stream = emitted(writes);
 		expect(stream).toContain("a=t,f=32,t=d,o=z,s=96,v=72,i=3100");
-		expect(stream).toContain("z=-1,C=1");
+		expect(stream).toContain("a=p,U=1,i=3100,c=8,r=6,q=2");
+		// Placeholders carry position; nothing addresses the cursor.
+		expect(stream).not.toContain("\x1b[s");
 		expect(stream).not.toContain("a=d");
-	});
-	test("an identical re-render emits nothing", () => {
-		const { surface, writes } = surfaceOn();
-		const frame = px(96, 72);
-		surface.render(frame, MAP_RECT, null);
-		writes.length = 0;
-		surface.render(px(96, 72), MAP_RECT, null);
-		expect(emitted(writes)).toBe("");
+		expect(layout).toEqual({ baseImageId: 3100, strip: null });
 	});
 
-	test("a small change rides a strip placed above the base", () => {
+	test("an identical re-render emits nothing and keeps the layout", () => {
 		const { surface, writes } = surfaceOn();
-		surface.render(px(96, 72), MAP_RECT, null);
+		surface.render(px(96, 72), GRID);
+		writes.length = 0;
+		const layout = surface.render(px(96, 72), GRID);
+		expect(emitted(writes)).toBe("");
+		expect(layout).toEqual({ baseImageId: 3100, strip: null });
+	});
+
+	test("a small change rides a strip image with its own virtual placement", () => {
+		const { surface, writes } = surfaceOn();
+		surface.render(px(96, 72), GRID);
 		const changed = px(96, 72);
 		// Inside the first tile.
 		changed.setPixel(10, 10, [255, 255, 255]);
 		writes.length = 0;
-		surface.render(changed, MAP_RECT, null);
+		const layout = surface.render(changed, GRID);
 		const stream = emitted(writes);
-		// Strip slot A, above the base; no prior strip to retire yet.
-		expect(stream).toContain("i=3200");
-		expect(stream).toContain("z=1,C=1");
+		// Strip slot A: one 4×3-cell tile, 48×36 px; nothing retires yet.
+		expect(stream).toContain("a=t,f=32,t=d,o=z,s=48,v=36,i=3200");
+		expect(stream).toContain("a=p,U=1,i=3200,c=4,r=3,q=2");
 		expect(stream).not.toContain("a=d");
+		expect(layout).toEqual({
+			baseImageId: 3100,
+			strip: { imageId: 3200, x: 0, y: 0, w: 4, h: 3 },
+		});
 	});
 
-	test("the next strip retires its predecessor, not the base", () => {
+	test("a replaced strip retires on the next render, never in its own", () => {
 		const { surface, writes } = surfaceOn();
-		surface.render(px(96, 72), MAP_RECT, null);
+		surface.render(px(96, 72), GRID);
 		const first = px(96, 72);
 		first.setPixel(10, 10, [255, 255, 255]);
-		surface.render(first, MAP_RECT, null);
+		surface.render(first, GRID);
 		const second = px(96, 72);
 		second.setPixel(10, 10, [0, 255, 0]);
 		writes.length = 0;
-		surface.render(second, MAP_RECT, null);
-		const stream = emitted(writes);
-		// Strip slot B replaces slot A; the base stays resident.
-		expect(stream).toContain("i=3201");
-		expect(stream).toContain("d=I,i=3200");
-		expect(stream).not.toContain("d=I,i=3100");
+		const layout = surface.render(second, GRID);
+		// Strip slot B replaces slot A, but cells still reference A until the
+		// flip frame flushes — A's deletion is deferred, not written here.
+		expect(emitted(writes)).toContain("i=3201");
+		expect(emitted(writes)).not.toContain("a=d");
+		expect(layout?.strip?.imageId).toBe(3201);
+		// The following render — even an idle one — writes exactly that delete.
+		writes.length = 0;
+		surface.render(second, GRID);
+		expect(emitted(writes)).toBe("\x1b_Ga=d,d=I,i=3200,q=2\x1b\\");
 	});
 
-	test("a large change retransmits double-buffered and retires base plus strip", () => {
+	test("a large change flips the double-buffered base and defers retirement", () => {
 		const { surface, writes } = surfaceOn();
-		// Six tiles square.
-		const bigRect: CellRect = { x: 2, y: 2, w: 24, h: 18 };
+		// Six tiles square: 24×18 cells.
+		const bigGrid: MapSize = { width: 24, height: 18 };
 		const bigFrame = (): Framebuffer => px(24 * 12, 18 * 24);
-		surface.render(bigFrame(), bigRect, null);
+		surface.render(bigFrame(), bigGrid);
 		const first = bigFrame();
 		// One tile: rides a strip.
 		first.setPixel(10, 10, [255, 255, 255]);
-		surface.render(first, bigRect, null);
+		surface.render(first, bigGrid);
 		const second = bigFrame();
 		// Touch eighteen of the thirty-six tiles: past the strip budget.
 		for (let ty = 0; ty < 3; ty += 1) {
@@ -341,24 +288,53 @@ describe("the kitty map surface", () => {
 			}
 		}
 		writes.length = 0;
-		surface.render(second, bigRect, null);
+		const layout = surface.render(second, bigGrid);
 		const stream = emitted(writes);
-		// Full-size transmit into the other base slot; old base and stale strip retire.
+		// Full-size transmit into the other base slot; the old base and the
+		// stale strip stay resident until the flip frame has flushed.
 		expect(stream).toContain("s=288,v=432");
-		expect(stream).toContain("i=3101");
-		expect(stream).toContain("d=I,i=3100");
-		expect(stream).toContain("d=I,i=3200");
+		expect(stream).toContain("a=p,U=1,i=3101,c=24,r=18,q=2");
+		expect(stream).not.toContain("a=d");
+		expect(layout).toEqual({ baseImageId: 3101, strip: null });
+		// The next render retires both.
+		writes.length = 0;
+		surface.render(second, bigGrid);
+		const retirements = emitted(writes);
+		expect(retirements).toContain("d=I,i=3100");
+		expect(retirements).toContain("d=I,i=3200");
+		expect(retirements).not.toContain("a=t");
 	});
 
-	test("an occluder fragments the placement around its hole", () => {
+	test("a grid beyond the diacritic range refuses instead of aliasing", () => {
 		const { surface, writes } = surfaceOn();
-		// The dialog lesson: occluded updates take the full path, whose
-		// fragmenting handles the hole — strips would ignore it.
-		const occluder: CellRect = { x: 6, y: 6, w: 3, h: 2 };
-		surface.render(px(96, 72), MAP_RECT, occluder);
-		const placements = emitted(writes).match(/c=\d+,r=\d+/gu) ?? [];
-		expect(placements).toHaveLength(4);
-		expect(emitted(writes)).not.toContain("z=1");
+		const layout = surface.render(px(8, 8), {
+			width: PLACEHOLDER_GRID_LIMIT + 1,
+			height: 2,
+		});
+		expect(layout).toBeNull();
+		expect(emitted(writes)).toBe("");
+	});
+
+	test("outgrowing the diacritic range frees resident images", () => {
+		const { surface, writes } = surfaceOn();
+		surface.render(px(96, 72), GRID);
+		writes.length = 0;
+		// A resize past the range: the cells blank (null layout), so nothing
+		// references the images — leave none resident on the terminal.
+		const layout = surface.render(px(8, 8), {
+			width: PLACEHOLDER_GRID_LIMIT + 1,
+			height: 2,
+		});
+		expect(layout).toBeNull();
+		expect(emitted(writes)).toContain("d=I,i=3100");
+		expect(emitted(writes)).not.toContain("a=t");
+		// Shrinking back retransmits from scratch.
+		writes.length = 0;
+		expect(surface.render(px(96, 72), GRID)).toEqual({
+			baseImageId: 3100,
+			strip: null,
+		});
+		expect(emitted(writes)).toContain("a=t,f=32,t=d,o=z,s=96,v=72,i=3100");
 	});
 
 	test("clear frees both slots of both layers", () => {

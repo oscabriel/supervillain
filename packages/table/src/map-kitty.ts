@@ -10,13 +10,16 @@
  * hit-testing, and demotion math are shared with the pixel tier; only
  * rasterization differs.
  *
- * Two deliberate departures from ADR-0032's letter, both tracked on #134:
+ * Placement is ADR-0032's committed mechanism: Unicode placeholders
+ * (U+10EEEE cells whose fg color carries the image ID, spelled by the map
+ * region's renderable — `map-kitty-placeholder.ts`). The emitter transmits
+ * images and binds them to virtual placements (`U=1`); position, diffing,
+ * and occlusion are the cell grid's business, so there is no occlusion
+ * manager and no rectangle subtraction anywhere. Validated end-to-end on
+ * #134 (headless byte checks 6/6 plus the live Ghostty leg, 2026-08-23).
  *
- * - Placement is classic (`a=p` placements + rect subtraction), because that
- *   is what the prototype validated live. The ADR's committed placeholders-
- *   first mechanism (U+10EEEE cells riding OpenTUI diffing) is still owed its
- *   OptimizedBuffer experiment; until that lands or the ADR reopens with
- *   evidence, this module ships the recorded fallback plan.
+ * One deliberate departure from the ADR's letter remains, tracked on #134:
+ *
  * - Cell metrics fall back to a fixed 12×24 instead of the terminal's
  *   reported size: OpenTUI at pin `a0b9064` parses-and-drops CSI 16 t
  *   responses (`parse.keypress.ts` returns null for window/cell reports), so
@@ -32,10 +35,10 @@
  */
 import { deflateSync } from "node:zlib";
 
-import type { MapCell, MapSize } from "./map.js";
-import { glyphBitmap, TILE_COLUMNS, TILE_ROWS } from "./map-pixel.js";
-
 import { Framebuffer } from "./map-kitty-framebuffer.js";
+import { PLACEHOLDER_GRID_LIMIT } from "./map-kitty-placeholder.js";
+import { glyphBitmap, TILE_COLUMNS, TILE_ROWS } from "./map-pixel.js";
+import type { MapCell, MapSize } from "./map.js";
 
 export { Framebuffer } from "./map-kitty-framebuffer.js";
 
@@ -118,7 +121,11 @@ export const transmitSequences = (
 	return [first, ...rest];
 };
 
-/** Places a crop of a transmitted image onto the cell grid, 1-based. */
+/**
+ * Places a crop of a transmitted image onto the cell grid, 1-based. The
+ * product ships placeholders; this classic `a=p` encoder stays as ADR-0032's
+ * recorded fallback plan and as the in-repo prototype's comparison path.
+ */
 export const placementSequence = (
 	imageId: number,
 	placementId: number,
@@ -140,6 +147,21 @@ export const placementSequence = (
 	)}\x1b[u`;
 };
 
+/**
+ * A virtual placement (`U=1`): the image is bound to a cols×rows grid and
+ * shown wherever placeholder cells reference it — no cursor addressing, no
+ * screen coordinates. The terminal fits the image to the grid; our raster's
+ * aspect matches the grid exactly at the assumed 12×24 metrics, so a real
+ * cell aspect far from 1:2 can letterbox and shift strip alignment by a few
+ * pixels — a terminal-matrix eyeball item on #134, unfixable until real cell
+ * metrics reach us (the CSI 16 t parse-and-drop, above).
+ */
+export const virtualPlacementSequence = (
+	imageId: number,
+	cols: number,
+	rows: number
+): string => APC(`a=p,U=1,i=${imageId},c=${cols},r=${rows},q=2`);
+
 export const deleteImageSequence = (
 	imageId: number,
 	placementId?: number
@@ -147,51 +169,6 @@ export const deleteImageSequence = (
 	placementId === undefined
 		? APC(`a=d,d=I,i=${imageId},q=2`)
 		: APC(`a=d,d=I,i=${imageId},p=${placementId},q=2`);
-
-/** Rectangle subtraction: `whole` minus `hole`, as up to four rects. */
-export const subtractRect = (
-	whole: CellRect,
-	hole: CellRect | null
-): CellRect[] => {
-	if (hole === null) {
-		return [whole];
-	}
-	const holeEndX = hole.x + hole.w;
-	const holeEndY = hole.y + hole.h;
-	const fragments: CellRect[] = [];
-	if (hole.y > whole.y) {
-		fragments.push({ ...whole, h: hole.y - whole.y });
-	}
-	if (holeEndY < whole.y + whole.h) {
-		fragments.push({
-			x: whole.x,
-			y: holeEndY,
-			w: whole.w,
-			h: whole.y + whole.h - holeEndY,
-		});
-	}
-	const bandY = Math.max(whole.y, hole.y);
-	const bandH = Math.min(whole.y + whole.h, holeEndY) - bandY;
-	if (bandH > 0) {
-		if (hole.x > whole.x) {
-			fragments.push({
-				x: whole.x,
-				y: bandY,
-				w: hole.x - whole.x,
-				h: bandH,
-			});
-		}
-		if (holeEndX < whole.x + whole.w) {
-			fragments.push({
-				x: holeEndX,
-				y: bandY,
-				w: whole.x + whole.w - holeEndX,
-				h: bandH,
-			});
-		}
-	}
-	return fragments;
-};
 
 // ---------------------------------------------------------------------------
 // Probe response parsing. The product verdict comes from the renderer's own
@@ -209,8 +186,7 @@ export const parseProbeResponse = (raw: string): ProbeReading => {
 	// Either an APC graphics response (the a=q reply), or `_G` advertised in
 	// the primary-device-attributes reply (kitty and ghostty do this).
 	const graphicsSupported =
-		/\x1b_G(?<body>[\s\S]*?)\x1b\\/u.test(raw) ||
-		/\x1b\[\?[\d;]*_G/u.test(raw);
+		/\x1b_G(?<body>[\s\S]*?)\x1b\\/u.test(raw) || /\x1b\[\?[\d;]*_G/u.test(raw);
 	const cellMatch = raw.match(/\x1b\[6;(?<height>\d+);(?<width>\d+)t/u);
 	return {
 		cellPx:
@@ -331,18 +307,14 @@ export const rasterizeCells = (
 };
 
 // ---------------------------------------------------------------------------
-// The map surface: double-buffered base image, strip updates for cheap moves,
-// occluder fragmentation for chrome over the map. Writes through an injected
-// sink, so tests drive it without a renderer.
+// The map surface: double-buffered base image, strip updates for cheap moves.
+// The emitter owns image lifecycles and returns the placeholder layout the
+// renderable spells into cells; it never learns screen coordinates. Writes
+// through an injected sink, so tests drive it without a renderer.
 // ---------------------------------------------------------------------------
 
 const BASE_IMAGE_IDS = [3100, 3101] as const;
 const STRIP_IMAGE_IDS = [3200, 3201] as const;
-// Below text: blanked cells let the image show. Strips sit one layer above.
-const BASE_Z_INDEX = -1;
-const STRIP_Z_INDEX = 1;
-const BASE_PLACEMENT_ID_START = 41;
-const STRIP_PLACEMENT_ID = 51;
 
 /**
  * When a changed region stays within this many tiles, an update rides a strip
@@ -352,24 +324,35 @@ const STRIP_PLACEMENT_ID = 51;
  */
 const MAX_STRIP_TILES = 12;
 
-const rectEquals = (a: CellRect | null, b: CellRect | null): boolean =>
-	a === b ||
-	(a !== null &&
-		b !== null &&
-		a.x === b.x &&
-		a.y === b.y &&
-		a.w === b.w &&
-		a.h === b.h);
+/** A strip's placeholder region: grid-local cell offsets plus its image. */
+export interface PlaceholderStrip {
+	readonly imageId: number;
+	readonly x: number;
+	readonly y: number;
+	readonly w: number;
+	readonly h: number;
+}
+
+/**
+ * What the map region's renderable spells into cells: every cell shows the
+ * base image (diacritics = its own grid coordinates) except cells inside the
+ * strip, which show the strip image (diacritics relative to the strip's
+ * origin).
+ */
+export interface PlaceholderLayout {
+	readonly baseImageId: number;
+	readonly strip: PlaceholderStrip | null;
+}
 
 /**
  * The changed region between two frames, snapped outward to whole tiles, in
- * map-cell coords — or null when the frames agree pixel for pixel.
+ * grid-local cell coords — or null when the frames agree pixel for pixel.
  */
 const changedTileRegion = (
 	previous: Framebuffer,
 	frame: Framebuffer,
-	mapRect: CellRect
-): CellRect | null => {
+	grid: MapSize
+): { x: number; y: number; w: number; h: number } | null => {
 	let minX = frame.width;
 	let minY = frame.height;
 	let maxX = -1;
@@ -393,15 +376,15 @@ const changedTileRegion = (
 	if (maxX < 0) {
 		return null;
 	}
-	const tileWidthPx = (frame.width / mapRect.w) * TILE_COLUMNS;
-	const tileHeightPx = (frame.height / mapRect.h) * TILE_ROWS;
+	const tileWidthPx = (frame.width / grid.width) * TILE_COLUMNS;
+	const tileHeightPx = (frame.height / grid.height) * TILE_ROWS;
 	const firstTileX = Math.floor(minX / tileWidthPx);
 	const lastTileX = Math.floor(maxX / tileWidthPx);
 	const firstTileY = Math.floor(minY / tileHeightPx);
 	const lastTileY = Math.floor(maxY / tileHeightPx);
 	return {
-		x: mapRect.x + firstTileX * TILE_COLUMNS,
-		y: mapRect.y + firstTileY * TILE_ROWS,
+		x: firstTileX * TILE_COLUMNS,
+		y: firstTileY * TILE_ROWS,
 		w: (lastTileX - firstTileX + 1) * TILE_COLUMNS,
 		h: (lastTileY - firstTileY + 1) * TILE_ROWS,
 	};
@@ -413,7 +396,14 @@ export class KittyMapSurface {
 	private activeBase: 0 | 1 | null = null;
 	private activeStrip: 0 | 1 | null = null;
 	private previousFrame: Framebuffer | null = null;
-	private lastOccluder: CellRect | null = null;
+	private lastLayout: PlaceholderLayout | null = null;
+	/**
+	 * Images replaced this render stay resident until the frame that flips
+	 * the placeholder cells has flushed — deleting them in the same render
+	 * would blank the cells for the gap between the raw APC write and the
+	 * frame bytes. They retire at the start of the next render (or clear).
+	 */
+	private pendingRetirements: number[] = [];
 	private readonly write: (data: string) => void;
 	private readonly chunkSize: number;
 
@@ -426,40 +416,51 @@ export class KittyMapSurface {
 	}
 
 	/**
-	 * Shows `frame` on the cell rect `mapRect`. Diffs against the previous
-	 * frame: a small changed region rides a kilobyte-scale strip re-encode,
-	 * anything larger retransmits the whole double-buffered image, an
-	 * identical frame emits nothing at all (chrome repaints freely). Strips
-	 * ignore occluders, so while one is present every update takes the full
-	 * path, whose fragmenting handles the hole correctly.
+	 * Shows `frame` on a placeholder grid of `grid` cells and returns the
+	 * layout the renderable must spell into those cells. Diffs against the
+	 * previous frame: a small changed region rides a kilobyte-scale strip
+	 * re-encode, anything larger retransmits the whole double-buffered image,
+	 * an identical frame emits nothing at all (chrome repaints freely —
+	 * occlusion is the cell grid's own z-order, never this emitter's).
+	 * Returns null, emitting nothing, when the grid outruns the diacritic
+	 * table — rows or columns beyond it cannot be spelled.
 	 */
-	render(frame: Framebuffer, mapRect: CellRect, occluder: CellRect | null): void {
+	render(frame: Framebuffer, grid: MapSize): PlaceholderLayout | null {
+		if (
+			grid.width > PLACEHOLDER_GRID_LIMIT ||
+			grid.height > PLACEHOLDER_GRID_LIMIT
+		) {
+			// The cells blank on a null layout, so nothing references the
+			// images — leave none resident on the terminal.
+			if (
+				this.activeBase !== null ||
+				this.activeStrip !== null ||
+				this.pendingRetirements.length > 0
+			) {
+				this.clear();
+			}
+			return null;
+		}
+		this.retirePending();
 		const previous = this.previousFrame;
-		const previousOccluder = this.lastOccluder;
 		this.previousFrame = frame;
-		this.lastOccluder = occluder;
 		if (
 			previous !== null &&
 			previous.width === frame.width &&
-			previous.height === frame.height &&
-			rectEquals(previousOccluder, occluder)
+			previous.height === frame.height
 		) {
-			const stripRegion =
-				occluder === null
-					? changedTileRegion(previous, frame, mapRect)
-					: null;
+			const stripRegion = changedTileRegion(previous, frame, grid);
 			if (stripRegion === null) {
-				// Pixel-identical, same occlusion: the terminal already has it.
-				return;
+				// Pixel-identical: the terminal already has it.
+				return this.lastLayout;
 			}
 			const changedTiles =
 				(stripRegion.w / TILE_COLUMNS) * (stripRegion.h / TILE_ROWS);
 			if (changedTiles <= MAX_STRIP_TILES) {
-				this.updateStrip(frame, mapRect, stripRegion);
-				return;
+				return this.updateStrip(frame, grid, stripRegion);
 			}
 		}
-		this.renderBase(frame, mapRect, occluder);
+		return this.renderBase(frame, grid);
 	}
 
 	/** Frees every image slot; teardown and any exit from bitmap mode. */
@@ -472,83 +473,72 @@ export class KittyMapSurface {
 		this.activeBase = null;
 		this.activeStrip = null;
 		this.previousFrame = null;
-		this.lastOccluder = null;
+		this.lastLayout = null;
+		this.pendingRetirements = [];
 	}
 
-	private renderBase(
-		fb: Framebuffer,
-		mapRect: CellRect,
-		occluder: CellRect | null
-	): void {
+	private retirePending(): void {
+		if (this.pendingRetirements.length === 0) {
+			return;
+		}
+		this.write(
+			this.pendingRetirements.map((id) => deleteImageSequence(id)).join("")
+		);
+		this.pendingRetirements = [];
+	}
+
+	private renderBase(fb: Framebuffer, grid: MapSize): PlaceholderLayout {
 		const next: 0 | 1 = this.activeBase === 0 ? 1 : 0;
 		const id = this.baseIds[next] ?? 0;
-		const pxPerCellX = fb.width / mapRect.w;
-		const pxPerCellY = fb.height / mapRect.h;
-		const fragmentPlacements = subtractRect(mapRect, occluder).map(
-			(fragment, index) =>
-				placementSequence(
-					id,
-					BASE_PLACEMENT_ID_START + index,
-					fragment,
-					BASE_Z_INDEX,
-					{
-						x: Math.round((fragment.x - mapRect.x) * pxPerCellX),
-						y: Math.round((fragment.y - mapRect.y) * pxPerCellY),
-						w: Math.round(fragment.w * pxPerCellX),
-						h: Math.round(fragment.h * pxPerCellY),
-					}
-				)
-		);
-		// A resident strip would ghost above the new base — retire it with the
-		// base it annotated.
-		const stripRetirement =
-			this.activeStrip === null
-				? []
-				: [deleteImageSequence(this.stripIds[this.activeStrip] ?? 0)];
+		// A resident strip's cells flip back to the new base in the same frame
+		// — retire the strip with the base it annotated, both deferred.
 		if (this.activeStrip !== null) {
+			this.pendingRetirements.push(this.stripIds[this.activeStrip] ?? 0);
 			this.activeStrip = null;
 		}
-		const baseRetirement =
-			this.activeBase === null
-				? []
-				: [deleteImageSequence(this.baseIds[this.activeBase] ?? 0)];
+		if (this.activeBase !== null) {
+			this.pendingRetirements.push(this.baseIds[this.activeBase] ?? 0);
+		}
 		this.write(
 			[
 				...transmitSequences(id, fb, this.chunkSize),
-				...fragmentPlacements,
-				...stripRetirement,
-				...baseRetirement,
+				virtualPlacementSequence(id, grid.width, grid.height),
 			].join("")
 		);
 		this.activeBase = next;
+		this.lastLayout = { baseImageId: id, strip: null };
+		return this.lastLayout;
 	}
 
 	private updateStrip(
 		fb: Framebuffer,
-		mapRect: CellRect,
-		region: CellRect
-	): void {
+		grid: MapSize,
+		region: { x: number; y: number; w: number; h: number }
+	): PlaceholderLayout {
 		const next: 0 | 1 = this.activeStrip === 0 ? 1 : 0;
 		const id = this.stripIds[next] ?? 0;
-		const pxPerCellX = fb.width / mapRect.w;
-		const pxPerCellY = fb.height / mapRect.h;
+		const pxPerCellX = fb.width / grid.width;
+		const pxPerCellY = fb.height / grid.height;
 		const cut = fb.cut(
-			Math.round((region.x - mapRect.x) * pxPerCellX),
-			Math.round((region.y - mapRect.y) * pxPerCellY),
+			Math.round(region.x * pxPerCellX),
+			Math.round(region.y * pxPerCellY),
 			Math.round(region.w * pxPerCellX),
 			Math.round(region.h * pxPerCellY)
 		);
-		const retirement =
-			this.activeStrip === null
-				? []
-				: [deleteImageSequence(this.stripIds[this.activeStrip] ?? 0)];
+		if (this.activeStrip !== null) {
+			this.pendingRetirements.push(this.stripIds[this.activeStrip] ?? 0);
+		}
 		this.write(
 			[
 				...transmitSequences(id, cut, this.chunkSize),
-				placementSequence(id, STRIP_PLACEMENT_ID, region, STRIP_Z_INDEX),
-				...retirement,
+				virtualPlacementSequence(id, region.w, region.h),
 			].join("")
 		);
 		this.activeStrip = next;
+		this.lastLayout = {
+			baseImageId: this.baseIds[this.activeBase ?? 0] ?? 0,
+			strip: { imageId: id, ...region },
+		};
+		return this.lastLayout;
 	}
 }

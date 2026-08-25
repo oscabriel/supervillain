@@ -14,11 +14,9 @@ import type { OptimizedBuffer, RenderContext } from "@opentui/core";
 import type { BattleMap, MapToken } from "@supervillain/core";
 import { mapDimensions } from "@supervillain/core";
 
-import {
-	FALLBACK_CELL_METRICS,
-	rasterizeCells,
-} from "./map-kitty.js";
-import type { Framebuffer } from "./map-kitty.js";
+import { imageIdRgb, placeholderCell } from "./map-kitty-placeholder.js";
+import { FALLBACK_CELL_METRICS, rasterizeCells } from "./map-kitty.js";
+import type { Framebuffer, PlaceholderLayout } from "./map-kitty.js";
 import {
 	composePixelCells,
 	pixelViewportSize,
@@ -115,12 +113,15 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 
 	/**
 	 * The bitmap tier's frame hook, assigned by the chrome that owns the
-	 * kitty emitter. Called from `renderSelf` — after layout, so the absolute
-	 * coordinates are real — with the rasterized frame; emission itself stays
-	 * outside the paint (the emitter writes escape bytes through its own
-	 * channel).
+	 * kitty emitter. Called from `renderSelf` with the rasterized frame and
+	 * its cell grid; the emitter transmits (through its own channel, outside
+	 * the paint) and answers with the placeholder layout this region then
+	 * spells into its cells. Null — no channel, blocked session, or a grid
+	 * beyond the diacritic range — leaves the region blank.
 	 */
-	onBitmapFrame: ((frame: Framebuffer) => void) | null = null;
+	onBitmapFrame:
+		| ((frame: Framebuffer, grid: MapSize) => PlaceholderLayout | null)
+		| null = null;
 
 	/** Hands the region new state and asks for the one frame that shows it. */
 	update(state: MapRegionState): void {
@@ -145,8 +146,7 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 		// The viewport is always in map cells; the tiled tiers (pixel, bitmap)
 		// fit fewer of them into the same terminal budget. Scrolling, cursor
 		// following, and hit-testing never learn which tier is drawing.
-		const size =
-			state.mode === "text" ? cells : pixelViewportSize(cells);
+		const size = state.mode === "text" ? cells : pixelViewportSize(cells);
 		this.#viewport = scrollViewport(
 			state.map,
 			size,
@@ -198,11 +198,13 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 		}
 	}
 	/**
-	 * The bitmap rung: the image is the map, so the cell grid blanks itself
-	 * (default-background spaces add no SGR and let the below-text image show)
-	 * while the same composed rows rasterize into RGBA for the emitter. The
-	 * dimmed flag is deliberately unused here — chrome over the map is an
-	 * emitter-side occluder, not a repaint.
+	 * The bitmap rung: the composed rows rasterize into RGBA for the emitter,
+	 * and the cells spell the placeholder grid the emitter answers with —
+	 * U+10EEEE, fg carrying the image ID, diacritics carrying each cell's row
+	 * and column (ADR-0032's committed mechanism). Placeholders are ordinary
+	 * text, so chrome over the map occludes through OpenTUI's own z-order; no
+	 * occluder rects exist anywhere. The dimmed flag is deliberately unused
+	 * here — dimming a transmitted image is a design follow-up, not cell work.
 	 */
 	#paintBitmap(state: MapRegionState): void {
 		const cells = {
@@ -219,16 +221,60 @@ export class MapSurfaceRenderable extends FrameBufferRenderable {
 		});
 		for (let row = 0; row < cells.height; row += 1) {
 			for (let column = 0; column < cells.width; column += 1) {
-				this.frameBuffer.setCell(
-					column,
-					row,
-					BLANK_GLYPH,
-					BLANK_FG,
-					BLANK_BG
-				);
+				this.frameBuffer.setCell(column, row, BLANK_GLYPH, BLANK_FG, BLANK_BG);
 			}
 		}
-		this.onBitmapFrame?.(rasterizeCells(rows, FALLBACK_CELL_METRICS));
+		// The grid is the composed tile area, not the whole framebuffer: any
+		// remainder row or column holds no image and stays blank.
+		const grid: MapSize = {
+			height: rows.length * TILE_ROWS,
+			width: (rows[0]?.length ?? 0) * TILE_COLUMNS,
+		};
+		const layout =
+			this.onBitmapFrame?.(rasterizeCells(rows, FALLBACK_CELL_METRICS), grid) ??
+			null;
+		if (layout !== null) {
+			this.#spellPlaceholders(layout, grid);
+		}
+	}
+
+	/**
+	 * One drawText run per row and image: base cells spell their own grid
+	 * coordinates; strip cells spell coordinates relative to the strip's
+	 * origin, because their diacritics address the strip image's placement
+	 * grid, not the map's. Combining marks ride the grapheme, not the cell
+	 * count, so each cell advances exactly one column.
+	 */
+	#spellPlaceholders(layout: PlaceholderLayout, grid: MapSize): void {
+		const baseFg = RGBA.fromInts(...imageIdRgb(layout.baseImageId));
+		const { strip } = layout;
+		const stripFg =
+			strip === null ? baseFg : RGBA.fromInts(...imageIdRgb(strip.imageId));
+		const baseRun = (row: number, from: number, to: number): void => {
+			if (to <= from) {
+				return;
+			}
+			let text = "";
+			for (let column = from; column < to; column += 1) {
+				text += placeholderCell(row, column);
+			}
+			this.frameBuffer.drawText(text, from, row, baseFg, BLANK_BG);
+		};
+		for (let row = 0; row < grid.height; row += 1) {
+			const inStrip =
+				strip !== null && row >= strip.y && row < strip.y + strip.h;
+			if (!inStrip || strip === null) {
+				baseRun(row, 0, grid.width);
+				continue;
+			}
+			baseRun(row, 0, strip.x);
+			let text = "";
+			for (let column = 0; column < strip.w; column += 1) {
+				text += placeholderCell(row - strip.y, column);
+			}
+			this.frameBuffer.drawText(text, strip.x, row, stripFg, BLANK_BG);
+			baseRun(row, strip.x + strip.w, grid.width);
+		}
 	}
 }
 
