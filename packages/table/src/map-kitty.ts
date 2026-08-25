@@ -92,20 +92,31 @@ const APC = (control: string, payload = "") =>
 export const TRANSMIT_CHUNK_BYTES = 4096;
 
 /**
+ * APC framing per chunk is ~11 bytes of base64-invariant overhead; the wire
+ * benchmark measured it at 0.6 KB across a 238 KB full-base transmit — noise.
+ * 4096 stays the default; whether ssh packetization favors fewer, larger
+ * chunks is the one open live-leg item on that results doc.
+ */
+/**
  * Transmit one RGBA framebuffer as a deflated, base64-chunked `a=t` sequence
  * chain. `m=1` is set only when a continuation actually follows: a lone chunk
  * marked `m=1` leaves the terminal waiting forever and nothing ever commits
- * (the dead-arrow-keys lesson, fixed and validated over real ssh).
+ * (the dead-arrow-keys lesson, fixed and validated over real ssh). The level
+ * is a parameter so the benchmarks harness sweeps it through this, the one
+ * true encoder. The shipped default is level 6 — the wire benchmark's pick
+ * (`.agents/benchmarks/2026-08-24-kitty-bitmap-wire.md`): on a full-base
+ * 188×60 retransmit it halves the wire against gloomberb's local-pty level 3
+ * for +3 ms of host CPU per retransmit.
  */
 export const transmitSequences = (
 	imageId: number,
 	fb: Framebuffer,
-	chunkSize: number = TRANSMIT_CHUNK_BYTES
+	chunkSize: number = TRANSMIT_CHUNK_BYTES,
+	deflateLevel = 6
 ): readonly string[] => {
-	// Deflate level 3 is gloomberb's local-pty CPU tuning; our constraint is
-	// ssh bandwidth, which likely wants something slower and tighter.
-	// Placeholder until a benchmarks-dir run exists (ADR-0012/NQ-10).
-	const base64 = deflateSync(fb.pixels, { level: 3 }).toString("base64");
+	const base64 = deflateSync(fb.pixels, { level: deflateLevel }).toString(
+		"base64"
+	);
 	const continues = (start: number): 0 | 1 =>
 		start + chunkSize < base64.length ? 1 : 0;
 	const first = APC(
@@ -318,9 +329,11 @@ const STRIP_IMAGE_IDS = [3200, 3201] as const;
 
 /**
  * When a changed region stays within this many tiles, an update rides a strip
- * re-encode instead of a full transmit. Placeholder pending the benchmarks
- * run (ADR-0012/NQ-10); the prototype measured strips at 4–10 KiB against a
- * ~120 KiB full map.
+ * re-encode instead of a full transmit. The wire benchmark swept strip cost
+ * against full-base retransmit (`.agents/benchmarks/2026-08-24-kitty-bitmap-wire.md`):
+ * at 188×60 a 12-tile strip is ≤6 KB (2% of base) and no swept rect ever
+ * reached crossover; at 80×24 strips stop paying near 16 of the grid's 25
+ * tiles, so the cap is load-bearing exactly there.
  */
 const MAX_STRIP_TILES = 12;
 

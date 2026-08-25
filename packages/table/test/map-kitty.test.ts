@@ -3,7 +3,7 @@
 /* oxlint-disable eslint/no-control-regex -- matching APC framing requires control characters in the patterns. */
 /* oxlint-disable eslint/sort-keys -- cell rects keep the protocol's own x,y,w,h field order everywhere. */
 import { describe, expect, test } from "bun:test";
-import { inflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 
 import { PLACEHOLDER_GRID_LIMIT } from "../src/map-kitty-placeholder.js";
 import {
@@ -80,6 +80,19 @@ describe("transmit framing", () => {
 		const base64 = payloadsOf(transmitSequences(3, frame, 512)).join("");
 		const inflated = inflateSync(Buffer.from(base64, "base64"));
 		expect([...inflated]).toEqual([...frame.pixels]);
+	});
+
+	test("the caller picks the deflate level; the shipped default stays 6", () => {
+		// The benchmarks run (ADR-0012/NQ-10) measured the sweep headlessly
+		// (2026-08-24: level 6 halves full-base wire for +3 ms of host CPU);
+		// the default must not drift from the results doc's pick.
+		const frame = px(48, 24);
+		expect(payloadsOf(transmitSequences(7, frame)).join("")).toBe(
+			deflateSync(frame.pixels, { level: 6 }).toString("base64")
+		);
+		expect(payloadsOf(transmitSequences(7, frame, 4096, 9)).join("")).toBe(
+			deflateSync(frame.pixels, { level: 9 }).toString("base64")
+		);
 	});
 });
 
