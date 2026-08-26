@@ -175,16 +175,18 @@ export class RoomHost {
 	readonly #campaignFolder: string;
 	readonly #logPath: string;
 	readonly #registry: HostRegistry;
-	readonly #table: TableView = { actor: "", gmSeatId: "gm", seats: [] };
+	// Not readonly: a mid-batch fold failure rebuilds this from the log.
+	#table: TableView = { actor: "", gmSeatId: "gm", seats: [] };
 	readonly #clock: () => string;
 	readonly #random: () => number;
-	readonly #envelopes: Envelope[] = [];
+	// Not readonly: a mid-batch fold failure rebuilds these from the log.
+	#envelopes: Envelope[] = [];
 	readonly #subscribers = new Set<Subscriber>();
 	/** This log's slice of the key-equivalence graph (ADR-0005): who is whom,
 	 * folded from `core.actor-linked` and consulted by every seat lookup, so
 	 * GM roaming falls out of idempotent seat claiming with no mechanism of
 	 * its own. */
-	readonly #links: ActorLinks = createActorLinks();
+	#links: ActorLinks = createActorLinks();
 	#authority: AuthorityEntry<unknown, unknown, unknown> | undefined;
 	#grammar: ReadonlySet<string> = new Set();
 	#gameId: string | undefined;
@@ -811,7 +813,17 @@ export class RoomHost {
 			await file.close();
 		}
 		for (const envelope of envelopes) {
-			this.#fold(envelope);
+			try {
+				this.#fold(envelope);
+			} catch (error) {
+				// The write landed; the fold refused. Resynchronize every
+				// fold-scope field from the log — memory must never strand
+				// behind disk, or the next submission mints a seq the log
+				// already carries and no future replay can open it (ADR-0010).
+				// oxlint-disable-next-line eslint/no-await-in-loop -- folds are strictly ordered per envelope and submissions serialize behind #writeTail; there is nothing to run in parallel.
+				await this.#resyncFromLog();
+				throw error;
+			}
 			this.#envelopes.push(envelope);
 			for (const subscriber of this.#subscribers) {
 				subscriber.push(envelope);
@@ -953,16 +965,42 @@ export class RoomHost {
 		this.#game = apply(this.#game, joinEvent(envelope));
 	}
 
-	async #replay(): Promise<void> {
-		let bytes: string;
-		try {
-			bytes = await readFile(this.#logPath, "utf-8");
-		} catch (error) {
-			if (isNodeError(error) && error.code === "ENOENT") {
-				return;
-			}
-			throw error;
-		}
+	/**
+	 * Recovers memory after a write landed but its fold threw: every
+	 * fold-scope field is reset to opened-empty values and then rebuilt by
+	 * folding the whole log through the ordinary `#fold` path. Anyone adding
+	 * new mutable fold state inherits this net automatically — but only if
+	 * the field is added to `#resetFoldState()` *and* folded inside `#fold`,
+	 * which is why resync replays through that path instead of a hand-rolled
+	 * copy. If the refold itself throws, memory is left mid-reset and the
+	 * error propagates: this binary cannot serve state it cannot re-derive,
+	 * so fail loudly rather than append on top of partial understanding.
+	 */
+	async #resyncFromLog(): Promise<void> {
+		// No ENOENT guard: the log exists — we just fsynced it.
+		this.#resetFoldState();
+		this.#foldLogLines(await readFile(this.#logPath, "utf-8"));
+	}
+
+	/** The opened-empty values every fold-scope field carries before replay.
+	 * Keep in step with the field initializers above; both must list exactly
+	 * the fields `#fold` can mutate. */
+	#resetFoldState(): void {
+		this.#table = { actor: "", gmSeatId: "gm", seats: [] };
+		this.#links = createActorLinks();
+		this.#authority = undefined;
+		this.#grammar = new Set();
+		this.#gameId = undefined;
+		this.#game = undefined;
+		this.#map = null;
+		this.#tokens = [];
+		this.#tokensPlaced = 0;
+		this.#envelopes.splice(0);
+	}
+
+	/** The one log-walking loop `#replay` and `#resyncFromLog` share: strict
+	 * newline/seq validation (ADR-0010), then fold and remember each line. */
+	#foldLogLines(bytes: string): void {
 		const lines = bytes.split("\n");
 		if (lines.at(-1) !== "") {
 			throw new Error("Log must end with a newline.");
@@ -979,5 +1017,18 @@ export class RoomHost {
 			this.#fold(envelope);
 			this.#envelopes.push(envelope);
 		}
+	}
+
+	async #replay(): Promise<void> {
+		let bytes: string;
+		try {
+			bytes = await readFile(this.#logPath, "utf-8");
+		} catch (error) {
+			if (isNodeError(error) && error.code === "ENOENT") {
+				return;
+			}
+			throw error;
+		}
+		this.#foldLogLines(bytes);
 	}
 }
