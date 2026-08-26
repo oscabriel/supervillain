@@ -122,7 +122,9 @@ export const DEFAULT_WEB_TOKEN_KEY_PATH = "/etc/supervillain/web-token-key";
 const ARTIFACT_TYPES: readonly ArtifactType[] = ["character", "log", "map"];
 const TOKEN_BYTE_LENGTH = 32;
 const CAPABILITY_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
-const DATABASE_FILE = "web.sqlite";
+export const DATABASE_FILE = "store.db";
+/** Pre-litestream-alignment name; migrated to DATABASE_FILE on open (see infra/files/litestream.yml's "*.db" glob). */
+const LEGACY_DATABASE_FILE = "web.sqlite";
 const SNAPSHOT_DIRECTORY = "snapshots";
 const OG_DIRECTORY = "og";
 const TOKEN_KEY_MODE = 0o600;
@@ -240,6 +242,32 @@ const unlinkIfPresent = (file: string): void => {
 	}
 };
 
+/**
+ * Moves a pre-alignment `web.sqlite` over to `store.db` before the database is
+ * opened. Runs once per state root per process in practice — it is a no-op once
+ * the legacy file is gone — and never runs while the new database file exists.
+ */
+const migrateLegacyDatabaseFile = (stateRoot: string): void => {
+	const source = path.join(stateRoot, LEGACY_DATABASE_FILE);
+	const destination = path.join(stateRoot, DATABASE_FILE);
+	if (!existsSync(source)) {
+		return;
+	}
+	if (existsSync(destination)) {
+		throw new Error(
+			`Legacy web database ${source} cannot replace an existing ${destination}`
+		);
+	}
+	try {
+		renameSync(source, destination);
+	} catch (error) {
+		throw new Error(
+			`Failed to migrate web database from ${source} to ${destination}`,
+			{ cause: error }
+		);
+	}
+};
+
 interface OwnedArtifactRow {
 	readonly id: string;
 	readonly name: string;
@@ -269,6 +297,7 @@ export const openBackendStore = (
 	}
 	mkdirSync(path.join(stateRoot, SNAPSHOT_DIRECTORY), { recursive: true });
 	mkdirSync(path.join(stateRoot, OG_DIRECTORY), { recursive: true });
+	migrateLegacyDatabaseFile(stateRoot);
 	const tokenKey = loadOrCreateTokenKey(tokenKeyPath);
 	const database = drizzle({
 		connection: {

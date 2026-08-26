@@ -2,7 +2,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,7 +12,7 @@ import {
 	assertSchemaMatchesMigrations,
 	MIGRATIONS,
 } from "../src/server/schema";
-import { openBackendStore } from "../src/server/store";
+import { openBackendStore, DATABASE_FILE } from "../src/server/store";
 
 const document = {
 	artifactType: "character",
@@ -107,7 +107,7 @@ describe("backend store", () => {
 		).toEqual(document);
 		store.close();
 		expect(
-			readFileSync(path.join(root, "state", "web.sqlite")).includes(capability)
+			readFileSync(path.join(root, "state", "store.db")).includes(capability)
 		).toBe(false);
 
 		const reopened = openBackendStore({
@@ -180,7 +180,7 @@ describe("backend store", () => {
 			.filter((entry) => entry.isFile())
 			.map((entry) => path.join(entry.parentPath, entry.name));
 		const durableBytes = files.map((file) => readFileSync(file));
-		const databaseBytes = readFileSync(path.join(root, "state", "web.sqlite"));
+		const databaseBytes = readFileSync(path.join(root, "state", "store.db"));
 		const snapshotBytes = files
 			.filter((file) => file.endsWith(".json"))
 			.map((file) => readFileSync(file));
@@ -204,5 +204,42 @@ describe("backend store", () => {
 		expect(key.byteLength).toBe(32);
 		// oxlint-disable-next-line eslint/no-bitwise -- Unix permission masks are bit fields.
 		expect(statSync(tokenKeyPath).mode & 0o777).toBe(0o600);
+	});
+
+	test("migrates a legacy web.sqlite over to store.db on open", async () => {
+		const root = await makeRoot();
+		const stateRoot = path.join(root, "state");
+		mkdirSync(stateRoot, { recursive: true });
+		const legacyCanary = `legacy-${randomUUID()}`;
+		// A real-shaped database with known durable bytes: built from the pinned
+		// migrations like a deployed box's `web.sqlite` would be, so the migrated
+		// file opens cleanly through drizzle's schema assertions.
+		const legacy = new Database(path.join(stateRoot, "web.sqlite"), {
+			strict: true,
+		});
+		migrate(legacy, MIGRATIONS);
+		legacy.run(
+			"INSERT INTO published_artifacts (id, name, owner_identity, published_at, snapshot_path, type) VALUES (?, ?, ?, ?, ?, ?)",
+			[randomUUID(), legacyCanary, "identity-1", "2026-08-26T00:00:00Z", "snapshots/x.json", "character"]
+		);
+		legacy.close();
+
+		const store = openBackendStore({
+			stateRoot,
+			tokenKeyPath: path.join(root, "secrets", "web-token-key"),
+		});
+		store.close();
+
+		expect(existsSync(path.join(stateRoot, "web.sqlite"))).toBe(false);
+		const migratedBytes = readFileSync(
+			path.join(stateRoot, DATABASE_FILE)
+		).toString("utf-8");
+		expect(migratedBytes.includes(legacyCanary)).toBe(true);
+
+		const reopened = openBackendStore({
+			stateRoot,
+			tokenKeyPath: path.join(root, "secrets", "web-token-key"),
+		});
+		reopened.close();
 	});
 });
