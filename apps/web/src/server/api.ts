@@ -6,6 +6,7 @@ import {
 
 import { validateSnapshotDocument } from "@supervillain/core";
 import { Hono } from "hono";
+import type { Context } from "hono";
 
 import { createRemoteIdentityDirectory } from "./identity-directory";
 import type {
@@ -25,6 +26,16 @@ const HEX_CHALLENGE = /^[0-9a-f]{64}$/u;
 const HEX_SIGNATURE = /^[0-9a-f]{128}$/u;
 const SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const SNAPSHOT_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
+// Body ceilings enforced BEFORE any body byte is parsed: a hostile client
+// controls both axes otherwise (full-buffer-parse cost per request). Publish
+// gets the snapshot limit plus slack for the envelope fields around the
+// document; the challenge endpoint carries only `{ key }`, so 1 KiB is
+// generous.
+const MAX_PUBLISH_BODY_BYTES = SNAPSHOT_SIZE_LIMIT_BYTES + 4096;
+const CHALLENGE_BODY_MAX_BYTES = 1024;
+// Unauthenticated challenge mints are bounded by count as well as TTL, or a
+// flood refills the table faster than AUTH_CHALLENGE_TTL_MS expires it.
+const MAX_OUTSTANDING_CHALLENGES = 4096;
 const DEFAULT_IDENTITY_CONDUIT_URL = "http://127.0.0.1:3002";
 const REVOKE_MESSAGE =
 	"Revoked. Chat apps may retain unfurl previews already rendered in chat history.";
@@ -141,6 +152,79 @@ const documentBytes = (document: unknown): number | undefined => {
 		: Buffer.byteLength(serialized, "utf-8");
 };
 
+type CappedJsonResult =
+	| { readonly ok: true; readonly value: unknown }
+	| {
+			readonly ok: false;
+			readonly reason: "invalid-json" | "too-large";
+	  };
+
+/**
+ * The one request-body boundary for the unauthenticated POSTs (issue #88 owns
+ * the complementary rate-limiting axes; both /api/publish and
+ * /api/publish/challenge must route their bodies through this helper so no
+ * code path parses a payload before a byte cap applies). A present
+ * content-length header refuses oversized bodies before any allocation;
+ * chunked bodies are streamed against the same budget so an absent
+ * content-length buys nothing. Returns a discriminated result — callers map
+ * `too-large` to 413 in their own envelope shape.
+ */
+const readCappedJson = async (
+	request: Request,
+	maxBytes: number
+): Promise<CappedJsonResult> => {
+	const contentLength = Math.trunc(
+		Number(request.headers.get("content-length") ?? "")
+	);
+	if (Number.isSafeInteger(contentLength) && contentLength > maxBytes) {
+		return { ok: false, reason: "too-large" };
+	}
+	if (request.body === null) {
+		return { ok: false, reason: "invalid-json" };
+	}
+	const reader = request.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	for (;;) {
+		// A byte-budgeted stream read is inherently sequential: each chunk's
+		// arrival gates whether the budget is already exceeded.
+		// oxlint-disable-next-line eslint/no-await-in-loop
+		const { done, value } = await reader.read();
+		if (done) {
+			break;
+		}
+		total += value.byteLength;
+		if (total > maxBytes) {
+			// oxlint-disable-next-line eslint/no-await-in-loop
+			await reader.cancel();
+			return { ok: false, reason: "too-large" };
+		}
+		chunks.push(value);
+	}
+	try {
+		return {
+			ok: true,
+			value: JSON.parse(
+				new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))
+			) as unknown,
+		};
+	} catch {
+		return { ok: false, reason: "invalid-json" };
+	}
+};
+
+/** Maps a capped-reader `too-large` failure into this app's 413 envelope. */
+const bodyTooLargeResponse = (c: Context): Response =>
+	c.json(
+		{
+			error: {
+				code: "body-too-large",
+				message: "Request body exceeds the allowed size.",
+			},
+		},
+		413
+	);
+
 const renderAndPersistCard = async (
 	backendStore: BackendStore,
 	capability: string,
@@ -179,12 +263,18 @@ export const createApi = (options: PublishApiOptions = {}): Hono => {
 		(() => randomBytes(AUTH_NONCE_BYTES).toString("hex"));
 	const challenges = new Map<string, ChallengeRecord>();
 
-	const issueChallenge = (key: string): string => {
+	const issueChallenge = (key: string): string | null => {
 		const now = clock();
 		for (const [challenge, record] of challenges) {
 			if (record.expiresAt <= now) {
 				challenges.delete(challenge);
 			}
+		}
+		// Refuse rather than evict live entries: eviction would let a flood
+		// invalidate challenges legitimately issued seconds earlier. Expired
+		// entries above have already freed capacity, so the refusal is strict.
+		if (challenges.size >= MAX_OUTSTANDING_CHALLENGES) {
+			return null;
 		}
 		const challenge = newChallenge();
 		if (!HEX_CHALLENGE.test(challenge)) {
@@ -259,12 +349,13 @@ export const createApi = (options: PublishApiOptions = {}): Hono => {
 
 	const app = new Hono().basePath("/api");
 	app.post("/publish/challenge", async (c) => {
-		let body: unknown;
-		try {
-			body = await c.req.json();
-		} catch {
-			return c.json({ error: "body must be JSON" }, 400);
+		const parsed = await readCappedJson(c.req.raw, CHALLENGE_BODY_MAX_BYTES);
+		if (!parsed.ok) {
+			return parsed.reason === "too-large"
+				? bodyTooLargeResponse(c)
+				: c.json({ error: "body must be JSON" }, 400);
 		}
+		const body = parsed.value;
 		if (
 			!isRecord(body) ||
 			typeof body.key !== "string" ||
@@ -272,7 +363,19 @@ export const createApi = (options: PublishApiOptions = {}): Hono => {
 		) {
 			return c.json({ error: "key must be 64 lowercase hex chars" }, 400);
 		}
-		return c.json({ challenge: issueChallenge(body.key) }, 201);
+		const challenge = issueChallenge(body.key);
+		if (challenge === null) {
+			return c.json(
+				{
+					error: {
+						code: "challenge-capacity",
+						message: "Too many outstanding challenges. Retry shortly.",
+					},
+				},
+				503
+			);
+		}
+		return c.json({ challenge }, 201);
 	});
 
 	app.post("/publish", async (c) => {
@@ -283,13 +386,13 @@ export const createApi = (options: PublishApiOptions = {}): Hono => {
 				authenticated.unavailable === true ? 503 : 401
 			);
 		}
-		let body: unknown;
-		try {
-			body = await c.req.json();
-		} catch {
-			return c.json({ error: "body must be JSON" }, 400);
+		const parsed = await readCappedJson(c.req.raw, MAX_PUBLISH_BODY_BYTES);
+		if (!parsed.ok) {
+			return parsed.reason === "too-large"
+				? bodyTooLargeResponse(c)
+				: c.json({ error: "body must be JSON" }, 400);
 		}
-		const publish = parsePublishBody(body);
+		const publish = parsePublishBody(parsed.value);
 		if (publish === undefined) {
 			return c.json(
 				{ error: "body needs type, non-empty name, and document" },
@@ -366,13 +469,13 @@ export const createApi = (options: PublishApiOptions = {}): Hono => {
 				authenticated.unavailable === true ? 503 : 401
 			);
 		}
-		let body: unknown;
-		try {
-			body = await c.req.json();
-		} catch {
-			return c.json({ error: "body must be JSON" }, 400);
+		const parsed = await readCappedJson(c.req.raw, MAX_PUBLISH_BODY_BYTES);
+		if (!parsed.ok) {
+			return parsed.reason === "too-large"
+				? bodyTooLargeResponse(c)
+				: c.json({ error: "body must be JSON" }, 400);
 		}
-		const request = parseRevokeBody(body);
+		const request = parseRevokeBody(parsed.value);
 		if (request === undefined) {
 			return c.json({ error: "body needs type and non-empty name" }, 400);
 		}
@@ -419,13 +522,13 @@ export const createApi = (options: PublishApiOptions = {}): Hono => {
 				authenticated.unavailable === true ? 503 : 401
 			);
 		}
-		let body: unknown;
-		try {
-			body = await c.req.json();
-		} catch {
-			return c.json({ error: "body must be JSON" }, 400);
+		const parsed = await readCappedJson(c.req.raw, MAX_PUBLISH_BODY_BYTES);
+		if (!parsed.ok) {
+			return parsed.reason === "too-large"
+				? bodyTooLargeResponse(c)
+				: c.json({ error: "body must be JSON" }, 400);
 		}
-		const revoke = parseRevokeBody(body);
+		const revoke = parseRevokeBody(parsed.value);
 		if (revoke === undefined) {
 			return c.json({ error: "body needs type and non-empty name" }, 400);
 		}
