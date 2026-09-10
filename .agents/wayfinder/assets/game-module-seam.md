@@ -12,7 +12,7 @@ The package keeps the game's identity whole; entry points keep dependency direct
 
 | entry point | provides | imports |
 | --- | --- | --- |
-| `model` | `S`/`C`/`E` types, `init`, `apply` — pure, platform-free | — |
+| `model` | `S`/`C`/`E` types, `init`, `apply`, `offers` — pure, platform-free | core seam types, type-only |
 | `authority` | `decide` — all randomness, all authority | model, content |
 | `view` | panels, `renderEvent` | model, content, OpenTUI |
 | `content` | packaged static data, terminology, file validators | model |
@@ -31,6 +31,7 @@ interface GameAuthority<S, C, E> {
 	init(): S; // constant empty state
 	decide(state: S, cmd: C, ctx: TableView): E[] | Rejection; // single-writer host
 	apply(state: S, event: E): S; // pure reducer, replay-safe
+	offers?(state: S, ctx: TableView): readonly Offer<C>[]; // pure eligibility, shared with the render side
 }
 ```
 
@@ -47,6 +48,26 @@ Riders:
 
 - **`TableView` is a read-only snapshot value captured at command time** (not a live handle), exposing the narrow core facts `decide` may read (seats, who holds the GM seat). It is the **licensed churn point**: v1 growth there (e.g. character↔seat bindings) is honest interface evolution. _(Correction 2026-07-14, surfaced by issue #10, [ADR-0002](../../adr/0002-tableview-carries-the-authenticated-actor.md): `TableView` also carries `actor` — the authenticated key of the perspective the snapshot serves: the command's connection-authenticated issuer in `decide`, the viewing player in panels. GM-only authority rules read it instead of trusting command payloads.)_ _(Correction 2026-07-20, issues #21/#24: `SeatView` carries `characterId: string | null`; bindings are established by the core-owned `core.bind-character` command → `core.character-bound` event, bind the issuer's own seat (actor-resolved, ADR-0002), are opaque to the core, last-write-wins in log order, and derive purely from replay.)_
 - **The envelope is the core's forever-promise; payload schema versioning is the module's problem.** The v1 Draw Steel module must replay v0 events.
+
+### Standing decisions (ADR-0035)
+
+_(Added 2026-09-10, [#138](https://github.com/oscabriel/supervillain/issues/138), [ADR-0035](../adr/0035-standing-decisions-a-pending-choice-is-state-continued-by-its-own-command.md), surfaced by reading tobi/neohack.) A `ds.*` command that needs a follow-up choice before it finishes does not grow a parameter per possible follow-up — the Panel would have to know every follow-up ahead of time. The command is accepted, `apply` leaves a **standing decision** in `S` with an id, a kind, and the offered answers, and a separate command (`ds.decision.answer {decisionId, answer}` / `ds.decision.cancel {decisionId}`) continues exactly that decision. The open decision is state, not a Panel's local buffer: it replays across reconnects and fold checkpoints (ADR-0018) and renders identically in every Panel. Ids give `decide` the answer-drift check for free: an answer whose id is not the currently standing one is rejected with one equality check — a late-arriving answer from a slow Table can never land on a different question, because an adapter may never substitute a newer standing question for a caller's older answer._
+
+- **At most one standing decision per seat; ids unique in the room's log.** Draw Steel has simultaneous triggered actions across seats, so per-room is too narrow. The id is minted in `decide` (all randomness lives there) and lands in the event payload, so replay never re-mints it.
+- **The GM may answer or cancel any seat's decision; a seat answers its own.** Seam invariant 4 (GM-in-the-loop) applied to stuck decisions: every game this product serves has a GM, so a vanished player's decision is unstickable by definition.
+- **Cancel cannot undo time already spent.** What a cancelled decision leaves behind ("the attack happened, you declined the bonus") is the module's per-decision-kind call. `decide` accepts the cancel (and rejects a stale id), `apply` clears the decision, and the initiating command's effects stand.
+- **No decision auto-resolves.** Timeout is not a thing. If a player disappears, the GM cancels or answers.
+- **Core stays blind.** The standing decision lives in the module's `S`, typed only by the module; no core machinery, no `GameView` hint (a read-only `standingDecision?()` hint is named churn until a real Panel needs to show "waiting on <seat>" without importing `S`). Exercised by the fake game module: a two-step command, a standing decision, a stale-id rejection, and GM-vs-seat resolution rights.
+
+### Offers (ADR-0036)
+
+_(Added 2026-09-10, [#139](https://github.com/oscabriel/supervillain/issues/139), [ADR-0036](../adr/0036-offers-eligibility-projection-on-the-model-entry.md), surfaced by reading tobi/neohack.) The `model` entry gains `offers(state, view): readonly Offer<C>[]` — the one place eligibility rules live, so a Panel never re-derives a rule `decide` also knows and never offers what the authority would refuse. `decide` and the render side both call it; no new lattice edge (`model` was already importable from both `authority` and `view`)._
+
+- **An offer is eligibility, never a guarantee.** Offers are computed from state at render time; state moves between the offer and the command landing, so `decide` may still reject an offered command. The rule worth stealing verbatim from neohack: "Eligibility does not imply safety."
+- **Availability is a closed three-way union, and `Offer<C>` is a discriminated union on it** — `attemptable` carries `command: C`; `needsSelection` carries `template: Partial<C>` (a fill-in the Panel completes into a whole `C`; the ADR-0030 contextual text task shape); `blocked` carries `reason: string` and no command. The template is typed partial on purpose: typing it as `C` would force every templatable command in the module's union to grow optional fields, and `decide` to reject half-filled commands at runtime. Deliberately smaller than neohack's five-way union: there is no perception uncertainty here — state is authoritative and shared. A `blocked` offer exists so a Panel can show a disabled action with a reason instead of hiding it (ADR-0030's contextual key help wants that text).
+- **The conformance rule is one-way:** every `attemptable` offer's command is accepted by `decide` on the same state. "The UI offered it and authority refused it" is a bug by definition. The reverse — `decide` pre-checking `offers` and rejecting anything unoffered — is a recommended pattern, not a requirement: a GM-only force command may be decidable without ever being offered to anyone. A `blocked` offer's reason must be a rule `decide` actually enforces, worded once and read by both (the fake module exports the string and both sides use it); a reason `decide` does not know is the drift this section exists to prevent, in the other direction.
+- **The gate:** a seat with a standing decision (above) collapses its offer list to answering or declining that decision — the same input-gate instinct neohack's driver has. Both conventions land together in the fake game module.
+- **Labels and reasons are module-owned strings**, never ANSI, per the render-end posture. Core defines the `Offer` shape; the module owns the words.
 
 ## Render end
 
@@ -87,7 +108,7 @@ A room binds to its module via a logged game id (`core.*` room-creation event). 
 
 ## The fake game module
 
-The second adapter that makes the seam real in v0 (two-adapters rule): a trivial game module used by core's tests, spanning **all four entry points**. Its `decide` exercises rejection, multi-event emission, and a `TableView` read through the same log as core events; its view end is a trivial panel + feed line proving the render seam; its content end is a trivial validator. It is the conformance surface for the interface — core tests cross the same seam Draw Steel does.
+The second adapter that makes the seam real in v0 (two-adapters rule): a trivial game module used by core's tests, spanning **all four entry points**. Its `decide` exercises rejection, multi-event emission, and a `TableView` read through the same log as core events; its view end is a trivial panel + feed line proving the render seam; its content end is a trivial validator. _(Extended 2026-09-10, [#138](https://github.com/oscabriel/supervillain/issues/138)/[#139](https://github.com/oscabriel/supervillain/issues/139): it also exercises the standing-decision convention — a two-step command, a standing decision in `S`, a stale-id rejection, GM-vs-seat resolution rights — and the offers projection, including the standing-decision gate, a `blocked` offer with a reason, and the one-way conformance rule that every `attemptable` offer is accepted by `decide` on the same state.)_ It is the conformance surface for the interface — core tests cross the same seam Draw Steel does.
 
 ## Named-churn ledger (deferred by decision, not oversight)
 
@@ -98,6 +119,9 @@ The second adapter that makes the seam real in v0 (two-adapters rule): a trivial
 | field-level schema introspection | content entry | v2 (builder) |
 | creation-wizard flow | new entry point or CLI-side | v2 — zero present consumers, so no entry point now |
 | `apply` widened to core events | authority end | escape hatch, only if a game needs reactive coupling |
+| `offers` on the Draw Steel model entry | `model` entry (ADR-0036) | when Draw Steel v0 Panels need eligibility they would otherwise re-derive |
+| `GameView.standingDecision?()` read-only hint | `GameView` (ADR-0035) | when core chrome must show "waiting on <seat>" without importing `S` |
+| standing decisions in Draw Steel commands | module convention (ADR-0035) | when Draw Steel's first follow-up choice arrives |
 
 ## Handoff to 015 — the lattice as acceptance test
 

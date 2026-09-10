@@ -71,7 +71,9 @@ const readLog = async (
 const withCampaign = async (
 	run: (folder: string) => Promise<void>
 ): Promise<void> => {
-	const folder = await mkdtemp(path.join(tmpdir(), "supervillain-fold-failure-"));
+	const folder = await mkdtemp(
+		path.join(tmpdir(), "supervillain-fold-failure-")
+	);
 	try {
 		await run(folder);
 	} finally {
@@ -124,6 +126,7 @@ describe("RoomHost fold failure safety", () => {
 			expect(reopened.snapshot().game).toEqual({
 				lastCharacterId: null,
 				lastSeatId: "player-1",
+				standing: {},
 				visits: 1,
 			});
 

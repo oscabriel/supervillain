@@ -66,6 +66,10 @@ Terminal-first virtual tabletop: a system-agnostic core hosts live game rooms ov
 
 **Rejection**: `decide`'s refusal result. The module supplies the message; core chrome renders it as ephemeral feedback to the issuing client — the loop closes in core. _Avoid_: error, exception, validation failure
 
+**Standing decision**: A half-finished command left in `S` by `apply` with an id, a kind, and the offered answers; continued by its own `decision.answer`/`decision.cancel` commands, resolvable by its seat or the GM, never auto-resolved. Cancelling declines the pending choice — it never undoes what the initiating command already applied. Module convention; core stays blind (ADR-0035). _Avoid_: pending command, unfinished action, modal, prompt state
+
+**Offer**: A seat's eligibility for a command, projected once by the module's pure `offers(state, view)` and read by every Panel; `decide` may pre-check it and must enforce every rule a `blocked` reason names — one place for the rule. `attemptable` (a whole command) | `needsSelection` (a partial template the Panel completes) | `blocked` (a reason, no command). Eligibility, never a guarantee: `decide` may still reject an offered command (ADR-0036). _Avoid_: guarantee, eligible action, permission
+
 **Replay**: Refolding the log to reproduce state, byte-identical. Replay never reads files or content — everything computed (dice, derived stat blocks) already lives in payloads. _Avoid_: rehydration, state recovery
 
 **Fold posture**: The pinned contract for events a fold can't cleanly apply (ADR-0010). Two tiers, keyed on type recognition: **unknown** (unrecognized type — silent skip, forward compat) vs **known-invalid** (recognized type, violated payload shape or fold invariant). Writers halt, readers tolerate: the host refuses to open on either tier; render folds never halt — unknown skips silently, known-invalid skips loudly (a warning FeedLine with seq/type/reason). Shapes a released host ever wrote stay valid forever via upgrade-on-read. _Avoid_: error handling, validation policy, fault tolerance

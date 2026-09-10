@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { decide } from "../../games/fake/src/authority.js";
-import { apply, eventTypes, init } from "../../games/fake/src/model.js";
+import {
+	PLEDGE_OWN_SEAT_REASON,
+	apply,
+	eventTypes,
+	init,
+	offers,
+} from "../../games/fake/src/model.js";
 import type {
 	FakeCommand,
 	FakeEvent,
@@ -121,6 +127,7 @@ describe("game module seam", () => {
 			expect(expected.game).toEqual({
 				lastCharacterId: "hero",
 				lastSeatId: "player-1",
+				standing: {},
 				visits: 1,
 			});
 
@@ -180,6 +187,266 @@ describe("game module seam", () => {
 	});
 });
 
+/** A standing decision opened in state by folding its own event — the shape
+ * every test below starts from. */
+const openStandingState = (decisionId = "decision-1"): FakeState =>
+	apply(init(), {
+		answers: ["yes", "no"],
+		decisionId,
+		kind: "double-visit",
+		prompt: "Double this visit?",
+		seatId: "guest",
+		type: "fake.decision-opened",
+	});
+
+const foldEvents = (events: readonly FakeEvent[]): FakeState => {
+	let state = init();
+	for (const event of events) {
+		state = apply(state, event);
+	}
+	return state;
+};
+
+describe("standing decisions and offers across the seam", () => {
+	const gmTable: TableView = {
+		actor: "actor-gm",
+		gmSeatId: "gm",
+		seats: table.seats,
+	};
+	const strangerTable: TableView = {
+		actor: "actor-stranger",
+		gmSeatId: "gm",
+		seats: table.seats,
+	};
+
+	test("a pledge is a two-step command: the open decision is state, not a Panel's local buffer", () => {
+		const emitted = decide(
+			init(),
+			{ seatId: "guest", type: "fake.pledge" },
+			table
+		);
+		expect(Array.isArray(emitted)).toBe(true);
+		if (!Array.isArray(emitted)) {
+			return;
+		}
+		expect(emitted.map(({ type }) => type)).toEqual([
+			"fake.seat-observed",
+			"fake.visit-counted",
+			"fake.decision-opened",
+		]);
+		const opened = emitted.at(-1);
+		if (opened?.type !== "fake.decision-opened") {
+			return;
+		}
+		// The decision carries what the glossary names: an id, a kind, and
+		// the offered answers.
+		expect(foldEvents(emitted).standing.guest).toEqual({
+			answers: ["yes", "no"],
+			decisionId: opened.decisionId,
+			kind: "double-visit",
+			prompt: "Double this visit?",
+		});
+	});
+
+	test("a pledge for another seat is refused with the words the blocked offer shows", () => {
+		// The rule lives once (ADR-0036): the reason a Panel renders on the
+		// disabled action is the reason decide refuses with.
+		expect(
+			decide(init(), { seatId: "guest", type: "fake.pledge" }, strangerTable)
+		).toEqual({ message: PLEDGE_OWN_SEAT_REASON, rejected: true });
+		expect(
+			decide(init(), { seatId: "guest", type: "fake.pledge" }, gmTable)
+		).toEqual({ message: PLEDGE_OWN_SEAT_REASON, rejected: true });
+	});
+
+	test("a seat with a standing decision cannot open a second one", () => {
+		expect(
+			decide(
+				openStandingState(),
+				{ seatId: "guest", type: "fake.pledge" },
+				table
+			)
+		).toMatchObject({ rejected: true });
+	});
+
+	test("an answer whose id is not the standing one is rejected", () => {
+		expect(
+			decide(
+				openStandingState(),
+				{
+					answer: "yes",
+					decisionId: "decision-stale",
+					type: "fake.decision.answer",
+				},
+				table
+			)
+		).toEqual({
+			message: "No standing decision 'decision-stale' is waiting.",
+			rejected: true,
+		});
+	});
+
+	test("a yes lands its own visit; declining and cancelling leave the pledge counted", () => {
+		// The pledge already counted a visit; resolving it never undoes that
+		// (ADR-0035: cancel cannot undo time already spent).
+		const state = openStandingState();
+
+		const yes = decide(
+			state,
+			{
+				answer: "yes",
+				decisionId: "decision-1",
+				type: "fake.decision.answer",
+			},
+			table
+		);
+		expect(Array.isArray(yes)).toBe(true);
+		if (Array.isArray(yes)) {
+			expect(yes).toEqual([
+				{
+					answer: "yes",
+					decisionId: "decision-1",
+					type: "fake.decision-answered",
+				},
+				{ type: "fake.visit-counted", visits: 1 },
+			]);
+			const folded = foldEvents(yes);
+			expect(folded.standing).toEqual({});
+			expect(folded.visits).toBe(1);
+		}
+
+		const no = decide(
+			state,
+			{ answer: "no", decisionId: "decision-1", type: "fake.decision.answer" },
+			table
+		);
+		expect(no).toEqual([
+			{
+				answer: "no",
+				decisionId: "decision-1",
+				type: "fake.decision-answered",
+			},
+		]);
+		if (Array.isArray(no)) {
+			expect(foldEvents(no).visits).toBe(0);
+		}
+
+		const cancelled = decide(
+			state,
+			{ decisionId: "decision-1", type: "fake.decision.cancel" },
+			table
+		);
+		expect(cancelled).toEqual([
+			{ decisionId: "decision-1", type: "fake.decision-cancelled" },
+		]);
+		if (Array.isArray(cancelled)) {
+			expect(foldEvents(cancelled).standing).toEqual({});
+		}
+	});
+
+	test("a seat answers its own decision, another seat cannot, and the GM can", () => {
+		const command = {
+			answer: "no",
+			decisionId: "decision-1",
+			type: "fake.decision.answer",
+		} as const;
+		expect(decide(openStandingState(), command, table)).not.toMatchObject({
+			rejected: true,
+		});
+		expect(decide(openStandingState(), command, gmTable)).not.toMatchObject({
+			rejected: true,
+		});
+		expect(decide(openStandingState(), command, strangerTable)).toMatchObject({
+			rejected: true,
+		});
+	});
+
+	test("every attemptable offer is accepted by decide on the same state", () => {
+		// Both sides of the gate: the open table and a seat owing an answer.
+		for (const state of [init(), openStandingState()]) {
+			const attemptable = offers(state, table).filter(
+				(offer) => offer.availability === "attemptable"
+			);
+			expect(attemptable.length).toBeGreaterThan(0);
+			for (const offer of attemptable) {
+				expect(decide(state, offer.command, table)).not.toMatchObject({
+					rejected: true,
+				});
+			}
+		}
+	});
+
+	test("a standing decision collapses the seat's offers to answering or declining it", () => {
+		const list = offers(openStandingState(), table);
+		expect(list).toEqual([
+			{
+				availability: "needsSelection",
+				label: "Answer: Double this visit?",
+				template: { decisionId: "decision-1", type: "fake.decision.answer" },
+			},
+			{
+				availability: "attemptable",
+				command: { decisionId: "decision-1", type: "fake.decision.cancel" },
+				label: "Decline the standing decision",
+			},
+		]);
+	});
+
+	test("a blocked offer carries a reason and no runnable command", () => {
+		const blocked = offers(init(), table).find(
+			({ availability }) => availability === "blocked"
+		);
+		expect(blocked).toEqual({
+			availability: "blocked",
+			label: "Pledge for another seat",
+			reason: PLEDGE_OWN_SEAT_REASON,
+		});
+	});
+
+	test("a standing decision survives a host restart through fresh replay", async () => {
+		const folder = await mkdtemp(path.join(tmpdir(), "supervillain-standing-"));
+		try {
+			const host = await RoomHost.open({
+				actor: "actor-gm",
+				campaignFolder: folder,
+				gameId: "fake",
+				registry,
+			});
+			await host.submit({
+				actor: "actor-guest",
+				command: { type: "core.claim-seat" },
+			});
+			await host.submit({
+				actor: "actor-guest",
+				command: { seatId: "player-1", type: "fake.pledge" },
+			});
+			const expected = host.snapshot();
+			expect(Object.keys(expected.game.standing)).toHaveLength(1);
+
+			const replayed = await RoomHost.open({
+				campaignFolder: folder,
+				registry,
+			});
+			expect(replayed.snapshot()).toEqual(expected);
+
+			// The reopened host still owes the answer: the decision is in the
+			// replayed log, not in the dead process's memory.
+			const decisionId = Object.values(expected.game.standing)[0]?.decisionId;
+			if (decisionId === undefined) {
+				throw new Error("no standing decision after pledge");
+			}
+			const answered = await replayed.submit({
+				actor: "actor-guest",
+				command: { answer: "yes", decisionId, type: "fake.decision.answer" },
+			});
+			expect(answered).toMatchObject({ accepted: true });
+			expect(replayed.snapshot().game.visits).toBe(2);
+		} finally {
+			await rm(folder, { force: true, recursive: true });
+		}
+	});
+});
+
 /** A permanent old-log fixture for the reference module, carrying the
  * pre-`characterId` `fake.seat-observed` shape beside the current one. */
 const legacyLogPath = path.join(
@@ -215,6 +482,7 @@ describe("fold posture across the seam", () => {
 		const expected: FakeState = {
 			lastCharacterId: "hero",
 			lastSeatId: "gm",
+			standing: {},
 			visits: 1,
 		};
 		const folder = await mkdtemp(path.join(tmpdir(), "supervillain-legacy-"));

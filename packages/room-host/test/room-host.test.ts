@@ -137,6 +137,7 @@ describe("RoomHost", () => {
 				game: {
 					lastCharacterId: null,
 					lastSeatId: "player-1",
+					standing: {},
 					visits: 1,
 				},
 				gameId: "fake",
@@ -262,7 +263,12 @@ describe("RoomHost", () => {
 			const host = await RoomHost.open({ campaignFolder, registry });
 			expect(await readFile(logPath, "utf-8")).toBe(bytes);
 			expect(host.snapshot()).toEqual({
-				game: { lastCharacterId: null, lastSeatId: "gm", visits: 1 },
+				game: {
+					lastCharacterId: null,
+					lastSeatId: "gm",
+					standing: {},
+					visits: 1,
+				},
 				gameId: "fake",
 				map: null,
 				seq: 6,
@@ -403,6 +409,7 @@ describe("RoomHost", () => {
 			expect(host.snapshot().game).toEqual({
 				lastCharacterId: "hero",
 				lastSeatId: "gm",
+				standing: {},
 				visits: 0,
 			});
 		});

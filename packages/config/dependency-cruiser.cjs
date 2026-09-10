@@ -74,10 +74,17 @@ module.exports = {
 			to: { pathNot: "^packages/games/[^/]+/src/model\\.ts$" },
 		},
 		{
+			// The model entry imports nothing at runtime: no randomness, no I/O,
+			// no platform (ADR-0036). The one exception is the core's seam types
+			// (Offer, TableView), imported type-only — erased at compile time —
+			// because the offers projection's signature names core-owned types.
+			// The workspace-link boundary leaves that import classified unknown,
+			// so runtime core imports from a model entry are a review-level
+			// violation this rule cannot see.
 			from: { path: "^packages/games/[^/]+/src/model\\.ts$" },
 			name: "game-model-imports-nothing",
 			severity: "error",
-			to: {},
+			to: { pathNot: "^@supervillain/core$" },
 		},
 		{
 			from: {

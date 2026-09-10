@@ -310,6 +310,38 @@ export interface RoomStore<C = unknown> {
 	readonly replay?: () => Promise<RoomReplay>;
 }
 
+/** What a seat may attempt right now, as the module projects it (ADR-0036).
+ * One projection serves `decide`, Panels, and any future agent door: the
+ * eligibility rule lives once, on the `model` entry. An offer is computed from
+ * state at render time, so it is eligibility, never a guarantee — state moves
+ * between the offer and the command landing, and `decide` may still reject an
+ * offered command. */
+export type OfferAvailability = "attemptable" | "needsSelection" | "blocked";
+
+/** Module-owned wording, strings only (the ADR-0025/0031 posture). */
+export type Offer<C = unknown> =
+	| {
+			readonly availability: "attemptable";
+			/** Dispatchable as-is. */
+			readonly command: C;
+			readonly label: string;
+	  }
+	| {
+			readonly availability: "needsSelection";
+			/** A fill-in template the Panel completes into a whole `C` (the
+			 * ADR-0030 contextual text task shape). Typed as a partial so the
+			 * module's command union stays whole: `decide` never sees a
+			 * half-filled command. */
+			readonly template: Partial<C>;
+			readonly label: string;
+	  }
+	| {
+			readonly availability: "blocked";
+			readonly label: string;
+			/** Why a Panel shows this action disabled rather than hiding it. */
+			readonly reason: string;
+	  };
+
 export interface GameAuthority<S, C, E> {
 	readonly init: () => S;
 	readonly decide: (
@@ -318,6 +350,14 @@ export interface GameAuthority<S, C, E> {
 		table: TableView
 	) => E[] | Rejection;
 	readonly apply: (state: Readonly<S>, event: E) => S;
+	/** Pure eligibility projection, shared with the render side (ADR-0036).
+	 * Optional: a module adopts it when it has eligibility rules Panels would
+	 * otherwise re-derive. The conformance rule is one-way: every attemptable
+	 * offer's command must be accepted by `decide` on the same state. */
+	readonly offers?: (
+		state: Readonly<S>,
+		table: TableView
+	) => readonly Offer<C>[];
 }
 
 export type LayoutSlot = "sidebar";
@@ -402,13 +442,13 @@ export interface EventGrammar {
 }
 
 export interface AuthorityEntry<S, C, E> {
-	readonly model: Pick<GameAuthority<S, C, E>, "init" | "apply">;
+	readonly model: Pick<GameAuthority<S, C, E>, "apply" | "init" | "offers">;
 	readonly authority: Pick<GameAuthority<S, C, E>, "decide">;
 	readonly grammar: EventGrammar;
 }
 
 export interface ViewEntry<S, C, E> {
-	readonly model: Pick<GameAuthority<S, C, E>, "init" | "apply">;
+	readonly model: Pick<GameAuthority<S, C, E>, "apply" | "init" | "offers">;
 	readonly view: GameView<S, C, E>;
 }
 
