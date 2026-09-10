@@ -12,10 +12,10 @@ import {
 	decodeJson,
 	encodeJson,
 	parseEnvelope,
-	parseRoomCommand,
 	parseRoomInfo,
 	parseRoomSubmission,
 	parseStreamCredit,
+	parseSubmitRequest,
 } from "./messages.js";
 import type { RoomInfo } from "./messages.js";
 import { TransportListenerClosedError } from "./seam.js";
@@ -24,6 +24,7 @@ import type {
 	TransportDialer,
 	TransportListener,
 } from "./seam.js";
+import { createSubmissionMemory, serveSubmission } from "./submissions.js";
 
 export {
 	chunkPayload,
@@ -126,6 +127,7 @@ export type {
 export {
 	createSubmissionMemory,
 	DEFAULT_SUBMISSION_MEMORY,
+	digestRoomCommand,
 	mintSubmissionId,
 	SubmissionUncertainError,
 } from "./submissions.js";
@@ -275,19 +277,36 @@ const handleConnection = async (
 			return;
 		}
 		const trusted = options.trustedStampers?.includes(connection.remoteId);
+		// The direct protocol's senders predate submission ids and mint none, so
+		// this memory stays empty in practice; a sender that mints one gets the
+		// same dedupe and payload binding the pipe path enforces (#137). Its
+		// scope is this connection, not the Room: the pipe path remembers per
+		// Room, so only there does a binding outlive a reconnect.
+		const memory = createSubmissionMemory();
+		const submitAsConnection = (
+			command: RoomCommand
+		): Promise<RoomSubmission> =>
+			store.submit(
+				trusted === true ? markTrustedRoomCommand(command) : command
+			);
 		for (;;) {
-			// oxlint-disable-next-line eslint/no-await-in-loop -- serving each lockstep request is the loop's purpose.
-			const command = parseRoomCommand(decodeJson(await connection.receive()));
-			const submission: RoomSubmission =
-				command.actor === connection.remoteId || trusted === true
-					? // oxlint-disable-next-line eslint/no-await-in-loop -- each response follows one submitted command.
-						await store.submit(
-							trusted === true ? markTrustedRoomCommand(command) : command
-						)
-					: {
-							message: "Actor does not match the connection identity.",
-							rejected: true,
-						};
+			const request = parseSubmitRequest(
+				// oxlint-disable-next-line eslint/no-await-in-loop -- serving each lockstep request is the loop's purpose.
+				decodeJson(await connection.receive())
+			);
+			let submission: RoomSubmission = {
+				message: "Actor does not match the connection identity.",
+				rejected: true,
+			};
+			if (request.command.actor === connection.remoteId || trusted === true) {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- each response follows one submitted command.
+				submission = await serveSubmission(
+					request.command,
+					request.submissionId,
+					memory,
+					submitAsConnection
+				);
+			}
 			// oxlint-disable-next-line eslint/no-await-in-loop -- submit is a sequential request/response channel.
 			await connection.send(encodeJson(submission));
 		}

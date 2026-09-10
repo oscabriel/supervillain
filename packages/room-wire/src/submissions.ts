@@ -11,8 +11,22 @@
  * governs submits unchanged — a lost ack surfaces as
  * {@link SubmissionUncertainError} and waits for a human, which is what the
  * retry affordance in the chrome is for.
+ *
+ * The memory binds every id to a canonical digest of the command it was first
+ * used for (#137). A replayed id wearing a different command is refused as a
+ * Rejection — the wire then never lies about which command an answer belongs
+ * to, and the dedupe holds against a buggy or hostile client, not just a
+ * well-behaved one. A resend that survives an eviction carries no evidence and
+ * is applied fresh: that is the accepted NQ-11 window, not a bug.
+ *
+ * Memory scope follows the path: the pipe path keeps one memory per Room, so
+ * a binding outlives a reconnect; the direct protocol keeps one per connection,
+ * which is enough because its senders mint no ids today.
  */
-import type { RoomSubmission } from "@supervillain/core";
+import { createHash } from "node:crypto";
+
+import { isRecord } from "@supervillain/core";
+import type { RoomCommand, RoomSubmission } from "@supervillain/core";
 
 /**
  * How many answered submissions one Room remembers. Memory only, per NQ-11 —
@@ -36,10 +50,19 @@ export class SubmissionUncertainError extends Error {
 	}
 }
 
-/** The Host's bounded memory of answers it has already given. */
+/** The Host's bounded memory of answers it has already given. Each remembered
+ * id is bound to the canonical digest of the command that earned the answer. */
 export interface SubmissionMemory {
-	readonly recall: (submissionId: string) => RoomSubmission | undefined;
-	readonly remember: (submissionId: string, submission: RoomSubmission) => void;
+	readonly recall: (
+		submissionId: string
+	) =>
+		| { readonly digest: string; readonly submission: RoomSubmission }
+		| undefined;
+	readonly remember: (
+		submissionId: string,
+		digest: string,
+		submission: RoomSubmission
+	) => void;
 	readonly size: () => number;
 }
 
@@ -47,15 +70,18 @@ export interface SubmissionMemory {
 export const createSubmissionMemory = (
 	limit: number = DEFAULT_SUBMISSION_MEMORY
 ): SubmissionMemory => {
-	const answers = new Map<string, RoomSubmission>();
+	const answers = new Map<
+		string,
+		{ readonly digest: string; readonly submission: RoomSubmission }
+	>();
 	return {
 		recall: (submissionId) => answers.get(submissionId),
-		remember(submissionId, submission) {
+		remember(submissionId, digest, submission) {
 			if (limit <= 0) {
 				return;
 			}
 			answers.delete(submissionId);
-			answers.set(submissionId, submission);
+			answers.set(submissionId, { digest, submission });
 			while (answers.size > limit) {
 				const [oldest] = answers.keys();
 				if (oldest === undefined) {
@@ -66,6 +92,69 @@ export const createSubmissionMemory = (
 		},
 		size: () => answers.size,
 	};
+};
+
+/** Canonical JSON: object keys sorted recursively, so a command and its
+ * reserialized copy digest identically. Arrays keep their order; primitives
+ * pass through untouched. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a RoomCommand's payload is deliberately opaque (core-owned); the canonical digest is defined over whatever JSON shape it takes.
+const canonicalize = (value: unknown): unknown => {
+	if (Array.isArray(value)) {
+		return value.map(canonicalize);
+	}
+	if (isRecord(value)) {
+		return Object.fromEntries(
+			Object.keys(value)
+				.toSorted()
+				.map((key) => [key, canonicalize(value[key])])
+		);
+	}
+	return value;
+};
+
+/** A canonical digest of a RoomCommand: SHA-256 over the command's stable-key-
+ * order JSON. This is what binds a submissionId to the command it was first
+ * used for — the same command arriving in a different byte order digests the
+ * same, a different command digests differently. */
+export const digestRoomCommand = (command: RoomCommand): string =>
+	createHash("sha256")
+		.update(JSON.stringify(canonicalize(command)))
+		.digest("hex");
+
+/**
+ * The one submission rule both wire paths serve (ADR-0012, NQ-6, #137).
+ *
+ * A submission carrying no id is applied every time — there is nothing to
+ * dedupe on. A submission carrying an id is answered from memory when that id
+ * has been seen before, which only holds if the command digests the same as
+ * the one the id was first used for; a different command under a used id is
+ * refused as a Rejection on the submit channel, never applied and never
+ * answered from memory. A first-seen id is applied, then remembered with its
+ * digest.
+ */
+export const serveSubmission = async (
+	command: RoomCommand,
+	submissionId: string | undefined,
+	memory: SubmissionMemory,
+	submit: (command: RoomCommand) => Promise<RoomSubmission>
+): Promise<RoomSubmission> => {
+	if (submissionId === undefined) {
+		return await submit(command);
+	}
+	const digest = digestRoomCommand(command);
+	const remembered = memory.recall(submissionId);
+	if (remembered !== undefined) {
+		return remembered.digest === digest
+			? remembered.submission
+			: {
+					message:
+						"This submission id was already used for a different command. Send a fresh id to submit it.",
+					rejected: true,
+				};
+	}
+	const submission = await submit(command);
+	memory.remember(submissionId, digest, submission);
+	return submission;
 };
 
 /** A fresh submission id. Opaque, and never derived from the command — the id

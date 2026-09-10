@@ -9,6 +9,7 @@ import type {
 import {
 	createSubmissionMemory,
 	decodeFrame,
+	digestRoomCommand,
 	encodeFrame,
 	encodePipeHandshakeOutcome,
 	encodeSubmitRequest,
@@ -34,6 +35,11 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 const DOOR = { sshHost: "supervillain.test", sshPort: 2222 } as const;
+
+const said = (text: string): RoomCommand => ({
+	actor: "guest:abcdef123456",
+	command: { text, type: "core.said" },
+});
 
 const envelope = (seq: number, actor = "gm-key"): Envelope => ({
 	actor,
@@ -146,6 +152,8 @@ const rawGateway = async (
 		command: RoomCommand,
 		submissionId?: string
 	) => Promise<RoomSubmission>;
+	/** Sends a hand-crafted wire payload verbatim, for byte-order tests. */
+	readonly submitRaw: (stream: number, wire: string) => Promise<RoomSubmission>;
 	readonly close: () => Promise<void>;
 }> => {
 	const connection = await listener.accept();
@@ -178,27 +186,34 @@ const rawGateway = async (
 			stream: registration.stream,
 		})
 	);
+	const submitRaw = async (
+		stream: number,
+		wire: string
+	): Promise<RoomSubmission> => {
+		await connection.send(
+			encodeFrame({
+				channel: "submit",
+				kind: "last",
+				payload: encoder.encode(wire),
+				room,
+				stream,
+			})
+		);
+		const answer = await nextFrame();
+		return JSON.parse(decoder.decode(answer.payload)) as RoomSubmission;
+	};
 	return {
 		close: () => connection.close(),
-		async submit(stream, command, submissionId) {
-			await connection.send(
-				encodeFrame({
-					channel: "submit",
-					kind: "last",
-					payload: encoder.encode(
-						JSON.stringify(
-							submissionId === undefined
-								? command
-								: { ...command, id: submissionId }
-						)
-					),
-					room,
-					stream,
-				})
-			);
-			const answer = await nextFrame();
-			return JSON.parse(decoder.decode(answer.payload)) as RoomSubmission;
-		},
+		submit: (stream, command, submissionId) =>
+			submitRaw(
+				stream,
+				JSON.stringify(
+					submissionId === undefined
+						? command
+						: { ...command, id: submissionId }
+				)
+			),
+		submitRaw,
 	};
 };
 
@@ -207,14 +222,39 @@ describe("the submission memory", () => {
 		const memory = createSubmissionMemory(2);
 		const accepted: RoomSubmission = { accepted: true, envelopes: [] };
 
-		memory.remember("one", accepted);
-		memory.remember("two", accepted);
-		expect(memory.recall("one")).toEqual(accepted);
+		memory.remember("one", "digest-one", accepted);
+		memory.remember("two", "digest-two", accepted);
+		expect(memory.recall("one")).toEqual({
+			digest: "digest-one",
+			submission: accepted,
+		});
 
-		memory.remember("three", accepted);
+		memory.remember("three", "digest-three", accepted);
 		expect(memory.size()).toBe(2);
 		expect(memory.recall("one")).toBeUndefined();
-		expect(memory.recall("three")).toEqual(accepted);
+		expect(memory.recall("three")).toEqual({
+			digest: "digest-three",
+			submission: accepted,
+		});
+	});
+
+	test("binds an id to its command's canonical digest, not its wire shape", async () => {
+		const command: RoomCommand = {
+			actor: "guest:abcdef123456",
+			command: { text: "one", type: "core.said" },
+		};
+
+		// Hand-built JSON with the keys in a different order: the same command.
+		const reserialized = JSON.parse(
+			'{"command":{"type":"core.said","text":"one"},"actor":"guest:abcdef123456"}'
+		) as RoomCommand;
+		expect(digestRoomCommand(command)).toBe(digestRoomCommand(reserialized));
+		expect(digestRoomCommand(command)).not.toBe(
+			digestRoomCommand({
+				...command,
+				command: { text: "two", type: "core.said" },
+			})
+		);
 	});
 });
 
@@ -298,6 +338,135 @@ describe("submission-id dedupe", () => {
 		await gateway.submit(2, command);
 		await gateway.submit(4, command);
 		expect(store.submissions).toHaveLength(2);
+
+		await gateway.close();
+		await host.close();
+		await hub.listener.close();
+	});
+
+	test("a replayed id carrying a different command is refused and never applied", async () => {
+		const hub = createMemoryTransportHub();
+		const store = new FakeRoomStore();
+		const host = openHostPipe({
+			dialer: hub.dialer("host-key"),
+			heartbeatIntervalMs: 0,
+			rooms: [
+				{ info: { gameId: "fake", label: "the table" }, name: "keep", store },
+			],
+		});
+		const gateway = await rawGateway(hub.listener, "keep");
+		await host.attached;
+
+		const first = await gateway.submit(2, said("one"), "submission-1");
+		expect(first).toMatchObject({ accepted: true });
+
+		// The same id arrives wearing a different command: a hijacked or
+		// corrupted resend. It must be refused on the submit channel, never
+		// answered from memory, and never applied.
+		const hijack = await gateway.submit(4, said("two"), "submission-1");
+		expect(hijack.rejected).toBe(true);
+		expect(store.submissions).toHaveLength(1);
+
+		// The refusal leaves the id's own memory untouched: the original
+		// command still dedupes to the answer it first got.
+		const stillOriginal = await gateway.submit(6, said("one"), "submission-1");
+		expect(stillOriginal).toEqual(first);
+		expect(store.submissions).toHaveLength(1);
+
+		await gateway.close();
+		await host.close();
+		await hub.listener.close();
+	});
+
+	test("a replayed id whose command only differs in key order is answered from memory", async () => {
+		const hub = createMemoryTransportHub();
+		const store = new FakeRoomStore();
+		const host = openHostPipe({
+			dialer: hub.dialer("host-key"),
+			heartbeatIntervalMs: 0,
+			rooms: [
+				{ info: { gameId: "fake", label: "the table" }, name: "keep", store },
+			],
+		});
+		const gateway = await rawGateway(hub.listener, "keep");
+		await host.attached;
+
+		const command: RoomCommand = {
+			actor: "guest:abcdef123456",
+			command: { text: "one", type: "core.said" },
+		};
+		const first = await gateway.submit(2, command, "submission-1");
+		expect(first).toMatchObject({ accepted: true });
+
+		// A reserializer rewrote the JSON on its way through: same command,
+		// different byte order. The answer must still be the remembered one.
+		const replay = await gateway.submitRaw(
+			4,
+			'{"id":"submission-1","actor":"guest:abcdef123456","command":{"type":"core.said","text":"one"}}'
+		);
+		expect(replay).toEqual(first);
+		expect(store.submissions).toHaveLength(1);
+
+		await gateway.close();
+		await host.close();
+		await hub.listener.close();
+	});
+
+	test("a different id carrying the same command is applied again", async () => {
+		const hub = createMemoryTransportHub();
+		const store = new FakeRoomStore();
+		const host = openHostPipe({
+			dialer: hub.dialer("host-key"),
+			heartbeatIntervalMs: 0,
+			rooms: [
+				{ info: { gameId: "fake", label: "the table" }, name: "keep", store },
+			],
+		});
+		const gateway = await rawGateway(hub.listener, "keep");
+		await host.attached;
+
+		// Duplicate commands are legal; only ids are unique.
+		const command: RoomCommand = {
+			actor: "guest:abcdef123456",
+			command: { type: "core.claim-seat" },
+		};
+		const one = await gateway.submit(2, command, "submission-1");
+		const two = await gateway.submit(4, command, "submission-2");
+		expect(one).toMatchObject({ accepted: true });
+		expect(two).toMatchObject({ accepted: true });
+		expect(store.submissions).toHaveLength(2);
+
+		await gateway.close();
+		await host.close();
+		await hub.listener.close();
+	});
+
+	test("an id evicted from memory is reusable for a new command, with no evidence it was ever used", async () => {
+		const hub = createMemoryTransportHub();
+		const store = new FakeRoomStore();
+		// One slot: the next remember evicts the first id. This is the accepted
+		// NQ-11 window, memory-only and bounded, not a bug.
+		const host = openHostPipe({
+			dialer: hub.dialer("host-key"),
+			heartbeatIntervalMs: 0,
+			rooms: [
+				{ info: { gameId: "fake", label: "the table" }, name: "keep", store },
+			],
+			submissionMemory: 1,
+		});
+		const gateway = await rawGateway(hub.listener, "keep");
+		await host.attached;
+
+		await gateway.submit(2, said("one"), "submission-1");
+		// The next remember evicts submission-1.
+		await gateway.submit(4, said("two"), "submission-2");
+		const afterEviction = await gateway.submit(
+			6,
+			said("three"),
+			"submission-1"
+		);
+		expect(afterEviction).toMatchObject({ accepted: true });
+		expect(store.submissions).toHaveLength(3);
 
 		await gateway.close();
 		await host.close();

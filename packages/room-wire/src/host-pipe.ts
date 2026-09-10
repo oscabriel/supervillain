@@ -28,7 +28,7 @@ import { MultiplexPipe } from "./pipe.js";
 import type { PipeStream } from "./pipe.js";
 import type { TransportConnection, TransportDialer } from "./seam.js";
 import { TransportTrustError } from "./seam.js";
-import { createSubmissionMemory } from "./submissions.js";
+import { createSubmissionMemory, serveSubmission } from "./submissions.js";
 import type { SubmissionMemory } from "./submissions.js";
 
 /** One Room this Host offers over the pipe. */
@@ -134,16 +134,13 @@ const serveSubmit = async (
 	for (;;) {
 		// oxlint-disable-next-line eslint/no-await-in-loop -- submit is a sequential request/response channel.
 		const request = parseSubmitRequest(decodeJson(await stream.receive()));
-		const { submissionId } = request;
-		const remembered =
-			submissionId === undefined ? undefined : memory.recall(submissionId);
-		const submission =
-			remembered ??
-			// oxlint-disable-next-line eslint/no-await-in-loop -- each response follows one submitted command.
-			(await room.store.submit(markTrustedRoomCommand(request.command)));
-		if (submissionId !== undefined && remembered === undefined) {
-			memory.remember(submissionId, submission);
-		}
+		// oxlint-disable-next-line eslint/no-await-in-loop -- submit is a sequential request/response channel.
+		const submission = await serveSubmission(
+			request.command,
+			request.submissionId,
+			memory,
+			(command) => room.store.submit(markTrustedRoomCommand(command))
+		);
 		// oxlint-disable-next-line eslint/no-await-in-loop -- responses leave in the order their commands arrived.
 		await stream.send(encodeJson(submission));
 	}
