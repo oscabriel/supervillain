@@ -1,3 +1,4 @@
+import { createActorLinks } from "./actors.js";
 import type { MapLegend } from "./map.js";
 import type { FeedLine } from "./text.js";
 import { isRecord } from "./validation.js";
@@ -232,6 +233,48 @@ export interface LogWriter<TEnvelope extends Envelope = Envelope> {
 
 export interface Log<TEnvelope extends Envelope = Envelope>
 	extends LogReader<TEnvelope>, LogWriter<TEnvelope> {}
+
+/** The one sentence every refusal to pull a Log says, on any surface. */
+export const LOG_EGRESS_REFUSAL =
+	"Only an identity that holds or has held a seat in this room can pull its log.";
+
+/**
+ * Log egress authorization (ADR-0033, #135 triage): any seated identity may
+ * pull a room's Log. Whether `actor` created the room or has ever claimed a
+ * seat in it, counting every key the log links to the same person (ADR-0005),
+ * so a second machine linked to a seat holder is that seat holder.
+ *
+ * Seat membership is history in the Log itself, so the answer comes from the
+ * very stream being pulled and needs nothing else — no registry, no gateway,
+ * no network. Spectators fall out for free: a seatless view never wrote a
+ * line. This is a reader fold (ADR-0010): unknown types are skipped and a
+ * malformed linking payload is ignored rather than halting.
+ */
+export const isSeatedInLog = (
+	envelopes: Iterable<Pick<Envelope, "actor" | "payload" | "type">>,
+	actor: string
+): boolean => {
+	const links = createActorLinks();
+	const seated: string[] = [];
+	for (const envelope of envelopes) {
+		if (envelope.type === CORE_ACTOR_LINKED) {
+			const linked = readActorLinkedPayload(envelope.payload);
+			if (linked !== null) {
+				links.link(envelope.actor, linked);
+			}
+			continue;
+		}
+		if (
+			envelope.type === CORE_ROOM_CREATED ||
+			envelope.type === CORE_SEAT_CLAIMED
+		) {
+			seated.push(envelope.actor);
+		}
+	}
+	// A linking event may land after the seat claim it makes reachable, so the
+	// membership question waits until the whole log has been folded.
+	return seated.some((holder) => links.same(holder, actor));
+};
 
 export interface SeatView {
 	readonly id: string;

@@ -54,7 +54,12 @@ import {
 	loadOrCreateIdentity,
 	openSshPrivateKey,
 } from "@supervillain/identity";
-import { InProcessRoomStore, RoomHost } from "@supervillain/room-host";
+import {
+	InProcessRoomStore,
+	openLocalLogSource,
+	pullLog,
+	RoomHost,
+} from "@supervillain/room-host";
 import {
 	isValidRoomName,
 	openGatewayLink,
@@ -108,6 +113,7 @@ const USAGE = `Usage:
   supervillain map check <campaign-folder> [file]
   supervillain map list <campaign-folder>
   supervillain campaign info <campaign-folder>
+  supervillain campaign pull <room> <campaign-folder>
 
 Operator role (this same binary is the self-hosted gateway — ADR-0015):
   supervillain gateway serve [--state <dir>] [--ssh-host <name>]
@@ -133,6 +139,13 @@ Operator role (this same binary is the self-hosted gateway — ADR-0015):
   over 'ssh <room>@<gateway>' — nothing more. Joining a room you host yourself
   is just another session at your own table: your key already holds the GM
   seat, so you sit back down in it.
+
+  campaign pull copies a room's log into a fresh campaign folder, byte for
+  byte and one way — nothing is ever written back. Any identity that holds
+  or has held a seat in the room can pull it; this machine's key is the one
+  asking. Today <room> is the path to the room's campaign folder on this
+  machine. Pulling a room by name from a gateway lands with the attachment
+  work. Pull is free at every tier and needs no network for a local room.
 
 ${independenceNotice}`;
 
@@ -739,6 +752,34 @@ const campaignInfo = async (campaignFolder: string): Promise<number> => {
 	return 0;
 };
 
+/**
+ * Log egress (ADR-0033, #135): one-way, byte-identical, never metered. The
+ * source is read, authorization is decided from that stream alone, and only
+ * then is the fresh folder written. `room` is the source room's campaign folder
+ * today; a gateway-named room is the same verb over a different source later.
+ */
+const campaignPull = async (
+	room: string,
+	campaignFolder: string
+): Promise<number> => {
+	const identity = await loadOrCreateIdentity(configFolder());
+	const source = await openLocalLogSource(room);
+	const outcome = await pullLog({
+		actor: identity.publicKeyHex,
+		destination: campaignFolder,
+		source,
+	});
+	if ("rejected" in outcome) {
+		console.error(outcome.message);
+		return 1;
+	}
+	console.log(`pulled ${outcome.eventCount} events into ${outcome.logPath}`);
+	console.log(
+		"this folder is yours: it replays on its own, hosts with 'supervillain create',\nand travels by copy. nothing was written back to the source."
+	);
+	return 0;
+};
+
 const campaign = async (args: readonly string[]): Promise<number> => {
 	let parsed: ReturnType<typeof parseArgs>;
 	try {
@@ -754,17 +795,30 @@ const campaign = async (args: readonly string[]): Promise<number> => {
 	const positionals = parsed.positionals.filter(
 		(value): value is string => typeof value === "string"
 	);
-	const [subcommand, campaignFolder] = positionals;
-	if (
-		subcommand !== "info" ||
-		campaignFolder === undefined ||
-		positionals.length !== 2
-	) {
-		console.error("campaign info requires a campaign folder.");
-		return 1;
-	}
+	const [subcommand, first, second] = positionals;
 	try {
-		return await campaignInfo(campaignFolder);
+		if (subcommand === "info") {
+			if (first === undefined || positionals.length !== 2) {
+				console.error("campaign info requires a campaign folder.");
+				return 1;
+			}
+			return await campaignInfo(first);
+		}
+		if (subcommand === "pull") {
+			if (
+				first === undefined ||
+				second === undefined ||
+				positionals.length !== 3
+			) {
+				console.error(
+					"campaign pull requires a room and a fresh campaign folder."
+				);
+				return 1;
+			}
+			return await campaignPull(first, second);
+		}
+		console.error("campaign requires info or pull.");
+		return 1;
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : String(error));
 		return 1;

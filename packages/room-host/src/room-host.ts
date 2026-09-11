@@ -57,7 +57,10 @@ import type {
 
 import { Latch } from "./latch.js";
 
-const LOG_FILE = "events.jsonl";
+/** The one file a Campaign folder needs to be a room: the JSONL Envelope
+ * stream. Pull (`egress.ts`) emits exactly this shape, so what it writes opens
+ * here. */
+export const LOG_FILE = "events.jsonl";
 const DICE_NOTATION =
 	/^(?<count>\d*)d(?<sides>\d+)(?:(?<sign>[+-])(?<modifier>\d+))?$/iu;
 

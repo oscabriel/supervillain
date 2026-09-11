@@ -324,6 +324,107 @@ describe("supervillain noun commands", () => {
 		});
 	});
 
+	test("campaign pull copies a room log one way, for seated identities only", async () => {
+		const scratch = await makeCampaign();
+		const cli = path.resolve(import.meta.dir, "../dist/index.js");
+		const runAs = async (
+			config: string,
+			args: readonly string[]
+		): Promise<{
+			readonly code: number;
+			readonly error: string;
+			readonly output: string;
+		}> => {
+			const childProcess = Bun.spawn(["bun", cli, ...args], {
+				env: { ...process.env, XDG_CONFIG_HOME: config },
+				stderr: "pipe",
+				stdout: "pipe",
+			});
+			const output = new Response(childProcess.stdout).text();
+			const error = new Response(childProcess.stderr).text();
+			return {
+				code: await childProcess.exited,
+				error: await error,
+				output: await output,
+			};
+		};
+		// Two machines, two identities: the CLI's key is the one asking to pull.
+		const gmConfig = path.join(scratch, "gm-config");
+		const strangerConfig = path.join(scratch, "stranger-config");
+		const shown = await runAs(gmConfig, ["key", "show"]);
+		const gmKey = /^key:\s+(?<key>[0-9a-f]{64})$/mu.exec(shown.output)?.groups
+			?.key;
+		expect(gmKey).toBeDefined();
+
+		const source = path.join(scratch, "source");
+		await mkdir(source, { recursive: true });
+		const logBytes = `${[
+			{ actor: gmKey, payload: { gameId: "fake" }, type: "core.room-created" },
+			{ actor: gmKey, payload: { seatId: "gm" }, type: "core.seat-claimed" },
+			{ actor: gmKey, payload: { text: "hi" }, type: "core.chat-posted" },
+		]
+			.map((line, index) =>
+				JSON.stringify({
+					...line,
+					seq: index + 1,
+					timestamp: "2026-01-01T00:00:00.000Z",
+				})
+			)
+			.join("\n")}\n`;
+		await writeFile(path.join(source, "events.jsonl"), logBytes);
+
+		const refusedInto = path.join(scratch, "refused");
+		expect(
+			await runAs(strangerConfig, ["campaign", "pull", source, refusedInto])
+		).toEqual({
+			code: 1,
+			error:
+				"Only an identity that holds or has held a seat in this room can pull its log.\n",
+			output: "",
+		});
+		await expect(access(refusedInto)).rejects.toThrow();
+
+		const pulledInto = path.join(scratch, "pulled");
+		const pulled = await runAs(gmConfig, [
+			"campaign",
+			"pull",
+			source,
+			pulledInto,
+		]);
+		expect(pulled.code).toBe(0);
+		expect(pulled.error).toBe("");
+		expect(pulled.output).toStartWith(
+			`pulled 3 events into ${path.join(pulledInto, "events.jsonl")}\n`
+		);
+		expect(await readFile(path.join(pulledInto, "events.jsonl"), "utf-8")).toBe(
+			logBytes
+		);
+		expect(await runAs(gmConfig, ["campaign", "info", pulledInto])).toEqual({
+			code: 0,
+			error: "",
+			output: "game: fake\nevents: 3\ncharacters: 0\n",
+		});
+
+		// Never twice into the same folder, and never with a missing argument.
+		expect(
+			await runAs(gmConfig, ["campaign", "pull", source, pulledInto])
+		).toEqual({
+			code: 1,
+			error: `${pulledInto} is not empty. pull writes only into a fresh campaign folder.\n`,
+			output: "",
+		});
+		expect(await runAs(gmConfig, ["campaign", "pull", source])).toEqual({
+			code: 1,
+			error: "campaign pull requires a room and a fresh campaign folder.\n",
+			output: "",
+		});
+		expect(await runAs(gmConfig, ["campaign", "push", source])).toEqual({
+			code: 1,
+			error: "campaign requires info or pull.\n",
+			output: "",
+		});
+	});
+
 	test("summarizes a campaign before a room exists", async () => {
 		const campaign = await makeCampaign();
 		const empty = await runCli(["campaign", "info", campaign]);
