@@ -492,7 +492,7 @@ _Each entry: the question, what was decided, and the evidence (a date and what h
 - Q1 — _open_
 - Q2 — _open_
 - Q3 — _open_
-- Q4 — _open_
+- Q4 — _open._ Local run (2026-09-27): rendering on the GM machine adds about 2–4 ms over the network round trip, and 8 chatting players cost about 16 KiB/s of GM upload at most and single-digit CPU. The real-network run is still to do; see `spikes/a-render-location/README.md`.
 - Q5 — _open_
 - Q6 — _open_
 - Q7 — _open_

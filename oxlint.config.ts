@@ -12,6 +12,8 @@ export default defineConfig({
 		"**/.nitro/**",
 		"**/.output/**",
 		"**/routeTree.gen.ts",
+		// Throwaway spikes (ASSESSMENT §8, Phase 1): measured, then deleted.
+		"spikes/**",
 	],
 	jsPlugins: [
 		{ name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" },
