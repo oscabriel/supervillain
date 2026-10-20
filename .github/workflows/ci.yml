@@ -3,11 +3,6 @@ name: CI
 on:
   push:
   pull_request:
-  workflow_dispatch:
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   verify:
@@ -16,89 +11,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version-file: package.json
       - run: bun install --frozen-lockfile
       - run: bun run build
+      - run: bun test
       - run: bun run check
-      - run: bun run depcruise
-      - run: bun run test:conformance
-      - run: bun run test:draw-steel
-      - run: bun run test:fake
-      - run: bun run test:identity
-      - run: bun run test:session
-      - run: bun run test:table
-      - run: bun run test:cli
-      - run: bun run test:gateway
-      - run: bun run test:web
-      - run: bun run test:install
-      # The #108 drills are real, so they need the real binaries: restic is
-      # apt's, and litestream's self-provision extracts its .deb with bsdtar
-      # (libarchive-tools); sqlite3 and ar ship with the runner. A command -v
-      # guard was rejected — it would make these checks decorative on the one
-      # surface that runs them every push (#133).
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq restic libarchive-tools
-      - run: sh infra/scripts/validate-local
-
-  # The dual Bun/Node lane is the standing claim that the event-sourced core stays
-  # runtime-portable: only the edges (Table, gateway render, CLI binary) are
-  # Bun-bound, so room-host, room-wire and transport-ws run identical specs under
-  # both runners (ADR-0012, NQ-12). Nothing here touches an external network any
-  # more — the remaining reason this is not a per-PR job is the macOS runner's
-  # cost, so it stays main-push-and-dispatch until that runner earns its place on
-  # every PR or leaves the matrix.
-  dual-lane:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - run: bun install --frozen-lockfile
-      - run: bun run build
-      # The join door end to end: a `create`d Host, a real gateway, and
-      # `supervillain join <name>` arriving over ssh (ADR-0012, NQ-7). Linux
-      # only because it needs an ssh client and a `script`-backed pty.
-      - name: Run the live join-through-gateway test
-        if: runner.os == 'Linux'
-        run: bun run test:join-live
-      - name: Run dual-lane suites with one retry
-        run: |
-          bun run test:room-host && bun run test:transport-ws && bun run test:room-wire || {
-            echo "::warning::dual-lane suites failed once; retrying"
-            bun run test:room-host && bun run test:transport-ws && bun run test:room-wire
-          }
-
-  # ADR-0012 (NQ-12): macOS x64 rejoins the GM platform matrix conditional on a
-  # passing darwin-x64 CI smoke build — this job is that condition. It must build
-  # AND run the compiled binary on real Intel hardware; a cross-compiled binary
-  # executed on a different host does not satisfy the ADR. Same
-  # main-push-and-dispatch gating as dual-lane, for the same runner-cost reason.
-  macos-x64-smoke:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: macos-15-intel
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
-      - run: bun install --frozen-lockfile
-      - run: bun run build
-      - run: bun run compile:macos-x64
-      - name: Ad-hoc codesign macOS binary
-        run: |
-          codesign --force --sign - dist-bin/supervillain
-          codesign --verify --strict dist-bin/supervillain
-      - name: Run the binary (minimum liveness bar)
-        run: dist-bin/supervillain --version
-      - name: Run the release smoke
-        run: sh smoke/release-smoke.sh "$PWD/dist-bin/supervillain"

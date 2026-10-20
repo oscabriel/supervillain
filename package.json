@@ -1,53 +1,23 @@
 {
-	"name": "supervillain",
-	"private": true,
-	"license": "MIT",
-	"workspaces": [
-		"apps/*",
-		"packages/*",
-		"packages/games/*"
-	],
-	"type": "module",
-	"scripts": {
-		"postinstall": "bun packages/config/link-depcruise-typescript.ts",
-		"build": "tsc -b",
-		"clean": "tsc -b --clean",
-		"compile:linux-x64": "bun build --compile apps/cli/src/compile/linux-x64.ts --outfile dist-bin/supervillain",
-		"compile:linux-arm64": "bun build --compile apps/cli/src/compile/linux-arm64.ts --outfile dist-bin/supervillain",
-		"compile:macos-arm64": "bun build --compile apps/cli/src/compile/macos-arm64.ts --outfile dist-bin/supervillain",
-		"compile:macos-x64": "bun build --compile apps/cli/src/compile/macos-x64.ts --outfile dist-bin/supervillain",
-		"check": "ultracite check",
-		"fix": "ultracite fix",
-		"depcruise": "packages/config/node_modules/.bin/depcruise --config packages/config/dependency-cruiser.cjs apps packages --output-type err-long",
-		"test:conformance": "bun run --cwd packages/core test:bun && bun run --cwd packages/core test:node",
-		"test:draw-steel": "bun test packages/games/draw-steel/test",
-		"test:fake": "bun test packages/games/fake/test",
-		"test:identity": "bun test packages/identity/test",
-		"test:session": "bun test packages/session/test",
-		"test:atlas": "bun test packages/atlas/test",
-		"test:table": "bun test packages/table/test",
-		"test:cli": "bun test apps/cli/test/*.test.ts",
-		"test:gateway": "bun test apps/gateway/test/",
-		"test:web": "bun test apps/web/test/",
-		"test:join-live": "bun test apps/gateway/test-live",
-		"test:install": "bun test smoke/install",
-		"test:room-host": "bun run --cwd packages/room-host test:bun && bun run --cwd packages/room-host test:node",
-		"test:transport-ws": "bun run --cwd packages/transport-ws test:bun && bun run --cwd packages/transport-ws test:node",
-		"test:room-wire": "bun run --cwd packages/room-wire test:bun && bun run --cwd packages/room-wire test:node",
-		"bench:table-idle-cpu": "bun packages/table/bench/idle-cpu.ts",
-		"bench:gateway-capacity": "bun apps/gateway/bench/capacity.ts",
-		"bench:gateway-rest": "bun apps/gateway/bench/rest.ts"
-	},
-	"devDependencies": {
-		"@oxlint/plugins": "1.78.0",
-		"oxfmt": "^0.58.0",
-		"oxlint": "1.78.0",
-		"typescript": "7.0.2",
-		"ultracite": "7.9.4"
-	},
-	"packageManager": "bun@1.4.0",
-	"patchedDependencies": {
-		"@opentui/ssh@0.4.3": "patches/@opentui%2Fssh@0.4.3.patch",
-		"ws@8.21.1": "patches/ws@8.21.1.patch"
-	}
+  "name": "supervillain",
+  "private": true,
+  "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "check": "oxlint && oxfmt --check",
+    "fix": "oxlint --fix && oxfmt"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "oxfmt": "0.58.0",
+    "oxlint": "1.78.0",
+    "typescript": "7.0.2"
+  },
+  "packageManager": "bun@1.4.2"
 }

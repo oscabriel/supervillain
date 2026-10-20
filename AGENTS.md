@@ -4,10 +4,11 @@ A terminal-first virtual tabletop. Players type `ssh <room>@<host>` and are sitt
 
 ## Where things stand
 
-We are rebuilding small. `ASSESSMENT.md` at the root is the plan: why, what survives, the eleven questions to settle, and the rebuild sketch. Its §9 is the one living record of decisions.
+We are rebuilding small, from a cleared tree. `ASSESSMENT.md` at the root is the plan: why, what survives, the eleven questions to settle, and the rebuild sketch. Its §9 is the one living record of decisions.
 
-- The previous build is tagged `archive/2026-09-exploration`. Treat it as a reference to copy from with care (ASSESSMENT §5 lists what's worth lifting), not as a base to patch.
-- `.agents/` (wayfinder, ADRs, research, benchmarks, CONTEXT.md) is the record of that exploration. Read it for context; nothing in it binds.
+- The previous build is tagged `archive/2026-09-exploration`, with its ADRs, wayfinder and benchmarks under `.agents/`; nothing in it binds. Copy from it with care (ASSESSMENT §5 lists what's worth lifting), one file and its tests at a time, from a worktree: `git worktree add ../supervillain-archive archive/2026-09-exploration`.
+- Spikes A and B import the archived packages, so they live at tag `archive/2026-09-spikes`. Spike C is paper only and stays in `spikes/`.
+- The rebuild goes in slices toward a table friends can sit at: engine, then SSH table with names and chat, chat-first input and layout, minimum Draw Steel, undo and the text map, then the relay.
 - The issue backlog from that phase is frozen. New issues come from play.
 
 ## Rules
@@ -28,7 +29,12 @@ We are rebuilding small. `ASSESSMENT.md` at the root is the plan: why, what surv
 
 ## Stack
 
-Bun workspaces, TypeScript 7 with `tsc -b`, oxlint and oxfmt, `bun test`, OpenTUI as the renderer, `@opentui/ssh` as the SSH server. Build with `bun run build`; check with `bun run check`.
+Bun workspaces, TypeScript 7 with `tsc -b`, oxlint and oxfmt on defaults, `bun test`. OpenTUI as the renderer and `@opentui/ssh` as the SSH server arrive with the table.
+
+- `packages/engine`: the envelope, the log, and the room fold. Pure apart from the log file.
+- `apps/supervillain`: the one binary. The table, Draw Steel and the relay start as folders here and become packages only when a boundary hurts.
+
+Build with `bun run build`, test with `bun test`, lint and format-check with `bun run check`.
 
 ## References
 

@@ -1,4 +1,0 @@
----
-# The one administrative SSH port contract, consumed by provisioning, deploy,
-# live validation, and operator commands. Public TCP 22 belongs to the gateway.
-sv_admin_ssh_port: 22022

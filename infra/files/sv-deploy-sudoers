@@ -1,3 +1,0 @@
-# Releases are deploy-owned; these are the only privileged deploy operations.
-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart sv-gateway.service
-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart sv-web.service

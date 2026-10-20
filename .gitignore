@@ -1,9 +1,9 @@
-.pi-subagents/
 node_modules/
 dist/
-dist-bin/
-.nitro/
-.output/
 *.tsbuildinfo
+.env
+.env.*
+!.env.example
 .agents/research/
 .claude/worktrees/
+.pi-subagents/

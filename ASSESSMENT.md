@@ -450,9 +450,13 @@ _Status (2026-09-27): commits pushed and `archive/2026-09-exploration` tagged an
 - **1c. Spike C**, Draw Steel combat on paper, producing a command list and data sources (Q5).
 - **Output:** §9 below, filled in and dead-set. No other documents.
 
+_Spikes A and B import the archived packages, so they live at tag `archive/2026-09-spikes` and run from a worktree of it (`git worktree add ../supervillain-spikes archive/2026-09-spikes`). Spike C is paper only and stays in `spikes/`._
+
 _Dropped (2026-09-27): a scratch session on the archived build. Four patches (input-line focus, `/name`, `/dmg` and `/heal`, GM `/undo`) worked end to end but cost about 1,240 lines across 21 files plus about 30 rewritten tests. That is editing the old code, which this plan exists to stop. The design lessons are folded into Q5, Q8 and Q9. The code is in `git stash` as "phase-1a scratch patches (dropped 2026-09-27)"._
 
 **Phase 2: rebuild small (about three to five weeks, a guess)**
+
+_Status (2026-10-20): started, in parallel with Phase 1 rather than after it. The tree on `main` was cleared to a fresh skeleton; the first milestone is a table friends can sit at, not the product. It begins with fewer packages than the sketch below: `packages/engine` and `apps/supervillain`, with the table, Draw Steel and the relay as folders in the app until a boundary hurts._
 
 A starting sketch, to be revised by Phase 1:
 
@@ -492,7 +496,7 @@ _Each entry: the question, what was decided, and the evidence (a date and what h
 - Q1 — _open_
 - Q2 — _open_
 - Q3 — _open_
-- Q4 — _open._ Local run (2026-09-27): rendering on the GM machine adds about 2–4 ms over the network round trip, and 8 chatting players cost about 16 KiB/s of GM upload at most and single-digit CPU. The real-network run is still to do; see `spikes/a-render-location/README.md`.
+- Q4 — _open._ Local run (2026-09-27): rendering on the GM machine adds about 2–4 ms over the network round trip, and 8 chatting players cost about 16 KiB/s of GM upload at most and single-digit CPU. The real-network run is still to do; see `spikes/a-render-location/README.md` at tag `archive/2026-09-spikes`.
 - Q5 — _open_
 - Q6 — _open_
 - Q7 — _open_

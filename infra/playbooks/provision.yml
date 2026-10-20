@@ -1,7 +1,0 @@
----
-- name: Provision the one-box apex
-  hosts: apex
-  become: true
-  gather_facts: true
-  roles:
-    - role: apex

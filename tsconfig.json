@@ -1,22 +1,4 @@
 {
-	"files": [],
-	"references": [
-		{ "path": "packages/config" },
-		{ "path": "packages/core" },
-		{ "path": "packages/atlas" },
-		{ "path": "packages/table" },
-		{ "path": "packages/room-host" },
-		{ "path": "packages/room-wire" },
-		{ "path": "packages/transport-ws" },
-		{ "path": "packages/session" },
-		{ "path": "packages/identity" },
-		{ "path": "packages/games/draw-steel" },
-		{ "path": "packages/games/fake" },
-		{ "path": "apps/gateway" },
-		{ "path": "apps/cli" },
-		{ "path": "apps/web" }
-	],
-	"compilerOptions": {
-		"strictNullChecks": true
-	}
+  "files": [],
+  "references": [{ "path": "packages/engine" }]
 }

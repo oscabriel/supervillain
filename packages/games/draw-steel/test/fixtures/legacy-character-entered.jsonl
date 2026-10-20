@@ -1,5 +1,0 @@
-{"actor":"actor-gm","payload":{"gameId":"draw-steel"},"seq":1,"timestamp":"2026-01-01T00:00:00.000Z","type":"core.room-created"}
-{"actor":"actor-gm","payload":{"seatId":"gm"},"seq":2,"timestamp":"2026-01-01T00:00:01.000Z","type":"core.seat-claimed"}
-{"actor":"actor-gm","payload":{"statBlock":{"name":"Ramona","characteristics":{"might":2,"agility":1,"reason":0,"intuition":1,"presence":-1},"stamina":20}},"seq":3,"timestamp":"2026-01-01T00:00:02.000Z","type":"ds.character-entered"}
-{"actor":"actor-gm","payload":{"sheet":{"name":"Sable","ancestry":"human","className":"tactician","kit":"panther","characteristics":{"might":1,"agility":2,"reason":1,"intuition":0,"presence":0},"stamina":18,"recoveries":8,"heroicResource":"focus","surges":0,"victories":0,"abilities":[]}},"seq":4,"timestamp":"2026-01-01T00:00:03.000Z","type":"ds.character-entered"}
-{"actor":"actor-gm","payload":{},"seq":5,"timestamp":"2026-01-01T00:00:04.000Z","type":"ds.encounter-started"}
