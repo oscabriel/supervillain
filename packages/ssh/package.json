@@ -1,0 +1,18 @@
+{
+  "name": "@supervillain/ssh",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@opentui/core": "0.6.6",
+    "effect": "4.0.5",
+    "ssh2": "1.16.0"
+  },
+  "devDependencies": {
+    "@types/ssh2": "1.15.5"
+  }
+}

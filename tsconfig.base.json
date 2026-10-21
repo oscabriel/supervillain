@@ -8,6 +8,7 @@
     "moduleResolution": "NodeNext",
     "noEmitOnError": true,
     "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
     "strict": true,
     "target": "ES2024",
     "types": ["bun"]

@@ -1,0 +1,19 @@
+{
+  "name": "supervillain",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "bin": {
+    "supervillain": "./src/main.ts"
+  },
+  "type": "module",
+  "dependencies": {
+    "@effect/platform-bun": "4.0.5",
+    "@opentui/core": "0.6.6",
+    "@opentui/solid": "0.6.6",
+    "@supervillain/engine": "workspace:*",
+    "@supervillain/ssh": "workspace:*",
+    "effect": "4.0.5",
+    "solid-js": "1.9.12"
+  }
+}

@@ -1,2 +1,7 @@
+preload = ["./apps/supervillain/preload.ts"]
+
 [install]
 linker = "isolated"
+
+[test]
+preload = ["./apps/supervillain/preload.ts"]
