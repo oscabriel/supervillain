@@ -456,7 +456,7 @@ _Dropped (2026-09-27): a scratch session on the archived build. Four patches (in
 
 **Phase 2: rebuild small (about three to five weeks, a guess)**
 
-_Status (2026-10-20): started, in parallel with Phase 1 rather than after it. The tree on `main` was cleared to a fresh skeleton; the first milestone is a table friends can sit at, not the product. It begins with fewer packages than the sketch below: `packages/engine` and `apps/supervillain`, with the table, Draw Steel and the relay as folders in the app until a boundary hurts._
+_Status (2026-10-20): started, in parallel with Phase 1 rather than after it. The tree on `main` was cleared to a fresh skeleton; the first milestone is a table friends can sit at, not the product. It begins with fewer packages than the sketch below: `packages/engine` and `apps/supervillain`, with the table, Draw Steel and the relay as folders in the app until a boundary hurts. The architecture is the one Spike D tested (§9)._
 
 A starting sketch, to be revised by Phase 1:
 
@@ -493,10 +493,15 @@ In likely order:
 
 _Each entry: the question, what was decided, and the evidence (a date and what happened at the table). Rewrite entries in place when evidence changes them; don't append corrections._
 
+- Architecture — **decided.**
+  - Rules are pure `decide`/`apply` functions, and one command registry drives parsing, completion and help on every surface.
+  - Effect 4 (exact pin) runs the host edge: the log file, the single writer, and one scope per SSH session. Solid and OpenTUI 0.6.6 render one App on the GM's terminal and every SSH seat.
+  - Evidence (2026-10-20): Spike D (`spikes/d-effect-table/`). Two adversarial test rounds with real OpenSSH clients passed all nine behaviour claims: seated in about 100 ms; plain text never fires a command; replay never rolls; 800 concurrent rolls without a duplicate `seq`; `kill -9` mid-burst reopens cleanly. Then a live run by hand, which worked.
+  - Open: the relay's trust handshake and the `@opentui/ssh` internals it leans on (Spike D README).
 - Q1 — _open_
 - Q2 — _open_
 - Q3 — _open_
-- Q4 — _open._ Local run (2026-09-27): rendering on the GM machine adds about 2–4 ms over the network round trip, and 8 chatting players cost about 16 KiB/s of GM upload at most and single-digit CPU. The real-network run is still to do; see `spikes/a-render-location/README.md` at tag `archive/2026-09-spikes`.
+- Q4 — _open._ Local run (2026-09-27): rendering on the GM machine adds about 2–4 ms over the network round trip, and 8 chatting players cost about 16 KiB/s of GM upload at most and single-digit CPU. Spike D's SSH-in-SSH relay (2026-10-20) adds about 0.5–2 ms per hop on loopback. The real-network run is still to do; see `spikes/a-render-location/README.md` at tag `archive/2026-09-spikes`.
 - Q5 — _open_
 - Q6 — _open_
 - Q7 — _open_
