@@ -1,0 +1,16 @@
+{
+  "name": "Mire Witch",
+  "level": 1,
+  "roles": ["Leader"],
+  "ev": "12",
+  "stamina": "eighty",
+  "speed": 5,
+  "stability": 1,
+  "free_strike": 3,
+  "might": 0,
+  "agility": 1,
+  "reason": 2,
+  "intuition": 2,
+  "presence": 3,
+  "features": []
+}

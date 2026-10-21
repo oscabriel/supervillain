@@ -1,19 +1,40 @@
 import { describe, expect, test } from "bun:test";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { Effect, Exit, Scope } from "effect";
+import { importBestiary } from "../../src/content/index.ts";
 import { plainText } from "../../src/game/index.ts";
-import { execLine, runLine } from "../../src/host/line.ts";
+import { execLine, type Reply, runLine } from "../../src/host/line.ts";
 import { Presence } from "../../src/host/Presence.ts";
+import { type TableServices, tableServices } from "../../src/host/services.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
+import { sampleCampaign } from "./campaign.ts";
 import { effect } from "./effect.ts";
 import { tempDir } from "./tempDir.ts";
 
 const vex = "key:SHA256:vexVEXvexVEXkey";
+const bob = "key:SHA256:bobBOBbobBOBkey";
 
-const atTable = <A, E>(body: Effect.Effect<A, E, TableRoom | Presence | Scope.Scope>) =>
+const atTable = <A, E>(body: Effect.Effect<A, E, TableServices | Scope.Scope>) =>
   Effect.gen(function* () {
     const dir = yield* tempDir;
-    return yield* body.pipe(Effect.provide(Presence.layer), Effect.provide(TableRoom.layer(dir)));
+    return yield* body.pipe(Effect.provide(tableServices(dir)));
   });
+
+/** The table over a copy of the sample campaign; `body` gets its folder. */
+const atSampleTable = <A, E>(
+  body: (dir: string) => Effect.Effect<A, E, TableServices | Scope.Scope>,
+) =>
+  Effect.gen(function* () {
+    const dir = yield* sampleCampaign;
+    return yield* body(dir).pipe(Effect.provide(tableServices(dir)));
+  });
+
+const stateNow = Effect.flatMap(TableRoom, (r) => r.state.get);
+
+/** The plain text of what a line wrote, or its refusal or message. */
+const said = (reply: Reply): ReadonlyArray<string> | string =>
+  reply.kind === "done" ? reply.lines.map(plainText) : reply.kind === "empty" ? "" : reply.text;
 
 describe("runLine", () => {
   effect("plain text is chat, and the reply is the feed line it made, labelled now", () =>
@@ -80,7 +101,7 @@ describe("runLine", () => {
       Effect.gen(function* () {
         const help = yield* runLine(vex, "/help", "exec");
         expect(help.kind === "message" && help.text).toStartWith(
-          "Plain text is chat. Commands start with /; roll and help work without it here.",
+          "Plain text is chat. Commands start with /; roll, help and sheet work without it here.",
         );
         expect(help.kind === "message" && help.text).not.toContain("/quit");
         expect(yield* runLine(vex, "/quit", "exec")).toMatchObject({ kind: "refusal" });
@@ -106,6 +127,246 @@ describe("runLine", () => {
   );
 });
 
+describe("runLine with Draw Steel", () => {
+  effect("/hero and /add load their sheets from the campaign folder into the event", () =>
+    atSampleTable(() =>
+      Effect.gen(function* () {
+        expect(yield* runLine("gm", "/hero bra")).toMatchObject({ kind: "done" });
+        expect((yield* runLine("gm", "/add bandit-cut x4")).kind).toBe("done");
+        const state = yield* stateNow;
+        expect(state.ds.heroes.map((h) => [h.id, h.sheet.class, h.stamina])).toEqual([
+          ["brann", "Censor", 24],
+        ]);
+        // Four cutpurses of 5 Stamina each pool into one squad.
+        expect(state.ds.creatures).toMatchObject([
+          { id: "bandit-cutpurse-a", name: "Bandit Cutpurse A", squad: 4, stamina: 20, max: 20 },
+        ]);
+        const recent = yield* Effect.flatMap(TableRoom, (r) => r.recent.get);
+        expect(recent.map((e) => e.type)).toEqual(["ds.hero-joined", "ds.creatures-added"]);
+        expect(recent[0]!.payload).toMatchObject({ sheet: { id: "brann", stamina: 24 } });
+        expect(recent[1]!.payload).toMatchObject({ block: { id: "bandit-cutpurse", stamina: 5 } });
+      }),
+    ),
+  );
+
+  effect("a sheet that's missing or wrong is refused, naming the file and the field", () =>
+    atSampleTable((dir) =>
+      Effect.gen(function* () {
+        expect(said(yield* runLine("gm", "/hero nobody"))).toBe(
+          'no hero "nobody" in heroes/ (there are: brann, ilsa, kesh, wren)',
+        );
+        expect(said(yield* runLine("gm", "/add dragon"))).toStartWith(
+          'no monster "dragon" in monsters/',
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            join(dir, "heroes", "broken.yaml"),
+            [
+              "name: Broken",
+              "class: Fury",
+              "level: 1",
+              "characteristics: { might: 9, agility: 0, reason: 0, intuition: 0, presence: 0 }",
+              "stamina: 20",
+              "recoveries: 8",
+              "speed: 5",
+              "resource: { name: ferocity, perTurn: 1d3 }",
+              "",
+            ].join("\n"),
+          ),
+        );
+        expect(said(yield* runLine("gm", "/hero broken"))).toBe(
+          "heroes/broken.yaml: characteristics.might must be a whole number from -5 to 5",
+        );
+        expect(said(yield* runLine("gm", "/hero b"))).toBe(
+          '"b" could be any of these heroes: brann, broken',
+        );
+        // A player's GM-only command reads no file: the rules refuse it as it is.
+        expect(said(yield* runLine(vex, "/hero broken"))).toBe("Only the GM can use /hero.");
+        expect(said(yield* runLine(vex, "/add dragon"))).toBe("Only the GM can use /add.");
+        expect((yield* stateNow).seq).toBe(0);
+      }),
+    ),
+  );
+
+  effect("a sheet the loader accepts is one /add and /hero accept: prose may run over lines", () =>
+    atSampleTable((dir) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          writeFile(
+            join(dir, "monsters", "ogre.yaml"),
+            [
+              "name: Ogre",
+              "level: 2",
+              "organization: elite",
+              "stamina: 60",
+              "speed: 5",
+              "freeStrike: 5",
+              "characteristics: { might: 3, agility: 0, reason: -1, intuition: 0, presence: 0 }",
+              "abilities:",
+              "  - name: Club Sweep",
+              "    bonus: 3",
+              "    tier1: 6 damage",
+              "    effect: >",
+              "      Each target is pushed",
+              "      one square.",
+              "  - name: Roar",
+              "    effect: |",
+              "      Every enemy within 3",
+              "      \tis frightened.",
+              "",
+            ].join("\n"),
+          ),
+        );
+        expect((yield* runLine("gm", "/add ogre")).kind).toBe("done");
+        const block = (yield* stateNow).ds.blocks.ogre!;
+        expect(block.abilities.map((a) => a.effect)).toEqual([
+          "Each target is pushed one square.",
+          "Every enemy within 3 is frightened.",
+        ]);
+      }),
+    ),
+  );
+
+  effect("a multi-effect creature from an import goes straight onto the table", () =>
+    atSampleTable((dir) =>
+      Effect.gen(function* () {
+        const source = yield* tempDir;
+        yield* Effect.promise(() =>
+          writeFile(
+            join(source, "beast.json"),
+            JSON.stringify({
+              name: "Two Effect Beast",
+              level: 1,
+              roles: ["Elite Brute"],
+              stamina: "30",
+              speed: 5,
+              stability: 1,
+              free_strike: 3,
+              might: 2,
+              agility: 0,
+              reason: -2,
+              intuition: 0,
+              presence: 0,
+              features: [
+                {
+                  name: "Gore",
+                  effects: [
+                    { roll: "2d10 + 2", tier1: "4 damage", tier2: "6 damage", tier3: "8 damage" },
+                    { effect: "Push 1." },
+                    { name: "Malice 2", effect: "Grab." },
+                  ],
+                },
+              ],
+            }),
+          ),
+        );
+        const report = yield* importBestiary({ from: source, into: dir });
+        expect(report.imported.map((m) => [m.id, m.status])).toEqual([
+          ["two-effect-beast", "written"],
+        ]);
+        expect((yield* runLine("gm", "/add two")).kind).toBe("done");
+        expect((yield* stateNow).ds.blocks["two-effect-beast"]!.abilities[0]!.effect).toBe(
+          "Push 1. Malice 2: Grab.",
+        );
+      }),
+    ),
+  );
+
+  effect("what only the rules would refuse is refused on loading, naming the file and field", () =>
+    atSampleTable((dir) =>
+      Effect.gen(function* () {
+        const long = "A Name Much Too Long For The Band To Hold";
+        yield* Effect.promise(() =>
+          writeFile(
+            join(dir, "monsters", "wordy.yaml"),
+            [
+              "name: Wordy",
+              "level: 1",
+              "organization: solo",
+              "stamina: 10",
+              "speed: 5",
+              "freeStrike: 1",
+              "characteristics: { might: 0, agility: 0, reason: 0, intuition: 0, presence: 0 }",
+              "abilities:",
+              `  - name: ${long}`,
+              '    effect: "Rings a bell\u0007"',
+              "",
+            ].join("\n"),
+          ),
+        );
+        expect(said(yield* runLine("gm", "/add wordy"))).toBe(
+          "monsters/wordy.yaml: abilities[1].name must be one line of up to 40 characters; abilities[1].effect holds control characters",
+        );
+        yield* Effect.promise(() =>
+          Bun.write(join(dir, "heroes", "Vex.yaml"), Bun.file(join(dir, "heroes", "brann.yaml"))),
+        );
+        expect(said(yield* runLine("gm", "/hero vex"))).toBe(
+          "heroes/Vex.yaml: the file name is the id, so it must be lowercase letters, digits and dashes",
+        );
+        expect((yield* stateNow).seq).toBe(0);
+      }),
+    ),
+  );
+
+  effect("a player who plays a hero is labelled with it; the GM gives a hero by label", () =>
+    atSampleTable(() =>
+      Effect.gen(function* () {
+        yield* runLine(vex, "/name Vex");
+        yield* runLine(bob, "/name Bob");
+        yield* runLine("gm", "/hero brann");
+        yield* runLine("gm", "/hero kesh");
+        expect((yield* runLine(vex, "/play brann")).kind).toBe("done");
+        expect(said(yield* runLine(vex, "hello"))).toEqual(["Vex (Brann): hello"]);
+        expect(said(yield* runLine("gm", "/play kesh nobody"))).toBe(
+          "Nobody at the table is called 'nobody'.",
+        );
+        expect((yield* runLine("gm", "/play kesh bob")).kind).toBe("done");
+        const state = yield* stateNow;
+        expect(state.ds.heroes.map((h) => [h.id, h.player])).toEqual([
+          ["brann", vex],
+          ["kesh", bob],
+        ]);
+        expect(said(yield* runLine(bob, "/me nods"))).toEqual(["Bob (Kesh) nods"]);
+      }),
+    ),
+  );
+
+  effect("the GM gives a hero to a seated guest by the guest's label", () =>
+    atSampleTable(() =>
+      Effect.gen(function* () {
+        const guest = "guest:wrenWREN";
+        yield* Effect.flatMap(Presence, (p) => p.enter(guest));
+        yield* runLine("gm", "/hero wren");
+        expect((yield* runLine("gm", "/play wren guest-wren")).kind).toBe("done");
+        expect((yield* stateNow).ds.heroes[0]!.player).toBe(guest);
+      }),
+    ),
+  );
+
+  effect("/sheet answers the sender alone, at a seat or over exec, and writes nothing", () =>
+    atSampleTable(() =>
+      Effect.gen(function* () {
+        yield* runLine("gm", "/hero brann");
+        yield* runLine("gm", "/add bandit-chief");
+        const seq = (yield* stateNow).seq;
+        const hero = yield* runLine(vex, "/sheet brann");
+        expect(hero.kind).toBe("message");
+        expect(said(hero)).toStartWith("Brann: Censor 1\nStamina 24/24");
+        expect(said(hero)).toContain("Driving Blow");
+        const chief = yield* runLine(vex, "/sheet bandit-c", "exec");
+        expect(chief.kind).toBe("message");
+        expect(said(chief)).toStartWith("Bandit Chief: level 1 leader");
+        expect(said(yield* runLine(vex, "/sheet nobody"))).toBe(
+          "Nobody at the table is called 'nobody'.",
+        );
+        expect(said(yield* runLine(vex, "/sheet"))).toBe("Usage: /sheet <who>");
+        expect((yield* stateNow).seq).toBe(seq);
+        expect(said(yield* runLine(vex, "/help"))).toContain("/sheet <who>");
+      }),
+    ),
+  );
+});
+
 describe("plainText", () => {
   test("reads each core kind the way the table shows it", () => {
     const at = (kind: string, text: string) => plainText({ who: "Vex", kind, text });
@@ -122,6 +383,8 @@ describe("execLine", () => {
     expect(execLine("roll 2d10")).toBe("/roll 2d10");
     expect(execLine("Roll 2d10")).toBe("/Roll 2d10");
     expect(execLine("help")).toBe("/help");
+    // /sheet is read-only and answers the sender alone, so it's safe without its slash.
+    expect(execLine("sheet kesh")).toBe("/sheet kesh");
     expect(execLine("/name Vex")).toBe("/name Vex");
     expect(execLine("hello everyone")).toBe("hello everyone");
     expect(execLine("  rolling along")).toBe("  rolling along");

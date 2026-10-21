@@ -1,14 +1,16 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import type { SessionInfo } from "@supervillain/ssh";
 import { Context, Effect, Layer, Logger } from "effect";
 import { Presence } from "../../src/host/Presence.ts";
-import { TableRoom } from "../../src/host/TableRoom.ts";
-import { TableServer, type TableServerOptions } from "../../src/host/TableServer.ts";
+import { tableServices } from "../../src/host/services.ts";
+import type { TableRoomOptions } from "../../src/host/TableRoom.ts";
+import { rateKeyOf, TableServer, type TableServerOptions } from "../../src/host/TableServer.ts";
 import { clientKey, sshExec, sshShell, waitFor } from "../e2e/openssh.ts";
 import { effect } from "./effect.ts";
 import { tempDir } from "./tempDir.ts";
 
 /** A table served on a free loopback port over a temp campaign, for the life of the test. */
-const servedTable = (more: Partial<TableServerOptions> = {}) =>
+const servedTable = (more: Partial<TableServerOptions> = {}, roomOptions: TableRoomOptions = {}) =>
   Effect.gen(function* () {
     const dir = yield* tempDir;
     const layer = TableServer.layer({
@@ -17,7 +19,7 @@ const servedTable = (more: Partial<TableServerOptions> = {}) =>
       port: 0,
       bind: "127.0.0.1",
       ...more,
-    }).pipe(Layer.provideMerge(Presence.layer), Layer.provideMerge(TableRoom.layer(dir)));
+    }).pipe(Layer.provideMerge(tableServices(dir, roomOptions)));
     // Session logs would only clutter the test output.
     const context = yield* Layer.build(layer.pipe(Layer.provide(Logger.layer([]))));
     return {
@@ -71,6 +73,44 @@ describe("TableServer", () => {
   );
 
   effect(
+    "guests from one address share one rate, however many connections they open",
+    () =>
+      Effect.gen(function* () {
+        const table = yield* servedTable({}, { playerRate: { burst: 2, perSecond: 0.01 } });
+        expect((yield* sshExec(table.port, "/say one")).exitCode).toBe(0);
+        expect((yield* sshExec(table.port, "/say two")).exitCode).toBe(0);
+        expect(yield* sshExec(table.port, "/say three")).toMatchObject({
+          exitCode: 1,
+          stderr: "You're sending lines too fast; wait a moment.\n",
+        });
+        // A key is its own sender, wherever it connects from.
+        const vex = yield* clientKey(yield* tempDir, "vex");
+        expect((yield* sshExec(table.port, "/say mine", vex)).exitCode).toBe(0);
+      }),
+    20_000,
+  );
+
+  effect(
+    "guest seats from one address share that rate too",
+    () =>
+      Effect.gen(function* () {
+        const table = yield* servedTable({}, { playerRate: { burst: 2, perSecond: 0.01 } });
+        const ann = yield* sshShell(table.port);
+        const bea = yield* sshShell(table.port);
+        yield* waitFor("both seats", () => Effect.runSync(table.presence.here.get).length === 2);
+        yield* waitFor("Ann's name prompt", () => ann.text().includes("call you?"));
+        ann.write("Ann\r");
+        yield* waitFor("Ann named", () => ann.text().includes("is now Ann"));
+        yield* waitFor("Bea's name prompt", () => bea.text().includes("call you?"));
+        bea.write("Bea\r");
+        yield* waitFor("Bea named", () => bea.text().includes("is now Bea"));
+        bea.write("hello\r");
+        yield* waitFor("Bea held back", () => bea.text().includes("You're sending lines too fast"));
+      }),
+    20_000,
+  );
+
+  effect(
     "a shell without a terminal is told how to connect, and no seat opens",
     () =>
       Effect.gen(function* () {
@@ -83,4 +123,40 @@ describe("TableServer", () => {
       }),
     20_000,
   );
+});
+
+describe("rateKeyOf", () => {
+  const PLAYER: `key:${string}` = `key:SHA256:${"p".repeat(43)}`;
+  const RELAY: `key:${string}` = `key:SHA256:${"r".repeat(43)}`;
+  const info = (
+    identity: SessionInfo["identity"],
+    more: Partial<SessionInfo> = {},
+  ): SessionInfo => ({
+    identity,
+    user: "den",
+    term: "xterm-256color",
+    cols: 80,
+    rows: 24,
+    env: {},
+    remoteAddress: "203.0.113.7",
+    ...more,
+  });
+  const key = (actor: `key:${string}`) =>
+    ({ kind: "key", actor, fingerprint: actor.slice(4), algorithm: "ssh-ed25519" }) as const;
+
+  test("a key is rated as itself, a guest by the address it came from", () => {
+    expect(rateKeyOf(info(key(PLAYER)))).toBe(PLAYER);
+    expect(rateKeyOf(info({ kind: "guest", actor: "guest:abc" }))).toBe("address:203.0.113.7");
+    expect(rateKeyOf(info({ kind: "guest", actor: "guest:xyz" }))).toBe("address:203.0.113.7");
+  });
+
+  test("through a relay, a key is still itself and a guest is the relay's guest", () => {
+    expect(rateKeyOf(info(key(RELAY), { relayedActor: PLAYER }))).toBe(PLAYER);
+    expect(rateKeyOf(info(key(RELAY), { relayedActor: "guest:abc" }))).toBe(
+      `relay:${RELAY}/guest:abc`,
+    );
+    expect(rateKeyOf(info(key(RELAY), { relayedActor: "guest:xyz" }))).toBe(
+      `relay:${RELAY}/guest:xyz`,
+    );
+  });
 });

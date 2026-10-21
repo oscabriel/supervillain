@@ -77,6 +77,29 @@ const verifiedKey = (ctx: Extract<AuthContext, { method: "publickey" }>) => {
   return { fingerprint: fingerprintOf(ctx.key.data), algorithm: key.type };
 };
 
+/**
+ * Closes a session channel that never asked for a shell or exec, and refuses anything more on it.
+ * ssh2 has no public way: a session becomes a closable channel only once started. So this sends
+ * the close itself, through ssh2's own internals; false if they aren't where 1.16 keeps them.
+ */
+const closeUnstarted = (client: Connection, session: ssh2.Session): boolean => {
+  const protocol = (client as unknown as { _protocol?: { channelClose?: (id: number) => void } })
+    ._protocol;
+  const internals = session as unknown as {
+    _ending?: boolean;
+    _chanInfo?: { outgoing?: { id?: unknown } };
+  };
+  const id = internals._chanInfo?.outgoing?.id;
+  if (typeof protocol?.channelClose !== "function" || typeof id !== "number") return false;
+  try {
+    internals._ending = true;
+    protocol.channelClose(id);
+  } catch {
+    // The connection is already gone.
+  }
+  return true;
+};
+
 /** Ends a channel after its last write, with an exit status; closes it outright if the peer stalls. */
 const endChannel = (channel: ServerChannel, status: number) => {
   try {
@@ -159,7 +182,23 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
       let user = "";
       let relay = false;
       let connectionSessions = 0;
+      /** Sessions that asked for a shell or exec and haven't closed. */
+      let startedSessions = 0;
+      let closed = false;
       const live = new Set<() => void>();
+
+      // A logged-in connection must keep a session going: one that never starts one, or whose last
+      // one ended, only holds a place. ssh2 answers keepalives itself, so nothing else would end it.
+      let idle: ReturnType<typeof setTimeout> | undefined;
+      const stopIdle = () => {
+        clearTimeout(idle);
+        idle = undefined;
+      };
+      const startIdle = () => {
+        stopIdle();
+        if (!closed && startedSessions === 0)
+          idle = setTimeout(() => link.socket.destroy(), timeouts.sessionStartMs);
+      };
 
       client.on("authentication", (ctx) => {
         if (ctx.method === "publickey") {
@@ -185,7 +224,10 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
         return ctx.reject(authMethods);
       });
 
-      client.once("ready", link.authenticated);
+      client.once("ready", () => {
+        link.authenticated();
+        startIdle();
+      });
 
       client.on("session", (acceptSession, rejectSession) => {
         const limit = relay ? limits.sessionsPerRelay : limits.sessionsPerConnection;
@@ -203,8 +245,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
         connectionSessions++;
         openSessions++;
         counts.sessions++;
-        // A session must ask for a shell or exec soon; one that idles only holds a place.
-        const startDeadline = setTimeout(() => link.socket.destroy(), timeouts.sessionStartMs);
+        let started = false;
         let released = false;
         const release = () => {
           if (released) return;
@@ -215,16 +256,30 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
           openSessions--;
           counts.sessions--;
           forget(remoteAddress);
+          if (started && --startedSessions === 0) startIdle();
         };
         live.add(release);
+        const start = () => {
+          started = true;
+          clearTimeout(startDeadline);
+          startedSessions++;
+          stopIdle();
+        };
 
         const session = acceptSession();
         session.once("close", release);
+        // A session must ask for a shell or exec soon; one that idles only holds a place. Only it
+        // goes: on a relay, the connection carries every other player. A connection left with no
+        // started session goes too, unless it's a relay's, which the idle rule above looks after.
+        const startDeadline = setTimeout(() => {
+          const closedAlone = closeUnstarted(client, session);
+          release();
+          if (!closedAlone || (startedSessions === 0 && !relay)) link.socket.destroy();
+        }, timeouts.sessionStartMs);
         let pty: Pty = sanitizePty(undefined);
         let hasPty = false;
         const env: Record<string, string> = {};
         let relayedActor: string | undefined;
-        let started = false;
         let resize: ((cols: number, rows: number) => void) | undefined;
 
         session.on("pty", (accept, reject, info) => {
@@ -266,8 +321,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
 
         session.on("shell", (accept, reject) => {
           if (!mayStart()) return reject?.();
-          started = true;
-          clearTimeout(startDeadline);
+          start();
           const channel = accept();
           if (!hasPty) {
             // A renderer would pour escape codes into a pipe and never notice the input ending.
@@ -283,8 +337,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
         session.on("exec", (accept, reject, { command }) => {
           const onExec = options.onExec;
           if (!mayStart() || !onExec) return reject?.();
-          started = true;
-          clearTimeout(startDeadline);
+          start();
           const channel = accept();
           const sessionInfo = info();
           runSession(
@@ -295,6 +348,8 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
       });
 
       client.on("close", () => {
+        closed = true;
+        stopIdle();
         connections.delete(client);
         for (const release of live) release();
       });

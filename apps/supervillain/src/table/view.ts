@@ -1,4 +1,5 @@
 import type { Accessor } from "solid-js";
+import type { CombatView } from "../game/index.ts";
 
 /** One rendered feed line. The table styles by `kind`, never by parsing `text`. */
 export interface FeedLine {
@@ -17,6 +18,9 @@ export interface Present {
   readonly label: string;
   readonly gm: boolean;
 }
+
+// The band's view is built by the rules (game/drawSteel/view.ts), which never import the table.
+export type { Combatant, CombatView } from "../game/index.ts";
 
 /**
  * Everything the table needs from the host, for one seat. The App never sees the room,
@@ -41,4 +45,6 @@ export interface TableView {
   readonly leave: () => void;
   /** How players join (`ssh -p 2222 den@host`), shown on the GM's seat while nobody else is here. */
   readonly joinHint?: string;
+  /** The Draw Steel band. Absent until the host provides it; undefined while there is no party or combat. */
+  readonly combat?: Accessor<CombatView | undefined>;
 }

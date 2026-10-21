@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test";
 import { connect, type Socket } from "node:net";
-import { Deferred, Effect } from "effect";
+import { Deferred, Effect, Fiber } from "effect";
 import { effect } from "./effect.ts";
 import { clientKey } from "./openssh.ts";
 import { testServer } from "./server.ts";
@@ -84,6 +84,27 @@ describe("relay trust", () => {
       // The same key straight to the port is just a player.
       const direct = yield* ssh2Client({ port: server.port, key: relayKey });
       expect((yield* ssh2Exec(direct, "who", { SV_ACTOR: PLAYER })).stdout).toBe("-");
+    }),
+  );
+
+  effect("a relayed channel that never starts is closed alone; the relay's players stay", () =>
+    Effect.gen(function* () {
+      const relayKey = yield* clientKey(yield* tempDir, "relay");
+      const server = yield* testServer({
+        trustedRelayKeys: [relayKey.fingerprint],
+        timeouts: { sessionStartMs: 200 },
+        onExec: (session) =>
+          Effect.sleep("1200 millis").pipe(
+            Effect.andThen(Effect.sync(() => session.write(session.info.relayedActor ?? "-"))),
+            Effect.as(0),
+          ),
+      });
+      const relay = yield* ssh2Client({ port: server.port, key: relayKey });
+      const player = yield* Effect.forkScoped(ssh2Exec(relay, "who", { SV_ACTOR: PLAYER }));
+      yield* Effect.sleep("50 millis");
+      // A player whose client stalls before its shell: the channel opens and never starts.
+      relay.subsys("nothing", () => undefined);
+      expect((yield* Fiber.join(player)).stdout).toBe(PLAYER);
     }),
   );
 

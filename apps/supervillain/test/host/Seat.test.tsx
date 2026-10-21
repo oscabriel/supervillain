@@ -1,20 +1,20 @@
 import { describe, expect } from "bun:test";
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing";
 import { Effect, Exit, Scope } from "effect";
-import { Presence } from "../../src/host/Presence.ts";
 import { mountTable, openSeat } from "../../src/host/Seat.ts";
+import { type TableServices, tableServices } from "../../src/host/services.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
+import { sampleCampaign } from "./campaign.ts";
 import { effect } from "./effect.ts";
-import { tempDir } from "./tempDir.ts";
 
 const alice = "key:SHA256:aliceAAAAkeyfingerprint";
 const bob = "key:SHA256:bobBBBBBkeyfingerprint";
 
-/** A temp campaign with the room and presence layers, for the length of `body`. */
-const atTable = <A, E>(body: Effect.Effect<A, E, TableRoom | Presence | Scope.Scope>) =>
+/** A copy of the sample campaign with the table's services, for the length of `body`. */
+const atTable = <A, E>(body: Effect.Effect<A, E, TableServices | Scope.Scope>) =>
   Effect.gen(function* () {
-    const dir = yield* tempDir;
-    return yield* body.pipe(Effect.provide(Presence.layer), Effect.provide(TableRoom.layer(dir)));
+    const dir = yield* sampleCampaign;
+    return yield* body.pipe(Effect.provide(tableServices(dir)));
   });
 
 interface Seated {
@@ -164,6 +164,42 @@ describe("a seat over a real room", () => {
         yield* type(b, "/narrate The sky falls.");
         yield* frameWhere(b, "the refusal", (f) => f.includes("Only the GM can use /narrate."));
         expect(b.view.complete("/ro")).toEqual(["/roll "]);
+      }),
+    ),
+  );
+
+  effect("draws the band from the room: the party, each seat's own hero, then the fight", () =>
+    atTable(
+      Effect.gen(function* () {
+        const g = yield* seat("gm");
+        const a = yield* seat(alice);
+        expect(g.view.combat?.()).toBeUndefined();
+        yield* type(a, "Alice");
+        yield* type(g, "/hero brann");
+        yield* type(g, "/hero kesh");
+        yield* frameWhere(g, "the party", (f) => f.includes("party · hero tokens 0"));
+        yield* type(a, "/play brann");
+        yield* frameWhere(g, "Brann's player", (f) => f.includes("Brann (Alice)"));
+        expect(g.view.combat?.()?.combatants.map((c) => [c.name, c.mine])).toEqual([
+          ["Brann (Alice)", false],
+          ["Kesh", false],
+        ]);
+        expect(a.view.combat?.()?.combatants.map((c) => [c.name, c.mine])).toEqual([
+          ["Brann", true],
+          ["Kesh", false],
+        ]);
+        expect(g.view.present().map((p) => p.label)).toEqual(["GM", "Alice (Brann)"]);
+
+        yield* type(g, "/add bandit-chief");
+        yield* type(g, "/start");
+        yield* frameWhere(a, "the fight", (f) => f.includes("round 1"));
+        const band = a.view.combat?.();
+        expect(band).toMatchObject({ active: true, round: 1 });
+        expect(band?.combatants.map((c) => [c.id, c.side, c.stamina, c.max])).toEqual([
+          ["brann", "heroes", 24, 24],
+          ["kesh", "heroes", 24, 24],
+          ["bandit-chief", "director", 80, 80],
+        ]);
       }),
     ),
   );

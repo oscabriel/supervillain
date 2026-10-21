@@ -16,6 +16,15 @@ export {
   type TableCommandSpec,
 } from "./module.ts";
 export {
+  type Combatant,
+  type CombatView,
+  type HostFact,
+  type HostNeed,
+  hostNeeds,
+  withHostFact,
+} from "./drawSteel/index.ts";
+export {
+  bandOf,
   type Command,
   commands,
   type FeedLine,
@@ -23,6 +32,8 @@ export {
   feedLines,
   plainText,
   rules,
+  sheetOf,
+  tableLabel,
   type TableState,
 } from "./table.ts";
 export {

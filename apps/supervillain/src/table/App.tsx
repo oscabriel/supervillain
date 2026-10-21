@@ -6,7 +6,8 @@ import {
 } from "@opentui/core";
 import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
 import { createSignal, Show } from "solid-js";
-import { Band } from "./Band.tsx";
+import { BAND_FRAME, Band } from "./Band.tsx";
+import { bandLayout } from "./band.ts";
 import { Feed } from "./Feed.tsx";
 import { Header } from "./Header.tsx";
 import { HintRow } from "./HintRow.tsx";
@@ -44,6 +45,12 @@ const PANE_HINT = "Esc closes · PgUp/PgDn scroll it · keep typing as usual";
 const CONFIRM_LEAVE = "Players are still here. Ctrl-C again closes the table for everyone.";
 /** A page scroll moves this much of the visible height, keeping a little context. */
 const PAGE = 0.8;
+/** The header, hint and input rows, which never give way. */
+const FIXED_ROWS = 3;
+/** The feed keeps at least its border and three lines, however full the band and the pane are. */
+const FEED_MIN = 5;
+/** The band never shrinks below one row inside its border. */
+const BAND_MIN = 3;
 
 /**
  * The one chat-first layout, for the GM's terminal and every SSH seat alike. It reads and
@@ -79,8 +86,9 @@ export function App(props: { view: TableView }) {
       const reply = await view.submit(intent.line);
       if (reply === undefined || reply === "") return;
       setNotice(reply);
-      // Every reply but help's is a refusal: give the line back to be fixed.
-      if (!/^\/help\b/i.test(text)) setLine(restoreDraft(line(), text));
+      // A one-line reply to anything but help is a refusal: give the line back to be fixed.
+      // A multi-line reply (a sheet, the help) is something asked for, read in the pane.
+      if (!/^\/help\b/i.test(text) && !reply.includes("\n")) setLine(restoreDraft(line(), text));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     }
@@ -154,15 +162,42 @@ export function App(props: { view: TableView }) {
     edit((s) => insert(s, decodePasteBytes(event.bytes)));
   });
 
-  const paneHeight = () => {
-    const lines = (notice() ?? "").split("\n").length;
-    return Math.max(3, Math.min(lines + 2, Math.floor(size().height / 2)));
+  /**
+   * The band's and the reply pane's heights. The feed and input always keep their rows. The band
+   * takes at most half the screen (two thirds in combat, when it's the table's state); a fight's
+   * band comes before a reply pane, which scrolls, so a sheet open beside it never hides anyone's
+   * numbers. The party or presence band asks little, so there the pane comes first.
+   */
+  const heights = () => {
+    const h = size().height;
+    const combat = view.combat?.();
+    const room = h - FIXED_ROWS - FEED_MIN - (notice() !== undefined && !multiline() ? 1 : 0);
+    const paneWanted = multiline()
+      ? Math.max(3, Math.min((notice() ?? "").split("\n").length + 2, Math.floor(h / 2)))
+      : 0;
+    const cap = Math.floor(combat?.active ? (h * 2) / 3 : h / 2);
+    if (combat === undefined || !combat.active) {
+      const band = Math.max(BAND_MIN, Math.min(cap, room - paneWanted));
+      return { band, pane: paneWanted };
+    }
+    const layout = bandLayout(combat, size().width - BAND_FRAME.width, cap - BAND_FRAME.height);
+    const wanted = layout.lines.length + BAND_FRAME.height;
+    const band = Math.max(BAND_MIN, Math.min(wanted, room - (multiline() ? 3 : 0)));
+    return { band, pane: multiline() ? Math.max(3, Math.min(paneWanted, room - band)) : 0 };
   };
+  const paneHeight = () => heights().pane;
+  const bandHeight = () => heights().band;
 
   return (
     <box flexDirection="column" width="100%" height="100%">
       <Header room={view.room} me={view.me} present={view.present()} />
-      <Band me={view.me} present={view.present()} joinHint={view.joinHint} />
+      <Band
+        me={view.me}
+        present={view.present()}
+        joinHint={view.joinHint}
+        combat={view.combat?.()}
+        maxHeight={bandHeight()}
+      />
 
       <box flexDirection="row" flexGrow={1} minHeight={0}>
         <Feed lines={view.feed()} ref={(el) => (feed = el)} />

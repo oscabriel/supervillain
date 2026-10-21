@@ -15,6 +15,12 @@ export const color = {
   debug: "#98c379",
   cursorFg: "#000000",
   cursorBg: "#d0d0d0",
+  heroes: "#61afef",
+  director: "#c678dd",
+  healthy: "#98c379",
+  winded: "#e5c07b",
+  dying: "#ff5f5f",
+  mineBg: "#3e4452",
 } as const;
 
 /** How a feed line of one kind looks: how it reads (from its module) and its colours. */
@@ -51,3 +57,26 @@ export function personLabel(p: Present, me: string): string {
 
 export const personColor = (p: Present, me: string): string =>
   p.gm ? color.gm : p.actor === me ? color.you : color.text;
+
+/**
+ * Which labels fit in `width` columns, whole, joined by ", ", with ", +N" for the rest. `mine` is
+ * kept first, so a seat always finds itself; the others go in order. Indices, in order.
+ */
+export function fitLabels(
+  labels: ReadonlyArray<string>,
+  width: number,
+  mine = -1,
+): { readonly shown: ReadonlyArray<number>; readonly more: number } {
+  const order = [...(mine >= 0 ? [mine] : []), ...[...labels.keys()].filter((i) => i !== mine)];
+  const shown: number[] = [];
+  let used = 0;
+  for (const [n, i] of order.entries()) {
+    const add = (shown.length > 0 ? 2 : 0) + Bun.stringWidth(labels[i]!);
+    const left = order.length - n - 1;
+    const tail = left > 0 ? `, +${left}`.length : 0;
+    if (used + add + tail > width) break;
+    shown.push(i);
+    used += add;
+  }
+  return { shown: shown.toSorted((a, b) => a - b), more: labels.length - shown.length };
+}

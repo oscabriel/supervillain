@@ -8,7 +8,7 @@ We are rebuilding small, from a cleared tree. `ASSESSMENT.md` at the root is the
 
 - The previous build is tagged `archive/2026-09-exploration`, with its ADRs, wayfinder and benchmarks under `.agents/`; nothing in it binds. Copy from it with care (ASSESSMENT §5 lists what's worth lifting), one file and its tests at a time, from a worktree: `git worktree add ../supervillain-archive archive/2026-09-exploration`.
 - Spikes A and B import the archived packages, so they live at tag `archive/2026-09-spikes`. Spike C (paper) and Spike D (the runnable Effect table that settled the architecture) live in `spikes/`. Lift lessons from them, not code; root lint and format skip that folder.
-- The rebuild goes in slices toward a table friends can sit at: engine, then SSH table with names and chat, chat-first input and layout, minimum Draw Steel, undo and the text map, then the relay. The first three are in: `bun supervillain host` runs a table you can join over SSH.
+- The rebuild goes in slices toward a table friends can sit at: engine, then SSH table with names and chat, chat-first input and layout, minimum Draw Steel, undo and the text map, then the relay. The first four are in: `bun supervillain host` runs a Draw Steel table you can join over SSH.
 - The issue backlog from that phase is frozen. New issues come from play.
 
 ## Rules
@@ -38,9 +38,11 @@ Bun workspaces, TypeScript 7 with `tsc -b`, oxlint and oxfmt on defaults, `bun t
 - `packages/engine`: the envelope, the log reader, the fold, `CampaignLog` and the single-writer `Room`. Generic over a game's rules.
 - `packages/ssh`: our SSH server on ssh2. A key is an identity and a keyless client can be a guest; each shell gets a renderer and each session its own Effect scope. It is open to strangers, so it caps connections and sessions (per address and in all), times out logins and idle sessions, cuts dead peers by keepalive and offers only elliptic-curve key exchange.
 - `apps/supervillain`: the one binary (`src/main.ts`, effect/cli). Folders become packages only when a boundary hurts:
-  - `game/`: the pure rules as modules (core: chat, names, dice), composed into one engine `Rules` and one command registry that drives parsing, completion and `/help`.
-  - `table/`: the chat-first App over `view.ts`.
-  - `host/`: the Effect edge. `TableRoom` (the room, with the log provided inside its layer), `Presence`, `Seat` (one `TableView` per seat), `TableServer` (SSH shells and exec) and `LocalSeat` (the GM's terminal).
+  - `game/`: the pure rules as modules composed in `table.ts` into one engine `Rules` and one command registry that drives parsing, completion and `/help`. `core.ts` is chat, names and dice; `drawSteel/` is the party, creatures, combat, Stamina, conditions, power rolls and resources, with the sheet types in `sheets.ts`. Projections (labels, the band, `/sheet`) are in `table.ts`.
+  - `content/`: hero and monster YAML in a campaign's `heroes/` and `monsters/`, the `CampaignContent` loader, and the Steel Compendium import. The rules never read a file: the host loads a sheet and puts it in the command, so the event carries it.
+  - `table/`: the chat-first App over `view.ts`, with the Draw Steel band (`band.ts` lays it out).
+  - `host/`: the Effect edge. `TableRoom` (the room, with the log provided inside its layer), `Presence`, `tableServices` (those two and `CampaignContent` over one campaign), `line.ts` (one input line: host facts such as sheets, then the room), `Seat` (one `TableView` per seat), `TableServer` (SSH shells and exec) and `LocalSeat` (the GM's terminal).
+- `examples/campaign`: the sample campaign (four heroes, four bandits) that `supervillain new --example` copies and the end-to-end tests play.
 
 Build with `bun run build`, test with `bun test`, lint and format-check with `bun run check`. Run the table from the root with `bun supervillain host` (the root `bunfig.toml` preloads the Solid JSX transform).
 

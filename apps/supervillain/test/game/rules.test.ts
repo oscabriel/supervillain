@@ -67,6 +67,38 @@ describe("chat text", () => {
     expect(posted(`q${"\u0301".repeat(10)}!`)).toBe(`q${"\u0301".repeat(3)}!`);
   });
 
+  test("emoji joiners, presentation selectors and script joiners between characters are kept", () => {
+    // The family emoji: man, woman, girl, joined by ZWJ.
+    expect(posted("hi \u{1f468}\u200d\u{1f469}\u200d\u{1f467}!")).toBe(
+      "hi \u{1f468}\u200d\u{1f469}\u200d\u{1f467}!",
+    );
+    // A heart drawn as emoji (VS16), the rainbow flag (VS16 then ZWJ), and a text-style sign (VS15).
+    expect(posted("love it \u2764\ufe0f")).toBe("love it \u2764\ufe0f");
+    expect(posted("\u{1f3f3}\ufe0f\u200d\u{1f308} pride")).toBe(
+      "\u{1f3f3}\ufe0f\u200d\u{1f308} pride",
+    );
+    expect(posted("\u2122\ufe0e mark")).toBe("\u2122\ufe0e mark");
+    // Persian keeps its non-joiner (می‌خواهم), Devanagari its joiner (क्‍ष).
+    expect(posted("\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645")).toBe(
+      "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645",
+    );
+    expect(posted("\u0915\u094d\u200d\u0937")).toBe("\u0915\u094d\u200d\u0937");
+  });
+
+  test("joiners and selectors leading, trailing, repeated or alone are stripped", () => {
+    expect(posted("\u200dhello\u200c")).toBe("hello");
+    expect(posted("a \u200d b \ufe0f c")).toBe("a b c");
+    expect(posted("\ufe0fstart")).toBe("start");
+    expect(posted("a\u200d\u200d\u200db")).toBe("a\u200db");
+    expect(posted("\u2764\ufe0f\ufe0f\ufe0f")).toBe("\u2764\ufe0f");
+    expect(posted("\u200d\u200c\ufe0f\ufe0e")).toBe("Say something.");
+    expect(posted(" \u200d \ufe0f ")).toBe("Say something.");
+    // A stray accent is no character to join to, and a selector doesn't reset the accent count.
+    expect(posted("\u0301\u200db")).toBe("b");
+    expect(posted("q\u0301\u0301\ufe0f\u0301\u0301")).toBe("q\u0301\u0301\u0301");
+    expect(posted(`q${"\u0301\u0301\u0301\u200d".repeat(5)}b`)).toBe("q\u0301\u0301\u0301\u200db");
+  });
+
   test("500 characters is fine, 501 is refused", () => {
     expect(posted("a".repeat(500))).toBe("a".repeat(500));
     expect(posted("a".repeat(501))).toBe("Keep it to 500 characters (that was 501).");
@@ -78,6 +110,32 @@ describe("chat text", () => {
     });
     expect(folded.error?.seq).toBe(1);
     expect(folded.state.feed).toEqual([]);
+  });
+
+  test("replay halts on stored chat with a control, a bidi override, or no or far too much text", () => {
+    const bad = [
+      "",
+      "two\nlines",
+      "c1\x85",
+      `abc${String.fromCharCode(0x202e)}def`,
+      "\u2066x",
+      "a".repeat(5000),
+    ];
+    for (const text of bad) {
+      const folded = fold(rules, [env(1, "core.chat-posted", { text })], { strict: true });
+      expect(folded.error?.seq).toBe(1);
+    }
+  });
+
+  test("replay keeps stored chat today's cleaner would tidy, so a cleaner change can't halt an old log", () => {
+    const stored = ["a\u200bb", "zalgo q\u0301\u0301\u0301\u0301\u0301", "  spaced  out  "];
+    const folded = fold(
+      rules,
+      stored.map((text, i) => env(i + 1, "core.chat-posted", { text })),
+      { strict: true },
+    );
+    expect(folded.error).toBeUndefined();
+    expect(folded.state.feed.map((f) => f.text)).toEqual(stored);
   });
 });
 
@@ -153,15 +211,34 @@ describe("names", () => {
   test("a lookalike of a taken name is taken: other scripts' letters and digits for letters", () => {
     const table = new Table();
     table.submit(ALICE, { type: "name", name: "Vex the Bold" });
-    expect(table.submit(BOB, { type: "name", name: "Vex the B\u043eld" })).toBe(
-      '"Vex the B\u043eld" is taken; pick another name.',
-    );
-    expect(table.submit(BOB, { type: "name", name: "V\u0435x the B0ld" })).toBe(
-      '"V\u0435x the B0ld" is taken; pick another name.',
+    table.submit(GUEST, { type: "name", name: "Cope" });
+    // Every letter Cyrillic: СОРЕ.
+    expect(
+      table.submit(BOB, { type: "name", name: "\u0421\u041e\u0420\u0415", seated: [GUEST] }),
+    ).toBe('"\u0421\u041e\u0420\u0415" is taken; pick another name.');
+    expect(table.submit(BOB, { type: "name", name: "Vex the B0ld" })).toBe(
+      '"Vex the B0ld" is taken; pick another name.',
     );
     expect(table.submit(BOB, { type: "name", name: "\uff27\uff2d" })).toBe(
       '"GM" is taken; pick another name.',
     );
+  });
+
+  test("a name can't mix Latin letters with another script's, taken or not", () => {
+    const mixed = "Names can't mix Latin letters with another script's.";
+    expect(named("V\u0435x")).toBe(mixed);
+    expect(named("Vex the B\u043eld")).toBe(mixed);
+    expect(named("\u0391lex")).toBe(mixed);
+    expect(named("Kai \u6d77")).toBe(mixed);
+  });
+
+  test("a name in one other script is fine, digits and punctuation with it too", () => {
+    expect(named("\u0412\u0435\u0440\u0430")).toBe("\u0412\u0435\u0440\u0430");
+    expect(named("\u0391\u03bb\u03ad\u03be\u03b1\u03bd\u03b4\u03c1\u03bf\u03c2")).toBe(
+      "\u0391\u03bb\u03ad\u03be\u03b1\u03bd\u03b4\u03c1\u03bf\u03c2",
+    );
+    expect(named("\u3055\u304f\u3089 2")).toBe("\u3055\u304f\u3089 2");
+    expect(named("R2-D2 \u00e9t\u00e9")).toBe("R2-D2 \u00e9t\u00e9");
   });
 
   test("a name can't carry the table's own markers", () => {
@@ -387,6 +464,7 @@ describe("replay", () => {
         { seq: 5, actor: BOB, kind: "emote", text: "waves" },
       ],
       core: { names: { [ALICE]: "Vex" } },
+      ds: rules.initial.ds,
     });
   });
 
@@ -399,6 +477,29 @@ describe("replay", () => {
     for (const envelope of table.envelopes) live = rules.apply(live, envelope);
     const replayed = fold(rules, JSON.parse(JSON.stringify(table.envelopes)), { strict: true });
     expect(replayed.state).toEqual(live);
+  });
+
+  test("a stored name today's rules would refuse still replays: rules change, logs don't", () => {
+    const log = [
+      // A Cyrillic е among Latin letters, and a lookalike of a name already held.
+      env(1, "core.name-set", { name: "V\u0435x" }, ALICE),
+      env(2, "core.name-set", { name: "V\u0435X" }, BOB),
+      env(3, "core.name-set", { name: "Ash\u200b" }, GUEST),
+    ];
+    const folded = fold(rules, log, { strict: true });
+    expect(folded.error).toBeUndefined();
+    expect(folded.state.core.names).toEqual({
+      [ALICE]: "V\u0435x",
+      [BOB]: "V\u0435X",
+      [GUEST]: "Ash\u200b",
+    });
+  });
+
+  test("replay halts on a stored name with a control, a bidi override, or no or far too much text", () => {
+    for (const name of ["", "Al\x1b[31mice", "Vex\u202e", "x".repeat(500)]) {
+      const folded = fold(rules, [env(1, "core.name-set", { name }, ALICE)], { strict: true });
+      expect(folded.error?.seq).toBe(1);
+    }
   });
 
   test("a lenient reader skips another module's events; the writer halts on them", () => {

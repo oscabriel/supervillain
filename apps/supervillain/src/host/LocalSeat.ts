@@ -1,9 +1,8 @@
 import { createCliRenderer } from "@opentui/core";
 import { Deferred, Effect, Exit } from "effect";
 import { GM } from "../game/index.ts";
-import type { Presence } from "./Presence.ts";
 import { mountTable, openSeat } from "./Seat.ts";
-import type { TableRoom } from "./TableRoom.ts";
+import type { TableServices } from "./services.ts";
 
 export interface LocalSeatOptions {
   readonly room: string;
@@ -17,9 +16,7 @@ export interface LocalSeatOptions {
  * The GM's own terminal: the same App, as actor `gm`. Completes when the GM leaves (Ctrl-C or
  * /quit), after restoring the terminal. Logs must not reach this terminal while it runs.
  */
-export const localSeat = (
-  options: LocalSeatOptions,
-): Effect.Effect<void, never, TableRoom | Presence> =>
+export const localSeat = (options: LocalSeatOptions): Effect.Effect<void, never, TableServices> =>
   Effect.gen(function* () {
     const renderer = yield* Effect.acquireRelease(
       // The App owns Ctrl-C, and the runtime owns signals, so leaving runs the host's finalizers.

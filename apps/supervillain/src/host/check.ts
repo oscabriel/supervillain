@@ -1,5 +1,5 @@
 import { fold, parseLog } from "@supervillain/engine";
-import { feedLines, labelOf, plainText, rules } from "../game/index.ts";
+import { feedLines, labelOf, plainText, rules, tableLabel } from "../game/index.ts";
 
 export interface CheckReport {
   /** The summary, the feed and the final state, for stdout. */
@@ -38,7 +38,9 @@ export function checkLog(path: string, text: string): CheckReport {
     `actors: ${state.actors.map((a) => `${label(a)} (${a})`).join(", ") || "none"}`,
     "",
     "feed:",
-    ...feedLines(state, label).map((l) => `${String(l.seq).padStart(6)}  ${plainText(l)}`),
+    ...feedLines(state, tableLabel(state)).map(
+      (l) => `${String(l.seq).padStart(6)}  ${plainText(l)}`,
+    ),
     "",
     "state:",
     JSON.stringify({ ...state, feed: `[${state.feed.length} lines]` }, null, 2),

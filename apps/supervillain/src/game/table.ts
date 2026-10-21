@@ -1,8 +1,16 @@
-import { core } from "./core.ts";
-import { compose, type CommandOf, GM, type StateOf } from "./module.ts";
+import { core, labelOf } from "./core.ts";
+import {
+  type CombatView,
+  combatView,
+  completeWho,
+  drawSteel,
+  sheetText,
+  withHeroes,
+} from "./drawSteel/index.ts";
+import { compose, type CommandOf, GM, type Refused, type StateOf } from "./module.ts";
 
-/** The table's modules, in registry order. Draw Steel joins this list. */
-const modules = [core] as const;
+/** The table's modules, in registry order. */
+const modules = [core, drawSteel] as const;
 type Modules = (typeof modules)[number];
 
 export type TableState = StateOf<Modules>;
@@ -18,6 +26,31 @@ export const commands = composed.commands;
 
 /** How a feed kind reads as text, from the module that writes it. */
 export const feedFormat = composed.feedFormat;
+
+/**
+ * Labels actors as the table shows them, now: a display name (else the default label), and the
+ * hero a player plays beside it, "Alice (Brann)". Read it when projecting, never store it.
+ */
+export const tableLabel = (state: TableState): ((actor: string) => string) =>
+  withHeroes(state.ds, labelOf(state));
+
+/**
+ * The Draw Steel band for one seat: combat or the party, undefined while there's neither. A hero
+ * played by someone else carries their name ("Brann (Alice)"); the seat's own hero is `mine`.
+ */
+export const bandOf = (state: TableState, actor: string): CombatView | undefined =>
+  combatView(state.ds, actor, labelOf(state));
+
+/** The /sheet text for a hero or creature, as commands name them, or why there's none. */
+export const sheetOf = (state: TableState, who: string): string | Refused =>
+  sheetText(state.ds, who);
+
+/** What Tab offers after /sheet: the heroes and creatures, the actor's own hero first. */
+export const completeSheet = (
+  state: TableState,
+  partial: string,
+  actor: string,
+): ReadonlyArray<string> => completeWho(state.ds, partial, actor);
 
 /** One feed line as it is shown: the table's `FeedLine`, built here so the rules never import the table. */
 export interface FeedLine {
@@ -40,18 +73,26 @@ export interface FeedLine {
  * - `narration`: the GM describing the scene, shown without a speaker;
  * - `roll`: follows the label ("who rolled 2d10+3: [4, 9] +3 = 16");
  * - `name`: a whole sentence naming both labels as they were then ("guest-7f3a is now Wren").
+ *
+ * Draw Steel's `ds`, `ds-roll` and `ds-turn` lines name their subject and have no speaker; a
+ * `ds-act` line follows its label ("Alice (Brann) spends 1 hero token → 2"), and a `ds-claim` line
+ * the player's name alone, whoever wrote it ("Alice takes Brann.").
  */
 export function feedLines(
   state: TableState,
-  labelOf: (actor: string) => string,
+  label: (actor: string) => string,
 ): ReadonlyArray<FeedLine> {
-  return state.feed.map((e) => ({
-    seq: e.seq,
-    who: labelOf(e.actor),
-    kind: e.kind,
-    text: e.text,
-    gm: e.actor === GM,
-  }));
+  const plain = labelOf(state);
+  return state.feed.map((e) => {
+    const speaker = e.speaker ?? e.actor;
+    return {
+      seq: e.seq,
+      who: feedFormat(e.kind).plainLabel ? plain(speaker) : label(speaker),
+      kind: e.kind,
+      text: e.text,
+      gm: speaker === GM,
+    };
+  });
 }
 
 /** A feed line as plain text, read the way the table shows it: for exec output and `check`. */

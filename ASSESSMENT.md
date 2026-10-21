@@ -502,7 +502,7 @@ _Each entry: the question, what was decided, and the evidence (a date and what h
 - Q2 — _open_
 - Q3 — _open_
 - Q4 — _open._ Local run (2026-09-27): rendering on the GM machine adds about 2–4 ms over the network round trip, and 8 chatting players cost about 16 KiB/s of GM upload at most and single-digit CPU. Spike D's SSH-in-SSH relay (2026-10-20) adds about 0.5–2 ms per hop on loopback. The real-network run is still to do; see `spikes/a-render-location/README.md` at tag `archive/2026-09-spikes`.
-- Q5 — _open_
+- Q5 — _open._ Built so far (2026-10-21, from a three-round live run of the sample fight and a read of the rules text, not yet play with friends): `/end` loses unspent heroic resources, surges and Malice, and ends temporary Stamina and every condition (Combat, "End of Combat"); a respite (`/rest`) skips the dead and turns Victories into XP; an ability's cost is spent with its power roll, from the hero's resource or the Malice pool; a resource goes below 0 only where the sheet sets `resource.min`; a squad's minions free strike together with `/fs … xN`, typed if the GM names a type. Not modelled yet: a squad's captain (its `withCaptain` text shows on `/sheet`, the GM applies it), and "immunity all" from imports.
 - Q6 — _open_
 - Q7 — _open_
 - Q8 — _open_

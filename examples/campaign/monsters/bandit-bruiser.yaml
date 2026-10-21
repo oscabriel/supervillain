@@ -1,0 +1,31 @@
+# Sample monster for testing supervillain; check against Draw Steel: Monsters before real play.
+# A made-up creature with plausible level 1 numbers. Ability text is a short sample paraphrase.
+name: Bandit Bruiser
+level: 1
+organization: platoon
+role: brute
+ev: 3
+stamina: 20
+speed: 5
+stability: 2
+freeStrike: 2
+characteristics: { might: 2, agility: 0, reason: -1, intuition: 0, presence: -1 }
+abilities:
+  - name: Cudgel
+    kind: main action
+    bonus: 2
+    keywords: Melee, Strike, Weapon
+    distance: Melee 1
+    target: One creature
+    tier1: 4 damage
+    tier2: 6 damage; push 1
+    tier3: 7 damage; push 2
+  - name: Shoulder Check
+    kind: maneuver
+    bonus: 2
+    keywords: Melee
+    distance: Melee 1
+    target: One creature
+    tier1: Push 1
+    tier2: Push 2
+    tier3: Push 3; prone

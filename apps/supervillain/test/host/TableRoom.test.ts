@@ -97,4 +97,23 @@ describe("TableRoom", () => {
         expect((yield* logLines(dir)).filter((l) => l.actor === alice)).toHaveLength(11);
       }),
   );
+
+  effect("actors sent under one rate key share its rate", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      yield* withTable(dir, (room) =>
+        Effect.gen(function* () {
+          const say = (actor: string) =>
+            room.submit(actor, { type: "say", text: "spam" }, "address:203.0.113.7");
+          for (let i = 0; i < 5; i++) yield* say("guest:one");
+          for (let i = 0; i < 5; i++) yield* say("guest:two");
+          expect((yield* Effect.flip(say("guest:three"))).message).toBe(
+            "You're sending lines too fast; wait a moment.",
+          );
+          // Each actor's own rate is untouched.
+          yield* room.submit("guest:three", { type: "say", text: "alone" });
+        }),
+      );
+    }),
+  );
 });

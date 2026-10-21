@@ -1,7 +1,8 @@
 import { describe, expect } from "bun:test";
 import { connect } from "node:net";
 import { TextRenderable } from "@opentui/core";
-import { Effect, Exit, Scope } from "effect";
+import { Effect, Exit, Fiber, Scope } from "effect";
+import type ssh2 from "ssh2";
 import { effect } from "./effect.ts";
 import { clientKey, sshExec, sshShell, waitFor } from "./openssh.ts";
 import { testServer } from "./server.ts";
@@ -15,6 +16,12 @@ const slowEcho =
       Effect.as(0),
       Effect.tap(() => Effect.sync(() => session.write("ok"))),
     );
+
+/** Resolves when the server cuts this client off. */
+const closeOf = (client: InstanceType<typeof ssh2.Client>) =>
+  Effect.callback<void>((resume) => {
+    client.once("close", () => resume(Effect.void));
+  });
 
 /** Opens an ssh2 client in its own scope, so the test can drop it on demand. */
 const heldClient = (options: Parameters<typeof ssh2Client>[0]) =>
@@ -119,6 +126,70 @@ describe("connection limits", () => {
         localAddress: "127.0.0.2",
       });
       expect((yield* ssh2Exec(other, "x")).stdout).toBe("ok");
+    }),
+  );
+
+  effect("an authenticated connection that opens no session is cut after the start grace", () =>
+    Effect.gen(function* () {
+      const server = yield* testServer({ allowGuests: true, timeouts: { sessionStartMs: 200 } });
+      const client = yield* ssh2Client({ port: server.port, keyboard: true });
+      const start = Date.now();
+      yield* closeOf(client).pipe(Effect.timeout("3 seconds"));
+      expect(Date.now() - start).toBeLessThan(2000);
+    }),
+  );
+
+  effect("idle connections give their places back, so an address isn't locked out for good", () =>
+    Effect.gen(function* () {
+      const server = yield* testServer({
+        allowGuests: true,
+        limits: { connectionsPerAddress: 2 },
+        timeouts: { sessionStartMs: 200 },
+        onExec: slowEcho("0 millis"),
+      });
+      const guest = { port: server.port, keyboard: true };
+      const idle = [yield* ssh2Client(guest), yield* ssh2Client(guest)];
+      expect(yield* Effect.flip(ssh2Client(guest))).toBeInstanceOf(Error);
+      yield* Effect.forEach(idle, closeOf).pipe(Effect.timeout("3 seconds"));
+      yield* Effect.sleep("100 millis");
+      expect((yield* ssh2Exec(yield* ssh2Client(guest), "x")).stdout).toBe("ok");
+    }),
+  );
+
+  effect("a connection keeps its place while a session runs, and is cut once none is left", () =>
+    Effect.gen(function* () {
+      const server = yield* testServer({
+        allowGuests: true,
+        timeouts: { sessionStartMs: 300 },
+        onExec: slowEcho("800 millis"),
+      });
+      const client = yield* ssh2Client({ port: server.port, keyboard: true });
+      // Runs well past the grace; then the connection has nothing open.
+      expect((yield* ssh2Exec(client, "x")).stdout).toBe("ok");
+      const ended = Date.now();
+      yield* closeOf(client).pipe(Effect.timeout("3 seconds"));
+      expect(Date.now() - ended).toBeLessThan(2000);
+    }),
+  );
+
+  effect("a channel that never starts is closed alone; the session beside it carries on", () =>
+    Effect.gen(function* () {
+      const key = yield* clientKey(yield* tempDir, "alice");
+      const server = yield* testServer({
+        limits: { sessionsPerConnection: 2 },
+        timeouts: { sessionStartMs: 200 },
+        onExec: slowEcho("1200 millis"),
+      });
+      const client = yield* ssh2Client({ port: server.port, key });
+      const running = yield* Effect.forkScoped(ssh2Exec(client, "x"));
+      yield* Effect.sleep("50 millis");
+      // A refused subsystem request leaves its session channel open and idle.
+      client.subsys("nothing", () => undefined);
+      yield* Effect.sleep("500 millis");
+      // The idle channel's place came back: a second session fits beside the first.
+      const beside = yield* Effect.forkScoped(ssh2Exec(client, "y"));
+      expect((yield* Fiber.join(running)).stdout).toBe("ok");
+      expect((yield* Fiber.join(beside)).stdout).toBe("ok");
     }),
   );
 

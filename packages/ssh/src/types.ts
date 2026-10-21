@@ -71,7 +71,12 @@ export interface Limits {
 export interface Timeouts {
   /** How long a connection has to log in before its socket is closed. Default 20 s. */
   readonly loginMs?: number;
-  /** How long a session has to ask for a shell or exec before its connection is cut. Default 10 s. */
+  /**
+   * How long a session channel has to ask for a shell or exec before it is closed, and how long a
+   * logged-in connection may go without a started session (after login, or once its last session
+   * ends) before it is cut. A missed start cuts the connection too when it leaves nothing started,
+   * unless it carries a relay. Default 10 s.
+   */
   readonly sessionStartMs?: number;
   /** How often a quiet client is pinged; after `keepaliveCount` unanswered pings it is cut. Default 15 s. */
   readonly keepaliveMs?: number;

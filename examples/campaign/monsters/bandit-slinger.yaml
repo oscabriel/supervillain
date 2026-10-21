@@ -1,0 +1,23 @@
+# Sample monster for testing supervillain; check against Draw Steel: Monsters before real play.
+# A made-up creature with plausible level 1 numbers. Ability text is a short sample paraphrase.
+name: Bandit Slinger
+level: 1
+organization: minion
+role: artillery
+ev: 3 for four minions
+stamina: 3
+speed: 5
+stability: 0
+freeStrike: 2
+characteristics: { might: 0, agility: 2, reason: 0, intuition: 1, presence: -1 }
+withCaptain: +5 bonus to ranged distance
+abilities:
+  - name: Sling Stone
+    kind: main action
+    bonus: 2
+    keywords: Ranged, Strike, Weapon
+    distance: Ranged 10
+    target: One creature or object per minion
+    tier1: 2 damage
+    tier2: 4 damage
+    tier3: 5 damage

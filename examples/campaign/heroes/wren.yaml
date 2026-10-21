@@ -1,0 +1,43 @@
+# Sample pregen for testing supervillain; check against Draw Steel: Heroes before real play.
+# The numbers are plausible for level 1, not copied from the book. Abilities are short sample
+# paraphrases with numbers, not rules text.
+name: Wren
+class: Shadow
+level: 1
+characteristics: { might: -1, agility: 2, reason: 1, intuition: 1, presence: 0 }
+stamina: 21
+recoveries: 8
+speed: 6
+stability: 0
+resource: { name: insight, perTurn: 1d3 }
+victories: 0
+abilities:
+  - name: Ranged Free Strike
+    kind: free strike
+    characteristics: [reason, agility]
+    keywords: Ranged, Strike, Weapon
+    distance: Ranged 5
+    target: One creature or object
+    tier1: 2 + A damage
+    tier2: 4 + A damage
+    tier3: 6 + A damage
+  - name: Twin Knives
+    kind: main action
+    characteristics: agility
+    keywords: Melee, Strike, Weapon
+    distance: Melee 1
+    target: One creature
+    tier1: 3 + A damage
+    tier2: 6 + A damage
+    tier3: 9 + A damage; Wren can shift 1 afterwards
+  - name: Strike From Smoke
+    kind: main action
+    characteristics: agility
+    cost: 3
+    keywords: Melee, Strike, Weapon
+    distance: Melee 1
+    target: One creature
+    tier1: 4 + A damage
+    tier2: 7 + A damage
+    tier3: 10 + A damage
+    effect: Wren is hidden after the strike if they end their move in cover.

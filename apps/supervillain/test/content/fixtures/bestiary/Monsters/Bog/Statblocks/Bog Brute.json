@@ -1,0 +1,46 @@
+{
+  "name": "Bog Brute",
+  "level": "1",
+  "roles": "Platoon Brute",
+  "ev": "3",
+  "stamina": "20",
+  "immunities": ["Acid 2", "most things"],
+  "weaknesses": [],
+  "speed": "5 (swim)",
+  "stability": 2,
+  "free_strike": 2,
+  "might": 2,
+  "agility": -1,
+  "reason": -2,
+  "intuition": 0,
+  "presence": -1,
+  "features": [
+    {
+      "type": "feature",
+      "feature_type": "ability",
+      "name": "Mud Slam",
+      "keywords": "Melee, Strike, Weapon",
+      "usage": "Main action",
+      "distance": "Melee 1",
+      "target": "One creature",
+      "effects": [
+        {
+          "roll": "Power Roll + 2",
+          "tier1": "4 damage",
+          "tier2": { "text": "6 damage; push 1" },
+          "tier3": "7 damage; push 2"
+        },
+        { "name": "Effect", "effect": "The target is slowed until the end of its next turn." }
+      ]
+    },
+    {
+      "type": "feature",
+      "feature_type": "ability",
+      "name": "Sinkhole",
+      "usage": "Maneuver",
+      "cost": "3 Malice",
+      "effects": [{ "roll": "Power Roll + lots", "tier1": "Slowed (save ends)" }]
+    },
+    "a feature that is only a string"
+  ]
+}

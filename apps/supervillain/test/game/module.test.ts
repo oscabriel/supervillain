@@ -47,13 +47,37 @@ describe("compose", () => {
     expect(bump?.complete?.(table.rules.initial, "+", ALICE)).toEqual([`+0 for ${ALICE}`]);
   });
 
-  test("the table's registry is every core command, in order, with its GM-only flag", () => {
+  test("the table's registry is core's commands then Draw Steel's, each with its GM-only flag", () => {
     expect(commands.map((c) => [c.name, c.gmOnly])).toEqual([
       ["say", false],
       ["me", false],
       ["narrate", true],
       ["name", false],
       ["roll", false],
+      ["hero", true],
+      ["play", false],
+      ["unplay", false],
+      ["add", true],
+      ["start", true],
+      ["first", true],
+      ["turn", false],
+      ["done", false],
+      ["round", true],
+      ["end", true],
+      ["rest", true],
+      ["pr", false],
+      ["dmg", false],
+      ["heal", false],
+      ["temp", false],
+      ["recover", false],
+      ["cond", false],
+      ["save", false],
+      ["res", false],
+      ["surge", false],
+      ["malice", true],
+      ["token", false],
+      ["victory", true],
+      ["fs", true],
     ]);
   });
 

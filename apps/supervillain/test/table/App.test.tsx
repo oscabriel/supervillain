@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { App } from "../../src/table/App.tsx";
+import { brakka, fight, goblins, ogre, sera, sniper, spearmen, vex } from "./combat.ts";
 import { alice, bob, fakeView, gm, line } from "./fakeView.ts";
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
@@ -55,6 +56,40 @@ describe("layout", () => {
       expect(rows.at(-1)).toStartWith(" >");
     });
   }
+});
+
+describe("the header at 80 columns", () => {
+  const seated = [
+    { actor: "gm", label: "GM", gm: true },
+    { actor: "key:a", label: "Alice (Brann)", gm: false },
+    { actor: "key:d", label: "Dan (Ilsa)", gm: false },
+    { actor: "key:b", label: "Bob (Kesh)", gm: false },
+    { actor: "key:c", label: "Cara (Wren)", gm: false },
+  ];
+
+  test("whole labels only: those that don't fit are counted, never cut in the middle", async () => {
+    const t = await mount(fakeView({ me: "gm", room: "ford", present: seated }), 80, 24);
+    const top = rowsOf(t.captureCharFrame())[0]!;
+    expect(top).toEndWith("here: GM (you), Alice (Brann), Dan (Ilsa), +2");
+    expect(top).not.toContain("…");
+  });
+
+  test("your own label stays, wherever you sit", async () => {
+    const t = await mount(
+      fakeView({
+        me: "key:c",
+        myName: "Cara",
+        room: "ford",
+        present: [...seated, { actor: "key:e", label: "Eve (Sel)", gm: false }],
+      }),
+      80,
+      24,
+    );
+    const top = rowsOf(t.captureCharFrame())[0]!;
+    expect(top).toContain("Cara (Wren) (you)");
+    expect(top).toMatch(/, \+\d$/);
+    expect(top).not.toContain("…");
+  });
 });
 
 /** Lets pending submits resolve, then draws a frame. */
@@ -357,5 +392,110 @@ describe("scrolling", () => {
     fake.setFeed([line(1, "Bob", "old news"), line(2, "Oscar", "fresh news")]);
     const frame = await settle(t);
     expect(frame.indexOf("fresh news")).toBeGreaterThan(frame.indexOf("old news"));
+  });
+});
+
+describe("the Draw Steel band", () => {
+  const crowd = fight([vex, spearmen, brakka, ogre, sera, sniper, ...goblins(40)]);
+  const feed = Array.from({ length: 40 }, (_, i) => line(i + 1, "Bob", `message ${i + 1}`));
+
+  /** The band's height: its top border (row 1, under the header) down to its bottom border. */
+  const bandHeight = (rows: ReadonlyArray<string>) =>
+    rows.findIndex((r, i) => i > 1 && r.startsWith("└"));
+
+  for (const [width, height] of [
+    [100, 30],
+    [80, 24],
+  ] as const) {
+    test(`at ${width}x${height} a full band leaves the feed, the hint and the input on screen`, async () => {
+      const fake = fakeView({ myName: "Alice", present: [gm, alice], feed, combat: crowd });
+      const t = await mount(fake, width, height);
+      const frame = t.captureCharFrame();
+      const rows = rowsOf(frame);
+      expect(rows).toHaveLength(height);
+      expect(rows[1]).toContain("round 2");
+      // In combat the band may take two thirds of the screen; the feed keeps its three lines.
+      expect(bandHeight(rows)).toBeLessThanOrEqual(Math.floor((height * 2) / 3));
+      expect(frame).toMatch(/\+\d+ more/);
+      expect(frame).toContain("message 40");
+      expect(frame).toContain("message 38");
+      expect(rows.at(-2)).toContain("Tab completes");
+      expect(rows.at(-1)).toStartWith(" >");
+    });
+  }
+
+  test("with a long reply open too, the band gives way and the feed and input stay", async () => {
+    const sheet = Array.from({ length: 30 }, (_, i) => `sheet line ${i + 1}`).join("\n");
+    const fake = fakeView({
+      myName: "Alice",
+      present: [gm, alice],
+      feed,
+      combat: crowd,
+      reply: () => sheet,
+    });
+    const t = await mount(fake, 80, 24);
+    const frame = await enter(t, "/sheet vex");
+    const rows = rowsOf(frame);
+    expect(rows).toHaveLength(24);
+    expect(frame).toContain("sheet line 1");
+    expect(frame).toContain("message 40");
+    expect(frame).toContain("▶ Vex");
+    expect(rows.at(-1)).toStartWith(" >");
+  });
+
+  test("a sheet open beside a full fight gives way to the band: every hero's numbers stay", async () => {
+    const sheet = Array.from({ length: 30 }, (_, i) => `sheet line ${i + 1}`).join("\n");
+    const heroes = [vex, brakka, sera].map((c) => ({ ...c, acting: false }));
+    const crowded = fight([...heroes, ogre, spearmen, ...goblins(5)], { active: true });
+    const fake = fakeView({
+      myName: "Alice",
+      present: [gm, alice],
+      feed,
+      combat: crowded,
+      reply: () => sheet,
+    });
+    const t = await mount(fake, 100, 30);
+    const frame = await enter(t, "/sheet ogre");
+    expect(frame).toContain("sheet line 1");
+    for (const part of [
+      "Wrath 3",
+      "recoveries 6/8",
+      "recoveries 4/10",
+      "bleeding (save)",
+      "Insight 1",
+    ])
+      expect(frame).toContain(part);
+    expect(frame).not.toMatch(/\+\d+ more/);
+    expect(frame).toContain("message 40");
+    expect(rowsOf(frame).at(-1)).toStartWith(" >");
+  });
+
+  test("a multi-line reply, like a sheet, is not a refusal: the line is not given back", async () => {
+    const fake = fakeView({
+      myName: "Alice",
+      reply: (l) =>
+        l === "/sheet vex" ? "Vex, level 1 Fury\nStamina 14/21" : "no hero called bob",
+    });
+    const t = await mount(fake);
+    const frame = await enter(t, "/sheet vex");
+    expect(frame).toContain("Vex, level 1 Fury");
+    expect(frame).toContain("Stamina 14/21");
+    expect(inputRow(t)).not.toContain("/sheet vex");
+    t.mockInput.pressEscape();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(await settle(t)).not.toContain("Vex, level 1 Fury");
+    expect(await enter(t, "/sheet bob")).toContain("› no hero called bob");
+    expect(inputRow(t)).toContain("> /sheet bob");
+  });
+
+  test("while the view has no party or combat the band shows who is here, until one starts", async () => {
+    const fake = fakeView({ myName: "Alice", present: [gm, alice], combat: null });
+    const t = await mount(fake);
+    expect(t.captureCharFrame()).toContain("at the table");
+    fake.setCombat(fight([vex, brakka], { active: false }));
+    const frame = await settle(t);
+    expect(frame).not.toContain("at the table");
+    expect(frame).toContain("party");
+    expect(frame).toContain("Brakka");
   });
 });

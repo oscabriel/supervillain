@@ -35,6 +35,8 @@ export type CommandSpecs<C extends { readonly type: string }, S> = {
 export interface FeedNote {
   readonly kind: string;
   readonly text: string;
+  /** The actor the line is labelled with, when not the one who wrote it (the GM giving a hero away). */
+  readonly speaker?: string;
 }
 
 /** How a feed line of one kind reads: whether it starts with who wrote it, and what comes between. */
@@ -43,6 +45,8 @@ export interface FeedFormat {
   readonly speaker: boolean;
   /** Chat reads "Alice: hi", most else "Alice rolled 14". */
   readonly separator: string;
+  /** Label the speaker by name alone, without the hero they play. */
+  readonly plainLabel?: boolean;
 }
 
 /** How a kind no module describes reads: "who text". */
@@ -178,7 +182,13 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
       const entries = feed
         ? [
             ...state.feed,
-            { seq: envelope.seq, actor: envelope.actor, kind: feed.kind, text: feed.text },
+            {
+              seq: envelope.seq,
+              actor: envelope.actor,
+              kind: feed.kind,
+              text: feed.text,
+              ...(feed.speaker !== undefined && { speaker: feed.speaker }),
+            },
           ].slice(-FEED_LIMIT)
         : state.feed;
       return { ...state, seq: envelope.seq, actors, feed: entries, [module.key]: slice };

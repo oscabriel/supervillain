@@ -1,0 +1,43 @@
+# Sample pregen for testing supervillain; check against Draw Steel: Heroes before real play.
+# The numbers are plausible for level 1, not copied from the book. Abilities are short sample
+# paraphrases with numbers, not rules text.
+name: Brann
+class: Censor
+level: 1
+characteristics: { might: 2, agility: -1, reason: 1, intuition: 1, presence: 2 }
+stamina: 24
+recoveries: 12
+# recoveryValue defaults to a third of stamina, rounded down: 8.
+speed: 5
+stability: 1
+resource: { name: wrath, perTurn: 2 }
+victories: 0
+abilities:
+  - name: Melee Free Strike
+    kind: free strike
+    characteristics: [might, agility]
+    keywords: Melee, Strike, Weapon
+    distance: Melee 1
+    target: One creature or object
+    tier1: 2 + M damage
+    tier2: 5 + M damage
+    tier3: 7 + M damage
+  - name: Driving Blow
+    kind: main action
+    characteristics: might
+    keywords: Melee, Strike, Weapon
+    distance: Melee 1
+    target: One creature
+    tier1: 3 + M damage
+    tier2: 5 + M damage; push 1
+    tier3: 8 + M damage; push 2
+  - name: Accusing Glare
+    kind: main action
+    characteristics: presence
+    cost: 3
+    keywords: Ranged, Strike
+    distance: Ranged 10
+    target: One enemy
+    tier1: 3 + P holy damage; taunted (EoT)
+    tier2: 5 + P holy damage; taunted (EoT)
+    tier3: 8 + P holy damage; taunted (EoT), and the target can't shift (EoT)

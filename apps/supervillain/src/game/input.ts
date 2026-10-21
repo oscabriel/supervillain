@@ -1,12 +1,16 @@
 import { GM } from "./module.ts";
-import { type Command, commands, type TableState } from "./table.ts";
+import { type Command, commands, completeSheet, type TableState } from "./table.ts";
 import { cleanText, quote } from "./text.ts";
 
-/** What one input line asks for. `help`, `state` and `quit` stay on the seat; only `command` reaches the room. */
+/**
+ * What one input line asks for. `help`, `sheet`, `state` and `quit` stay with the sender; only
+ * `command` reaches the room.
+ */
 export type Parsed =
   | { readonly kind: "command"; readonly command: Command }
   | { readonly kind: "refusal"; readonly message: string }
   | { readonly kind: "help"; readonly topic?: string }
+  | { readonly kind: "sheet"; readonly who: string }
   | { readonly kind: "state" }
   | { readonly kind: "quit" }
   | { readonly kind: "empty" };
@@ -67,6 +71,17 @@ const entries: ReadonlyArray<Entry> = [
     complete: (_state, actor, partial) => namesFor(actor, partial.trim().replace(/^\//, "")),
   },
   {
+    name: "sheet",
+    usage: "/sheet <who>",
+    summary: "Show a hero's or creature's sheet, to you alone.",
+    gmOnly: false,
+    run: (args) =>
+      args.trim() === ""
+        ? { kind: "refusal", message: "Usage: /sheet <who>" }
+        : { kind: "sheet", who: args.trim() },
+    complete: (state, actor, partial) => completeSheet(state, partial, actor),
+  },
+  {
     name: "state",
     usage: "/state",
     summary: "Show or hide the state pane.",
@@ -84,8 +99,11 @@ const entries: ReadonlyArray<Entry> = [
   },
 ];
 
-/** Commands that run without their slash over exec: none takes free text, so chat can't start one. */
-export const BARE_OVER_EXEC: ReadonlySet<string> = new Set(["roll", "help", "state"]);
+/**
+ * Commands that run without their slash over exec: none takes free text, so chat can't start one.
+ * /sheet is read-only and answers the sender alone, so "sheet kesh" said as chat would be the slip.
+ */
+export const BARE_OVER_EXEC: ReadonlySet<string> = new Set(["roll", "help", "sheet", "state"]);
 
 const say = commands.find((c) => c.name === "say");
 const name = commands.find((c) => c.name === "name");
@@ -185,8 +203,15 @@ export function completeLine(
   return entry.complete(state, actor, args).map((arg) => `/${entry.name} ${arg}`);
 }
 
-const helpLine = (e: Entry, width: number, gmMark: string) =>
-  `${e.usage.padEnd(width)}  ${e.summary}${e.gmOnly ? ` ${gmMark}` : ""}`;
+/** Summaries line up after usages this long; a longer usage puts its summary on the next line. */
+const HELP_COLUMN = 15;
+
+const helpLine = (e: Entry, width: number, gmMark: string) => {
+  const summary = `${e.summary}${e.gmOnly ? ` ${gmMark}` : ""}`;
+  return width > 0 && e.usage.length > width
+    ? `${e.usage}\n${" ".repeat(width)}  ${summary}`
+    : `${e.usage.padEnd(width)}  ${summary}`;
+};
 
 /** The /help text for this actor: every command they can use where they are, or one command by name. */
 export function helpText(actor: string, topic?: string, surface: Surface = "seat"): string {
@@ -196,11 +221,11 @@ export function helpText(actor: string, topic?: string, surface: Surface = "seat
     return helpLine(entry, 0, actor === GM ? "(GM)" : "(GM only)");
   }
   const shown = visibleTo(actor, surface);
-  const width = Math.max(...shown.map((e) => e.usage.length));
+  const width = Math.min(HELP_COLUMN, Math.max(...shown.map((e) => e.usage.length)));
   const bare = shown.filter((e) => BARE_OVER_EXEC.has(e.name)).map((e) => e.name);
   const intro =
     surface === "seat"
       ? "Plain text is chat. Commands start with /, and Tab completes them."
-      : `Plain text is chat. Commands start with /; ${bare.join(" and ")} work without it here.`;
+      : `Plain text is chat. Commands start with /; ${bare.length <= 1 ? bare.join("") : `${bare.slice(0, -1).join(", ")} and ${bare.at(-1)}`} work without it here.`;
   return [intro, ...shown.map((e) => helpLine(e, width, "(GM)"))].join("\n");
 }

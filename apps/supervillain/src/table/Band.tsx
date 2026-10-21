@@ -1,13 +1,79 @@
+import { useTerminalDimensions } from "@opentui/solid";
 import { For, Show } from "solid-js";
+import { bandLayout, type Segment, type Tone } from "./band.ts";
 import { color, people, personColor, personLabel } from "./theme.ts";
-import type { Present } from "./view.ts";
+import type { CombatView, Present } from "./view.ts";
+
+const TONES: Readonly<Record<Tone, string>> = {
+  text: color.text,
+  dim: color.dim,
+  heroes: color.heroes,
+  director: color.director,
+  acting: color.bright,
+  healthy: color.healthy,
+  winded: color.winded,
+  dying: color.dying,
+  dead: color.dim,
+  temp: color.dice,
+};
+
+/** Border, padding and the border again: what the band's box takes from the screen. */
+export const BAND_FRAME = { width: 4, height: 2 } as const;
+
+const styleOf = (s: Segment) =>
+  s.mine
+    ? { fg: color.you, bg: color.mineBg, bold: true }
+    : { fg: TONES[s.tone], bold: s.tone === "acting" };
 
 /**
- * The band above the feed. Draw Steel fills it with initiative and Stamina meters
- * (`Vex ▐██████▌ 14/21 · slowed`); until then it shows who is at the table, compactly, and, to a
- * GM sitting alone, how players join.
+ * The band above the feed. With a Draw Steel view it holds initiative and Stamina meters
+ * (`▶ Vex ▐████░░▌ 14/21 +5 · slowed (EoT)`) in at most `maxHeight` rows, or the party outside
+ * combat; without one it shows who is at the table, compactly, and, to a GM sitting alone, how
+ * players join.
  */
-export function Band(props: { me: string; present: ReadonlyArray<Present>; joinHint?: string }) {
+export function Band(props: {
+  me: string;
+  present: ReadonlyArray<Present>;
+  joinHint?: string;
+  combat?: CombatView | undefined;
+  maxHeight: number;
+}) {
+  return (
+    <Show when={props.combat} fallback={<Presence {...props} />}>
+      {(combat) => <Combat combat={combat()} maxHeight={props.maxHeight} />}
+    </Show>
+  );
+}
+
+function Combat(props: { combat: CombatView; maxHeight: number }) {
+  const size = useTerminalDimensions();
+  const layout = () =>
+    bandLayout(props.combat, size().width - BAND_FRAME.width, props.maxHeight - BAND_FRAME.height);
+  return (
+    <box
+      border
+      borderColor={props.combat.active ? color.brand : color.border}
+      title={layout().title}
+      bottomTitle={layout().more > 0 ? ` +${layout().more} more ` : ""}
+      bottomTitleAlignment="right"
+      flexShrink={0}
+      paddingLeft={1}
+      paddingRight={1}
+    >
+      <Show when={layout().lines.length > 0} fallback={<text fg={color.dim}>no heroes yet</text>}>
+        <For each={layout().lines}>
+          {(line) => (
+            <text wrapMode="none">
+              <For each={line}>{(s) => <span style={styleOf(s)}>{s.text}</span>}</For>
+            </text>
+          )}
+        </For>
+      </Show>
+    </box>
+  );
+}
+
+function Presence(props: { me: string; present: ReadonlyArray<Present>; joinHint?: string }) {
   const alone = () => people(props.present).every((p) => p.actor === props.me);
   return (
     <box

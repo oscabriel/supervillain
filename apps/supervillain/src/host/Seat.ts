@@ -3,11 +3,20 @@ import { render } from "@opentui/solid";
 import type { View } from "@supervillain/engine";
 import { Effect, FiberSet, type Scope, Stream } from "effect";
 import { type Accessor, createComponent, createMemo, createRoot, createSignal } from "solid-js";
-import { completeLine, type FeedLine, feedLines, GM, labelOf, nameOf } from "../game/index.ts";
+import {
+  bandOf,
+  completeLine,
+  type FeedLine,
+  feedLines,
+  GM,
+  nameOf,
+  tableLabel,
+} from "../game/index.ts";
 import { App } from "../table/App.tsx";
 import type { Present, TableView } from "../table/view.ts";
 import { debugText, type Reply, runLine } from "./line.ts";
 import { Presence } from "./Presence.ts";
+import type { TableServices } from "./services.ts";
 import { TableRoom } from "./TableRoom.ts";
 
 /** How long a seat gathers state changes before drawing them: about one frame. */
@@ -15,6 +24,8 @@ const BATCH = "16 millis";
 
 export interface SeatOptions {
   readonly actor: string;
+  /** Whose rate this seat's lines count against; the actor by default. */
+  readonly rateKey?: string;
   readonly room: string;
   /** Closes the seat: ends the SSH session, or the GM's terminal and the host with it. */
   readonly leave: () => void;
@@ -69,11 +80,12 @@ const replyText = (reply: Reply): string | undefined =>
 
 /**
  * Opens one seat: enters presence for the life of the scope and builds the TableView the App
- * reads. Labels are resolved here, from the current names, every time the feed is projected.
+ * reads. Labels are resolved here, from the current names and heroes, every time the feed is
+ * projected, and so is this seat's Draw Steel band.
  */
 export const openSeat = (
   options: SeatOptions,
-): Effect.Effect<TableView, never, Scope.Scope | TableRoom | Presence> =>
+): Effect.Effect<TableView, never, Scope.Scope | TableServices> =>
   Effect.gen(function* () {
     const { actor } = options;
     const room = yield* TableRoom;
@@ -83,17 +95,18 @@ export const openSeat = (
     const recent = yield* follow(room.recent);
     const here = yield* follow(presence.here);
     // In-flight submits end with the seat.
-    const run = yield* FiberSet.makeRuntimePromise<TableRoom | Presence>();
+    const run = yield* FiberSet.makeRuntimePromise<TableServices>();
     const rows = keepRows();
 
     const derived = createRoot((dispose) => ({
       dispose,
-      feed: createMemo(() => rows(feedLines(state(), labelOf(state())))),
+      feed: createMemo(() => rows(feedLines(state(), tableLabel(state())))),
       present: createMemo((): ReadonlyArray<Present> => {
-        const label = labelOf(state());
+        const label = tableLabel(state());
         return here().map((a) => ({ actor: a, label: label(a), gm: a === GM }));
       }),
       myName: createMemo(() => nameOf(state(), actor)),
+      combat: createMemo(() => bandOf(state(), actor)),
     }));
     yield* Effect.addFinalizer(() => Effect.sync(derived.dispose));
 
@@ -104,9 +117,10 @@ export const openSeat = (
       feed: derived.feed,
       present: derived.present,
       myName: derived.myName,
+      combat: derived.combat,
       submit: (line) =>
         run(
-          runLine(actor, line).pipe(
+          runLine(actor, line, "seat", options.rateKey ?? actor).pipe(
             Effect.map((reply) => {
               const text = replyText(reply);
               return reply.kind === "message" && /^\s*\/help\s*$/i.test(line)

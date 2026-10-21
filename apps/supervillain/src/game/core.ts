@@ -2,10 +2,23 @@ import type { Decision, Dice, Envelope } from "@supervillain/engine";
 import * as Schema from "effect/Schema";
 import { parseNotation, signed } from "./dice.ts";
 import { GM, type Module, type Shared } from "./module.ts";
-import { cleanText, hasControls, lengthOf, nameKey } from "./text.ts";
+import {
+  cleanText,
+  hasControls,
+  hasTerminalControls,
+  lengthOf,
+  mixesLatin,
+  nameKey,
+} from "./text.ts";
 
 export const CHAT_MAX = 500;
 export const NAME_MAX = 24;
+/**
+ * What replay holds stored text to: room for today's limits to grow. Decide enforces the real
+ * rules; replay checks only facts no rule change or Unicode upgrade can move (see `storedText`).
+ */
+const STORED_CHAT_MAX = 4 * CHAT_MAX;
+const STORED_NAME_MAX = 4 * NAME_MAX;
 
 /** Who is who. Names live here, apart from the feed, so a label never depends on the feed cap. */
 export interface CoreState {
@@ -84,8 +97,17 @@ function normalName(raw: string): string | { refusal: string } {
   if (hasControls(name)) return { refusal: "Names can't hold control or invisible characters." };
   if (cleanText(name) !== name) return { refusal: "Names can't hold stray or stacked accents." };
   if (lengthOf(name) > NAME_MAX) return { refusal: `Keep names to ${NAME_MAX} characters.` };
+  if (mixesLatin(name)) return { refusal: "Names can't mix Latin letters with another script's." };
   return name;
 }
+
+/**
+ * Whether stored text may be replayed: some text, within a generous bound, and nothing a terminal
+ * acts on or that reorders a line. Decide's sanitising may change; this must not, or an old log
+ * would halt the writer.
+ */
+const storedText = (text: string, max: number): boolean =>
+  text !== "" && lengthOf(text) <= max && !hasTerminalControls(text);
 
 /**
  * Every label someone other than `actor` answers to, as name keys: "GM", then each key's name and
@@ -230,12 +252,14 @@ export const core: Module<"core", CoreState, CoreCommand> = {
     switch (envelope.type) {
       case "core.chat-posted": {
         const { text, style } = decode(ChatPosted, envelope);
-        if (chatText(text) !== text) throw new Error(`unclean chat text at seq ${envelope.seq}`);
+        if (!storedText(text, STORED_CHAT_MAX))
+          throw new Error(`unsafe chat text at seq ${envelope.seq}`);
         return { slice, feed: { kind: style ?? "chat", text } };
       }
       case "core.name-set": {
         const { name } = decode(NameSet, envelope);
-        if (normalName(name) !== name) throw new Error(`bad name ${JSON.stringify(name)}`);
+        if (!storedText(name, STORED_NAME_MAX))
+          throw new Error(`bad name ${JSON.stringify(name)} at seq ${envelope.seq}`);
         const was = slice.names[envelope.actor] ?? defaultLabel(envelope.actor);
         return {
           slice: { names: { ...slice.names, [envelope.actor]: name } },

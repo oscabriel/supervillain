@@ -1,0 +1,24 @@
+# Sample monster for testing supervillain; check against Draw Steel: Monsters before real play.
+# A made-up creature with plausible level 1 numbers. Ability text is a short sample paraphrase.
+name: Bandit Cutpurse
+level: 1
+organization: minion
+role: harrier
+ev: 3 for four minions
+# A minion's stamina is one minion's; a squad pools them.
+stamina: 5
+speed: 6
+stability: 0
+freeStrike: 1
+characteristics: { might: 0, agility: 2, reason: 0, intuition: 1, presence: -1 }
+withCaptain: +2 bonus to speed
+abilities:
+  - name: Shiv
+    kind: main action
+    bonus: 2
+    keywords: Melee, Strike, Weapon
+    distance: Melee 1
+    target: One creature or object per minion
+    tier1: 1 damage
+    tier2: 2 damage
+    tier3: 3 damage

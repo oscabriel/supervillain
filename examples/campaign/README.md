@@ -1,0 +1,69 @@
+# Sample campaign: a fight at the ford
+
+A ready-to-play campaign folder for trying supervillain: four level-1 heroes and the bandits for one encounter. **Everything here is a sample for testing.** The numbers are plausible for level 1 and the ability text is a short paraphrase. None of it is copied from the books, so check it against _Draw Steel: Heroes_ and _Draw Steel: Monsters_ before real play.
+
+## Hosting it
+
+The host writes into the campaign folder: the log (`events.jsonl`), the host key and `host.log`. Make a copy first, so this one stays clean:
+
+```sh
+bun supervillain new ~/campaigns/first-fight --example
+bun supervillain host ~/campaigns/first-fight
+```
+
+Players join with the `ssh` command the host prints. The table's Draw Steel commands (see `/help`) bring a hero or monster in by its id, the file name without `.yaml`. A unique start of the id is enough: `bra` for `brann`.
+
+## What's in it
+
+| Hero | Class | Resource |
+| --- | --- | --- |
+| `brann` | Censor | wrath, 2 a turn |
+| `kesh` | Fury | ferocity, 1d3 a turn |
+| `wren` | Shadow | insight, 1d3 a turn |
+| `ilsa` | Tactician | focus, 2 a turn |
+
+| Monster | Organization | EV |
+| --- | --- | --- |
+| `bandit-cutpurse` | minion harrier | 3 for four minions |
+| `bandit-slinger` | minion artillery | 3 for four minions |
+| `bandit-bruiser` | platoon brute | 3 |
+| `bandit-chief` | leader | 12 |
+
+A suggested fight: the chief, two bruisers, four cutpurses and four slingers (24 EV in all).
+
+## Writing your own
+
+One YAML file per hero in `heroes/<id>.yaml` and one per monster in `monsters/<id>.yaml`. The file name is the id. The host reads a file each time a hero or monster is brought in, so you can edit one mid-session and bring it in again. A mistake is reported with the file and the field, for example `heroes/vex.yaml: characteristics.might must be a whole number from -5 to 5`. In those messages `abilities[2]` means the second ability.
+
+Hero fields:
+
+| Field | What goes in it |
+| --- | --- |
+| `name`, `class` | Text |
+| `level` | 1 to 10 |
+| `characteristics` | `{ might: 2, agility: 1, reason: 0, intuition: 0, presence: -1 }`, each from -5 to 5 |
+| `stamina`, `recoveries`, `speed` | Whole numbers |
+| `recoveryValue` | Optional: a third of `stamina` rounded down if left out |
+| `stability` | Optional, 0 if left out |
+| `resource` | `{ name: wrath, perTurn: 2 }`, where `perTurn` is a number or dice such as `1d3`. Add `min: -3` for a class that may spend below 0 (a Talent's clarity goes to -(1 + Reason)) |
+| `victories` | Optional, 0 if left out |
+| `immunities`, `weaknesses` | Optional damage types with numbers: `{ fire: 5 }`. `all` matches every type |
+| `abilities` | A list, below |
+
+Monster fields: `name`, `level`, `organization` (minion, horde, platoon, elite, leader or solo), an optional `role`, an optional `ev`, `stamina` (for a minion, one minion's), `speed`, `stability` (optional, 0 if left out), `freeStrike`, `characteristics`, `immunities`, `weaknesses`, an optional `withCaptain` and `abilities`.
+
+A text field may run over several lines (a folded `>` or literal `|` block); the table reads it as one line. Names are one line of up to 40 characters.
+
+If you edit a monster file mid-fight and `/add` it again, creatures already in the fight take its new abilities and modifiers, but a squad keeps the Stamina per minion it was added with.
+
+Ability fields: `name`, then any of `kind` (main action, maneuver…), `characteristics` (a hero's: `might` or `[might, agility]`), `bonus` (a monster's flat roll bonus), `cost` (spent when the ability is rolled: the hero's resource or the Director's Malice), `keywords` (`Melee, Strike, Weapon`), `distance`, `target`, `tier1`, `tier2`, `tier3` and `effect`.
+
+## Importing monsters from Steel Compendium
+
+If you have a local copy of Steel Compendium's `data-bestiary-json`, the import command turns its creatures into monster files:
+
+```sh
+bun supervillain import ~/data-bestiary-json --into ~/campaigns/first-fight "Goblin Warrior"
+```
+
+It looks for a creature's exact name or id first, then a unique start of one. It never overwrites a file that's already there unless you pass `--overwrite`. Anything it can't read is left out, listed in the file's header comments and reported when the import finishes. Their data stays on your disk: supervillain doesn't bundle it.

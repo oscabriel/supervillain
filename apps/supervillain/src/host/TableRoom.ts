@@ -17,7 +17,7 @@ export const RECENT = 8;
 const PLAYER_RATE: Rate = { burst: 10, perSecond: 2 };
 
 export interface TableRoomOptions {
-  /** How fast each player may write. The GM is never held back. */
+  /** How fast each sender (see `submit`'s rate key) may write. The GM is never held back. */
   readonly playerRate?: Rate;
 }
 
@@ -28,9 +28,14 @@ export interface TableRoomOptions {
 export class TableRoom extends Context.Service<
   TableRoom,
   {
+    /**
+     * Decides and writes one command as `actor`. Its rate is counted against `rateKey`, the actor
+     * unless the host knows better: guests from one address, say, share one.
+     */
     readonly submit: (
       actor: string,
       command: Command,
+      rateKey?: string,
     ) => Effect.Effect<ReadonlyArray<Envelope>, Refusal>;
     readonly state: View<TableState>;
     /** The last few envelopes in the log, oldest first, for the debug pane. */
@@ -47,9 +52,9 @@ export class TableRoom extends Context.Service<
         const log = yield* CampaignLog;
         const room = yield* makeRoom(rules);
         const take = rateLimiter(options.playerRate ?? PLAYER_RATE);
-        const throttle = (actor: string) =>
+        const throttle = (actor: string, rateKey: string) =>
           Effect.flatMap(Clock.currentTimeMillis, (now) =>
-            actor === GM || take(actor, now)
+            actor === GM || take(rateKey, now)
               ? Effect.void
               : Effect.fail(
                   new Refusal({ message: "You're sending lines too fast; wait a moment." }),
@@ -62,8 +67,11 @@ export class TableRoom extends Context.Service<
             [...xs, ...written].sort((a, b) => a.seq - b.seq).slice(-RECENT),
           );
         return TableRoom.of({
-          submit: (actor, command) =>
-            throttle(actor).pipe(Effect.andThen(room.submit(actor, command)), Effect.tap(remember)),
+          submit: (actor, command, rateKey = actor) =>
+            throttle(actor, rateKey).pipe(
+              Effect.andThen(room.submit(actor, command)),
+              Effect.tap(remember),
+            ),
           state: room.state,
           recent: { get: SubscriptionRef.get(recent), changes: SubscriptionRef.changes(recent) },
         });

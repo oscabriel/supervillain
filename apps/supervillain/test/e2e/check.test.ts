@@ -16,7 +16,7 @@ const KNOWN_LOG = [
   line(1, "gm", "core.chat-posted", { text: "Welcome to the den." }),
   line(2, vex, "core.name-set", { name: "Vex" }),
   line(3, vex, "core.dice-rolled", { notation: "2d10+2", rolls: [4, 9], modifier: 2, total: 15 }),
-  line(4, "gm", "ds.combat-started", { round: 1 }),
+  line(4, "gm", "map.token-moved", { token: "vex", to: [3, 4] }),
   line(5, guest, "core.chat-posted", { text: "waves", style: "emote" }),
   "",
 ].join("\n");
@@ -31,7 +31,7 @@ describe("supervillain check", () => {
         yield* Effect.promise(() => writeFile(path, KNOWN_LOG));
         const result = yield* cli(["check", dir]);
         expect(result.exitCode).toBe(0);
-        expect(result.stderr).toBe('seq 4: skipped unknown event type "ds.combat-started"\n');
+        expect(result.stderr).toBe('seq 4: skipped unknown event type "map.token-moved"\n');
         const [summary, state] = result.stdout.split("\nstate:\n");
         expect(summary).toBe(
           [
@@ -52,6 +52,14 @@ describe("supervillain check", () => {
           actors: ["gm", vex, guest],
           feed: "[4 lines]",
           core: { names: { [vex]: "Vex" } },
+          ds: {
+            heroes: [],
+            creatures: [],
+            blocks: {},
+            combat: { active: false, round: 0, acted: [] },
+            malice: 0,
+            tokens: 0,
+          },
         });
       }),
     15_000,

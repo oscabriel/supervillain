@@ -106,12 +106,17 @@ describe("parseInputLine", () => {
 
 describe("completeLine", () => {
   test("after a slash: the command names this actor can use", () => {
+    const draw = ["/play ", "/unplay ", "/turn ", "/done", "/pr ", "/dmg ", "/heal ", "/temp "];
+    const steel = ["/recover ", "/cond ", "/save ", "/res ", "/surge ", "/token "];
     expect(completeLine(state, ALICE, "/")).toEqual([
       "/say ",
       "/me ",
       "/name ",
       "/roll ",
+      ...draw,
+      ...steel,
       "/help ",
+      "/sheet ",
       "/quit",
     ]);
     expect(completeLine(state, GM, "/")).toEqual([
@@ -120,14 +125,39 @@ describe("completeLine", () => {
       "/narrate ",
       "/name ",
       "/roll ",
+      "/hero ",
+      "/play ",
+      "/unplay ",
+      "/add ",
+      "/start",
+      "/first ",
+      "/turn ",
+      "/done",
+      "/round",
+      "/end",
+      "/rest",
+      "/pr ",
+      "/dmg ",
+      "/heal ",
+      "/temp ",
+      "/recover ",
+      "/cond ",
+      "/save ",
+      "/res ",
+      "/surge ",
+      "/malice ",
+      "/token ",
+      "/victory ",
+      "/fs ",
       "/help ",
+      "/sheet ",
       "/state",
       "/quit",
     ]);
   });
 
   test("a partial name narrows the list, whatever its case or leading space", () => {
-    expect(completeLine(state, ALICE, "/r")).toEqual(["/roll "]);
+    expect(completeLine(state, ALICE, "/r")).toEqual(["/roll ", "/recover ", "/res "]);
     expect(completeLine(state, ALICE, "  /RO")).toEqual(["/roll "]);
     expect(completeLine(state, ALICE, "/n")).toEqual(["/name "]);
     expect(completeLine(state, GM, "/n")).toEqual(["/narrate ", "/name "]);
@@ -149,6 +179,33 @@ describe("completeLine", () => {
   });
 });
 
+/** The Draw Steel commands a player sees in /help, in registry order. */
+const PLAYER_DRAW_STEEL = [
+  "/play <hero> [player]",
+  "                 Play a hero. The GM names a player to give them one.",
+  "/unplay [hero]   Stop playing your hero. The GM names any hero to free it.",
+  "/turn [who]      Start a turn (your hero's, by default); the turn before ends.",
+  "/done            End the current turn: EoT conditions end, save-ends roll a save.",
+  "/pr <who> <ability|+N> [edge|bane|edge2|bane2]",
+  "                 Power roll: 2d10 + characteristic, with the tier's result.",
+  "/dmg <who> <n> [type]",
+  "                 Deal damage: temporary Stamina first, after weakness and immunity.",
+  "/heal <who> <n>  Regain Stamina, up to max.",
+  "/temp <who> <n>  Gain temporary Stamina; it doesn't stack, the larger stays.",
+  "/recover <hero> [ally]",
+  "                 Spend a Recovery to regain a third of max Stamina; 'ally' while dying.",
+  "/cond <who> [-]<condition> [eot|save|end]",
+  "                 Set a condition (to end of encounter unless EoT or save ends), or remove it with -.",
+  "/save <who> [condition]",
+  "                 Roll a save (d10, 6+) against save-ends conditions.",
+  "/res <hero> <+N|-N>",
+  "                 Gain or spend heroic resource.",
+  "/surge <hero> <+N|-N>",
+  "                 Gain or spend surges.",
+  "/token <+N|-N|reset>",
+  "                 Spend hero tokens. The GM adds them, or resets to one per hero.",
+];
+
 describe("helpText", () => {
   test("a player at a seat sees the commands they can use", () => {
     expect(helpText(ALICE)).toBe(
@@ -158,7 +215,9 @@ describe("helpText", () => {
         "/me <action>     Act something out: /me waves.",
         "/name <name>     Set the name the table calls you.",
         "/roll <dice>     Roll dice: 2d10+3, d20, 3d6-1.",
+        ...PLAYER_DRAW_STEEL,
         "/help [command]  List the commands, or explain one.",
+        "/sheet <who>     Show a hero's or creature's sheet, to you alone.",
         "/quit            Leave the table.",
       ].join("\n"),
     );
@@ -167,12 +226,14 @@ describe("helpText", () => {
   test("over a one-off ssh command there is no Tab and no seat to leave", () => {
     expect(helpText(ALICE, undefined, "exec")).toBe(
       [
-        "Plain text is chat. Commands start with /; roll and help work without it here.",
+        "Plain text is chat. Commands start with /; roll, help and sheet work without it here.",
         "/say <text>      Say something to the table (plain text does the same).",
         "/me <action>     Act something out: /me waves.",
         "/name <name>     Set the name the table calls you.",
         "/roll <dice>     Roll dice: 2d10+3, d20, 3d6-1.",
+        ...PLAYER_DRAW_STEEL,
         "/help [command]  List the commands, or explain one.",
+        "/sheet <who>     Show a hero's or creature's sheet, to you alone.",
       ].join("\n"),
     );
   });
@@ -181,6 +242,14 @@ describe("helpText", () => {
     const lines = helpText(GM).split("\n");
     expect(lines).toContain("/narrate <text>  Describe the scene, with no speaker. (GM)");
     expect(lines).toContain("/state           Show or hide the state pane. (GM)");
+    expect(lines).toContain(
+      "/start           Start a combat: who picks first, then resources and Malice. (GM)",
+    );
+    // A usage too long for the column puts its summary on the next line, in the column.
+    expect(lines).toContain("/add <monster id> [xN] [as <name>]");
+    expect(lines).toContain(
+      "                 Add creatures from a stat block; minions form squads of up to 8. (GM)",
+    );
   });
 
   test("one command, by name", () => {

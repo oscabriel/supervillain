@@ -1,0 +1,39 @@
+# Sample pregen for testing supervillain; check against Draw Steel: Heroes before real play.
+# The numbers are plausible for level 1, not copied from the book. Abilities are short sample
+# paraphrases with numbers, not rules text.
+name: Ilsa
+class: Tactician
+level: 1
+characteristics: { might: 2, agility: 1, reason: 2, intuition: 1, presence: -1 }
+stamina: 24
+recoveries: 10
+speed: 5
+stability: 2
+resource: { name: focus, perTurn: 2 }
+victories: 0
+abilities:
+  - name: Melee Free Strike
+    kind: free strike
+    characteristics: [might, agility]
+    keywords: Melee, Strike, Weapon
+    distance: Melee 1
+    target: One creature or object
+    tier1: 2 + M damage
+    tier2: 5 + M damage
+    tier3: 7 + M damage
+  - name: Marked Target
+    kind: main action
+    characteristics: might
+    keywords: Melee, Strike, Weapon
+    distance: Melee 1
+    target: One creature
+    tier1: 3 + M damage
+    tier2: 5 + M damage
+    tier3: 8 + M damage
+    effect: One ally adjacent to the target can make a free strike against it.
+  - name: Form Up
+    kind: maneuver
+    cost: 3
+    distance: Ranged 10
+    target: Self and up to two allies
+    effect: Each target can shift up to 2 squares, and gains an edge on their next strike this round.
