@@ -147,10 +147,12 @@ export function combatView(
     ...shown.filter((w) => sideOf(w) !== leading),
   ];
   const next = nextSide(slice);
+  // As /start counts them: the living heroes' Victories, on average.
+  const living = slice.heroes.filter((h) => heroHealth(h) !== "dead");
   const victories =
-    slice.heroes.length === 0
+    living.length === 0
       ? undefined
-      : Math.floor(slice.heroes.reduce((s, h) => s + h.victories, 0) / slice.heroes.length);
+      : Math.floor(living.reduce((s, h) => s + h.victories, 0) / living.length);
   return {
     round: combat.round,
     active: combat.active,
@@ -239,7 +241,7 @@ export function sheetText(slice: DrawSteelState, typed: string): string | Refuse
         `${health === "dying" ? "dying and bleeding" : (health ?? "healthy")} (winded at ${winded}, dead at -${winded})`,
         `Recoveries ${h.recoveries}/${s.recoveries}, ${value} each`,
       ].join(" · "),
-      `${s.resource.name} ${h.resource} (+${s.resource.perTurn} a turn) · surges ${h.surges} · Victories ${h.victories}`,
+      `${s.resource.name} ${h.resource} (+${s.resource.perTurn} a turn) · surges ${h.surges} · Victories ${h.victories} · XP ${h.xp}`,
       characteristicsLine(s.characteristics),
       `Speed ${s.speed} · Stability ${s.stability}`,
       ...modifiersLine(s.immunities, s.weaknesses),

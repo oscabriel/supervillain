@@ -1,17 +1,9 @@
 import type { Duplex, Readable } from "node:stream";
 import { Effect, type Scope } from "effect";
 import ssh2, { type ClientChannel } from "ssh2";
-import { fingerprintOf } from "./keys.ts";
+import { fingerprintOf, KEX } from "./keys.ts";
 import { type RawExit, type RawRequest, SshError } from "./types.ts";
 
-/** The same elliptic-curve-only key exchange the server offers. */
-const KEX: Array<ssh2.KexAlgorithm> = [
-  "curve25519-sha256",
-  "curve25519-sha256@libssh.org",
-  "ecdh-sha2-nistp256",
-  "ecdh-sha2-nistp384",
-  "ecdh-sha2-nistp521",
-];
 /** How long a closing link waits for its disconnect to go out before cutting the socket. */
 const CLOSE_GRACE_MS = 250;
 

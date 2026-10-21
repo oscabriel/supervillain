@@ -7,7 +7,10 @@ export interface Rate {
 /** Past this many senders, ones that have caught up are forgotten. */
 const PRUNE_AT = 1024;
 
-/** Token buckets, one per key: `take(key, now)` spends a token, or says no when there's none left. */
+/**
+ * Token buckets, one per key. `take(key, now)` spends one token, or says no when the key has
+ * none left. Pure over the clock it's handed, so the caller owns time.
+ */
 export function rateLimiter(rate: Rate): (key: string, now: number) => boolean {
   const buckets = new Map<string, { tokens: number; at: number }>();
   const refill = (bucket: { tokens: number; at: number }, now: number) => {

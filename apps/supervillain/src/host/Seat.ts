@@ -113,8 +113,16 @@ export const openSeat = (
         return here().map((a) => ({ actor: a, label: label(a), gm: a === GM }));
       }),
       myName: createMemo(() => nameOf(state(), actor)),
-      combat: createMemo(() => bandOf(state(), actor)),
-      map: createMemo(() => mapView(state().ds, actor)),
+      ...(() => {
+        // The band and the map read the Draw Steel slice and the names, which a chat line leaves
+        // as they were: then neither is built, nor drawn, again.
+        const ds = createMemo(() => state().ds);
+        const names = createMemo(() => state().core.names);
+        return {
+          combat: createMemo(() => bandOf({ ds: ds(), core: { names: names() } }, actor)),
+          map: createMemo(() => mapView(ds(), actor)),
+        };
+      })(),
     }));
     yield* Effect.addFinalizer(() => Effect.sync(derived.dispose));
 

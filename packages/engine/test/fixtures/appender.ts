@@ -6,7 +6,7 @@ const padding = "x".repeat(64 * 1024);
 
 const program = Effect.gen(function* () {
   const log = yield* CampaignLog;
-  let seq = log.envelopes.length;
+  let seq = log.take().length;
   for (let batch = 0; ; batch++) {
     const size = (batch % 3) + 1;
     const envelopes = Array.from({ length: size }, () => ({

@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test";
 import { existsSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { effect } from "../host/effect.ts";
@@ -35,7 +35,7 @@ describe("supervillain host --headless", () => {
 
         expect(yield* sshExec(host.port, "/name Vex", vex)).toMatchObject({
           exitCode: 0,
-          stdout: `${label} is now Vex\n`,
+          stdout: "Vex joins the table.\n",
         });
         expect(yield* sshExec(host.port, "hello everyone", vex)).toMatchObject({
           exitCode: 0,
@@ -87,28 +87,46 @@ describe("supervillain host --headless", () => {
   );
 
   effect(
-    "runs from any folder, and makes a new campaign folder only its owner can read",
+    "runs from any folder, on a campaign folder given relative to it",
     () =>
       Effect.gen(function* () {
-        const campaign = join(yield* tempDir, "new-campaign");
         const elsewhere = yield* tempDir;
-        const host = yield* startHost([campaign, "--headless"], elsewhere);
+        yield* Effect.promise(() => mkdir(join(elsewhere, "ford")));
+        const host = yield* startHost(["ford", "--headless"], elsewhere);
         expect((yield* sshExec(host.port, "help")).exitCode).toBe(0);
-        expect((yield* Effect.promise(() => stat(campaign))).mode & 0o777).toBe(0o700);
+        expect(existsSync(join(elsewhere, "ford", "host_key"))).toBe(true);
         expect(yield* Effect.promise(() => host.stop())).toBe(0);
       }),
     30_000,
   );
 
-  effect("a campaign folder that can't be made is one plain line, not a stack trace", () =>
+  effect(
+    "a campaign folder that isn't there is refused, pointing at `new`, and nothing is made",
+    () =>
+      Effect.gen(function* () {
+        const typo = join(yield* tempDir, "frod");
+        const result = yield* cli(["host", typo, "--headless", "--port", "0"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr.trim().split("\n")).toEqual([
+          `supervillain: there's no campaign at ${typo}; make one with: bun supervillain new ${typo} (--example for the sample)`,
+        ]);
+        expect(existsSync(typo)).toBe(false);
+      }),
+  );
+
+  effect("a port in use is one plain line saying what to do", () =>
     Effect.gen(function* () {
-      const result = yield* cli(["host", "/proc/nope/campaign", "--headless"]);
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr.trim().split("\n")).toEqual([
-        expect.stringMatching(
-          /^supervillain: can't make the campaign folder \/proc\/nope\/campaign: /,
-        ),
-      ]);
+      const campaign = yield* tempDir;
+      const busy = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      try {
+        const result = yield* cli(["host", campaign, "--headless", "--port", String(busy.port)]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr.trim().split("\n")).toEqual([
+          `supervillain: port ${busy.port} on 127.0.0.1 is in use (another table?); pick another with --port, or --port 0 for any free one`,
+        ]);
+      } finally {
+        busy.stop(true);
+      }
     }),
   );
 });

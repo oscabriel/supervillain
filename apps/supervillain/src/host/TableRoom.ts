@@ -6,12 +6,12 @@ import {
   Refusal,
   type View,
 } from "@supervillain/engine";
+import { type Rate, rateLimiter } from "@supervillain/ssh";
 import { Clock, Context, Effect, Layer, SubscriptionRef } from "effect";
 import { type Command, GM, rules, type TableState } from "../game/index.ts";
-import { type Rate, rateLimiter } from "./rate.ts";
 
 /** How many envelopes the state pane shows. */
-export const RECENT = 8;
+const RECENT = 8;
 
 /** Faster than anyone types or rolls at a table, slow enough that nobody can flood the log. */
 const PLAYER_RATE: Rate = { burst: 10, perSecond: 2 };
@@ -49,8 +49,7 @@ export class TableRoom extends Context.Service<
     Layer.effect(
       TableRoom,
       Effect.gen(function* () {
-        const log = yield* CampaignLog;
-        const room = yield* makeRoom(rules);
+        const room = yield* makeRoom(rules, { recent: RECENT });
         const take = rateLimiter(options.playerRate ?? PLAYER_RATE);
         const throttle = (actor: string, rateKey: string) =>
           Effect.flatMap(Clock.currentTimeMillis, (now) =>
@@ -60,7 +59,7 @@ export class TableRoom extends Context.Service<
                   new Refusal({ message: "You're sending lines too fast; wait a moment." }),
                 ),
           );
-        const recent = yield* SubscriptionRef.make(log.envelopes.slice(-RECENT));
+        const recent = yield* SubscriptionRef.make(room.recent);
         // Submits finish in any order, so keep the newest by seq.
         const remember = (written: ReadonlyArray<Envelope>) =>
           SubscriptionRef.update(recent, (xs) =>

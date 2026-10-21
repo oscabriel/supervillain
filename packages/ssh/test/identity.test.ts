@@ -84,6 +84,31 @@ describe("identity", () => {
       }),
   );
 
+  effect(
+    "an RSA key its client restricts to rsa-sha2-512 isn't offered, as ssh2 never advertises it",
+    () =>
+      Effect.gen(function* () {
+        // ssh2 1.16's server-sig-algs is missing a comma (sendExtInfo in lib/protocol/Protocol.js):
+        // it says `ecdsa-sha2-nistp521rsa-sha2-512`, so rsa-sha2-512 is never named. The list is a
+        // fixed string private to that module, and the server's options can't replace it, so only
+        // patching ssh2 would fix it, and we don't patch dependencies. OpenSSH's defaults sign with
+        // rsa-sha2-256 then, and log in (the test above). Only a client restricted to rsa-sha2-512
+        // skips its RSA key; docs/PLAYING.md says what to do. If this fails, ssh2 fixed it: drop
+        // that note and this test.
+        const rsa = yield* clientKey(yield* tempDir, "rsa", "rsa");
+        const { port } = yield* whoami(false);
+        const only512 = yield* sshExec(port, ["whoami"], {
+          key: rsa,
+          flags: ["-v", "-o", "PubkeyAcceptedAlgorithms=rsa-sha2-512"],
+        });
+        const advertised = /server-sig-algs=<([^>]*)>/.exec(only512.stderr)?.[1]?.split(",");
+        expect(advertised).toContain("rsa-sha2-256");
+        expect(advertised).not.toContain("rsa-sha2-512");
+        expect(only512.exitCode).toBe(255);
+        expect(only512.stderr).toContain("Permission denied");
+      }),
+  );
+
   effect("a key holder is still a key when guests are allowed", () =>
     Effect.gen(function* () {
       const alice = yield* clientKey(yield* tempDir, "alice");

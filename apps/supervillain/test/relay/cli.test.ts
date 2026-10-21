@@ -71,7 +71,10 @@ describe("supervillain relay", () => {
     Effect.gen(function* () {
       const dir = yield* tempDir;
       const rooms = join(dir, "rooms.json");
-      yield* Effect.promise(() => writeFile(rooms, JSON.stringify({ den: GM, attic: GM })));
+      const linked = "2026-10-01T12:00:00.000Z";
+      yield* Effect.promise(() =>
+        writeFile(rooms, JSON.stringify({ den: { key: GM, linked }, attic: { key: GM, linked } })),
+      );
       yield* Effect.promise(() => writeFile(join(dir, "relay_key"), "", { mode: 0o600 }));
       const forgot = yield* cli(["relay", "forget", "den", "--dir", dir]);
       expect(forgot.exitCode).toBe(0);
@@ -80,13 +83,34 @@ describe("supervillain relay", () => {
       // A GM linked now isn't left believing it keeps the room.
       expect(forgot.stdout).toContain("replaces the GM linked now");
       expect(JSON.parse(yield* Effect.promise(() => readFile(rooms, "utf8")))).toEqual({
-        attic: GM,
+        attic: { key: GM, linked },
       });
       const again = yield* cli(["relay", "forget", "den", "--dir", dir]);
       expect(again).toMatchObject({ exitCode: 0 });
       expect(again.stdout).toContain(`no GM holds room den in ${rooms}`);
       const bad = yield* cli(["relay", "forget", "Not A Room", "--dir", dir]);
       expect(bad.exitCode).toBe(1);
+    }),
+  );
+
+  effect("--claim-days takes a whole number of days, at least one", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      const started = yield* cli([
+        "relay",
+        "--player-port",
+        "0",
+        "--gm-port",
+        "0",
+        "--bind",
+        "127.0.0.1",
+        "--claim-days",
+        "0",
+        "--dir",
+        dir,
+      ]);
+      expect(started.exitCode).toBe(1);
+      expect(started.stderr).toContain("--claim-days takes a number of days from 1, not 0");
     }),
   );
 

@@ -256,7 +256,7 @@ describe("RelayLink", () => {
   );
 
   effect(
-    "--relay-key pins the key: relay_known is neither read nor written",
+    "--relay-key pins the key: a relay_known already there is neither read nor changed",
     () =>
       controlled(
         Effect.gen(function* () {
@@ -290,6 +290,26 @@ describe("RelayLink", () => {
               readFile(join(campaignDir, "relay_known"), "utf8"),
             )).trim(),
           ).toBe(other.fingerprint);
+        }),
+      ),
+    30_000,
+  );
+
+  effect(
+    "--relay-key with no relay_known yet pins that key there, so a later start without it stays pinned",
+    () =>
+      controlled(
+        Effect.gen(function* () {
+          const relayKey = yield* clientKey(yield* tempDir, "relay");
+          const relay = yield* fakeRelay();
+          const { campaignDir } = yield* linked(relay.port, { relayKey: relayKey.fingerprint });
+          yield* waitFor("the hello", () => relay.links.length === 1);
+          expect(yield* relay.exec(relayKey, "who")).toMatchObject({ exitCode: 0 });
+          expect(
+            (yield* Effect.promise(() =>
+              readFile(join(campaignDir, "relay_known"), "utf8"),
+            )).trim(),
+          ).toBe(relayKey.fingerprint);
         }),
       ),
     30_000,

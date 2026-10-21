@@ -20,6 +20,13 @@ export interface View<A> {
 export interface Room<S, C> {
   readonly submit: (actor: string, command: C) => Effect.Effect<ReadonlyArray<Envelope>, Refusal>;
   readonly state: View<S>;
+  /** The last envelopes the room replayed when it opened, as many as `recent` asked for. */
+  readonly recent: ReadonlyArray<Envelope>;
+}
+
+export interface RoomOptions {
+  /** How many of the replayed envelopes to keep, for a view of the latest. Default none. */
+  readonly recent?: number;
 }
 
 /**
@@ -28,20 +35,23 @@ export interface Room<S, C> {
  */
 export const makeRoom = <S, C>(
   rules: Rules<S, C>,
+  options: RoomOptions = {},
 ): Effect.Effect<Room<S, C>, LogError, CampaignLog> =>
   Effect.gen(function* () {
     const log = yield* CampaignLog;
-    const replayed = fold(rules, log.envelopes, { strict: true });
+    // Held only while the room opens: the state is what lasts.
+    const opened = log.take();
+    const replayed = fold(rules, opened, { strict: true });
     if (replayed.error) {
       return yield* new LogError({
         message: `Replay halted at seq ${replayed.error.seq}: ${replayed.error.message}`,
       });
     }
     const state = yield* SubscriptionRef.make(replayed.state);
-    let seq = log.envelopes.length;
+    let seq = opened.length;
     // Every submission is stamped later than the one before, by a millisecond if the clock hasn't
     // moved (or went back), so a submission is told apart by its actor and timestamp alone.
-    let last = log.envelopes.reduce((latest, e) => {
+    let last = opened.reduce((latest, e) => {
       const t = Date.parse(e.timestamp);
       return Number.isNaN(t) ? latest : Math.max(latest, t);
     }, Number.NEGATIVE_INFINITY);
@@ -91,8 +101,10 @@ export const makeRoom = <S, C>(
         // must not leave the log written and the state unset.
       }).pipe(Effect.uninterruptible, writer.withPermit);
 
+    const keep = options.recent ?? 0;
     return {
       submit,
       state: { get: SubscriptionRef.get(state), changes: SubscriptionRef.changes(state) },
+      recent: keep > 0 ? opened.slice(-keep) : [],
     };
   });

@@ -51,4 +51,5 @@ export {
   type Parsed,
   parseInputLine,
   type Surface,
+  unknownHelpTopic,
 } from "./input.ts";

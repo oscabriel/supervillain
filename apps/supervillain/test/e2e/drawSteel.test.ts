@@ -47,7 +47,7 @@ describe("a short Draw Steel encounter over real ssh", () => {
         const started = yield* asGm(table, "/start");
         // The sample heroes have no Victories: Malice is 0 for Victories, 2 heroes and round 1.
         expect(started[0]).toMatch(
-          /^Combat begins, round 1\. d10: ([1-9]|10), so (the players pick|the Director picks) who goes first .* Malice \+3 \(0 for Victories, 2 heroes, round 1\) → 3\.$/,
+          /^Combat begins, round 1\. d10: ([1-9]|10), so (the players pick|the Director picks) who goes first, .* Malice \+3 \(0 for Victories, 2 heroes, round 1\) → 3\. The party has no hero tokens; \/token reset gives one per hero\.$/,
         );
         yield* asGm(table, "/first heroes");
 

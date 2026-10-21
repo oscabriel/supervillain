@@ -133,6 +133,26 @@ describe("chat", () => {
     expect(await settle(t)).not.toContain("no creature called gob");
   });
 
+  test("a long line in the pane wraps under where its text starts, not at the left edge", async () => {
+    const help = [
+      "Plain text is chat.",
+      `/turn [who]      ${"Start a turn (your hero's, by default); the turn before ends. ".repeat(2).trim()}`,
+      "  ≤11: a tier's text, indented, that runs long enough to need a second line at eighty",
+    ];
+    const fake = fakeView({ myName: "Alice", reply: () => help.join("\n") });
+    const t = await mount(fake, 80, 24);
+    const rows = rowsOf(await enter(t, "/help"));
+    const turn = rows.findIndex((r) => r.includes("/turn [who]"));
+    // The pane's border and padding take two columns: the summary starts at 17 inside it.
+    const at = rows[turn]!.indexOf("Start");
+    expect(rows[turn + 1]!.slice(0, at).trim()).toBe("│");
+    expect(rows[turn + 1]![at]).not.toBe(" ");
+    const tier = rows.findIndex((r) => r.includes("≤11"));
+    const indent = rows[tier]!.indexOf("≤11");
+    expect(rows[tier + 1]!.slice(0, indent).trim()).toBe("│");
+    expect(rows[tier + 1]![indent]).not.toBe(" ");
+  });
+
   test("multi-line help shows every line in a pane", async () => {
     const help = [
       "Plain text is chat.",
@@ -149,7 +169,7 @@ describe("chat", () => {
     expect(fake.submitted).toEqual(["/help"]);
   });
 
-  test("a refused line comes back to the input to be fixed; a help reply does not", async () => {
+  test("a refused line leaves the input empty, so the next line can't run into it; Up brings it back", async () => {
     const fake = fakeView({
       myName: "Alice",
       reply: (l) =>
@@ -161,10 +181,65 @@ describe("chat", () => {
     });
     const t = await mount(fake);
     expect(await enter(t, "/roll fireball")).toContain("› not dice");
+    expect(inputRow(t)).not.toContain("fireball");
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
     expect(inputRow(t)).toContain("> /roll fireball");
     t.mockInput.pressKey("u", { ctrl: true });
+    await enter(t, "/roll 2d10");
+    expect(fake.submitted).toEqual(["/roll fireball", "/roll 2d10"]);
     expect(await enter(t, "/help roll")).toContain("/roll <dice>  Roll dice.");
     expect(inputRow(t)).not.toContain("/help roll");
+  });
+
+  test("lines go to the host one at a time, in the order they were typed", async () => {
+    let release: (() => void) | undefined;
+    const fake = fakeView({
+      myName: "Alice",
+      reply: (l) =>
+        l === "/hero brann" ? new Promise((done) => (release = () => done(undefined))) : undefined,
+    });
+    const t = await mount(fake);
+    await enter(t, "/hero brann");
+    await enter(t, "/play brann");
+    expect(fake.submitted).toEqual(["/hero brann"]);
+    release?.();
+    await settle(t);
+    expect(fake.submitted).toEqual(["/hero brann", "/play brann"]);
+  });
+
+  test("a bare help, exit or quit is a question first: Enter again says it to the table", async () => {
+    const fake = fakeView({ myName: "Alice" });
+    const t = await mount(fake);
+    expect(await enter(t, "help")).toContain(
+      '› Did you mean /help? Enter again to say "help" to the table.',
+    );
+    expect(fake.submitted).toEqual([]);
+    expect(inputRow(t)).toContain("> help");
+    t.mockInput.pressEnter();
+    await settle(t);
+    expect(fake.submitted).toEqual(["help"]);
+    expect(await enter(t, "exit")).toContain(
+      '› Did you mean /quit? Enter again to say "exit" to the table.',
+    );
+    expect(fake.left()).toBe(0);
+  });
+
+  test("Ctrl-D on an empty line leaves, as in a shell", async () => {
+    const fake = fakeView({ myName: "Alice" });
+    const t = await mount(fake);
+    await t.mockInput.typeText("ab");
+    t.mockInput.pressKey("a", { ctrl: true });
+    t.mockInput.pressKey("d", { ctrl: true });
+    await t.renderOnce();
+    expect(inputRow(t)).toContain("> b");
+    expect(fake.left()).toBe(0);
+    t.mockInput.pressKey("u", { ctrl: true });
+    t.mockInput.pressKey("e", { ctrl: true });
+    t.mockInput.pressKey("u", { ctrl: true });
+    t.mockInput.pressKey("d", { ctrl: true });
+    await settle(t);
+    expect(fake.left()).toBe(1);
   });
 
   test("the next line clears an old reply", async () => {
@@ -307,14 +382,29 @@ describe("first ten seconds", () => {
     });
     const t = await mount(fake);
     expect(await enter(t, "Oscar")).toContain("Oscar is taken; pick another name");
-    expect(inputRow(t)).toStartWith(" what should the table call you? Oscar");
-    t.mockInput.pressKey("u", { ctrl: true });
+    // The line is empty again, so the next name isn't added to the refused one.
+    expect(inputRow(t)).toBe(" what should the table call you?");
     await enter(t, "Vex");
     fake.setMyName("Vex");
     await settle(t);
     expect(inputRow(t)).toStartWith(" >");
     await enter(t, "hello");
     expect(fake.submitted).toEqual(["/name Oscar", "/name Vex", "hello"]);
+  });
+
+  test("at the name prompt, help and leaving words are answered, not taken as a name", async () => {
+    const fake = fakeView({ myName: undefined, present: [alice] });
+    const t = await mount(fake);
+    expect(await enter(t, "help")).toContain(
+      "› Type the name the table should call you, then Enter. /help lists the commands; Ctrl-C leaves.",
+    );
+    expect(await enter(t, "quit")).toContain(
+      '› To leave, press Ctrl-C. To be called "quit", press Enter again.',
+    );
+    expect(fake.submitted).toEqual([]);
+    t.mockInput.pressEnter();
+    await settle(t);
+    expect(fake.submitted).toEqual(["/name quit"]);
   });
 
   test("the GM's seat is never asked for a name", async () => {
@@ -502,27 +592,24 @@ describe("the Draw Steel band", () => {
     const frame = await enter(t, "/sheet brann");
     const rows = rowsOf(frame);
     expect(rows).toHaveLength(24);
-    // The pane, border to border: about 8 rows, here 7, since the four heroes' rows (six lines,
-    // two of them wrapped) and the one acting are what the band keeps.
+    // The pane, border to border: at least 7 rows, since the four heroes' rows (five lines, one
+    // wrapped, their Recoveries gone) and the one acting are what the band keeps.
     const top = rows.findIndex((r) => r.includes("just for you"));
     const bottom = rows.findIndex((r, i) => i > top && r.startsWith("└"));
     expect(bottom - top + 1).toBeGreaterThanOrEqual(7);
     expect(frame).toContain("sheet line 1");
     expect(frame).toContain("sheet line 5");
-    // Every hero row stays whole.
+    // Every hero row stays whole but for its Recoveries, which the sheet has.
     for (const part of [
       "wrath 3",
-      "recoveries 12/12",
       "ferocity 4",
       "1 surge",
       "weakened (save)",
       "focus 1",
-      "recoveries 9/10",
       "dying (dead at -10)",
       "bleeding",
       "dazed (save)",
       "insight 0",
-      "recoveries 8/8",
     ])
       expect(frame).toContain(part);
     // Creatures fold into "+N more", and only creatures: shown plus hidden is all eight of them.
@@ -558,7 +645,7 @@ describe("the Draw Steel band", () => {
     expect(frame).not.toMatch(/\+\d+ more/);
   });
 
-  test("a multi-line reply, like a sheet, is not a refusal: the line is not given back", async () => {
+  test("a multi-line reply, like a sheet, opens the pane, and a refusal one line, neither giving the line back", async () => {
     const fake = fakeView({
       myName: "Alice",
       reply: (l) =>
@@ -573,7 +660,7 @@ describe("the Draw Steel band", () => {
     await new Promise((r) => setTimeout(r, 40));
     expect(await settle(t)).not.toContain("Vex, level 1 Fury");
     expect(await enter(t, "/sheet bob")).toContain("› no hero called bob");
-    expect(inputRow(t)).toContain("> /sheet bob");
+    expect(inputRow(t)).not.toContain("/sheet bob");
   });
 
   test("while the view has no party or combat the band shows who is here, until one starts", async () => {

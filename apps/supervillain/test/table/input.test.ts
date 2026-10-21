@@ -97,8 +97,8 @@ describe("editing", () => {
   });
 });
 
-describe("refused lines", () => {
-  test("a refused line comes back to an empty input, cursor at the end, history kept", () => {
+describe("lines given back", () => {
+  test("a line a hint answered comes back to an empty input, cursor at the end, history kept", () => {
     const { state } = submitLine(typed("/roll fireball"));
     const back = restoreDraft(state, "/roll fireball");
     expect(back.text).toBe("/roll fireball");

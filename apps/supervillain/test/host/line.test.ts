@@ -85,6 +85,18 @@ describe("runLine", () => {
     ),
   );
 
+  effect("help on a command there isn't is a refusal, so exec exits 1", () =>
+    atTable(
+      Effect.gen(function* () {
+        expect(yield* runLine(vex, "/help nosuch", "exec")).toEqual({
+          kind: "refusal",
+          text: "Unknown command /nosuch. /help lists the commands.",
+        });
+        expect((yield* runLine(vex, "/help roll", "exec")).kind).toBe("message");
+      }),
+    ),
+  );
+
   effect("the state dump is the GM's alone", () =>
     atTable(
       Effect.gen(function* () {
@@ -129,6 +141,24 @@ describe("runLine", () => {
 });
 
 describe("runLine with Draw Steel", () => {
+  effect("a guest who drops and comes back as a new guest takes their hero back", () =>
+    atSampleTable(() =>
+      Effect.gen(function* () {
+        const [first, again] = ["guest:daveDAVE1", "guest:daveDAVE2"];
+        yield* runLine("gm", "/hero wren");
+        const seat = yield* Scope.make();
+        yield* Effect.flatMap(Presence, (p) => p.enter(first)).pipe(Scope.provide(seat));
+        yield* runLine(first, "/name Dave");
+        yield* runLine(first, "/play wren");
+        yield* Effect.flatMap(Presence, (p) => p.enter(again));
+        expect(said(yield* runLine(again, "/play wren"))).toBe("Wren is played by Dave.");
+        yield* Scope.close(seat, Exit.void);
+        yield* runLine(again, "/name Dave");
+        expect(said(yield* runLine(again, "/play wren"))).toEqual(["Dave takes Wren."]);
+      }),
+    ),
+  );
+
   effect("/hero and /add load their sheets from the campaign folder into the event", () =>
     atSampleTable(() =>
       Effect.gen(function* () {
@@ -478,7 +508,7 @@ describe("plainText", () => {
     expect(at("emote", "waves")).toBe("Vex waves");
     expect(at("narration", "Rain falls.")).toBe("Rain falls.");
     expect(at("roll", "rolled d6: [4] = 4")).toBe("Vex rolled d6: [4] = 4");
-    expect(at("name", "guest-7f3a is now Vex")).toBe("guest-7f3a is now Vex");
+    expect(at("name", "Vex is now Ash")).toBe("Vex is now Ash");
   });
 });
 
@@ -502,5 +532,7 @@ describe("execLine", () => {
     expect(execLine("me too")).toBe("me too");
     expect(execLine("say what")).toBe("say what");
     expect(execLine("quit")).toBe("quit");
+    // /state is the GM's seat's alone, and exec never runs as the GM: a bare one is chat.
+    expect(execLine("state of things")).toBe("state of things");
   });
 });

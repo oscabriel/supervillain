@@ -176,15 +176,26 @@ describe("in combat", () => {
     expect(rowWith(rows, "Goblin 5")).toContain("Goblin 6");
   });
 
-  test("fourteen at 80x24: everyone still shows, long rows cut with … rather than hidden", async () => {
+  test("fourteen at 80x24: everyone still shows, heroes giving up their Recoveries rather than anyone hidden", async () => {
     const t = await mount(fight([...party, ...goblins(8)]), 80, 24);
     const rows = bandRows(t);
     const band = rows.join("\n");
     expect(rows.length).toBeLessThanOrEqual(12);
-    for (const name of ["Vex", "Spearmen", "Brakka", "Ogre", "Sera", "Sniper", "Goblin 8"])
+    for (const name of ["Vex", "Spearmen", "Brakka", "Ogre", "Sera", "Goblin 8"])
       expect(band).toContain(name);
-    expect(rowWith(rows, "Vex")).toContain("slowed (EoT)");
-    expect(rowWith(rows, "Vex")).toMatch(/ …\s*│$/);
+    expect(rowWith(rows, "dead:")).toContain("Goblin Sniper");
+    expect(rowWith(rows, "Vex")).toContain("slowed (EoT) · Wrath 3 · 2 surges");
+    expect(band).not.toContain("recoveries");
+    expect(band).not.toContain("more");
+  });
+
+  test("past that, long rows are cut with … rather than anyone hidden", async () => {
+    const long = { ...vex, conditions: ["slowed (EoT)", "dazed (save)", "weakened (save)"] };
+    const t = await mount(fight([long, spearmen, brakka, ogre, sera, ...goblins(12)]), 80, 24);
+    const rows = bandRows(t);
+    const band = rows.join("\n");
+    for (const name of ["Vex", "x3", "Brakka", "Ogre", "Sera", "12 "]) expect(band).toContain(name);
+    expect(rowWith(rows, "Vex")).toMatch(/ …\s+/);
     expect(band).not.toContain("more");
   });
 
@@ -264,24 +275,21 @@ describe("a full fight in a small band", () => {
     expect(band).not.toContain("more");
   });
 
-  test("kept whole for a reply pane, heroes keep every row while creatures pair, then the dead go, then the rest count as more", async () => {
-    const t = await mount(fight(ford), 80, 24, 9, true);
+  test("kept whole for a reply pane, heroes keep every row but their Recoveries while creatures pair, then the dead go, then the rest count as more", async () => {
+    const t = await mount(fight(ford), 80, 24, 8, true);
     const rows = bandRows(t);
     const band = rows.join("\n");
-    expect(rows.length).toBeLessThanOrEqual(9);
+    expect(rows.length).toBeLessThanOrEqual(8);
     for (const part of [
       "wrath 3",
-      "recoveries 12/12",
       "ferocity 4",
       "1 surge",
       "weakened (save)",
       "focus 1",
-      "recoveries 9/10",
       "dying (dead at -10)",
       "bleeding",
       "dazed (save)",
       "insight 0",
-      "recoveries 8/8",
     ])
       expect(band).toContain(part);
     // A player's name may shorten to share the meter column; no hero's details are cut.
@@ -294,6 +302,55 @@ describe("a full fight in a small band", () => {
     const shown = (band.match(/Bruiser \d/g) ?? []).length + 1;
     expect(shown + Number(more?.[1])).toBe(8);
     expect(rowWith(rows, "Chief")).toMatch(/Chief .*Bruiser \d/);
+  });
+
+  test("beside the map at 80x24, four heroes and four creature groups each keep one row: every enemy's Stamina shows", async () => {
+    const [brann, kesh, ilsa, wren] = ford;
+    const heroes = [
+      { ...brann!, conditions: ["slowed (EoT)"] },
+      kesh!,
+      ilsa!,
+      { ...wren!, stamina: 12, health: undefined, conditions: [] },
+    ];
+    const enemies = [
+      combatant({ id: "bandit-chief", name: "Bandit Chief", stamina: 60, max: 80 }),
+      combatant({ id: "bandit-bruiser-1", name: "Bandit Bruiser 1", stamina: 9, max: 20 }),
+      combatant({
+        id: "bandit-cutpurse-a",
+        name: "Bandit Cutpurse A",
+        stamina: 16,
+        max: 20,
+        count: 4,
+      }),
+      combatant({
+        id: "bandit-slinger-a",
+        name: "Bandit Slinger A",
+        stamina: 20,
+        max: 20,
+        count: 4,
+      }),
+    ];
+    const t = await mount(fight([...heroes, ...enemies]), 80, 24, 8, true);
+    const band = bandRows(t).join("\n");
+    for (const part of [
+      "60/80",
+      "9/20",
+      "Cutpurse A x4",
+      "Slinger A x4",
+      "slowed (EoT)",
+      "wrath 3",
+    ])
+      expect(band).toContain(part);
+    expect(band).not.toContain("more");
+  });
+
+  test("a dead hero folds into the dead line with the dead creatures", async () => {
+    const [brann, ...rest] = ford;
+    const dead = { ...brann!, stamina: -13, health: "dead" as const, conditions: [] };
+    const t = await mount(fight([dead, ...rest]), 80, 24);
+    const rows = bandRows(t);
+    expect(rowWith(rows, "dead:")).toContain("Brann (Alice), Bandit Cutpurse A");
+    expect(rows.filter((r) => r.includes("Brann"))).toHaveLength(1);
   });
 
   test("kept whole with room for every creature, the band is just as it is without a pane", async () => {

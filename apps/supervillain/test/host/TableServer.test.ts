@@ -128,10 +128,10 @@ describe("TableServer", () => {
         yield* waitFor("both seats", () => Effect.runSync(table.presence.here.get).length === 2);
         yield* waitFor("Ann's name prompt", () => ann.text().includes("call you?"));
         ann.write("Ann\r");
-        yield* waitFor("Ann named", () => ann.text().includes("is now Ann"));
+        yield* waitFor("Ann named", () => ann.text().includes("Ann joins the table"));
         yield* waitFor("Bea's name prompt", () => bea.text().includes("call you?"));
         bea.write("Bea\r");
-        yield* waitFor("Bea named", () => bea.text().includes("is now Bea"));
+        yield* waitFor("Bea named", () => bea.text().includes("Bea joins the table"));
         bea.write("hello\r");
         yield* waitFor("Bea held back", () => bea.text().includes("You're sending lines too fast"));
       }),
@@ -176,6 +176,10 @@ describe("rateKeyOf", () => {
     expect(rateKeyOf(info(key(PLAYER)))).toBe(PLAYER);
     expect(rateKeyOf(info({ kind: "guest", actor: "guest:abc" }))).toBe("address:203.0.113.7");
     expect(rateKeyOf(info({ kind: "guest", actor: "guest:xyz" }))).toBe("address:203.0.113.7");
+    // An IPv6 guest counts by its /64, as one-off commands do, however it rotates within it.
+    const v6 = (remoteAddress: string) =>
+      rateKeyOf(info({ kind: "guest", actor: "guest:abc" }, { remoteAddress }));
+    expect(v6("2001:db8:1:1::7")).toBe(v6("2001:db8:1:1::8"));
   });
 
   test("through a relay, a key is still itself and a guest is the relay's guest", () => {

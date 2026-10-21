@@ -30,7 +30,7 @@ export function sanitize(raw: string): string {
 
 const HISTORY_LIMIT = 200;
 /** A little over the longest chat line the rules take, so an overlong one is refused, not cut. */
-export const DRAFT_MAX = 2000;
+const DRAFT_MAX = 2000;
 
 /** The GM's actor id: the seat that is never asked its name and alone opens the state pane. */
 const GM = "gm";
@@ -203,15 +203,15 @@ export function submitLine(s: LineState): {
 }
 
 /**
- * After a refusal, puts the sent line back so it can be fixed, unless something has been typed
- * since. History keeps it too.
+ * Puts a sent line back on the input, unless something has been typed since: after a hint that
+ * asks for Enter again. History keeps it too.
  */
 export function restoreDraft(s: LineState, line: string): LineState {
   return s.text === "" ? replaced(s, line) : s;
 }
 
 /** "name" until a player's seat has a display name (ASSESSMENT Q2); the GM's seat is never asked. */
-export type Mode = "name" | "chat";
+type Mode = "name" | "chat";
 
 export const NAME_PROMPT = "what should the table call you?";
 
@@ -227,20 +227,59 @@ const LAYOUTS: ReadonlyArray<Layout> = ["map", "feed", "both"];
  * What a submitted line does: leave, toggle the debug pane, change the layout, centre the map on a
  * square or token (`/view <square|who>`, as typed), or go to the host.
  */
-export type Intent =
+type Intent =
   | { readonly kind: "quit" }
   | { readonly kind: "state" }
   /** `toggle` shows or hides the map. */
   | { readonly kind: "view"; readonly layout: Layout | "toggle" }
   | { readonly kind: "focus"; readonly at: string }
+  /** A line that is likely a slip (a bare `help` or `exit`), answered for this seat alone. */
+  | { readonly kind: "hint"; readonly text: string; readonly again: boolean }
   | { readonly kind: "send"; readonly line: string };
+
+/** Words typed alone that mean a command more often than chat or a name, and the command. */
+const SLIPS: Readonly<Record<string, "/help" | "/quit">> = {
+  help: "/help",
+  exit: "/quit",
+  quit: "/quit",
+};
+
+/**
+ * What the table answers a bare `help`, `exit` or `quit`. `again` says Enter on the same line
+ * sends it after all; at the name prompt, `help` is only ever a question.
+ */
+function slipHint(line: string, mode: Mode): Intent | undefined {
+  const command = SLIPS[line.trim().toLowerCase()];
+  if (command === undefined) return undefined;
+  if (mode === "name")
+    return command === "/help"
+      ? {
+          kind: "hint",
+          text: "Type the name the table should call you, then Enter. /help lists the commands; Ctrl-C leaves.",
+          again: false,
+        }
+      : {
+          kind: "hint",
+          text: `To leave, press Ctrl-C. To be called "${line}", press Enter again.`,
+          again: true,
+        };
+  return {
+    kind: "hint",
+    text: `Did you mean ${command}? Enter again to say "${line}" to the table.`,
+    again: true,
+  };
+}
 
 /**
  * The table runs /quit and /view itself, and /state on the GM's seat (anyone else's goes to the
- * host, which refuses it). In name mode, a plain line is sent as `/name <line>`.
+ * host, which refuses it). In name mode, a plain line is sent as `/name <line>`. A bare `help`,
+ * `exit` or `quit` is answered with a hint, unless it is `asked`: the line that was just hinted,
+ * sent again.
  */
-export function intentFor(line: string, mode: Mode, me = ""): Intent {
+export function intentFor(line: string, mode: Mode, me = "", asked?: string): Intent {
   const word = line.split(" ", 1)[0]!.toLowerCase();
+  const slip = line === asked ? undefined : slipHint(line, mode);
+  if (slip !== undefined) return slip;
   if (word === "/quit") return { kind: "quit" };
   if (word === "/state" && me === GM) return { kind: "state" };
   if (word === "/view") {
@@ -273,7 +312,7 @@ export interface KeyLike {
   readonly sequence: string;
 }
 
-export type KeyAction =
+type KeyAction =
   | { readonly kind: "insert"; readonly text: string }
   | { readonly kind: "complete"; readonly step: 1 | -1 }
   | { readonly kind: "scroll"; readonly direction: 1 | -1 }
@@ -288,6 +327,7 @@ export type KeyAction =
         | "delete"
         | "deleteWord"
         | "clearToStart"
+        | "eof"
         | "left"
         | "right"
         | "home"
@@ -312,6 +352,8 @@ export function keyAction(key: KeyLike): KeyAction {
         return { kind: "deleteWord" };
       case "u":
         return { kind: "clearToStart" };
+      case "d":
+        return { kind: "eof" };
     }
   }
   switch (key.name) {

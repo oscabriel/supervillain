@@ -119,7 +119,7 @@ describe("sheetText", () => {
       [
         "Vex: Censor 1",
         "Stamina 10/21 · winded (winded at 10, dead at -10) · Recoveries 8/8, 7 each",
-        "Wrath 0 (+2 a turn) · surges 0 · Victories 2",
+        "Wrath 0 (+2 a turn) · surges 0 · Victories 2 · XP 0",
         "Might +2 · Agility +0 · Reason -1 · Intuition +1 · Presence +2",
         "Speed 5 · Stability 1",
         "Conditions: slowed (EoT)",
@@ -213,7 +213,7 @@ describe("parsing", () => {
       banes: 0,
     });
     expect(parse("pr", "vex")).toEqual({
-      refusal: "Usage: /pr <who> <ability|+N> [edge|bane|edge2|bane2]",
+      refusal: "Usage: /pr <who> <ability|+N> [edge|bane|edge2|bane2] [on <target>…]",
     });
     expect(parse("dmg", "goblin-1 7 fire")).toEqual({
       type: "dmg",

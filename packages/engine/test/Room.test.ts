@@ -26,7 +26,33 @@ const withRoom = <A, E>(
     return yield* body(room, yield* CampaignLog);
   }).pipe(Effect.provide(CampaignLog.layer(dir)));
 
+/** What the campaign in `dir` holds on disk, read by opening its log alone. */
+const onDisk = (dir: string) =>
+  Effect.gen(function* () {
+    return (yield* CampaignLog).take();
+  }).pipe(Effect.provide(CampaignLog.layer(dir)));
+
 describe("makeRoom", () => {
+  effect("keeps only the last few envelopes it replayed, when asked for them", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      yield* withRoom(dir, (room) =>
+        Effect.gen(function* () {
+          for (const n of [1, 2, 3]) yield* room.submit("gm", { type: "add", n });
+        }),
+      );
+      const recent = yield* Effect.map(makeRoom(tally, { recent: 2 }), (room) =>
+        room.recent.map((e) => e.seq),
+      ).pipe(Effect.provide(CampaignLog.layer(dir)));
+      expect(recent).toEqual([2, 3]);
+      expect(
+        yield* Effect.map(makeRoom(tally), (room) => room.recent).pipe(
+          Effect.provide(CampaignLog.layer(dir)),
+        ),
+      ).toEqual([]);
+    }),
+  );
+
   effect("writes an accepted command's events with the actor, the next seq and a timestamp", () =>
     Effect.gen(function* () {
       const dir = yield* tempDir;
@@ -41,7 +67,7 @@ describe("makeRoom", () => {
       const [e] = written;
       expect(e).toMatchObject({ actor: "key:alice", seq: 1, type: "added", payload: { n: 4 } });
       expect(new Date(e!.timestamp).toISOString()).toBe(e!.timestamp);
-      expect(yield* withRoom(dir, (_, log) => Effect.succeed(log.envelopes))).toEqual(written);
+      expect(yield* onDisk(dir)).toEqual(written);
     }),
   );
 
@@ -62,9 +88,7 @@ describe("makeRoom", () => {
             expect((yield* room.submit("gm", { type: "add", n: 1 }))[0]?.seq).toBe(2);
           }),
         );
-        expect(
-          yield* withRoom(dir, (_, log) => Effect.succeed(log.envelopes.map((e) => e.seq))),
-        ).toEqual([1, 2]);
+        expect(yield* Effect.map(onDisk(dir), (es) => es.map((e) => e.seq))).toEqual([1, 2]);
       }),
     );
   }
@@ -158,10 +182,12 @@ describe("makeRoom", () => {
             return yield* room.state.get;
           }),
         );
-        const onDisk = yield* withRoom(dir, (_, log) => Effect.succeed(log.envelopes));
-        expect(onDisk.map((e) => e.seq)).toEqual(submits.map((_, i) => i + 1));
-        expect(onDisk.filter((e) => e.actor === "key:alice")).toHaveLength(400);
-        expect(onDisk.map((e) => (e.payload as { value: number }).value)).toEqual([...state.rolls]);
+        const written = yield* onDisk(dir);
+        expect(written.map((e) => e.seq)).toEqual(submits.map((_, i) => i + 1));
+        expect(written.filter((e) => e.actor === "key:alice")).toHaveLength(400);
+        expect(written.map((e) => (e.payload as { value: number }).value)).toEqual([
+          ...state.rolls,
+        ]);
       }).pipe(Random.withSeed("800 rolls")),
     20_000,
   );
@@ -174,7 +200,7 @@ describe("makeRoom", () => {
       // Like a real append, the bytes land at once and the fsync takes a while.
       const slowLog = CampaignLog.of({
         path: "memory",
-        envelopes: [],
+        take: () => [],
         append: (envelopes) =>
           Effect.gen(function* () {
             written.push(...envelopes);
@@ -201,7 +227,7 @@ describe("makeRoom", () => {
       let appends = 0;
       const flakyLog = CampaignLog.of({
         path: "memory",
-        envelopes: [],
+        take: () => [],
         append: () =>
           ++appends === 1 ? Effect.fail(new LogError({ message: "disk full" })) : Effect.void,
       });

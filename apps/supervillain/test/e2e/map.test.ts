@@ -141,7 +141,7 @@ describe("the ford road over real ssh", () => {
           ["B", true, true],
           ["K", false, false],
           ["b", false, false],
-          ["bc", false, false],
+          ["c", false, false],
         ]);
         expect(before.maps[1]?.reachLabel).toBe("Brann can reach: 0 of speed 5 left");
         yield* table.stop;

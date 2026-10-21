@@ -1,5 +1,5 @@
 import { type Dice, type Envelope, fold } from "@supervillain/engine";
-import { core } from "../../src/game/core.ts";
+import { core, labelOf } from "../../src/game/core.ts";
 import type { HeroSheet, StatBlock } from "../../src/game/drawSteel/sheets.ts";
 import { drawSteel } from "../../src/game/drawSteel/index.ts";
 import { compose, GM } from "../../src/game/module.ts";
@@ -10,7 +10,9 @@ export const ALICE = "key:SHA256:abcdefghIJKLMNOPqrstuvwxyz0123456789ABCDEFG";
 export const BOB = "key:SHA256:Zyxwvuts+/0123456789abcdefghijklmnopqrstuvw";
 
 /** The table with Draw Steel beside core, as the integrator will wire it. */
-export const table = compose([core, drawSteel] as const);
+export const table = compose([core, drawSteel] as const, {
+  label: (state, actor) => labelOf(state)(actor),
+});
 export type State = typeof table.rules.initial;
 export type Command = Parameters<typeof table.rules.decide>[2];
 

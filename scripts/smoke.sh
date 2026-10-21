@@ -91,7 +91,7 @@ expect_exec() {
   esac
 }
 
-expect_exec "/name Smoke" "is now Smoke"
+expect_exec "/name Smoke" "Smoke joins the table"
 expect_exec "hello from the smoke test" "Smoke: hello from the smoke test"
 expect_exec "/roll 2d10+2" "Smoke rolled 2d10+2"
 

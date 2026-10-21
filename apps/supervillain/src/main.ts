@@ -3,13 +3,14 @@
 // root, or this file from anywhere.
 //   supervillain host [campaign-dir] [--port 2222] [--bind 127.0.0.1] [--room name] [--headless]
 //                     [--relay host:port] [--relay-key SHA256:…] [--relay-player-port 2222]
-//                     [--relay-host-key SHA256:…]
+//                     [--relay-host-key SHA256:…]   (the folder must exist: `new` makes one)
 //   supervillain new <campaign-dir> [--example]
 //   supervillain import <bestiary-json-path> --into <campaign-dir> [names...] [--overwrite]
 //   supervillain check <campaign-dir>
 //   supervillain relay [--player-port 2222] [--gm-port 7022] [--bind 0.0.0.0] [--dir ~/.supervillain-relay]
+//                      [--claim-days 30]
 //   supervillain relay forget <room> [--dir …]
-import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import {
@@ -25,13 +26,14 @@ import {
   Stream,
 } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
+import { isFingerprint } from "@supervillain/ssh";
 import { checkLog } from "./host/check.ts";
 import { relayCommand } from "./relay/cli.ts";
 import {
-  isFingerprint,
   joinNote,
   linkAlert,
   parseRelayAddress,
+  relayJoinCommand,
   roomSlug,
 } from "./host/RelayLink.ts";
 import { isRoomName } from "./relay/protocol.ts";
@@ -86,17 +88,21 @@ const fail = (e: { readonly message: string }) =>
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** How players reach this host, as one command to paste. */
-const joinCommand = (room: string, bind: string, port: number) => {
-  const address = bind === "0.0.0.0" || bind === "::" ? "<this machine's address>" : bind;
-  return `ssh ${port === 22 ? "" : `-p ${port} `}${room}@${address}`;
-};
+/** How players reach this host directly, as one command to paste. */
+const joinCommand = (room: string, bind: string, port: number) =>
+  relayJoinCommand(
+    room,
+    bind === "0.0.0.0" || bind === "::" ? "<this machine's address>" : bind,
+    port,
+  );
 
 const host = Command.make(
   "host",
   {
     campaignDir: Argument.String("campaign-dir").pipe(
-      Argument.withDescription("Folder holding events.jsonl and the host key (default ./campaign)"),
+      Argument.withDescription(
+        "The campaign folder, made with `new` (default ./campaign); it holds events.jsonl and the host key",
+      ),
       Argument.withDefault("campaign"),
     ),
     port: Flag.Int("port").pipe(
@@ -166,12 +172,22 @@ const host = Command.make(
       return yield* new HostError({
         message: `a relay's room is 1-32 of a-z, 0-9 and -, starting with a letter: pick one with --room, not ${room}`,
       });
-    // The log is every word said at the table: a new campaign folder is its owner's alone.
-    yield* Effect.tryPromise({
-      try: () => mkdir(dir, { recursive: true, mode: 0o700 }),
+    // A mistyped folder would open an empty table under a new host key, which players' ssh
+    // warns about: only `new` makes a campaign.
+    const folder = yield* Effect.tryPromise({
+      try: () =>
+        stat(dir).catch((e: NodeJS.ErrnoException) =>
+          e.code === "ENOENT" ? undefined : Promise.reject(e),
+        ),
       catch: (e) =>
-        new HostError({ message: `can't make the campaign folder ${dir}: ${messageOf(e)}` }),
+        new HostError({ message: `can't open the campaign folder ${dir}: ${messageOf(e)}` }),
     });
+    if (folder === undefined)
+      return yield* new HostError({
+        message: `there's no campaign at ${dir}; make one with: ${SELF} new ${o.campaignDir} (--example for the sample)`,
+      });
+    if (!folder.isDirectory())
+      return yield* new HostError({ message: `${dir} isn't a folder, so it can't be a campaign` });
     // The table (OpenTUI and Solid) loads only here, so `check` never needs it. Its JSX needs the
     // Solid transform, which bunfig.toml preloads only when run from the repo root.
     yield* Effect.promise(() => import("../preload.ts"));
@@ -221,24 +237,30 @@ const host = Command.make(
       yield* Console.log(
         `host key ${server.hostKeyFingerprint}${relay ? " (this table's: direct connections only)" : ""}`,
       );
+      // host.log carries the same key guidance as stdout and /help: at a seat, it's all there is.
       yield* Effect.logInfo(
         relay
-          ? `hosting "${room}" on ${o.bind}:${server.port} (direct: ${direct}); through the relay: ${joining}`
-          : `hosting "${room}" on ${o.bind}:${server.port}, players: ${joining}`,
+          ? `hosting "${room}" on ${o.bind}:${server.port} (direct: ${direct}); through the relay: ${joining}; players' ssh sees the relay's host key: ${relayHostKeyText}; this table's host key ${server.hostKeyFingerprint} is for direct connections only`
+          : `hosting "${room}" on ${o.bind}:${server.port}, players: ${joining}; host key ${server.hostKeyFingerprint}`,
       );
       if (o.headless) return yield* Effect.never;
+      const relayJoining =
+        relay === undefined
+          ? joining
+          : `${relay.joinCommand}${relayHostKey === undefined ? "" : ` · relay host key ${relayHostKey}`}`;
       yield* localSeat({
         room,
         helpFooter: relay
           ? `Players join through the relay with: ${joining}\nThe relay's host key, which their ssh sees: ${relayHostKeyText}\nPlayers here can join directly: ${direct} (host key ${server.hostKeyFingerprint})`
           : `Players join with: ${joining}\nHost key: ${server.hostKeyFingerprint}`,
-        joinHint: joining,
+        // The seat covers what was printed, so the band carries the key players check too.
+        joinHint: relay ? joining : `${joining} · host key ${server.hostKeyFingerprint}`,
         ...(relay === undefined
           ? {}
           : {
               joinNote: {
-                get: Effect.map(relay.status.get, (s) => joinNote(s, relay.joinCommand)),
-                changes: Stream.map(relay.status.changes, (s) => joinNote(s, relay.joinCommand)),
+                get: Effect.map(relay.status.get, (s) => joinNote(s, relayJoining)),
+                changes: Stream.map(relay.status.changes, (s) => joinNote(s, relayJoining)),
               },
               alert: {
                 get: Effect.map(relay.status.get, linkAlert),
@@ -247,7 +269,17 @@ const host = Command.make(
             }),
       });
       yield* Effect.logInfo("the GM left the table; shutting down");
-    }).pipe(Effect.provide(layer), Effect.provide(logs));
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provide(logs),
+      Effect.mapError((e) =>
+        e._tag === "SshError" && /EADDRINUSE/.test(e.message)
+          ? new HostError({
+              message: `port ${o.port} on ${o.bind} is in use (another table?); pick another with --port, or --port 0 for any free one`,
+            })
+          : e,
+      ),
+    );
   }),
 ).pipe(
   Command.withDescription(
@@ -369,11 +401,25 @@ const check = Command.make(
     ),
   },
   Effect.fn(function* (o) {
-    const path = join(resolve(o.campaignDir), "events.jsonl");
+    const dir = resolve(o.campaignDir);
+    const path = join(dir, "events.jsonl");
     const text = yield* Effect.tryPromise({
-      try: () => readFile(path, "utf8"),
-      catch: (e) => new CheckError({ message: `can't read ${path}: ${messageOf(e)}` }),
+      try: () =>
+        readFile(path, "utf8").catch(async (e: NodeJS.ErrnoException) => {
+          if (e.code !== "ENOENT") throw e;
+          await stat(dir);
+          return undefined;
+        }),
+      catch: (e) =>
+        new CheckError({
+          message:
+            (e as NodeJS.ErrnoException).code === "ENOENT"
+              ? `there's no campaign at ${dir}`
+              : `can't read ${path}: ${messageOf(e)}`,
+        }),
     });
+    if (text === undefined)
+      return yield* Console.log(`${path}: no log yet; the table hasn't been opened`);
     const report = checkLog(path, text);
     for (const warning of report.warnings) yield* Console.error(warning);
     yield* Console.log(report.out.join("\n"));

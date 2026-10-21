@@ -2,7 +2,7 @@ import { GM, type Refused } from "../module.ts";
 import { quote } from "../text.ts";
 import type { Square } from "./map.ts";
 import { marksOf } from "./marks.ts";
-import type { Characteristic, HeroSheet, StatBlock } from "./sheets.ts";
+import type { HeroSheet, StatBlock } from "./sheets.ts";
 
 export type Side = "heroes" | "director";
 
@@ -44,6 +44,8 @@ export interface Hero {
   readonly resource: number;
   readonly surges: number;
   readonly victories: number;
+  /** Experience: each respite adds the Victories the hero had. */
+  readonly xp: number;
   readonly conditions: ReadonlyArray<Condition>;
   /** The actor who plays this hero, if anyone has claimed it. */
   readonly player?: string;
@@ -142,13 +144,7 @@ export const everyone = (slice: DrawSteelState): ReadonlyArray<Who> => [
 export const findWho = (slice: DrawSteelState, id: string): Who | undefined =>
   everyone(slice).find((w) => w.id === id);
 
-export const CHARACTERISTICS: ReadonlyArray<Characteristic> = [
-  "might",
-  "agility",
-  "reason",
-  "intuition",
-  "presence",
-];
+export { CHARACTERISTICS } from "./sheets.ts";
 
 export const capitalized = (s: string): string => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
 
@@ -277,7 +273,7 @@ export function creatureHealth(creature: Creature): Health | undefined {
   return undefined;
 }
 
-export const healthOf = (who: Who): Health | undefined =>
+const healthOf = (who: Who): Health | undefined =>
   who.kind === "hero" ? heroHealth(who.hero) : creatureHealth(who.creature);
 
 export const isDead = (who: Who): boolean => healthOf(who) === "dead";

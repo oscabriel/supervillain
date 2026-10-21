@@ -4,10 +4,16 @@ import { signed } from "../dice.ts";
 import type { FeedNote } from "../module.ts";
 import { hasTerminalControls } from "../text.ts";
 import { type EventType, type Payload, Payloads } from "./events.ts";
-import { distance, formatSquare, misshapen, type Square, standable } from "./map.ts";
+import { distance, formatSquare, misshapen, sameSquare, type Square, standable } from "./map.ts";
 
 import { safeSheet } from "./schema.ts";
-import type { Characteristic, HeroSheet } from "./sheets.ts";
+import {
+  type Ability,
+  characteristicOfLetter,
+  type HeroSheet,
+  isTrait,
+  reachOf,
+} from "./sheets.ts";
 import {
   andList,
   type Board,
@@ -92,6 +98,16 @@ function withWho(
     : withCreature(slice, id, f);
 }
 
+/** A hero this change killed has no conditions left: the dead aren't slowed or bleeding. */
+function buried(before: DrawSteelState, after: DrawSteelState, id: string): DrawSteelState {
+  const [was, now] = [findWho(before, id), findWho(after, id)];
+  if (was?.kind !== "hero" || now?.kind !== "hero") return after;
+  if (heroHealth(was.hero) === "dead" || heroHealth(now.hero) !== "dead") return after;
+  return now.hero.conditions.length === 0
+    ? after
+    : withHero(after, id, (h) => ({ ...h, conditions: [] }));
+}
+
 const healthSuffix = (health: Health | undefined) => (health === undefined ? "" : ` · ${health}`);
 
 /** "14/21 · winded", read from the state after the change. */
@@ -146,6 +162,7 @@ function heroJoined(slice: DrawSteelState, envelope: Envelope): Applied {
     resource: 0,
     surges: 0,
     victories: sheet.victories,
+    xp: 0,
     conditions: [],
   };
   return {
@@ -236,9 +253,13 @@ function combatStarted(slice: DrawSteelState, envelope: Envelope): Applied {
   next = { ...next, malice: total, combat: { active: true, round: 1, roll, acted: [] } };
   const picker = roll >= 6 ? "the players pick" : "the Director picks";
   const text = [
-    `Combat begins, round 1. d10: ${roll}, so ${picker} who goes first (/first heroes or /first director).`,
+    `Combat begins, round 1. d10: ${roll}, so ${picker} who goes first, and the GM types /first heroes or /first director.`,
     `Malice ${signed(added) || "+0"} (${malice.victories} for Victories, ${plural(malice.heroes, "hero", "heroes")}, round ${malice.round}) → ${total}.`,
     ...(gained.length > 0 ? [`${gained.join(", ")}.`] : []),
+    // A session starts with one token per hero, which nothing else on screen reminds a GM of.
+    ...(slice.tokens === 0 && slice.heroes.length > 0
+      ? ["The party has no hero tokens; /token reset gives one per hero."]
+      : []),
   ].join(" ");
   return { slice: next, feed: { kind: "ds-turn", text } };
 }
@@ -387,6 +408,7 @@ function rested(slice: DrawSteelState, envelope: Envelope): Applied {
               recoveries: h.sheet.recoveries,
               temp: 0,
               victories: 0,
+              xp: h.xp + h.victories,
             },
       ),
     },
@@ -394,75 +416,139 @@ function rested(slice: DrawSteelState, envelope: Envelope): Applied {
   };
 }
 
-const LETTERS: Readonly<Record<string, Characteristic>> = {
-  M: "might",
-  A: "agility",
-  R: "reason",
-  I: "intuition",
-  P: "presence",
-};
-
 /** "8 + M damage" read with the hero's Might of 2: "8 + M (2) = 10 damage". */
 const withScores = (text: string, sheet: HeroSheet) =>
   text.replace(/\b(\d+) \+ ([MARIP])\b/g, (_match, n: string, letter: string) => {
-    const score = sheet.characteristics[LETTERS[letter]!];
+    const score = sheet.characteristics[characteristicOfLetter(letter)!];
     return `${n} + ${letter} (${score}) = ${Number(n) + score}`;
   });
+
+const abilitiesOf = (slice: DrawSteelState, found: Who): ReadonlyArray<Ability> =>
+  found.kind === "hero"
+    ? found.hero.sheet.abilities
+    : (slice.blocks[found.creature.block]?.abilities ?? []);
+
+/** A cost off the hero's resource or the Malice pool, and how the feed says it: " (3 Wrath → 1)". */
+function spend(
+  slice: DrawSteelState,
+  envelope: Envelope,
+  found: Who,
+  cost: number | undefined,
+): { readonly next: DrawSteelState; readonly paid: string } {
+  if (cost !== undefined && cost < 0) bad(envelope, "has a negative cost");
+  if (found.kind === "creature" && slice.malice - (cost ?? 0) < 0)
+    bad(envelope, "spends Malice the Director doesn't have");
+  if (cost === undefined || cost === 0) return { next: slice, paid: "" };
+  if (found.kind === "hero") {
+    const after = found.hero.resource - cost;
+    return {
+      next: withHero(slice, found.id, (h) => ({ ...h, resource: after })),
+      paid: ` (${cost} ${found.hero.sheet.resource.name} → ${after})`,
+    };
+  }
+  const malice = slice.malice - cost;
+  return { next: { ...slice, malice }, paid: ` (${cost} Malice → ${malice})` };
+}
+
+/** Sentences run together with one full stop between: "6 damage. Effect: …". */
+const sentences = (parts: ReadonlyArray<string | undefined>) =>
+  parts
+    .filter((p): p is string => p !== undefined && p !== "")
+    .map((p) => p.replace(/\.$/, ""))
+    .join(". ");
 
 /**
  * A power roll as decide scored it: the stored total and tier are trusted, so a later change to
  * the scoring never halts an old log. A cost comes off the hero's resource or the Malice pool.
+ * The line names its targets, the tier's text and the ability's effect, and any target that
+ * stood past the ability's reach; the damage follows in its own events.
  */
 function powerRolled(slice: DrawSteelState, envelope: Envelope): Applied {
   const p = decode("ds.power-rolled", envelope);
   const found = who(slice, envelope, p.id);
   if (p.dice.some((d) => d < 1 || d > 10)) bad(envelope, "has dice that aren't d10s");
-  if (p.cost !== undefined && p.cost < 0) bad(envelope, "has a negative cost");
-  if (found.kind === "creature" && slice.malice - (p.cost ?? 0) < 0)
-    bad(envelope, "spends Malice the Director doesn't have");
-  const abilities =
-    found.kind === "hero"
-      ? found.hero.sheet.abilities
-      : (slice.blocks[found.creature.block]?.abilities ?? []);
-  const ability = abilities.find((a) => a.name === p.ability);
+  const targets = (p.targets ?? []).map((t) => ({ ...t, name: who(slice, envelope, t.id).name }));
+  const ability = abilitiesOf(slice, found).find((a) => a.name === p.ability);
   const printed = ability?.[`tier${p.tier}`];
   const tierText =
     printed !== undefined && found.kind === "hero"
       ? withScores(printed, found.hero.sheet)
       : printed;
-  let next = slice;
-  let paid = "";
-  if (p.cost !== undefined && p.cost > 0) {
-    if (found.kind === "hero") {
-      const after = found.hero.resource - p.cost;
-      next = withHero(slice, p.id, (h) => ({ ...h, resource: after }));
-      paid = ` (${p.cost} ${found.hero.sheet.resource.name} → ${after})`;
-    } else {
-      next = { ...slice, malice: slice.malice - p.cost };
-      paid = ` (${p.cost} Malice → ${next.malice})`;
-    }
-  }
+  const { next, paid } = spend(slice, envelope, found, p.cost);
+  const at = targets.length === 0 ? "" : ` on ${andList(targets.map((t) => t.name))}`;
   const head =
     p.ability !== undefined
-      ? `${found.name} uses ${p.ability}${paid}:`
+      ? `${found.name} uses ${p.ability}${at}${paid}:`
       : p.characteristic !== undefined
-        ? `${found.name} rolls ${capitalized(p.characteristic)}:`
-        : `${found.name} rolls:`;
+        ? `${found.name} rolls ${capitalized(p.characteristic)}${at}:`
+        : `${found.name} rolls${at}:`;
   const net = Math.min(p.edges, 2) - Math.min(p.banes, 2);
   const natural = p.dice[0] + p.dice[1] >= 19;
   const notes = [
     ...(net === 2 ? ["double edge"] : net === -2 ? ["double bane"] : []),
     ...(natural ? [`natural ${p.dice[0] + p.dice[1]}`] : []),
   ];
+  const said = sentences([tierText, ability?.effect && `Effect: ${ability.effect}`]);
+  const reach = ability === undefined ? undefined : reachOf(ability);
+  const far = targets
+    .filter((t) => reach !== undefined && t.apart !== undefined && t.apart > reach)
+    .map((t) => `${t.name} is ${plural(t.apart!, "square")} away`);
   const text = [
     head,
     `[${p.dice[0]}, ${p.dice[1]}]`,
     ...(p.bonus !== 0 ? [signed(p.bonus)] : []),
     ...(net === 1 ? ["+2 edge"] : net === -1 ? ["-2 bane"] : []),
     `= ${p.total}${notes.length > 0 ? `, ${notes.join(", ")}` : ""}`,
-    `· tier ${p.tier}${tierText !== undefined ? ` — ${tierText}` : ""}`,
+    `· tier ${p.tier}${said !== "" ? ` — ${said}${ability?.effect !== undefined ? "." : ""}` : ""}`,
+    ...(far.length > 0 ? [`(${far.join("; ")}; ${ability?.distance})`] : []),
   ].join(" ");
   return { slice: next, feed: { kind: "ds-roll", text } };
+}
+
+/** An ability with no power roll: its cost spent, and its effect for the table to read. */
+function abilityUsed(slice: DrawSteelState, envelope: Envelope): Applied {
+  const p = decode("ds.ability-used", envelope);
+  const found = who(slice, envelope, p.id);
+  if (!isSafe(p.ability)) bad(envelope, "holds control characters");
+  const effect = abilitiesOf(slice, found).find((a) => a.name === p.ability)?.effect;
+  const { next, paid } = spend(slice, envelope, found, p.cost);
+  const text = `${found.name} uses ${p.ability}${paid}${effect === undefined ? "." : `: ${effect}`}`;
+  return { slice: next, feed: { kind: "ds-roll", text } };
+}
+
+/** Bleeding's Stamina loss: not damage, so temporary Stamina doesn't take it (Classes, "Bleeding"). */
+function bled(slice: DrawSteelState, envelope: Envelope): Applied {
+  const { id, roll, level } = decode("ds.bled", envelope);
+  const found = who(slice, envelope, id);
+  if (roll < 1 || roll > 6) bad(envelope, `has a d6 of ${roll}`);
+  if (level < 0) bad(envelope, "has a negative level");
+  const loss = roll + level;
+  const lost = withWho(slice, envelope, id, (x) => ({
+    ...x,
+    stamina: "sheet" in x ? x.stamina - loss : Math.max(0, x.stamina - loss),
+  }));
+  const next = buried(slice, lost, id);
+  return {
+    slice: next,
+    feed: {
+      kind: "ds",
+      text: `${found.name} bleeds and loses ${loss} Stamina (1d6: ${roll}, + level ${level}) → ${meter(next, id)}`,
+    },
+  };
+}
+
+/**
+ * A creature's traits that start at half Stamina, as " · Name: effect", when this change took
+ * it there: the Director has them in front of them as it happens.
+ */
+function windedTraits(before: Who, after: Who | undefined, slice: DrawSteelState): string {
+  if (before.kind !== "creature" || after?.kind !== "creature") return "";
+  if (creatureHealth(before.creature) !== undefined) return "";
+  if (creatureHealth(after.creature) !== "winded") return "";
+  return (slice.blocks[after.creature.block]?.abilities ?? [])
+    .filter((a) => isTrait(a) && /half (its |their )?stamina|winded/i.test(a.effect ?? ""))
+    .map((a) => ` · ${a.name}: ${a.effect}`)
+    .join("");
 }
 
 function damaged(slice: DrawSteelState, envelope: Envelope): Applied {
@@ -473,7 +559,7 @@ function damaged(slice: DrawSteelState, envelope: Envelope): Applied {
   const temp = target.kind === "hero" ? target.hero.temp : target.creature.temp;
   const fromTemp = Math.min(temp, p.dealt);
   const before = target.kind === "creature" ? minionsLeft(target.creature) : 0;
-  const next = withWho(slice, envelope, p.id, (x) => ({
+  const hit = withWho(slice, envelope, p.id, (x) => ({
     ...x,
     temp: x.temp - fromTemp,
     stamina:
@@ -481,6 +567,7 @@ function damaged(slice: DrawSteelState, envelope: Envelope): Applied {
         ? x.stamina - (p.dealt - fromTemp)
         : Math.max(0, x.stamina - (p.dealt - fromTemp)),
   }));
+  const next = buried(slice, hit, p.id);
   const details: string[] = [];
   if (p.weakness !== undefined || p.immunity !== undefined)
     details.push(
@@ -501,7 +588,7 @@ function damaged(slice: DrawSteelState, envelope: Envelope): Applied {
   const far = p.apart !== undefined && p.apart > 1 ? ` from ${plural(p.apart, "square")} away` : "";
   const source =
     p.source === undefined ? "" : `${nameOf(slice, p.source)} free strikes${together}${far}: `;
-  const text = `${source}${target.name} takes ${p.dealt}${p.type !== undefined ? ` ${p.type}` : ""} damage${details.length > 0 ? ` (${details.join("; ")})` : ""} → ${meter(next, p.id)}${squad}`;
+  const text = `${source}${target.name} takes ${p.dealt}${p.type !== undefined ? ` ${p.type}` : ""} damage${details.length > 0 ? ` (${details.join("; ")})` : ""} → ${meter(next, p.id)}${squad}${windedTraits(target, after, next)}`;
   return { slice: next, feed: { kind: "ds", text } };
 }
 
@@ -787,6 +874,11 @@ function forceMoved(slice: DrawSteelState, envelope: Envelope): Applied {
   const board = boardOf(slice, envelope);
   const found = who(slice, envelope, p.id);
   const from = board.tokens[p.id] ?? bad(envelope, `moves '${p.id}', who isn't on the map`);
+  if (p.from !== undefined && !sameSquare(p.from, from))
+    bad(
+      envelope,
+      `moves '${p.id}' from ${formatSquare(p.from)}, but they stand at ${formatSquare(from)}`,
+    );
   checkPath(envelope, board, from, p.path);
   if (p.slam !== undefined && p.slam.remaining < 1) bad(envelope, "slams with nothing left");
   const into =
@@ -851,6 +943,8 @@ const appliers: Readonly<
   "ds.combat-ended": combatEnded,
   "ds.rested": rested,
   "ds.power-rolled": powerRolled,
+  "ds.ability-used": abilityUsed,
+  "ds.bled": bled,
   "ds.damaged": damaged,
   "ds.healed": healed,
   "ds.temp-set": tempSet,

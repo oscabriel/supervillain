@@ -1,8 +1,8 @@
 import type { Refused } from "./module.ts";
 import { quote } from "./text.ts";
 
-export const MAX_DICE = 100;
-export const MAX_SIDES = 1000;
+const MAX_DICE = 100;
+const MAX_SIDES = 1000;
 export const MAX_MODIFIER = 1000;
 
 export interface Notation {

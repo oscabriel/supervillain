@@ -1,4 +1,4 @@
-import { columnLabel, parseSquare } from "../game/drawSteel/map.ts";
+import { columnLabel, formatSquare, parseSquare } from "../game/drawSteel/map.ts";
 import { pick } from "../game/drawSteel/state.ts";
 import { quote } from "../game/text.ts";
 import type { MapToken, MapView } from "./view.ts";
@@ -187,9 +187,9 @@ export interface Focus {
 }
 
 /**
- * Where a seat's `/view <square|who>` points: a token by its exact mark ("B", "b1", which wins
- * over the square it spells, as in commands), else a square on the map, else a token by its id or
- * name or a unique start of either or of a word in one.
+ * Where a seat's `/view <square|who>` points, read as /dist reads it (board.ts `point`): a token
+ * by its exact mark ("B", "b1", which wins over the square it spells), else a square (refused past
+ * the map's edge), else a token by its id or name or a unique start of either or of a word in one.
  */
 export function focusOf(
   map: MapView,
@@ -199,7 +199,10 @@ export function focusOf(
   const marked = map.tokens.find((t) => t.mark === q);
   if (marked !== undefined) return { token: marked.id };
   const square = parseSquare(q);
-  if (square !== undefined && square.x < map.width && square.y < map.height) return { square };
+  if (square !== undefined)
+    return square.x < map.width && square.y < map.height
+      ? { square }
+      : { refusal: `${formatSquare(square)} is outside the map.` };
   const found = pick(
     map.tokens,
     (t) => [t.id, t.name],
@@ -332,8 +335,17 @@ export function mapLayout(map: MapView, width: number, height: number, focus?: F
     const shown = cy >= 0 && cy < down.span;
     lines.push([lead(shown ? String(down.origin + cy + 1) : ""), ...row(cy)]);
   }
+  // Rows and columns left out have no other sign when no token is past them.
+  const cropped = [
+    down.span < map.height
+      ? `rows ${down.origin + 1}-${down.origin + down.span} of ${map.height}`
+      : "",
+    across.span < map.width
+      ? `columns ${columnLabel(across.origin)}-${columnLabel(across.origin + across.span - 1)} of a-${columnLabel(map.width - 1)}`
+      : "",
+  ].filter((part) => part !== "");
   return {
-    title,
+    title: cropped.length === 0 ? title : `${title.trimEnd()} · ${cropped.join(", ")} `,
     reachClipped: map.reach.some((r) => !inView(view, r)),
     bottomTitle: offscreenTitle(
       off.map((t) => `${arrowOf(t)}${t.mark}`),

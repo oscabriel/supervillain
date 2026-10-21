@@ -219,7 +219,9 @@ describe("a seat over a real room", () => {
         ]);
         expect(g.view.present().map((p) => p.label)).toEqual(["GM", "Alice (Brann)"]);
 
+        // Each seat sends in order, but two seats race: wait for one line to land before the next.
         yield* type(g, "/add bandit-chief");
+        yield* frameWhere(g, "the chief", (f) => f.includes("Bandit Chief joins the fight"));
         yield* type(g, "/start");
         yield* frameWhere(a, "the fight", (f) => f.includes("round 1"));
         const band = a.view.combat?.();
@@ -233,6 +235,26 @@ describe("a seat over a real room", () => {
     ),
   );
 
+  effect("a chat line leaves the band and the map as they were, so neither is drawn again", () =>
+    atTable(
+      Effect.gen(function* () {
+        const g = yield* seat("gm");
+        yield* type(g, "/hero brann");
+        yield* type(g, "/map ford-road");
+        yield* type(g, "/place brann b5");
+        yield* frameWhere(g, "Brann's token", () => (g.view.map?.()?.tokens.length ?? 0) > 0);
+        const [band, map] = [g.view.combat?.(), g.view.map?.()];
+        yield* type(g, "just chatting");
+        yield* frameWhere(g, "the chat", (f) => f.includes("GM: just chatting"));
+        expect(g.view.combat?.()).toBe(band);
+        expect(g.view.map?.()).toBe(map);
+        yield* type(g, "/dmg brann 1");
+        yield* frameWhere(g, "the damage", (f) => f.includes("23/24"));
+        expect(g.view.combat?.()).not.toBe(band);
+      }),
+    ),
+  );
+
   effect("draws the map from the room, with each seat's own hero and where it can reach", () =>
     atTable(
       Effect.gen(function* () {
@@ -241,7 +263,10 @@ describe("a seat over a real room", () => {
         expect(g.view.map?.()).toBeUndefined();
         yield* type(a, "Alice");
         yield* type(g, "/hero brann");
+        // /hero reads a file first, so Alice's /play would overtake it from another seat.
+        yield* frameWhere(a, "Brann", (f) => f.includes("Brann joins the party"));
         yield* type(a, "/play brann");
+        yield* frameWhere(a, "Alice's hero", (f) => f.includes("Alice takes Brann"));
         yield* type(g, "/map ford-road");
         yield* frameWhere(a, "the map's column letters", (f) => f.includes("The Ford Road"));
         yield* type(a, "/place brann b5");

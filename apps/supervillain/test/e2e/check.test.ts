@@ -41,7 +41,7 @@ describe("supervillain check", () => {
             "",
             "feed:",
             "     1  GM: Welcome to the den.",
-            "     2  vexVEXve is now Vex",
+            "     2  Vex joins the table.",
             "     3  Vex rolled 2d10+2: [4, 9] +2 = 15",
             "     5  guest-7f3a waves",
             "",
@@ -90,12 +90,19 @@ describe("supervillain check", () => {
   );
 
   effect(
-    "a folder with no log says so and exits 1",
+    "a folder that isn't there says so and exits 1; a campaign with no log yet says that",
     () =>
       Effect.gen(function* () {
-        const result = yield* cli(["check", join(yield* tempDir, "nowhere")]);
-        expect(result.exitCode).toBe(1);
-        expect(result.stderr).toContain("events.jsonl");
+        const nowhere = join(yield* tempDir, "nowhere");
+        const missing = yield* cli(["check", nowhere]);
+        expect(missing.exitCode).toBe(1);
+        expect(missing.stderr.trim()).toBe(`supervillain: there's no campaign at ${nowhere}`);
+        const fresh = yield* tempDir;
+        const empty = yield* cli(["check", fresh]);
+        expect(empty).toMatchObject({
+          exitCode: 0,
+          stdout: `${join(fresh, "events.jsonl")}: no log yet; the table hasn't been opened\n`,
+        });
       }),
     15_000,
   );

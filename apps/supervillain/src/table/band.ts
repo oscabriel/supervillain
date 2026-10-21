@@ -32,8 +32,9 @@ export interface BandLayout {
   /** Combatants left out for lack of room, shown as `+N more`. */
   readonly more: number;
   /**
-   * The fewest lines that hold every hero's row whole and the creature acting, if one is, with
-   * every other creature counted in `more`: what a band beside a reply pane must keep.
+   * The fewest lines that hold every living hero's row whole (but for its Recoveries) and the
+   * creature acting, if one is, with every other creature counted in `more`: what a band beside a
+   * reply pane or a map must keep.
    */
   readonly keepLines: number;
 }
@@ -310,7 +311,13 @@ function cellsOf(
   return shown.map((c) => cellOf(c, combat, nameWidth, numberWidth, marks));
 }
 
-/** The dead creatures, folded into one line: "dead: Bandit Cutpurse A, Bandit Slinger A". */
+/** A row as it reads when room is short: a hero's Recoveries go first, since /sheet has them. */
+function compact(c: Combatant): Combatant {
+  const { recoveries: _recoveries, ...rest } = c;
+  return rest;
+}
+
+/** The dead, folded into one line: "dead: Brann (Alice), Bandit Cutpurse A". */
 const fallenLine = (fallen: ReadonlyArray<Combatant>, width: number): Line =>
   truncate(
     [
@@ -323,12 +330,13 @@ const fallenLine = (fallen: ReadonlyArray<Combatant>, width: number): Line =>
 /**
  * Lays the band out in `width` columns and at most `rows` lines, giving up the least first: short
  * rows always pair up and long ones wrap; then creatures' names shorten so they pair up too while
- * heroes keep whole rows; then long rows drop their last details for `…`; and when even that
- * overflows, every cell is fitted to half the width and whoever still doesn't fit is counted in
- * `more`. Dead creatures fold into one `dead:` line at the end, the first thing to go. Outside
- * combat only the heroes show, without turn markers. With `heroesWhole`, no hero row is cut:
- * after the pairing, the dead line goes and then creatures are counted in `more`, the one acting
- * last; only when the heroes alone overflow does the last resort above apply.
+ * heroes keep whole rows; then heroes' Recoveries go; then long rows drop their last details for
+ * `…`; and when even that overflows, every cell is fitted to half the width and whoever still
+ * doesn't fit is counted in `more`. The dead, heroes too, fold into one `dead:` line at the end,
+ * the first thing to go. Outside combat only the heroes show, without turn markers. With
+ * `heroesWhole`, no hero row is cut but for its Recoveries: after the pairing, the dead line goes
+ * and then creatures are counted in `more`, the one acting last; only when the heroes alone
+ * overflow does the last resort above apply.
  */
 export function bandLayout(
   view: CombatView,
@@ -338,13 +346,14 @@ export function bandLayout(
 ): BandLayout {
   const title = titleOf(view);
   const all = view.active ? view.combatants : view.combatants.filter((c) => c.side === "heroes");
-  const fallen = all.filter((c) => c.side === "director" && c.health === "dead");
+  const fallen = all.filter((c) => c.health === "dead");
   const shown = all.filter((c) => !fallen.includes(c));
+  const short = shown.map(compact);
   const room = Math.max(1, rows);
   const column = Math.floor((width - GAP) / 2);
   const halves = column >= MIN_COLUMN;
   const tail = fallen.length === 0 ? [] : [fallenLine(fallen, width)];
-  const essential = shown.filter((c) => c.side === "heroes" || c.acting);
+  const essential = short.filter((c) => c.side === "heroes" || c.acting);
   const keepLines = mixedLines(essential, view.active, width, column).length;
 
   const full = cellsOf(shown, view.active, () => width);
@@ -354,6 +363,7 @@ export function bandLayout(
   const attempts: ReadonlyArray<() => ReadonlyArray<Line>> = [
     () => pack(full.map(flat), column, (i) => wrap(full[i]!, width)),
     () => mixedLines(shown, view.active, width, column),
+    () => mixedLines(short, view.active, width, column),
     ...(options.heroesWhole
       ? []
       : [
@@ -375,12 +385,12 @@ export function bandLayout(
 
   if (options.heroesWhole) {
     // The dead line goes first, then the creatures least worth watching: the one acting stays longest.
-    const creatures = shown.filter((c) => c.side === "director");
+    const creatures = short.filter((c) => c.side === "director");
     const order = creatures.toSorted((a, b) => Number(b.acting) - Number(a.acting));
     for (let k = creatures.length; k >= 0; k--) {
       const kept = new Set(order.slice(0, k));
       const lines = mixedLines(
-        shown.filter((c) => c.side === "heroes" || kept.has(c)),
+        short.filter((c) => c.side === "heroes" || kept.has(c)),
         view.active,
         width,
         column,

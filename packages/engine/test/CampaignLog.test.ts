@@ -24,10 +24,21 @@ describe("CampaignLog", () => {
       const dir = yield* tempDir;
       const first = [env(1, "added", { n: 2 }), env(2, "added", { n: 3 })];
       yield* withLog(dir, (log) => log.append(first));
-      const reopened = yield* withLog(dir, (log) => Effect.succeed(log.envelopes));
+      const reopened = yield* withLog(dir, (log) => Effect.succeed(log.take()));
       expect(reopened).toEqual(first);
       const text = yield* Effect.promise(() => readFile(join(dir, "events.jsonl"), "utf8"));
       expect(text).toBe(first.map((e) => JSON.stringify(e) + "\n").join(""));
+    }),
+  );
+
+  effect("hands over what it read once, so it doesn't hold the whole log for the host's life", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      const first = [env(1, "added", { n: 2 })];
+      yield* withLog(dir, (log) => log.append(first));
+      const [once, again] = yield* withLog(dir, (log) => Effect.succeed([log.take(), log.take()]));
+      expect(once).toEqual(first);
+      expect(again).toEqual([]);
     }),
   );
 
@@ -36,7 +47,7 @@ describe("CampaignLog", () => {
       const dir = yield* tempDir;
       const one = env(1, "added", { n: 2 });
       yield* writeLog(dir, line(one) + '{"actor":"gm","se');
-      const opened = yield* withLog(dir, (log) => Effect.succeed(log.envelopes));
+      const opened = yield* withLog(dir, (log) => Effect.succeed(log.take()));
       expect(opened).toEqual([one]);
       expect(yield* readLog(dir)).toBe(line(one));
     }),
@@ -60,6 +71,10 @@ describe("CampaignLog", () => {
       const dir = yield* tempDir;
       const second = yield* withLog(dir, () => Effect.flip(withLog(dir, () => Effect.void)));
       expect(second.message).toContain(`another host (pid ${process.pid})`);
+      // A crash can leave a lock whose pid another program has since taken: say how to clear it.
+      expect(second.message).toContain(
+        `if no host has it open, delete ${join(dir, "events.lock")} and start again`,
+      );
       yield* withLog(dir, () => Effect.void);
     }),
   );
@@ -105,13 +120,14 @@ describe("CampaignLog", () => {
 
         const count = yield* withLog(dir, (log) =>
           Effect.gen(function* () {
-            expect(log.envelopes.length).toBeGreaterThan(0);
-            expect(log.envelopes.map((e) => e.seq)).toEqual(log.envelopes.map((_, i) => i + 1));
-            yield* log.append([env(log.envelopes.length + 1, "added", { n: 1 })]);
-            return log.envelopes.length + 1;
+            const opened = log.take();
+            expect(opened.length).toBeGreaterThan(0);
+            expect(opened.map((e) => e.seq)).toEqual(opened.map((_, i) => i + 1));
+            yield* log.append([env(opened.length + 1, "added", { n: 1 })]);
+            return opened.length + 1;
           }),
         );
-        const reread = yield* withLog(dir, (log) => Effect.succeed(log.envelopes.length));
+        const reread = yield* withLog(dir, (log) => Effect.succeed(log.take().length));
         expect(reread).toBe(count);
       }),
     10_000,

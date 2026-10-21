@@ -5,6 +5,8 @@ import {
   type SessionInfo,
   type SshError,
   serve,
+  type Rate,
+  rateLimiter,
 } from "@supervillain/ssh";
 import { Clock, Context, Effect, Layer } from "effect";
 import { CampaignContent } from "../content/index.ts";
@@ -12,7 +14,6 @@ import { plainText } from "../game/index.ts";
 import { execLine, runLine } from "./line.ts";
 import { Presence } from "./Presence.ts";
 import { mountTable, openSeat } from "./Seat.ts";
-import { type Rate, rateLimiter } from "./rate.ts";
 import { RelayLink, type RelayLinkOptions, type RelayLinkService } from "./RelayLink.ts";
 import type { TableServices } from "./services.ts";
 import { TableRoom } from "./TableRoom.ts";
@@ -45,8 +46,8 @@ const actorOf = (info: SessionInfo) => info.relayedActor ?? info.identity.actor;
 /**
  * Whose rate a session's lines count against. A key is one person wherever they connect from,
  * so it is rated as itself. Keys cost nothing to make, so one address could seat a fresh key per
- * session; that's accepted, and the per-address connection and session caps bound it. A guest is a new actor every connection, so a direct guest is rated
- * by its address. Behind a relay every player shares the relay's address, and only the relay
+ * session; that's accepted, and the per-address connection and session caps bound it. A guest is
+ * a new actor every connection, so a direct guest is rated by its address (an IPv6 one by its /64). Behind a relay every player shares the relay's address, and only the relay
  * sees theirs: a relayed guest is rated as that guest of that relay, keyed by the relay's own
  * key so one relay's guest ids never spend another relay's players' rate. Keeping guest ids
  * stable per person is then the relay's job, as the trusted end that sees their addresses.
@@ -55,7 +56,7 @@ export const rateKeyOf = (info: SessionInfo): string => {
   const actor = actorOf(info);
   if (actor.startsWith("key:")) return actor;
   if (info.relayedActor !== undefined) return `relay:${info.identity.actor}/${actor}`;
-  return `address:${info.remoteAddress}`;
+  return `address:${addressBucket(info.remoteAddress)}`;
 };
 
 /**

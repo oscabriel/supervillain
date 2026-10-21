@@ -38,6 +38,7 @@ import {
   controls,
   type DrawSteelState,
   everyone,
+  findWho,
   heroOf,
   isDead,
   plural,
@@ -267,12 +268,11 @@ function sourceOf(
   if (actor !== GM) {
     const own = heroOf(slice, actor);
     if (own === undefined) return refuse("You can only force move with your own hero.");
-    return resolve(slice, own.id);
+    return findWho(slice, own.id);
   }
   const acting = slice.combat.acting;
   if (acting === undefined || acting === target.id) return undefined;
-  const who = resolve(slice, acting);
-  return "refusal" in who ? undefined : who;
+  return findWho(slice, acting);
 }
 
 /**
@@ -412,6 +412,7 @@ export function forceMove(
       id: target.id,
       kind,
       ...(source !== undefined && { source: source.id }),
+      from: start,
       distance: command.distance,
       stability,
       path: [...forced.path],

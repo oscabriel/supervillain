@@ -1,6 +1,7 @@
 import { useTerminalDimensions } from "@opentui/solid";
-import { For, Show } from "solid-js";
+import { createMemo, For, Show } from "solid-js";
 import { bandLayout, type Segment, type Tone } from "./band.ts";
+import { keepLines } from "./keep.ts";
 import { color, people, personColor, personLabel } from "./theme.ts";
 import type { CombatView, Present } from "./view.ts";
 
@@ -57,10 +58,16 @@ export function Band(props: {
 
 function Combat(props: { combat: CombatView; maxHeight: number; heroesWhole: boolean }) {
   const size = useTerminalDimensions();
-  const layout = () =>
-    bandLayout(props.combat, size().width - BAND_FRAME.width, props.maxHeight - BAND_FRAME.height, {
-      heroesWhole: props.heroesWhole,
-    });
+  const keep = keepLines<Segment>();
+  const layout = createMemo(() => {
+    const laid = bandLayout(
+      props.combat,
+      size().width - BAND_FRAME.width,
+      props.maxHeight - BAND_FRAME.height,
+      { heroesWhole: props.heroesWhole },
+    );
+    return { ...laid, lines: keep(laid.lines) };
+  });
   return (
     <box
       border

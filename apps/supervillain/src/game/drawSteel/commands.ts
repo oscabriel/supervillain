@@ -1,7 +1,7 @@
 import type { CommandSpec, CommandSpecs, Refused } from "../module.ts";
 import { cleanText, lengthOf, quote } from "../text.ts";
 import { type MapGrid, parseSquare, type Square } from "./map.ts";
-import type { HeroSheet, StatBlock } from "./sheets.ts";
+import { type HeroSheet, isTrait, type StatBlock } from "./sheets.ts";
 import {
   type ConditionName,
   CONDITIONS,
@@ -45,11 +45,17 @@ export type DsCommand =
     }
   | {
       readonly type: "play";
-      readonly hero: string;
+      /** Absent for a bare /play, which lists the heroes free to play. */
+      readonly hero?: string;
       /** The GM's form: the label of the player who gets the hero, as typed. */
       readonly player?: string;
       /** The actor the host found for `player`. Decide refuses `player` without it. */
       readonly playerActor?: string;
+      /**
+       * Actors with a seat open, filled in by the host (presence isn't in the log): a hero whose
+       * guest has left is free to take, since a guest never comes back as the same actor.
+       */
+      readonly seated?: ReadonlyArray<string>;
     }
   | { readonly type: "unplay"; readonly hero?: string }
   | { readonly type: "start" }
@@ -67,6 +73,8 @@ export type DsCommand =
       readonly bonus?: number;
       readonly edges: number;
       readonly banes: number;
+      /** Who it's aimed at, as typed after `on`: the tier's damage goes to each. */
+      readonly targets?: ReadonlyArray<string>;
     }
   | {
       readonly type: "dmg";
@@ -120,9 +128,9 @@ export type DsCommand =
   | ForcedCommand<"slide">;
 
 /** The most a single /dmg, /heal or /temp may move. */
-export const AMOUNT_MAX = 999;
+const AMOUNT_MAX = 999;
 /** The most creatures one /add may bring. */
-export const ADD_MAX = 40;
+const ADD_MAX = 40;
 /** The most minions in one squad. */
 export const SQUAD_SIZE = 8;
 const BONUS_MAX = 30;
@@ -147,7 +155,7 @@ const signedStep = (s: string | undefined): number | undefined =>
 const usage = (spec: { usage: string }): Refused => ({ refusal: `Usage: ${spec.usage}` });
 
 /** A condition by name or unique prefix, or why it isn't one. */
-export const conditionNamed = (typed: string): ConditionName | Refused =>
+const conditionNamed = (typed: string): ConditionName | Refused =>
   pick(
     CONDITIONS,
     (c) => [c],
@@ -288,7 +296,7 @@ const play: Spec<"play"> = {
   gmOnly: false,
   parse: (args) => {
     const [id, ...rest] = words(args);
-    if (id === undefined) return usage(play);
+    if (id === undefined) return { type: "play" };
     const player = rest.join(" ");
     return player === "" ? { type: "play", hero: id } : { type: "play", hero: id, player };
   },
@@ -343,28 +351,38 @@ const turn: Spec<"turn"> = {
     completeWho(slice, partial, actor).filter((id) => !slice.combat.acted.includes(id)),
 };
 
+/** Takes edge, bane, edge2 and bane2 off the end of `rest`, adding them up. */
+function modifiersOff(rest: string[], into: { edges: number; banes: number }): void {
+  while (rest.length > 0 && MODIFIERS[rest.at(-1)!.toLowerCase()] !== undefined) {
+    const modifier = MODIFIERS[rest.pop()!.toLowerCase()]!;
+    into.edges += modifier.edges;
+    into.banes += modifier.banes;
+  }
+}
+
 const pr: Spec<"pr"> = {
-  usage: "/pr <who> <ability|+N> [edge|bane|edge2|bane2]",
-  summary: "Power roll: 2d10 + characteristic, with the tier's result.",
+  usage: "/pr <who> <ability|+N> [edge|bane|edge2|bane2] [on <target>…]",
+  summary: "Power roll with the tier's result and its damage to each target, or use an ability.",
   gmOnly: false,
   parse: (args) => {
     const [who, ...rest] = words(args);
-    let edges = 0;
-    let banes = 0;
-    while (rest.length > 0 && MODIFIERS[rest.at(-1)!.toLowerCase()] !== undefined) {
-      const modifier = MODIFIERS[rest.pop()!.toLowerCase()]!;
-      edges += modifier.edges;
-      banes += modifier.banes;
-    }
+    const modifiers = { edges: 0, banes: 0 };
+    modifiersOff(rest, modifiers);
+    const on = rest.findLastIndex((w) => w.toLowerCase() === "on");
+    const targets = on === -1 ? [] : rest.splice(on).slice(1);
+    if (on !== -1 && targets.length === 0) return usage(pr);
+    modifiersOff(rest, modifiers);
+    const { edges, banes } = modifiers;
+    const aimed = targets.length === 0 ? {} : { targets };
     const roll = rest.join(" ");
     if (who === undefined || roll === "") return usage(pr);
     if (/^[+-]\d+$/.test(roll)) {
       const bonus = Number(roll);
       if (Math.abs(bonus) > BONUS_MAX)
         return { refusal: `Keep the bonus within ${BONUS_MAX} either way.` };
-      return { type: "pr", who, bonus, edges, banes };
+      return { type: "pr", who, bonus, edges, banes, ...aimed };
     }
-    return { type: "pr", who, ability: roll, edges, banes };
+    return { type: "pr", who, ability: roll, edges, banes, ...aimed };
   },
   complete: targetThen((slice, who, typed) => {
     const found = resolve(slice, who);
@@ -374,7 +392,7 @@ const pr: Spec<"pr"> = {
         ? found.hero.sheet.abilities
         : (slice.blocks[found.creature.block]?.abilities ?? []);
     return matching(
-      abilities.filter((a) => a.characteristics !== undefined || a.bonus !== undefined),
+      abilities.filter((a) => !isTrait(a)),
       (a) => a.name,
       (a) => [a.name],
       typed,

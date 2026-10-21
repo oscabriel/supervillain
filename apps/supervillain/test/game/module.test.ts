@@ -130,7 +130,7 @@ describe("compose", () => {
       actors: [ALICE, GM],
       feed: [
         { seq: 1, actor: ALICE, kind: "counter", text: "bumped" },
-        { seq: 2, actor: ALICE, kind: "name", text: "abcdefgh is now Vex" },
+        { seq: 2, actor: ALICE, kind: "name", text: "Vex joins the table." },
         { seq: 4, actor: GM, kind: "counter", text: "bumped" },
       ],
       undo: [],

@@ -7,13 +7,14 @@ import { EVENTS } from "./events.ts";
 import { type DrawSteelState, initial } from "./state.ts";
 
 /**
- * The events that carry dice: power rolls, saves, the start of combat, a turn's start that rolls
+ * The events that carry dice: power rolls, bleeding, saves, the start of combat, a turn's start that rolls
  * for its resource and a turn's end that rolls saves. A player can't take these back.
  */
 function rolled(envelope: Envelope): boolean {
   const payload = envelope.payload as { rolls?: unknown[]; saves?: unknown[] };
   switch (envelope.type) {
     case "ds.power-rolled":
+    case "ds.bled":
     case "ds.saved":
     case "ds.combat-started":
       return true;
@@ -43,7 +44,7 @@ export const drawSteel: Module<"ds", DrawSteelState, DsCommand> = {
   rolled,
   formats,
   commands,
-  decide: (slice, _shared, actor, command, dice) => decide(slice, actor, command, dice),
+  decide: (slice, shared, actor, command, dice) => decide(slice, actor, command, dice, shared),
   apply,
 };
 

@@ -17,6 +17,7 @@ import {
   type Surface,
   tableLabel,
   type TableState,
+  unknownHelpTopic,
   withHostFact,
   withMapGrid,
 } from "../game/index.ts";
@@ -61,16 +62,19 @@ const actorLabelled = (
 
 /**
  * Adds what the host knows and the rules can't see: who is seated, for a name to be checked
- * against; the time now, for a player's /undo window, and whose change a GM's `/undo <who>` means; the sheet a /hero or /add brings in, or the
+ * against and a hero whose guest has left to be taken; the time now, for a player's /undo window, and whose change a GM's `/undo <who>` means; the sheet a /hero or /add brings in, or the
  * map a /map loads, read from the campaign folder now so the event carries it; and the actor a
  * GM's /play names. A file that can't be read is refused, naming the file and what's wrong.
  * Nothing is read for a GM-only command someone else sent: the rules refuse it as it is.
  */
 const withHostFacts = (
   actor: string,
-  command: Command,
+  typed: Command,
 ): Effect.Effect<Command, Refusal, TableServices> =>
   Effect.gen(function* () {
+    // Whose guest has left, for a hero they held to be free to take.
+    const command: Command =
+      typed.type === "play" ? { ...typed, seated: yield* (yield* Presence).here.get } : typed;
     if (command.type === "name") {
       const seated = yield* (yield* Presence).here.get;
       return { ...command, seated };
@@ -136,8 +140,11 @@ export const runLine = (
         return { kind: "empty" };
       case "refusal":
         return { kind: "refusal", text: parsed.message };
-      case "help":
+      case "help": {
+        const unknown = unknownHelpTopic(parsed.topic);
+        if (unknown !== undefined) return { kind: "refusal", text: unknown };
         return { kind: "message", text: helpText(actor, parsed.topic, surface) };
+      }
       case "sheet": {
         const text = sheetOf(yield* room.state.get, parsed.who);
         return typeof text === "string"

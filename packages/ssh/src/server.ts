@@ -5,7 +5,7 @@ import { CliRenderEvents, type CliRenderer, createCliRenderer, NativeSession } f
 import { Cause, Deferred, Effect, Exit, FiberSet, type Scope } from "effect";
 import ssh2, { type AuthContext, type Connection, type ServerChannel } from "ssh2";
 import { addressBucket, normalizeAddress } from "./address.ts";
-import { fingerprintOf, loadHostKey, parseKey } from "./keys.ts";
+import { fingerprintOf, KEX, loadHostKey, parseKey } from "./keys.ts";
 import { rateLimiter } from "./rate.ts";
 import { isRelayableActor } from "./relay.ts";
 import {
@@ -42,17 +42,6 @@ const DEFAULT_TIMEOUTS = {
   keepaliveMs: 15_000,
   keepaliveCount: 3,
 };
-/**
- * Elliptic-curve key exchange only. ssh2 also offers finite-field groups up to 8192 bits, and one
- * such handshake costs the host's only thread seconds of CPU before anyone has logged in.
- */
-const KEX: Array<ssh2.KexAlgorithm> = [
-  "curve25519-sha256",
-  "curve25519-sha256@libssh.org",
-  "ecdh-sha2-nistp256",
-  "ecdh-sha2-nistp384",
-  "ecdh-sha2-nistp521",
-];
 /** How long a closing session waits for the renderer to restore the client's terminal. */
 const RESTORE_TIMEOUT_MS = 2000;
 const NO_PTY_MESSAGE = "This needs a terminal: connect with ssh -t.";

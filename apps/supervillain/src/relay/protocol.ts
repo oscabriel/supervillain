@@ -5,7 +5,7 @@
 // <campaign>/relay_known, first link stores).
 import type { Socket } from "node:net";
 
-export const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 1;
 
 /** Where players connect: `ssh -p 2222 <room>@<relay>`. */
 export const DEFAULT_PLAYER_PORT = 2222;
@@ -19,7 +19,7 @@ export const RELAYED_ACTOR_ENV = "SV_ACTOR";
 export const RELAY_USERNAME = "relay";
 
 /** A room's name: 1-32 of `a-z`, `0-9` and `-`, starting with a letter. */
-export const ROOM_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+const ROOM_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 
 export const isRoomName = (name: string): boolean => ROOM_NAME.test(name);
 

@@ -9,16 +9,16 @@ export const GM = "gm";
 export const FEED_LIMIT = 500;
 
 /** How many batches /undo can walk back through. */
-export const UNDO_DEPTH = 20;
+const UNDO_DEPTH = 20;
 
 /** How long a player may take back their own latest batch. The GM has no limit. */
 export const UNDO_WINDOW_MS = 30_000;
 
 /** The corrective event /undo writes. Compose owns it, whichever modules it composes. */
-export const RETRACTED = "core.retracted";
+const RETRACTED = "core.retracted";
 
 /** The event /redo writes, putting back what the latest undo took. Compose owns it too. */
-export const REDONE = "core.redone";
+const REDONE = "core.redone";
 
 export type Refused = { readonly refusal: string };
 
@@ -117,7 +117,7 @@ export interface RedoEntry {
 }
 
 /** The parts of the table state every module shares. */
-export interface TableBase {
+interface TableBase {
   /** The seq of the last event applied. */
   readonly seq: number;
   /** Every actor who has written an event, in order of their first event. */
@@ -133,11 +133,13 @@ export interface TableBase {
 /** What a module's `decide` may read beyond its own slice. */
 export interface Shared {
   readonly actors: ReadonlyArray<string>;
+  /** How the table names an actor now, for a refusal: their display name. */
+  readonly label: (actor: string) => string;
 }
 
 /**
  * A slice of the game: its own state under `key`, its events (namespaced `<key>.<name>`),
- * its commands and the pure decide/apply for them. Draw Steel will be the second one.
+ * its commands and the pure decide/apply for them: core and Draw Steel.
  */
 export interface Module<K extends string, S, C extends { readonly type: string }> {
   readonly key: K;
@@ -537,7 +539,7 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
         return { refusal: `Only the GM can use /${entry.spec.name}.` };
       return entry.module.decide(
         sliceOf(state, entry.module),
-        { actors: state.actors },
+        { actors: state.actors, label: (who) => options.label?.(state, who) ?? who },
         actor,
         command,
         dice,

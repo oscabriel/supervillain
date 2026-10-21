@@ -7,6 +7,7 @@ import {
   hasControls,
   hasTerminalControls,
   lengthOf,
+  looksLikeGuestLabel,
   mixesLatin,
   nameKey,
 } from "./text.ts";
@@ -150,7 +151,7 @@ function chooseName(
     return refuse(`"${name}" is taken; pick another name.`);
   if (MARKERS.some((marker) => key.includes(marker)))
     return refuse(`"${name}" would read like a marker; pick another name.`);
-  if (key.startsWith("guest-") && key !== nameKey(defaultLabel(actor)))
+  if (looksLikeGuestLabel(name) && key !== nameKey(defaultLabel(actor)))
     return refuse(`"${name}" looks like a guest's label; pick another name.`);
   return { events: [{ type: "core.name-set", payload: { name } }] };
 }
@@ -260,10 +261,14 @@ export const core: Module<"core", CoreState, CoreCommand> = {
         const { name } = decode(NameSet, envelope);
         if (!storedText(name, STORED_NAME_MAX))
           throw new Error(`bad name ${JSON.stringify(name)} at seq ${envelope.seq}`);
-        const was = slice.names[envelope.actor] ?? defaultLabel(envelope.actor);
+        const was = slice.names[envelope.actor];
         return {
           slice: { names: { ...slice.names, [envelope.actor]: name } },
-          feed: { kind: "name", text: `${was} is now ${name}` },
+          // A first name is someone arriving; the label they had till now was only a placeholder.
+          feed: {
+            kind: "name",
+            text: was === undefined ? `${name} joins the table.` : `${was} is now ${name}`,
+          },
         };
       }
       case "core.dice-rolled": {

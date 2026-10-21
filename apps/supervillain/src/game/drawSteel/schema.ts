@@ -1,9 +1,9 @@
 import * as Schema from "effect/Schema";
 import type { Refused } from "../module.ts";
 import { cleanText, hasTerminalControls, quote } from "../text.ts";
-import type { HeroSheet, StatBlock } from "./sheets.ts";
+import { CHARACTERISTICS, type HeroSheet, type StatBlock } from "./sheets.ts";
 
-const Characteristic = Schema.Literals(["might", "agility", "reason", "intuition", "presence"]);
+const Characteristic = Schema.Literals(CHARACTERISTICS);
 
 const Characteristics = Schema.Struct({
   might: Schema.Int,

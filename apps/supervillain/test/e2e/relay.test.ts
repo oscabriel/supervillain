@@ -120,7 +120,10 @@ const logOf = (dir: string) =>
 const roomsOf = (relayDir: string) =>
   Effect.promise(
     async () =>
-      JSON.parse(await readFile(join(relayDir, "rooms.json"), "utf8")) as Record<string, string>,
+      JSON.parse(await readFile(join(relayDir, "rooms.json"), "utf8")) as Record<
+        string,
+        { key: string; linked: string }
+      >,
   );
 
 describe("supervillain host --relay, through supervillain relay", () => {
@@ -145,8 +148,16 @@ describe("supervillain host --relay, through supervillain relay", () => {
         expect(host.output()).toContain(`trusted relay key ${relay.key} on first use`);
         const known = yield* Effect.promise(() => readFile(join(campaign, "relay_known"), "utf8"));
         expect(known.trim()).toBe(relay.key);
-        // The relay claimed the room for this campaign's host key.
-        expect(yield* roomsOf(relayDir)).toEqual({ den: host.hostKey });
+        // The relay claimed the room for this campaign's host key. It writes the claim once the
+        // login is done, which the host may log first.
+        yield* waitFor(
+          "the claim",
+          () => relay.output().includes("room den: claimed by GM host key"),
+          10_000,
+        );
+        expect(yield* roomsOf(relayDir)).toEqual({
+          den: { key: host.hostKey, linked: expect.any(String) },
+        });
         expect(host.output()).toContain(`players join with: ssh -p ${ports.player} den@127.0.0.1`);
         // Players' ssh meets the relay's host key there, not this table's, and the GM is told so.
         expect(host.output()).toContain("players' ssh sees the relay's host key");
@@ -155,6 +166,17 @@ describe("supervillain host --relay, through supervillain relay", () => {
         );
         expect(host.output()).toMatch(
           /players here can also join directly: ssh -p \d+ den@127\.0\.0\.1/,
+        );
+        // Its log line (host.log, at a seat) says the same about keys as its stdout and /help.
+        const logged = host
+          .output()
+          .split("\n")
+          .find((line) => / INFO .*hosting "den"/.test(line));
+        expect(logged).toContain(
+          "players' ssh sees the relay's host key: ask whoever runs the relay",
+        );
+        expect(logged).toContain(
+          `this table's host key ${host.hostKey} is for direct connections only`,
         );
 
         // One player by exec, one in a pseudo-terminal.
@@ -204,7 +226,9 @@ describe("supervillain host --relay, through supervillain relay", () => {
         yield* waitFor("the usurper's warning", () =>
           usurper.output().includes("another GM's host key may hold room den there"),
         );
-        expect(yield* roomsOf(relayDir)).toEqual({ den: host.hostKey });
+        expect(yield* roomsOf(relayDir)).toEqual({
+          den: { key: host.hostKey, linked: expect.any(String) },
+        });
         yield* Effect.promise(() => usurper.stop());
 
         // The relay goes away: the seated player's connection with it. It comes back on the same
@@ -222,7 +246,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
         const again = yield* sshExec(ports.player, ["/name Vex"], { key: vex, user: "den" });
         expect(again).toMatchObject({
           exitCode: 0,
-          stdout: expect.stringMatching(/is now Vex\n$/),
+          stdout: "Vex joins the table.\n",
         });
         expect((yield* logOf(campaign)).at(-1)).toMatchObject({
           actor: `key:${vex.fingerprint}`,

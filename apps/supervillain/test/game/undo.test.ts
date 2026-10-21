@@ -219,7 +219,7 @@ describe("undo, in compose and the fold", () => {
     expect(t.state.feed.map((e) => e.text)).toEqual([
       "+5 → 5",
       "nice",
-      "abcdefgh is now Wren",
+      "Wren joins the table.",
       "rolled 1d6: [4] = 4",
       "pinned at 3",
       "undid: +5 → 5",

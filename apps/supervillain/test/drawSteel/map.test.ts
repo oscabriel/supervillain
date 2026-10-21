@@ -6,6 +6,7 @@ import {
   parseSquare,
   readMapText,
 } from "../../src/game/drawSteel/index.ts";
+import type { StatBlock } from "../../src/game/drawSteel/sheets.ts";
 import type { MapView } from "../../src/table/view.ts";
 import {
   ALICE,
@@ -510,7 +511,7 @@ describe("mapView", () => {
         },
         {
           id: "goblin-warrior",
-          mark: "g",
+          mark: "w",
           name: "Goblin Warrior",
           x: 4,
           y: 2,
@@ -521,7 +522,7 @@ describe("mapView", () => {
         },
         {
           id: "goblin-runner-a",
-          mark: "gA",
+          mark: "rA",
           name: "Goblin Runner A",
           x: 9,
           y: 4,
@@ -594,13 +595,29 @@ describe("mapView", () => {
       ["vex", "V"],
       ["kor", "K"],
       ["kira", "Ki"],
-      ["goblin-warrior", "g"],
-      ["goblin-warrior-1", "g1"],
-      ["goblin-warrior-2", "g2"],
-      ["goblin-archer", "ga"],
-      ["goblin-runner-a", "gA"],
-      ["goblin-runner-b", "gB"],
+      ["goblin-warrior", "w"],
+      ["goblin-warrior-1", "w1"],
+      ["goblin-warrior-2", "w2"],
+      ["goblin-archer", "a"],
+      ["goblin-runner-a", "rA"],
+      ["goblin-runner-b", "rB"],
     ]);
+  });
+
+  test("a block's mark comes from its last word, so it's the same whichever came first", () => {
+    const marksWith = (first: StatBlock, second: StatBlock) => {
+      const t = cave();
+      t.run(GM, { type: "add", monster: first.id, count: 4, sheet: first });
+      t.run(GM, { type: "add", monster: second.id, count: 4, sheet: second });
+      ok(t, GM, "/place cutpurse-a a1");
+      ok(t, GM, "/place slinger-a b1");
+      return Object.fromEntries((mapView(t.ds, GM)?.tokens ?? []).map((k) => [k.id, k.mark]));
+    };
+    const cutpurse = { ...RUNNER, id: "bandit-cutpurse", name: "Bandit Cutpurse" };
+    const slinger = { ...RUNNER, id: "bandit-slinger", name: "Bandit Slinger" };
+    const marks = { "bandit-cutpurse-a": "cA", "bandit-slinger-a": "sA" };
+    expect(marksWith(cutpurse, slinger)).toEqual(marks);
+    expect(marksWith(slinger, cutpurse)).toEqual(marks);
   });
 });
 
@@ -780,13 +797,13 @@ describe("marks are names", () => {
     t.run(GM, { type: "add", monster: "goblin-warrior", count: 2, sheet: GOBLIN });
     ok(t, GM, "/place vex a1");
     ok(t, GM, "/place goblin-warrior-1 e3");
-    ok(t, GM, "/dmg g1 3");
+    ok(t, GM, "/dmg w1 3");
     expect(t.creature("goblin-warrior-1").stamina).toBe(12);
-    ok(t, ALICE, "/dist vex g1");
+    ok(t, ALICE, "/dist vex w1");
     expect(t.lastFeed()).toEqual([
       "abcdefgh (Vex) measures Vex (a1) to Goblin Warrior 1 (e3): 4 squares.",
     ]);
-    // g2 isn't on the map, so g2 is the square.
+    // No token is g2, so g2 is the square.
     ok(t, ALICE, "/dist V g2");
     expect(t.lastFeed()[0]).toEndWith("Vex (a1) to g2: 6 squares.");
     ok(t, GM, "/dmg K 1");
@@ -803,13 +820,13 @@ describe("marks are names", () => {
       }),
     );
     for (const token of mapView(t.ds, GM)?.tokens ?? []) marks.set(token.id, token.mark);
-    expect(marks.get("goblin-warrior-9")).toBe("g9");
-    expect(marks.get("goblin-warrior-10")).toBe("g0");
+    expect(marks.get("goblin-warrior-9")).toBe("w9");
+    expect(marks.get("goblin-warrior-10")).toBe("w0");
     const eleven = marks.get("goblin-warrior-11")!;
     expect(eleven).toHaveLength(2);
-    expect(eleven.startsWith("g")).toBe(true);
-    // And the lone Goblin Warrior from the cave is "g": thirteen marks, all different.
-    expect(marks.get("goblin-warrior")).toBe("g");
+    expect(eleven.startsWith("w")).toBe(true);
+    // And the lone Goblin Warrior from the cave is "w": thirteen marks, all different.
+    expect(marks.get("goblin-warrior")).toBe("w");
     expect(new Set(marks.values()).size).toBe(13);
   });
 });
@@ -891,5 +908,29 @@ describe("undo at the map", () => {
     t.run(GM, { type: "round" });
     t.run(ALICE, { type: "turn" });
     t.run(ALICE, { type: "undo", now: t.now });
+  });
+
+  test("a move a later slam stood on can't be undone first, though the slam went nowhere", () => {
+    const t = cave();
+    ok(t, GM, "/place kor e2");
+    ok(t, GM, "/place vex f1");
+    ok(t, ALICE, "/move vex d2");
+    // From d2, a push away from Kor at e2 meets the wall at c2 at once.
+    ok(t, GM, "/push vex 3 from kor");
+    expect(t.envelopes.at(-2)).toMatchObject({
+      type: "ds.force-moved",
+      payload: { path: [], from: { x: 3, y: 1 }, slam: { into: "wall", remaining: 2 } },
+    });
+    expect(t.hero("vex").stamina).toBe(17);
+    expect(t.submit(ALICE, { type: "undo", now: t.now })).toStartWith(
+      "A later change depends on it",
+    );
+    expect(t.submit(GM, { type: "undo", who: "alice", whose: ALICE })).toStartWith(
+      "A later change depends on it",
+    );
+    t.run(GM, { type: "undo" });
+    t.run(ALICE, { type: "undo", now: t.now });
+    expect(where(t, "vex")).toBe("f1");
+    expect(t.hero("vex").stamina).toBe(21);
   });
 });

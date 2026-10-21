@@ -1,16 +1,5 @@
 import type { Accessor } from "solid-js";
-import type { CombatView } from "../game/index.ts";
-
-/** One rendered feed line. The table styles by `kind`, never by parsing `text`. */
-export interface FeedLine {
-  readonly seq: number;
-  /** The actor's current label (display name, else a short key label), resolved when the feed is projected. */
-  readonly who: string;
-  readonly kind: string;
-  readonly text: string;
-  /** Whether the GM wrote it: the GM's label is drawn in the GM's colour, so a name can't pass for the GM. */
-  readonly gm?: boolean;
-}
+import type { CombatView, FeedLine } from "../game/index.ts";
 
 /** Someone with a seat open right now. */
 export interface Present {
@@ -19,8 +8,8 @@ export interface Present {
   readonly gm: boolean;
 }
 
-// The band's view is built by the rules (game/drawSteel/view.ts), which never import the table.
-export type { Combatant, CombatView } from "../game/index.ts";
+// The band's view and the feed's lines are built by the rules (game/), which never import the table.
+export type { Combatant, CombatView, FeedLine } from "../game/index.ts";
 
 /** One token on the map. */
 export interface MapToken {
@@ -85,8 +74,8 @@ export interface TableView {
    * redialing` (for the GM). Undefined while all is well.
    */
   readonly alert?: Accessor<string | undefined>;
-  /** The Draw Steel band. Absent until the host provides it; undefined while there is no party or combat. */
+  /** The Draw Steel band; undefined while there is no party or combat. Every seat has it; a fake may not. */
   readonly combat?: Accessor<CombatView | undefined>;
-  /** The text map. Absent until the host provides it; undefined while no map is loaded. */
+  /** The text map; undefined while no map is loaded. Every seat has it; a fake may not. */
   readonly map?: Accessor<MapView | undefined>;
 }

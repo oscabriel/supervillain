@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import type { View } from "@supervillain/engine";
-import type { AttachOptions } from "@supervillain/ssh";
+import { type AttachOptions, isFingerprint } from "@supervillain/ssh";
 import {
   Context,
   Deferred,
@@ -25,10 +25,7 @@ import {
 } from "../relay/protocol.ts";
 
 /** In the campaign folder: the relay key fingerprint this GM trusts, pinned on first use. */
-export const RELAY_KNOWN_FILE = "relay_known";
-
-/** An OpenSSH SHA256 key fingerprint, as `ssh-keygen -lf` prints it and `--relay-key` takes it. */
-export const isFingerprint = (text: string): boolean => /^SHA256:[A-Za-z0-9+/]{43}$/.test(text);
+const RELAY_KNOWN_FILE = "relay_known";
 
 /** How the GM's link to the relay is doing, for the GM's screen and the host log. */
 export type RelayStatus =
@@ -124,7 +121,10 @@ export const roomSlug = (name: string): string => {
   return slug === "" ? "table" : slug;
 };
 
-/** How players join through a relay: `ssh -p 2222 den@relay.example`, without `-p` on port 22. */
+/**
+ * How players join, through a relay or straight to a host: `ssh -p 2222 den@relay.example`,
+ * without `-p` on port 22.
+ */
 export const relayJoinCommand = (
   room: string,
   host: string,
@@ -239,7 +239,8 @@ const readReply = (socket: Socket) =>
 /**
  * The GM's side of the relay: dials the relay's GM port, names the room, and serves SSH on the
  * link with the relay as the only client it lets in, trusting the relay's key only if it is the
- * pinned one (`--relay-key`, else relay_known, which the first link fills). A link that drops is
+ * pinned one (`--relay-key`, else relay_known, which the first link fills, with the `--relay-key`
+ * when there is one). A link that drops is
  * redialed with backoff; a relay key that isn't the pinned one is refused and not redialed until
  * the GM fixes relay_known. Nothing said in plaintext is trusted.
  */
@@ -286,14 +287,21 @@ export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
 
       /** Whether a key that logged in on the link is the relay's. Pins it on first use. */
       const decide = (fingerprint: string): Decision => {
-        if (options.relayKey !== undefined)
-          return fingerprint === options.relayKey
-            ? { admit: true, firstUse: false }
-            : {
-                admit: false,
-                final: true,
-                reason: `its key ${fingerprint} doesn't match --relay-key ${options.relayKey}`,
-              };
+        if (options.relayKey !== undefined) {
+          if (fingerprint !== options.relayKey)
+            return {
+              admit: false,
+              final: true,
+              reason: `its key ${fingerprint} doesn't match --relay-key ${options.relayKey}`,
+            };
+          // A later start without --relay-key stays pinned to it, never trusting on first use.
+          try {
+            writeFileSync(knownPath, `${fingerprint}\n`, { mode: 0o600, flag: "wx" });
+          } catch {
+            // There's one already, which the pin overrides; or the folder won't take it.
+          }
+          return { admit: true, firstUse: false };
+        }
         let text: string | undefined;
         try {
           text = readKnownText(knownPath);

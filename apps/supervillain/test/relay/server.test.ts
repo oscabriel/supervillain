@@ -1,11 +1,12 @@
 import { describe, expect } from "bun:test";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { TERMINAL_RESET } from "@supervillain/ssh";
 import { Effect, Exit, Fiber, Scope } from "effect";
 import { closedRoomMessage, readLine } from "../../src/relay/protocol.ts";
 import { forgetRoom } from "../../src/relay/rooms.ts";
+import { claimLimiter } from "../../src/relay/server.ts";
 import { effect, waitFor } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
 import { gmTable, linkGm, startRelay } from "./harness.ts";
@@ -193,7 +194,9 @@ describe("relay: rooms", () => {
 
       const first = yield* linkDen(rightful);
       yield* linked(relay, "den");
-      expect(yield* rooms()).toEqual({ den: rightful.server.hostKeyFingerprint });
+      expect(yield* rooms()).toEqual({
+        den: { key: rightful.server.hostKeyFingerprint, linked: expect.any(String) },
+      });
       yield* first.close;
       yield* linked(relay, "den", false);
 
@@ -206,7 +209,7 @@ describe("relay: rooms", () => {
       expect(relay.logs.join("\n")).toContain(
         `room den: refused a GM with host key ${impostor.server.hostKeyFingerprint}`,
       );
-      expect(yield* rooms()).toEqual({ den: rightful.server.hostKeyFingerprint });
+      expect(yield* rooms()).toMatchObject({ den: { key: rightful.server.hostKeyFingerprint } });
 
       // The rightful GM relinks with its own key.
       const again = yield* linkDen(rightful);
@@ -218,7 +221,7 @@ describe("relay: rooms", () => {
       yield* forgetRoom(join(relay.dir, "rooms.json"), "den");
       yield* linkGm(impostor, relay.gmPort, "den", relay.relayKeyFingerprint);
       yield* linked(relay, "den");
-      expect(yield* rooms()).toEqual({ den: impostor.server.hostKeyFingerprint });
+      expect(yield* rooms()).toMatchObject({ den: { key: impostor.server.hostKeyFingerprint } });
     }),
   );
 
@@ -238,6 +241,104 @@ describe("relay: rooms", () => {
       expect(yield* Effect.promise(() => seated.exited)).toBe(1);
       expect(fresh.closed()).toBe(false);
       expect((yield* sshExec(relay.playerPort, ["hi"], { key })).exitCode).toBe(0);
+    }),
+  );
+
+  effect("a claim no GM has linked for --claim-days lapses, and another host key claims it", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      const roomsFile = join(dir, "rooms.json");
+      const days = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+      const gone = `SHA256:${"A".repeat(43)}`;
+      const lapsed = days(8);
+      yield* Effect.promise(() =>
+        writeFile(
+          roomsFile,
+          JSON.stringify({
+            den: { key: gone, linked: lapsed },
+            attic: { key: gone, linked: days(6) },
+          }),
+          { mode: 0o600 },
+        ),
+      );
+      const relay = yield* startRelay({ dir, gm: { claimDays: 7 } });
+      const newcomer = yield* gmTable();
+      yield* linkGm(newcomer, relay.gmPort, "den", relay.relayKeyFingerprint);
+      yield* linked(relay, "den");
+      expect(relay.logs.join("\n")).toContain(
+        `room den: dropped the claim of GM host key ${gone}, last linked ${lapsed}\n`,
+      );
+      // Attic's claim is younger than the expiry, and holds.
+      const attic = yield* linkGm(
+        yield* gmTable(),
+        relay.gmPort,
+        "attic",
+        relay.relayKeyFingerprint,
+      );
+      yield* waitFor("the second GM to be refused", attic.closed);
+      const after = JSON.parse(yield* Effect.promise(() => readFile(roomsFile, "utf8")));
+      expect(after).toMatchObject({
+        den: { key: newcomer.server.hostKeyFingerprint },
+        attic: { key: gone },
+      });
+    }),
+  );
+
+  effect("a GM's link renews its claim when it begins and when it ends", () =>
+    Effect.gen(function* () {
+      const relay = yield* startRelay();
+      const roomsFile = join(relay.dir, "rooms.json");
+      const linkedAt = () =>
+        Effect.promise(async () =>
+          Date.parse(JSON.parse(await readFile(roomsFile, "utf8")).den.linked as string),
+        );
+      const table = yield* scoped(openTable(relay));
+      const began = yield* linkedAt();
+      yield* Effect.sleep("20 millis");
+      yield* table.close;
+      yield* linked(relay, "den", false);
+      for (let tries = 0; (yield* linkedAt()) === began && tries < 100; tries++)
+        yield* Effect.sleep("20 millis");
+      expect(yield* linkedAt()).toBeGreaterThan(began);
+    }),
+  );
+
+  effect("a full registry drops its stalest unlinked claim for a new one, never a linked one", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      const roomsFile = join(dir, "rooms.json");
+      const absent = `SHA256:${"A".repeat(43)}`;
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      yield* Effect.promise(() =>
+        writeFile(roomsFile, JSON.stringify({ attic: { key: absent, linked: yesterday } }), {
+          mode: 0o600,
+        }),
+      );
+      const relay = yield* startRelay({ dir, gm: { maxRooms: 2 } });
+      yield* openTable(relay, "den");
+      yield* openTable(relay, "cellar");
+      expect(relay.logs.join("\n")).toContain(
+        `room attic: dropped the claim of GM host key ${absent}, last linked ${yesterday}, to make room for cellar`,
+      );
+      const rooms = () =>
+        Effect.promise(async () =>
+          Object.keys(JSON.parse(await readFile(roomsFile, "utf8"))).sort(),
+        );
+      expect(yield* rooms()).toEqual(["cellar", "den"]);
+      // Both claims left have a GM linked now: a third is refused, and neither is dropped.
+      const third = yield* linkGm(
+        yield* gmTable(),
+        relay.gmPort,
+        "loft",
+        relay.relayKeyFingerprint,
+      );
+      yield* waitFor("the third claim to be refused", third.closed);
+      // Refused on the hello, so the GM's host hears why, and nothing logs in.
+      expect(third.answer).toBe("ERR the relay holds its most rooms, each with a GM linked now");
+      expect(relay.logs.join("\n")).toContain(
+        "room loft: refused: the relay holds its most rooms (2), each with a GM linked now",
+      );
+      expect(yield* rooms()).toEqual(["cellar", "den"]);
     }),
   );
 
@@ -348,10 +449,14 @@ describe("relay: limits", () => {
         relay.relayKeyFingerprint,
       );
       yield* waitFor("the third GM to be refused", third.closed);
+      expect(third.answer).toBe("ERR the relay has its most GMs linked; try again later");
       expect(relay.logs.join("\n")).toContain(
         "room cellar: refused: the relay has its most GMs linked (2)",
       );
       expect([...relay.linkedRooms()].sort()).toEqual(["attic", "den"]);
+      // A link that can't be kept claims nothing.
+      const rooms = yield* Effect.promise(() => readFile(join(relay.dir, "rooms.json"), "utf8"));
+      expect(Object.keys(JSON.parse(rooms)).sort()).toEqual(["attic", "den"]);
     }),
   );
 
@@ -366,6 +471,7 @@ describe("relay: limits", () => {
         relay.relayKeyFingerprint,
       );
       yield* waitFor("the second claim to be refused", squatter.closed);
+      expect(squatter.answer).toBe("ERR this address claims rooms too fast; try again later");
       expect(relay.logs.join("\n")).toContain(
         "room attic: refused: 127.0.0.1 claims rooms too fast",
       );
@@ -379,8 +485,9 @@ describe("relay: limits", () => {
       yield* openTable(full, "den");
       const over = yield* linkGm(yield* gmTable(), full.gmPort, "attic", full.relayKeyFingerprint);
       yield* waitFor("the claim past the total to be refused", over.closed);
+      expect(over.answer).toBe("ERR the relay holds its most rooms, each with a GM linked now");
       expect(full.logs.join("\n")).toContain(
-        "room attic: refused: the relay holds its most rooms (1)",
+        "room attic: refused: the relay holds its most rooms (1), each with a GM linked now",
       );
       const rooms = yield* Effect.promise(() => readFile(join(full.dir, "rooms.json"), "utf8"));
       expect(Object.keys(JSON.parse(rooms))).toEqual(["den"]);
@@ -410,6 +517,26 @@ describe("relay: limits", () => {
       const link = yield* linkGm(gm, relay.gmPort, "den", relay.relayKeyFingerprint);
       expect(link.answer).toBe("OK");
       yield* linked(relay, "den");
+    }),
+  );
+});
+
+describe("relay: claim rates", () => {
+  effect("claims count per IPv4 address, and per IPv6 /64 and /48 both", () =>
+    Effect.sync(() => {
+      const one = { burst: 1, perSecond: 1 / 3600 };
+      const allowed = claimLimiter(one, { burst: 2, perSecond: 1 / 3600 });
+      expect(allowed("203.0.113.7", 0)).toBeUndefined();
+      expect(allowed("203.0.113.7", 1)).toBe("203.0.113.7");
+      expect(allowed("203.0.113.8", 1)).toBeUndefined();
+      // One /64 claims once; a second /64 in the same /48 claims too; a third is over the /48.
+      expect(allowed("2001:db8:1:1::1", 0)).toBeUndefined();
+      expect(allowed("2001:db8:1:1::2", 0)).toBe("2001:db8:1:1::/64");
+      expect(allowed("2001:db8:1:2::1", 0)).toBeUndefined();
+      expect(allowed("2001:db8:1:3::1", 0)).toBe("2001:db8:1::/48");
+      expect(allowed("2001:db8:2:3::1", 0)).toBeUndefined();
+      // An hour on, each has a claim again.
+      expect(allowed("2001:db8:1:3::1", 3_600_000)).toBeUndefined();
     }),
   );
 });

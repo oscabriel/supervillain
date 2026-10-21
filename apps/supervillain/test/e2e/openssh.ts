@@ -1,7 +1,6 @@
+// The real OpenSSH client and ssh-keygen, kept away from the user's config, agent and known_hosts.
 import { join } from "node:path";
 import { Effect } from "effect";
-
-/** The real OpenSSH client and ssh-keygen, kept away from the user's config, agent and known_hosts. */
 
 export interface ClientKey {
   readonly path: string;

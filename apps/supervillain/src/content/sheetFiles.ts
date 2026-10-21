@@ -6,13 +6,13 @@ import {
   ID_MAX,
   sheetProblems,
 } from "../game/drawSteel/schema.ts";
-import type {
-  Ability,
-  Characteristic,
-  DamageModifier,
-  HeroSheet,
-  Organization,
-  StatBlock,
+import {
+  type Ability,
+  CHARACTERISTICS,
+  type DamageModifier,
+  type HeroSheet,
+  type Organization,
+  type StatBlock,
 } from "../game/drawSteel/sheets.ts";
 import { SheetInvalid } from "./errors.ts";
 import { toYaml } from "./yaml.ts";
@@ -24,13 +24,7 @@ import { toYaml } from "./yaml.ts";
 // Text may run over several lines (a folded `>` or literal `|` block): every run of whitespace in
 // it becomes one space, since the table draws each field on one line.
 
-export const CHARACTERISTICS: ReadonlyArray<Characteristic> = [
-  "might",
-  "agility",
-  "reason",
-  "intuition",
-  "presence",
-];
+export { CHARACTERISTICS };
 
 export const ORGANIZATIONS: ReadonlyArray<Organization> = [
   "minion",

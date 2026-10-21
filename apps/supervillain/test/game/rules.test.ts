@@ -176,7 +176,7 @@ describe("names", () => {
     expect(table.last?.payload).toEqual({ name: "Alice" });
     expect(nameOf(table.state, ALICE)).toBe("Alice");
     expect(feed(table)).toEqual([
-      { seq: 1, who: "Alice", kind: "name", text: "abcdefgh is now Alice", gm: false },
+      { seq: 1, who: "Alice", kind: "name", text: "Alice joins the table.", gm: false },
     ]);
   });
 
@@ -222,6 +222,20 @@ describe("names", () => {
     expect(table.submit(BOB, { type: "name", name: "\uff27\uff2d" })).toBe(
       '"GM" is taken; pick another name.',
     );
+  });
+
+  test("a capital I reads as an l, rn as m, and spaces and punctuation don't tell names apart", () => {
+    const table = new Table();
+    table.submit(ALICE, { type: "name", name: "Alice" });
+    table.submit(GUEST, { type: "name", name: "Vern" });
+    for (const lookalike of ["AIice", "Alice.", "A l i c e", "A-lice!"])
+      expect(table.submit(BOB, { type: "name", name: lookalike })).toBe(
+        `"${lookalike}" is taken; pick another name.`,
+      );
+    expect(table.submit(BOB, { type: "name", name: "Vem", seated: [GUEST] })).toBe(
+      '"Vem" is taken; pick another name.',
+    );
+    expect(table.submit(BOB, { type: "name", name: "Alicia" })).toBeUndefined();
   });
 
   test("a name can't mix Latin letters with another script's, taken or not", () => {
@@ -346,7 +360,7 @@ describe("labels", () => {
     table.submit(ALICE, { type: "name", name: "Ash" });
     expect(feed(table)).toEqual([
       { seq: 1, who: "Ash", kind: "chat", text: "who am I", gm: false },
-      { seq: 2, who: "Ash", kind: "name", text: "abcdefgh is now Vex", gm: false },
+      { seq: 2, who: "Ash", kind: "name", text: "Vex joins the table.", gm: false },
       { seq: 3, who: "Ash", kind: "chat", text: "Vex", gm: false },
       { seq: 4, who: "Ash", kind: "name", text: "Vex is now Ash", gm: false },
     ]);
@@ -457,7 +471,7 @@ describe("replay", () => {
       seq: 5,
       actors: [ALICE, GM, BOB],
       feed: [
-        { seq: 1, actor: ALICE, kind: "name", text: "abcdefgh is now Vex" },
+        { seq: 1, actor: ALICE, kind: "name", text: "Vex joins the table." },
         { seq: 2, actor: ALICE, kind: "chat", text: "hello" },
         { seq: 3, actor: ALICE, kind: "roll", text: "rolled 2d10+3: [4, 9] +3 = 16" },
         { seq: 4, actor: GM, kind: "narration", text: "The door creaks." },

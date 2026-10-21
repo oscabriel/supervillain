@@ -39,8 +39,10 @@ export const tableLabel = (state: TableState): ((actor: string) => string) =>
  * The Draw Steel band for one seat: combat or the party, undefined while there's neither. A hero
  * played by someone else carries their name ("Brann (Alice)"); the seat's own hero is `mine`.
  */
-export const bandOf = (state: TableState, actor: string): CombatView | undefined =>
-  combatView(state.ds, actor, labelOf(state));
+export const bandOf = (
+  state: Pick<TableState, "ds" | "core">,
+  actor: string,
+): CombatView | undefined => combatView(state.ds, actor, labelOf(state));
 
 /** The /sheet text for a hero or creature, as commands name them, or why there's none. */
 export const sheetOf = (state: TableState, who: string): string | Refused =>

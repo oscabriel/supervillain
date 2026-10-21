@@ -125,7 +125,6 @@ export const BARE_OVER_EXEC: ReadonlySet<string> = new Set([
   "redo",
   "help",
   "sheet",
-  "state",
 ]);
 
 const say = commands.find((c) => c.name === "say");
@@ -235,6 +234,10 @@ const helpLine = (e: Entry, width: number, gmMark: string) => {
     ? `${e.usage}\n${" ".repeat(width)}  ${summary}`
     : `${e.usage.padEnd(width)}  ${summary}`;
 };
+
+/** Why `/help <topic>` has nothing to show, when no command has that name. */
+export const unknownHelpTopic = (topic: string | undefined): string | undefined =>
+  topic === undefined || find(topic.replace(/^\//, "")) !== undefined ? undefined : unknown(topic);
 
 /** The /help text for this actor: every command they can use where they are, or one command by name. */
 export function helpText(actor: string, topic?: string, surface: Surface = "seat"): string {

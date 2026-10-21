@@ -28,7 +28,9 @@ async function takeLock(path: string): Promise<void> {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
     const owner = Number((await readFile(path, "utf8").catch(() => "")).trim());
     if (owner > 0 && isRunning(owner))
-      throw new Error(`another host (pid ${owner}) has this campaign open: ${path}`);
+      throw new Error(
+        `another host (pid ${owner}) has this campaign open; if no host has it open, delete ${path} and start again`,
+      );
     await unlink(path);
     return takeLock(path);
   }
@@ -48,8 +50,11 @@ export class CampaignLog extends Context.Service<
   CampaignLog,
   {
     readonly path: string;
-    /** The envelopes on disk when the log was opened. */
-    readonly envelopes: ReadonlyArray<Envelope>;
+    /**
+     * The envelopes on disk when the log was opened, handed over once (to the room, to replay):
+     * a second call gets none, so the log doesn't hold every event for the host's whole life.
+     */
+    readonly take: () => ReadonlyArray<Envelope>;
     /** Appends whole lines in one write, then fsyncs. */
     readonly append: (envelopes: ReadonlyArray<Envelope>) => Effect.Effect<void, LogError>;
   }
@@ -102,7 +107,13 @@ export class CampaignLog extends Context.Service<
             last += envelopes.length;
           });
 
-        return CampaignLog.of({ path, envelopes: parsed.envelopes, append });
+        let opened: ReadonlyArray<Envelope> = parsed.envelopes;
+        const take = () => {
+          const taken = opened;
+          opened = [];
+          return taken;
+        };
+        return CampaignLog.of({ path, take, append });
       }),
     );
 }

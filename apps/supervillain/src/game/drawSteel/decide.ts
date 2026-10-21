@@ -1,14 +1,21 @@
 import type { Decision, Dice, NewEvent } from "@supervillain/engine";
 import { parseNotation } from "../dice.ts";
 import { clearedAtEnd, forceMove, loadMap, measure, move, place } from "./board.ts";
-import { GM, type Refused } from "../module.ts";
+import { GM, type Refused, type Shared } from "../module.ts";
 import { cleanText, hasControls, quote } from "../text.ts";
 import { type DsCommand, SQUAD_SIZE } from "./commands.ts";
 import { event } from "./events.ts";
 import { distance } from "./map.ts";
 import { modifiedDamage, powerRoll } from "./math.ts";
 import { decodeHeroSheet, decodeStatBlock, ID } from "./schema.ts";
-import type { Characteristic, Characteristics } from "./sheets.ts";
+import {
+  type Ability,
+  type Characteristic,
+  type Characteristics,
+  isActionThatBleeds,
+  isTrait,
+  tierDamage,
+} from "./sheets.ts";
 import {
   capitalized,
   CHARACTERISTICS,
@@ -34,6 +41,9 @@ const refuse = (refusal: string): Refused => ({ refusal });
 const decided = (...events: NewEvent[]): Decision => ({ events });
 
 const NO_COMBAT = "No combat is running; /start one.";
+/** A player can't /start, so they hear who can. */
+const noCombat = (actor: string) =>
+  actor === GM ? NO_COMBAT : "No combat is running; the GM starts one with /start.";
 /** A save ends its condition on 6 or more on a d10 (Classes, "Saving Throws"). */
 const SAVE = 6;
 const OWN = "You can only change your own hero.";
@@ -142,13 +152,56 @@ function addCreatures(
   return decided(event("ds.creatures-added", { block, creatures }));
 }
 
+/** Why a player can't take a hero someone else holds, or undefined when its guest has left. */
+function heldBy(
+  hero: Hero,
+  actor: string,
+  command: Extract<DsCommand, { type: "play" }>,
+  shared: Shared,
+): string | undefined {
+  const holder = hero.player;
+  if (holder === undefined) return undefined;
+  const away = command.seated !== undefined && !command.seated.includes(holder);
+  if (away && holder.startsWith("guest:")) return undefined;
+  const name = hero.sheet.name;
+  const by = `${name} is played by ${quote(shared.label(holder), 40)}`;
+  if (actor === GM)
+    return away
+      ? `${by}, who isn't here; /unplay ${hero.id} first.`
+      : `${by}; /unplay ${hero.id} first.`;
+  return away
+    ? `${by}, who isn't here; ask the GM to /unplay ${hero.id} if they aren't coming back.`
+    : `${by}.`;
+}
+
+/** A bare /play: the heroes nobody plays. */
+function freeHeroes(slice: DrawSteelState): Refused {
+  const free = slice.heroes.filter((h) => h.player === undefined && heroHealth(h) !== "dead");
+  if (slice.heroes.length === 0)
+    return refuse("Usage: /play <hero>. There's no party yet; the GM brings heroes in with /hero.");
+  if (free.length === 0)
+    return refuse("Usage: /play <hero>. Every hero is taken; the GM brings more in with /hero.");
+  return refuse(`Usage: /play <hero>. Free to play: ${free.map((h) => h.sheet.name).join(", ")}.`);
+}
+
+/**
+ * A player takes a hero, or the GM gives one to a player. A hero held by a guest who has left
+ * is free: a guest is a new actor every time they connect, so they'd never get it back.
+ */
 function play(
   slice: DrawSteelState,
   actor: string,
   command: Extract<DsCommand, { type: "play" }>,
+  shared: Shared,
 ): Decision {
+  if (command.hero === undefined) return freeHeroes(slice);
   const who = resolve(slice, command.hero);
-  if ("refusal" in who) return who;
+  if ("refusal" in who)
+    return who.refusal.startsWith("Nobody at the table")
+      ? refuse(
+          `Nobody in the party is called '${quote(command.hero)}'; the GM brings heroes in with /hero.`,
+        )
+      : who;
   if (who.kind !== "hero") return refuse(`${who.name} is a creature; the GM plays it.`);
   const hero = who.hero;
   if (actor === GM) {
@@ -160,14 +213,16 @@ function play(
       return refuse(`Nobody at the table is called '${quote(command.player)}'.`);
     const theirs = heroOf(slice, player);
     if (theirs !== undefined) return refuse(`${quote(label)} already plays ${theirs.sheet.name}.`);
-    if (hero.player !== undefined)
-      return refuse(`${hero.sheet.name} is taken; /unplay ${hero.id} first.`);
+    if (hero.player === player) return refuse(`${quote(label)} already plays ${hero.sheet.name}.`);
+    const held = heldBy(hero, actor, command, shared);
+    if (held !== undefined) return refuse(held);
     return decided(event("ds.hero-claimed", { hero: hero.id, player, label: quote(label, 40) }));
   }
   if (command.player !== undefined) return refuse("Only the GM can give a hero to someone else.");
   const own = heroOf(slice, actor);
   if (own !== undefined) return refuse(`You already play ${own.sheet.name}.`);
-  if (hero.player !== undefined) return refuse(`${hero.sheet.name} is taken.`);
+  const held = heldBy(hero, actor, command, shared);
+  if (held !== undefined) return refuse(held);
   return decided(event("ds.hero-claimed", { hero: hero.id, player: actor }));
 }
 
@@ -254,7 +309,7 @@ function turn(
   dice: Dice,
 ): Decision {
   const { combat } = slice;
-  if (!combat.active) return refuse(NO_COMBAT);
+  if (!combat.active) return refuse(noCombat(actor));
   const typed = command.who ?? heroOf(slice, actor)?.id;
   if (typed === undefined)
     return refuse(
@@ -283,7 +338,7 @@ function turn(
 }
 
 function done(slice: DrawSteelState, actor: string, dice: Dice): Decision {
-  if (!slice.combat.active) return refuse(NO_COMBAT);
+  if (!slice.combat.active) return refuse(noCombat(actor));
   const acting = slice.combat.acting;
   if (acting === undefined) return refuse("Nobody is acting.");
   const who = findWho(slice, acting);
@@ -305,6 +360,50 @@ const characteristicsOf = (slice: DrawSteelState, who: Who): Characteristics | u
     ? who.hero.sheet.characteristics
     : slice.blocks[who.creature.block]?.characteristics;
 
+/** Whether `who` is bleeding: the condition, or a dying hero, whose bleeding can't end. */
+const bleeding = (who: Who): boolean =>
+  conditionsOf(who).some((c) => c.name === "bleeding") ||
+  (who.kind === "hero" && heroHealth(who.hero) === "dying");
+
+/**
+ * Bleeding's Stamina loss, 1d6 + level, after a main action, a triggered action, or a roll with
+ * Might or Agility (Classes, "Bleeding"), when `who` is bleeding and `bleeds` says it was one.
+ */
+function bleed(slice: DrawSteelState, who: Who, bleeds: boolean, dice: Dice): NewEvent[] {
+  if (!bleeds || !bleeding(who) || isDead(who)) return [];
+  const level =
+    who.kind === "hero" ? who.hero.sheet.level : (slice.blocks[who.creature.block]?.level ?? 0);
+  return [event("ds.bled", { id: who.id, roll: roll(dice, 6), level })];
+}
+
+const MIGHT_OR_AGILITY: ReadonlyArray<Characteristic> = ["might", "agility"];
+
+/** The targets typed after `on`, each at the table and alive, with how far from `who` they stand. */
+function targetsOf(
+  slice: DrawSteelState,
+  who: Who,
+  typed: ReadonlyArray<string>,
+): Array<{ readonly target: Who; readonly apart?: number }> | Refused {
+  const targets: Array<{ readonly target: Who; readonly apart?: number }> = [];
+  const from = slice.map?.tokens[who.id];
+  for (const name of typed) {
+    const target = resolve(slice, name);
+    if ("refusal" in target) return target;
+    if (isDead(target)) return refuse(`${target.name} is dead.`);
+    if (targets.some((t) => t.target.id === target.id)) continue;
+    const at = slice.map?.tokens[target.id];
+    targets.push(
+      from === undefined || at === undefined ? { target } : { target, apart: distance(from, at) },
+    );
+  }
+  return targets;
+}
+
+/**
+ * A power roll, by ability, characteristic or flat bonus. An ability's cost is spent with it; at
+ * targets, the tier's damage goes to each. An ability with no power roll is used instead: its
+ * cost spent and its effect printed. Bleeding follows either, when it applies.
+ */
 function powerRollFor(
   slice: DrawSteelState,
   actor: string,
@@ -315,9 +414,12 @@ function powerRollFor(
   if ("refusal" in who) return who;
   if (!controls(actor, who)) return refuse("You can only roll for your own hero.");
   const scores = characteristicsOf(slice, who);
+  const aimed = targetsOf(slice, who, command.targets ?? []);
+  if ("refusal" in aimed) return aimed;
   let bonus = command.bonus ?? 0;
   let named: { ability: string } | { characteristic: Characteristic } | undefined;
-  let cost: { readonly ability: string; readonly amount: number } | undefined;
+  let chosen: Ability | undefined;
+  let bleeds = false;
   if (command.ability !== undefined) {
     const abilities =
       who.kind === "hero"
@@ -341,23 +443,26 @@ function powerRollFor(
     if (choice.kind === "characteristic") {
       bonus = scores?.[choice.name] ?? 0;
       named = { characteristic: choice.name };
+      bleeds = MIGHT_OR_AGILITY.includes(choice.name);
     } else {
       const ability = abilities[choice.index]!;
-      if (ability.bonus !== undefined) bonus = ability.bonus;
-      else if (ability.characteristics !== undefined && ability.characteristics.length > 0)
-        bonus = Math.max(...ability.characteristics.map((c) => scores?.[c] ?? 0));
-      else return refuse(`${ability.name} has no power roll.`);
+      chosen = ability;
       named = { ability: ability.name };
-      if (ability.cost !== undefined && ability.cost > 0)
-        cost = { ability: ability.name, amount: ability.cost };
+      const uses = ability.characteristics ?? [];
+      bleeds = isActionThatBleeds(ability) || uses.some((c) => MIGHT_OR_AGILITY.includes(c));
+      if (ability.bonus !== undefined) bonus = ability.bonus;
+      else if (uses.length > 0) bonus = Math.max(...uses.map((c) => scores?.[c] ?? 0));
+      else return useAbility(slice, who, ability, aimed, dice);
     }
   }
-  const short = cost === undefined ? undefined : shortOf(slice, who, cost.amount);
-  if (short !== undefined) return refuse(`${short}; ${cost?.ability} costs ${cost?.amount}.`);
+  const cost = chosen?.cost !== undefined && chosen.cost > 0 ? chosen.cost : undefined;
+  const short = cost === undefined ? undefined : shortOf(slice, who, cost);
+  if (short !== undefined) return refuse(`${short}; ${chosen?.name} costs ${cost}.`);
   const pair = [roll(dice, 10), roll(dice, 10)] as const;
   const edges = Math.min(command.edges, 2);
   const banes = Math.min(command.banes, 2);
   const { total, tier } = powerRoll(pair, bonus, edges, banes);
+  const hurt = tierDamage(chosen?.[`tier${tier}`], scores);
   return decided(
     event("ds.power-rolled", {
       id: who.id,
@@ -368,8 +473,43 @@ function powerRollFor(
       banes,
       total,
       tier,
-      ...(cost !== undefined && { cost: cost.amount }),
+      ...(cost !== undefined && { cost }),
+      ...(aimed.length > 0 && {
+        targets: aimed.map(({ target, apart }) => ({
+          id: target.id,
+          ...(apart !== undefined && { apart }),
+        })),
+      }),
     }),
+    ...(hurt === undefined
+      ? []
+      : aimed.flatMap(({ target }) => damageEvents(slice, target, hurt.amount, hurt.type))),
+    ...bleed(slice, who, bleeds, dice),
+  );
+}
+
+/** An ability with no power roll: refused for a trait, else its cost spent and its effect told. */
+function useAbility(
+  slice: DrawSteelState,
+  who: Who,
+  ability: Ability,
+  aimed: ReadonlyArray<unknown>,
+  dice: Dice,
+): Decision {
+  if (isTrait(ability))
+    return refuse(`${ability.name} is a trait: it's always on, so there's nothing to use.`);
+  if (aimed.length > 0)
+    return refuse(`${ability.name} has no power roll, so it deals no damage to aim.`);
+  const cost = ability.cost !== undefined && ability.cost > 0 ? ability.cost : undefined;
+  const short = cost === undefined ? undefined : shortOf(slice, who, cost);
+  if (short !== undefined) return refuse(`${short}; ${ability.name} costs ${cost}.`);
+  return decided(
+    event("ds.ability-used", {
+      id: who.id,
+      ability: ability.name,
+      ...(cost !== undefined && { cost }),
+    }),
+    ...bleed(slice, who, isActionThatBleeds(ability), dice),
   );
 }
 
@@ -391,8 +531,19 @@ function damage(
   source?: { readonly id: string; readonly minions?: number; readonly apart?: number },
 ): Decision {
   if (isDead(who)) return refuse(`${who.name} is dead.`);
+  return decided(...damageEvents(slice, who, amount, type, source));
+}
+
+/** A `ds.damaged` for `who`, after weakness and immunity. */
+function damageEvents(
+  slice: DrawSteelState,
+  who: Who,
+  amount: number,
+  type: string | undefined,
+  source?: { readonly id: string; readonly minions?: number; readonly apart?: number },
+): NewEvent[] {
   const { dealt, weakness, immunity } = modifiedDamage(amount, type, modifiersOf(slice, who));
-  return decided(
+  return [
     event("ds.damaged", {
       id: who.id,
       amount,
@@ -404,7 +555,7 @@ function damage(
       ...(source?.minions !== undefined && { minions: source.minions }),
       ...(source?.apart !== undefined && { apart: source.apart }),
     }),
-  );
+  ];
 }
 
 function freeStrike(slice: DrawSteelState, command: Extract<DsCommand, { type: "fs" }>): Decision {
@@ -586,15 +737,17 @@ function victory(
   slice: DrawSteelState,
   command: Extract<DsCommand, { type: "victory" }>,
 ): Decision {
-  let heroes: ReadonlyArray<Hero> = slice.heroes;
+  if (slice.heroes.length === 0) return refuse("There's no party yet; /hero brings one in.");
+  let heroes: ReadonlyArray<Hero> = slice.heroes.filter((h) => heroHealth(h) !== "dead");
   if (command.who !== undefined) {
     const who = resolve(slice, command.who);
     if ("refusal" in who) return who;
     if (who.kind !== "hero")
       return refuse(`Only heroes earn Victories; ${who.name} is a creature.`);
+    if (isDead(who)) return refuse(`${who.name} is dead and earns no Victories.`);
     heroes = [who.hero];
   }
-  if (heroes.length === 0) return refuse("There's no party yet; /hero brings one in.");
+  if (heroes.length === 0) return refuse("Every hero is dead; there's nobody to earn Victories.");
   const short = heroes.find((h) => h.victories + command.by < 0);
   if (short !== undefined)
     return refuse(
@@ -615,6 +768,7 @@ export function decide(
   actor: string,
   command: DsCommand,
   dice: Dice,
+  shared: Shared = { actors: [], label: (who) => who },
 ): Decision {
   switch (command.type) {
     case "hero":
@@ -622,7 +776,7 @@ export function decide(
     case "add":
       return addCreatures(slice, command);
     case "play":
-      return play(slice, actor, command);
+      return play(slice, actor, command, shared);
     case "unplay":
       return unplay(slice, actor, command);
     case "start":

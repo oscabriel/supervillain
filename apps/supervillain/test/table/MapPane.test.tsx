@@ -267,6 +267,22 @@ describe("when the reach doesn't fit", () => {
   });
 });
 
+describe("a cropped view says what it shows", () => {
+  test("the title names the rows and columns in view when some are left out, and nothing when all show", () => {
+    const open: MapView = {
+      ...ford,
+      width: 16,
+      height: 12,
+      terrain: Array.from({ length: 12 }, () => ".".repeat(16)),
+      tokens: [token({ id: "vex", mark: "V", x: 3, y: 3, side: "heroes", mine: true })],
+      reach: [],
+    };
+    expect(mapLayout(open, 76, 13).title).toBe(` map · ${ford.name} `);
+    expect(mapLayout(open, 76, 6).title).toBe(` map · ${ford.name} · rows 2-6 of 12 `);
+    expect(mapLayout(open, 20, 13).title).toBe(` map · ${ford.name} · columns a-h of a-p `);
+  });
+});
+
 describe("reach on difficult terrain", () => {
   test("a reachable difficult square is a doubled wave, so the tint isn't the only sign", async () => {
     const map: MapView = { ...ford, reach: [...ford.reach, { x: 2, y: 2 }] };
@@ -285,8 +301,10 @@ describe("where /view points", () => {
     expect(focusOf(map, "k26")).toEqual({ square: { x: 10, y: 25 } });
     // "g" is the goblin's mark, though it starts no other name either.
     expect(focusOf(map, "g")).toEqual({ token: "goblin" });
-    expect(focusOf(map, "zz9")).toEqual({
-      refusal: "No token on the map is called 'zz9'; /view <square|who>, or map, feed or both",
+    // A square past the map's edge is that, as /dist says, not a name nobody has.
+    expect(focusOf(map, "zz9")).toEqual({ refusal: "zz9 is outside the map." });
+    expect(focusOf(map, "nobody")).toEqual({
+      refusal: "No token on the map is called 'nobody'; /view <square|who>, or map, feed or both",
     });
     const two = {
       ...map,

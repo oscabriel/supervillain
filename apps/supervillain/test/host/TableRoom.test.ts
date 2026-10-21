@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { TestClock } from "effect/testing";
 import { Effect } from "effect";
 import { TableRoom } from "../../src/host/TableRoom.ts";
 import { effect } from "./effect.ts";
@@ -89,13 +90,13 @@ describe("TableRoom", () => {
             );
             yield* say(bob);
             for (let i = 0; i < 20; i++) yield* say("gm");
-            // Two lines a second come back.
-            yield* Effect.sleep("600 millis");
+            // Two lines a second come back, by the room's clock.
+            yield* TestClock.adjust("600 millis");
             yield* say(alice);
           }),
         );
         expect((yield* logLines(dir)).filter((l) => l.actor === alice)).toHaveLength(11);
-      }),
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   effect("actors sent under one rate key share its rate", () =>

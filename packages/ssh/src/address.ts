@@ -22,14 +22,13 @@ const ipv6Groups = (address: string): number[] | undefined => {
 
 /**
  * What per-address limits and rates count by. An IPv6 client usually holds a whole /64, so a cap
- * per exact address wouldn't hold one person back: IPv6 counts by its /64. IPv4 counts as itself.
+ * per exact address wouldn't hold one person back: IPv6 counts by its /64, or by its /48 (what one
+ * site is usually given) for limits that must hold a whole site back. IPv4 counts as itself.
  */
-export const addressBucket = (address: string): string => {
+export const addressBucket = (address: string, prefix: 48 | 64 = 64): string => {
   const normal = normalizeAddress(address);
   const groups = ipv6Groups(normal);
   if (groups === undefined) return normal;
-  return `${groups
-    .slice(0, 4)
-    .map((g) => g.toString(16))
-    .join(":")}::/64`;
+  const kept = groups.slice(0, prefix / 16).map((g) => g.toString(16));
+  return `${kept.join(":")}::/${prefix}`;
 };

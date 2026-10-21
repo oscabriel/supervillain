@@ -20,6 +20,14 @@ describe("addresses, as limits count them", () => {
     expect(addressBucket("fe80::1%eth0")).toBe("fe80:0:0:0::/64");
   });
 
+  test("an IPv6 address can count by its /48 instead, the most one site usually holds", () => {
+    expect(addressBucket("2001:db8:1:2:aaaa::1", 48)).toBe("2001:db8:1::/48");
+    expect(addressBucket("2001:db8:1:ffff::1", 48)).toBe("2001:db8:1::/48");
+    expect(addressBucket("2001:db8:2::1", 48)).not.toBe(addressBucket("2001:db8:1::1", 48));
+    // IPv4 has no prefix to widen: it is itself.
+    expect(addressBucket("203.0.113.7", 48)).toBe("203.0.113.7");
+  });
+
   test("anything else is left as it is", () => {
     expect(addressBucket("unknown")).toBe("unknown");
     expect(addressBucket("not:an:address::x")).toBe("not:an:address::x");

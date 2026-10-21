@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fold } from "@supervillain/engine";
 import type { HeroSheet, StatBlock } from "../../src/game/drawSteel/sheets.ts";
+import { sheetText } from "../../src/game/drawSteel/view.ts";
 import {
   ALICE,
   BOB,
@@ -68,6 +69,30 @@ describe("what /end and /rest reset (Combat, 'End of Combat'; Monster Basics, 'E
     expect(t.lastFeed()).toEqual([
       "The party rests: Stamina and Recoveries are back to full. Victories become XP: Kor 2. Vex is dead and doesn't recover.",
     ]);
+  });
+});
+
+describe("XP and the dead", () => {
+  test("a respite adds each hero's Victories to their XP, which the sheet shows", () => {
+    const t = party();
+    t.run(GM, { type: "rest" });
+    t.run(GM, { type: "victory", who: "vex", by: 3 });
+    t.run(GM, { type: "rest" });
+    expect([t.hero("vex").xp, t.hero("kor").xp]).toEqual([5, 2]);
+    const sheet = sheetText(t.ds, "vex");
+    expect(typeof sheet === "string" && sheet.split("\n")[2]).toContain("Victories 0 · XP 5");
+  });
+
+  test("a hero who dies loses their conditions, and Victories go to the living", () => {
+    const t = party();
+    t.run(GM, { type: "cond", who: "vex", condition: "slowed", duration: "eot" });
+    t.run(GM, { type: "dmg", who: "vex", amount: 31 });
+    expect(t.hero("vex").conditions).toEqual([]);
+    t.run(GM, { type: "victory", by: 1 });
+    expect(t.lastFeed()).toEqual(["Victories +1: Kor 3."]);
+    expect(t.submit(GM, { type: "victory", who: "vex", by: 1 })).toBe(
+      "Vex is dead and earns no Victories.",
+    );
   });
 });
 
@@ -204,7 +229,7 @@ describe("who may do what", () => {
   test("the GM can't give away a hero someone plays without freeing it first", () => {
     const t = party();
     expect(t.submit(GM, { type: "play", hero: "vex", player: "Bob", playerActor: BOB })).toBe(
-      "Vex is taken; /unplay vex first.",
+      "Vex is played by abcdefgh; /unplay vex first.",
     );
     expect(t.hero("vex").player).toBe(ALICE);
   });

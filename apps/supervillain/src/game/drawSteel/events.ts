@@ -1,11 +1,12 @@
 import * as Schema from "effect/Schema";
 import { HeroSheetSchema, StatBlockSchema } from "./schema.ts";
+import { CHARACTERISTICS } from "./sheets.ts";
 import { CONDITIONS } from "./state.ts";
 
 const Id = Schema.String;
 const Condition = Schema.Literals(CONDITIONS);
 const Side = Schema.Literals(["heroes", "director"]);
-const Characteristic = Schema.Literals(["might", "agility", "reason", "intuition", "presence"]);
+const Characteristic = Schema.Literals(CHARACTERISTICS);
 const Square = Schema.Struct({ x: Schema.Int, y: Schema.Int });
 /** A token or a bare square, as /dist measured it. */
 const Point = Schema.Struct({ id: Schema.optionalKey(Id), at: Square });
@@ -73,7 +74,25 @@ export const Payloads = {
     tier: Schema.Literals([1, 2, 3]),
     /** The ability's cost, spent with the roll: the hero's resource, or a creature's Malice. */
     cost: Schema.optionalKey(Schema.Int),
+    /**
+     * Who it was aimed at, with how far each stood when both were on the map. The tier's damage
+     * follows as `ds.damaged` events in the same batch.
+     */
+    targets: Schema.optionalKey(
+      Schema.Array(Schema.Struct({ id: Id, apart: Schema.optionalKey(Schema.Int) })),
+    ),
   }),
+  /** An ability with no power roll: its cost is spent, and its effect goes in the feed. */
+  "ds.ability-used": Schema.Struct({
+    id: Id,
+    ability: Schema.String,
+    cost: Schema.optionalKey(Schema.Int),
+  }),
+  /**
+   * Bleeding's Stamina loss after a roll or action: the d6 and the creature's level, added. It
+   * isn't damage, so nothing reduces it and temporary Stamina doesn't take it.
+   */
+  "ds.bled": Schema.Struct({ id: Id, roll: Schema.Int, level: Schema.Int }),
   /** `dealt` is after weakness and immunity; temporary Stamina takes it first. */
   "ds.damaged": Schema.Struct({
     id: Id,
@@ -143,6 +162,11 @@ export const Payloads = {
     id: Id,
     kind: Schema.Literals(["push", "pull", "slide"]),
     source: Schema.optionalKey(Id),
+    /**
+     * Where the target stood. A later change that stood on it (a slam that went nowhere) then
+     * won't fold from anywhere else, so undo refuses to take the move it stood on back first.
+     */
+    from: Schema.optionalKey(Square),
     distance: Schema.Int,
     stability: Schema.Int,
     path: Schema.Array(Square),

@@ -1,5 +1,6 @@
 import { useTerminalDimensions } from "@opentui/solid";
-import { For } from "solid-js";
+import { createMemo, For } from "solid-js";
+import { keepLines } from "./keep.ts";
 import { type Focus, MAP_FRAME, mapLayout, type MapSegment, type MapTone } from "./map.ts";
 import { color } from "./theme.ts";
 import type { MapView } from "./view.ts";
@@ -34,13 +35,16 @@ const styleOf = (s: MapSegment) => ({
  */
 export function MapPane(props: { map: MapView; height: number; focus?: Focus | undefined }) {
   const size = useTerminalDimensions();
-  const layout = () =>
-    mapLayout(
+  const keep = keepLines<MapSegment>();
+  const layout = createMemo(() => {
+    const laid = mapLayout(
       props.map,
       size().width - MAP_FRAME.width,
       props.height - MAP_FRAME.height,
       props.focus,
     );
+    return { ...laid, lines: keep(laid.lines) };
+  });
   return (
     <box
       border

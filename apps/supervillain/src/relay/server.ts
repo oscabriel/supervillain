@@ -12,14 +12,15 @@ import {
   type Limits,
   loadHostKey,
   normalizeAddress,
+  type Rate,
   type RawSession,
+  rateLimiter,
   type SshError,
   serve,
   TERMINAL_RESET,
   type Timeouts,
 } from "@supervillain/ssh";
 import { Clock, Context, Effect, FiberSet, Layer, Schema, type Scope, Semaphore } from "effect";
-import { type Rate, rateLimiter } from "../host/rate.ts";
 import {
   closedRoomMessage,
   errLine,
@@ -32,7 +33,15 @@ import {
   readLine,
   TABLE_CLOSED_MESSAGE,
 } from "./protocol.ts";
-import { checkRelayDir, claimRoom, readRooms, type RoomsError } from "./rooms.ts";
+import {
+  checkRelayDir,
+  type ClaimPolicy,
+  claimRoom,
+  judgeClaim,
+  readRooms,
+  type RoomsError,
+  touchRoom,
+} from "./rooms.ts";
 
 export class RelayError extends Schema.TaggedError<RelayError>()("RelayError", {
   message: Schema.String,
@@ -51,13 +60,20 @@ export interface GmLimits {
   readonly linksPerAddress?: number;
   /** How fast one address may dial in. Default a burst of 10, then one every 6 s. */
   readonly linkRate?: Rate;
-  /** Rooms rooms.json may hold; a claim past it is refused. Default 1024. */
-  readonly maxRooms?: number;
   /**
-   * How fast one address may claim rooms nobody holds; GMs relinking rooms they hold don't count.
-   * Default 3, then one an hour.
+   * Rooms rooms.json may hold. A claim past it drops the stalest claim with no GM linked now, or
+   * is refused if every claim has one. Default 1024.
+   */
+  readonly maxRooms?: number;
+  /** A claim no GM has linked for this many days lapses, and another key may claim it. Default 30. */
+  readonly claimDays?: number;
+  /**
+   * How fast one address (an IPv4 address or IPv6 /64) may claim rooms nobody holds; GMs relinking
+   * rooms they hold don't count. Default 3, then one an hour.
    */
   readonly claimRate?: Rate;
+  /** How fast one IPv6 /48 may claim rooms, all its /64s together. Default 10, then 4 an hour. */
+  readonly siteClaimRate?: Rate;
   /** How long a GM has to say its hello. Default 10 s. */
   readonly lineTimeoutMs?: number;
   /** How long the SSH handshake on a link may take. Default 20 s. */
@@ -113,7 +129,9 @@ const GM_DEFAULTS = {
   linksPerAddress: 8,
   linkRate: { burst: 10, perSecond: 1 / 6 },
   maxRooms: 1024,
+  claimDays: 30,
   claimRate: { burst: 3, perSecond: 1 / 3600 },
+  siteClaimRate: { burst: 10, perSecond: 4 / 3600 },
   lineTimeoutMs: LINE_TIMEOUT_MS,
   readyTimeoutMs: 20_000,
   keepaliveMs: 15_000,
@@ -125,13 +143,32 @@ const SHUTDOWN_NOTICE = "The relay is shutting down.";
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** What a player hears for a room no GM has ever linked. A name that can't be a room isn't echoed. */
-export const unknownRoomMessage = (room: string): string =>
+const unknownRoomMessage = (room: string): string =>
   isRoomName(room)
     ? `There's no table called ${room} here.`
     : "There's no table by that name here.";
 
 /** What a player hears for a room that carries all the sessions it may. */
-export const fullRoomMessage = (room: string): string => `The table ${room} is full right now.`;
+const fullRoomMessage = (room: string): string => `The table ${room} is full right now.`;
+
+/**
+ * How fast an address may claim rooms: by `perAddress` for its IPv4 address or IPv6 /64, and for
+ * IPv6 by `perSite` for its /48 too, so a site with many /64s can't claim a room from each. Returns
+ * the bucket over its rate, or undefined when the claim may go ahead (and is counted).
+ */
+export const claimLimiter = (perAddress: Rate, perSite: Rate) => {
+  const byAddress = rateLimiter(perAddress);
+  const bySite = rateLimiter(perSite);
+  return (address: string, now: number): string | undefined => {
+    const bucket = addressBucket(address);
+    if (!byAddress(bucket, now)) return bucket;
+    const site = addressBucket(address, 48);
+    if (site !== bucket && !bySite(site, now)) return site;
+    return undefined;
+  };
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** One GM's live link: the relay is the SSH client on it. */
 interface GmLink {
@@ -174,8 +211,19 @@ const make = (
     // Links and log lines from socket callbacks run here, with this fiber's services (the logger).
     const fibers = yield* FiberSet.make();
     const fork = yield* FiberSet.runtime(fibers)<never>();
+    const run = yield* FiberSet.runtimePromise(fibers)<never>();
+    // Socket callbacks read the time from the same clock the Effect code does.
+    const clock = yield* Clock.Clock;
     const claims = yield* Semaphore.make(1);
-    const claimAllowed = rateLimiter(gmLimits.claimRate);
+    const claimOver = claimLimiter(gmLimits.claimRate, gmLimits.siteClaimRate);
+    /** The claim rules now: rooms with a GM linked keep their claims however old. */
+    const claimPolicy = (): ClaimPolicy => ({
+      maxRooms: gmLimits.maxRooms,
+      expireMs: gmLimits.claimDays * DAY_MS,
+      linked: new Set([...links.values()].filter((l) => l.alive).map((l) => l.room)),
+    });
+    const fullRooms = (room: string) =>
+      `room ${room}: refused: the relay holds its most rooms (${gmLimits.maxRooms}), each with a GM linked now`;
     const links = new Map<string, GmLink>();
     /** GM sockets that haven't linked yet: saying hello, or logging in. */
     const pending = new Set<Socket>();
@@ -186,7 +234,6 @@ const make = (
     /** One link, from its hello's answer until it closes. Closing its scope closes the socket. */
     const runLink = (socket: Socket, address: string, room: string) =>
       Effect.gen(function* () {
-        const bucket = addressBucket(address);
         /** Whether one more GM may link: a room already linked is only relinked. */
         const linkFull = () => !links.has(room) && links.size >= gmLimits.links;
         const fullRefusal = `room ${room}: refused: the relay has its most GMs linked (${gmLimits.links})`;
@@ -201,23 +248,26 @@ const make = (
           // A claimed room only takes the host key that claimed it. Read fresh, so a `forget`
           // takes effect on a running relay.
           verifyHostKey: async (offered) => {
-            const rooms = await Effect.runPromise(Effect.result(readRooms(roomsFile)));
-            if (rooms._tag === "Failure") {
-              refusal = `room ${room}: can't read the room registry: ${rooms.failure.message}`;
+            const verdict = await run(
+              Effect.gen(function* () {
+                const rooms = yield* readRooms(roomsFile);
+                const now = yield* Clock.currentTimeMillis;
+                return judgeClaim(rooms, room, offered, now, claimPolicy());
+              }).pipe(Effect.result),
+            );
+            if (verdict._tag === "Failure") {
+              refusal = `room ${room}: can't read the room registry: ${verdict.failure.message}`;
               return false;
             }
             if (linkFull()) {
               refusal = fullRefusal;
               return false;
             }
-            const holder = rooms.success[room];
-            if (holder === undefined && Object.keys(rooms.success).length >= gmLimits.maxRooms) {
-              refusal = `room ${room}: refused: the relay holds its most rooms (${gmLimits.maxRooms})`;
-              return false;
-            }
-            if (holder === undefined || holder === offered) return true;
-            refusal = `room ${room}: refused a GM with host key ${offered} from ${address}; ${holder} holds it (supervillain relay forget ${room} releases it)`;
-            return false;
+            const { success } = verdict;
+            if (success.kind === "full") refusal = fullRooms(room);
+            else if (success.kind === "held")
+              refusal = `room ${room}: refused a GM with host key ${offered} from ${address}; ${success.holder} holds it (supervillain relay forget ${room} releases it)`;
+            return refusal === undefined;
           },
         }).pipe(
           Effect.tapError((e) =>
@@ -230,32 +280,29 @@ const make = (
                 : Effect.logInfo(`room ${room}: GM link from ${address} failed: ${e.message}`),
           ),
         );
-        // The host key is proven now. Claims are serialized, so two first links can't both win.
+        // The host key is proven now. Claims are serialized, so two first links can't both win,
+        // and a link that can't be kept (the relay stopping, or at its most links) claims nothing.
         const proven = client.hostKeyFingerprint;
         const claim = yield* claims.withPermits(1)(
           Effect.gen(function* () {
-            // Claiming a room costs a GM nothing, so one address claims only so fast; a GM
-            // relinking a room it holds claims nothing.
-            const held = (yield* readRooms(roomsFile))[room] !== undefined;
-            if (!held && !claimAllowed(bucket, yield* Clock.currentTimeMillis))
-              return { tooFast: true } as const;
-            return yield* claimRoom(roomsFile, room, proven, { maxRooms: gmLimits.maxRooms });
+            if (!accepting || client.closed()) return { gone: true } as const;
+            if (linkFull()) return { linkFull: true } as const;
+            return yield* claimRoom(roomsFile, room, proven, claimPolicy());
           }),
         );
-        if ("tooFast" in claim)
-          return yield* Effect.logWarning(`room ${room}: refused: ${bucket} claims rooms too fast`);
-        if ("full" in claim)
-          return yield* Effect.logWarning(
-            `room ${room}: refused: the relay holds its most rooms (${gmLimits.maxRooms})`,
+        if ("gone" in claim) return;
+        if ("linkFull" in claim) return yield* Effect.logWarning(fullRefusal);
+        if ("full" in claim) return yield* Effect.logWarning(fullRooms(room));
+        const { holder, claimed, dropped } = claim;
+        for (const old of dropped)
+          yield* Effect.logInfo(
+            `room ${old.room}: dropped the claim of GM host key ${old.key}, last linked ${new Date(old.linked).toISOString()}${old.room === room ? "" : `, to make room for ${room}`}`,
           );
-        const { holder, claimed } = claim;
         if (holder !== proven)
           return yield* Effect.logWarning(
             `room ${room}: refused a GM with host key ${proven} from ${address}; ${holder} holds it (supervillain relay forget ${room} releases it)`,
           );
-        if (!accepting || client.closed()) return;
         if (claimed) yield* Effect.logInfo(`room ${room}: claimed by GM host key ${proven}`);
-        if (linkFull()) return yield* Effect.logWarning(fullRefusal);
 
         const link: GmLink = { room, client, alive: true, sessions: 0 };
         const old = links.get(room);
@@ -264,9 +311,15 @@ const make = (
         yield* Effect.addFinalizer(() =>
           Effect.suspend(() => {
             link.alive = false;
-            if (links.get(room) !== link) return Effect.void;
+            // Its claim's time is when a GM was last linked: now, as this link ends.
+            const renew = touchRoom(roomsFile, room, proven).pipe(
+              Effect.catchTag("RoomsError", (e) =>
+                Effect.logError(`room ${room}: can't write the room registry: ${e.message}`),
+              ),
+            );
+            if (links.get(room) !== link) return renew;
             links.delete(room);
-            return Effect.logInfo(`room ${room}: GM link closed`);
+            return Effect.andThen(renew, Effect.logInfo(`room ${room}: GM link closed`));
           }),
         );
         if (old) {
@@ -288,6 +341,39 @@ const make = (
         Effect.ensuring(Effect.sync(() => socket.destroy())),
       );
 
+    /**
+     * Whether a hello for `room` from `address` may go on to log in, judged before SSH so the GM's
+     * host hears why on the answer line: for a reason that is about the relay or the address, not
+     * the host key, which only the login proves. Claiming a room nobody holds costs a GM nothing,
+     * so one address claims only so fast; a GM relinking a room it holds claims nothing. Returns
+     * the journal's line and the answer's reason, or undefined to go on.
+     */
+    const judgeHello = (room: string, address: string) =>
+      claims.withPermits(1)(
+        Effect.gen(function* () {
+          if (!links.has(room) && links.size >= gmLimits.links)
+            return {
+              journal: `room ${room}: refused: the relay has its most GMs linked (${gmLimits.links})`,
+              reason: "the relay has its most GMs linked; try again later",
+            };
+          const now = yield* Clock.currentTimeMillis;
+          // Judged for no key, "held" means some key holds the room: only its GM will log in.
+          const verdict = judgeClaim(yield* readRooms(roomsFile), room, "", now, claimPolicy());
+          if (verdict.kind === "full")
+            return {
+              journal: fullRooms(room),
+              reason: "the relay holds its most rooms, each with a GM linked now",
+            };
+          const over = verdict.kind === "free" ? claimOver(address, now) : undefined;
+          if (over !== undefined)
+            return {
+              journal: `room ${room}: refused: ${over} claims rooms too fast`,
+              reason: "this address claims rooms too fast; try again later",
+            };
+          return undefined;
+        }),
+      );
+
     const gmSockets = new Set<Socket>();
     const linksByAddress = new Map<string, number>();
     const linkAllowed = rateLimiter(gmLimits.linkRate);
@@ -301,7 +387,7 @@ const make = (
         !accepting ||
         pending.size >= gmLimits.pendingLinks ||
         fromHere >= gmLimits.linksPerAddress ||
-        !linkAllowed(bucket, Date.now())
+        !linkAllowed(bucket, clock.currentTimeMillisUnsafe())
       ) {
         return void socket.destroy();
       }
@@ -329,8 +415,26 @@ const make = (
             return refuse(errLine(hello.reason));
           }
           if (!accepting) return refuse(errLine("the relay is shutting down"));
-          socket.write(OK_LINE);
-          void fork(runLink(socket, address, hello.room));
+          void fork(
+            judgeHello(hello.room, address).pipe(
+              Effect.flatMap((refused) => {
+                if (refused !== undefined)
+                  return Effect.andThen(
+                    Effect.logWarning(refused.journal),
+                    Effect.sync(() => refuse(errLine(refused.reason))),
+                  );
+                if (socket.destroyed) return Effect.void;
+                socket.write(OK_LINE);
+                return runLink(socket, address, hello.room);
+              }),
+              Effect.catchTag("RoomsError", (e) =>
+                Effect.andThen(
+                  Effect.logError(`room ${hello.room}: can't read the room registry: ${e.message}`),
+                  Effect.sync(() => refuse(errLine("the relay can't read its room registry"))),
+                ),
+              ),
+            ),
+          );
         },
         (e: unknown) => {
           void fork(

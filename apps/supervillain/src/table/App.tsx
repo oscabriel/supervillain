@@ -5,7 +5,7 @@ import {
   type ScrollBoxRenderable,
 } from "@opentui/core";
 import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
-import { createEffect, createSignal, on, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import { BAND_FRAME, Band } from "./Band.tsx";
 import { bandLayout } from "./band.ts";
 import { Feed } from "./Feed.tsx";
@@ -37,6 +37,7 @@ import {
   tableCompletions,
 } from "./input.ts";
 import { InputLine } from "./InputLine.tsx";
+import { hanging } from "./hanging.ts";
 import { type Focus, focusOf, followed, MAP_FRAME, mapLayout, mapRowsWanted } from "./map.ts";
 import { MapPane } from "./MapPane.tsx";
 import { color, people } from "./theme.ts";
@@ -106,6 +107,10 @@ export function App(props: { view: TableView }) {
   const [pin, setPin] = createSignal<{ readonly square: Focus } | { readonly token: string }>();
   /** The GM pressed Ctrl-C with players here, and the next Ctrl-C closes the table. */
   const [leaving, setLeaving] = createSignal(false);
+  /** The line a hint just answered: sent again as it is, it goes ahead. */
+  let asked: string | undefined;
+  /** Lines reach the host one at a time, so one that waits on a file can't be overtaken. */
+  let queue: Promise<unknown> = Promise.resolve();
   let feed: ScrollBoxRenderable | undefined;
   let pane: ScrollBoxRenderable | undefined;
   let debug: ScrollBoxRenderable | undefined;
@@ -188,14 +193,11 @@ export function App(props: { view: TableView }) {
   }
 
   /** `/view <square|who>`: centres the map there, showing it if it was hidden. */
-  function centre(at: string, text: string) {
+  function centre(at: string) {
     const map = view.map?.();
     if (map === undefined) return void setNotice(NO_MAP);
     const found = focusOf(map, at);
-    if ("refusal" in found) {
-      setNotice(found.refusal);
-      return setLine(restoreDraft(line(), text));
-    }
+    if ("refusal" in found) return void setNotice(found.refusal);
     setPin(found);
     if (split() === "feed") setSplit("both");
   }
@@ -205,18 +207,24 @@ export function App(props: { view: TableView }) {
     setLine(state);
     if (text === undefined) return;
     setNotice(undefined);
-    const intent = intentFor(text, mode(), view.me);
+    const intent = intentFor(text, mode(), view.me, asked);
+    asked = undefined;
     if (intent.kind === "quit") return view.leave();
     if (intent.kind === "state") return void setShowDebug(!showDebug());
     if (intent.kind === "view") return changeLayout(intent.layout);
-    if (intent.kind === "focus") return centre(intent.at, text);
+    if (intent.kind === "focus") return centre(intent.at);
+    if (intent.kind === "hint") {
+      setNotice(intent.text);
+      if (!intent.again) return;
+      asked = text;
+      return setLine(restoreDraft(line(), text));
+    }
+    // A refused line isn't given back: the next one typed would run into it. Up brings it back.
+    const reply = queue.then(() => view.submit(intent.line));
+    queue = reply.catch(() => undefined);
     try {
-      const reply = await view.submit(intent.line);
-      if (reply === undefined || reply === "") return;
-      setNotice(reply);
-      // A one-line reply to anything but help is a refusal: give the line back to be fixed.
-      // A multi-line reply (a sheet, the help) is something asked for, read in the pane.
-      if (!/^\/help\b/i.test(text) && !reply.includes("\n")) setLine(restoreDraft(line(), text));
+      const text = await reply;
+      if (text !== undefined && text !== "") setNotice(text);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     }
@@ -274,6 +282,8 @@ export function App(props: { view: TableView }) {
         return edit(deleteWordBack);
       case "clearToStart":
         return edit(clearToStart);
+      case "eof":
+        return line().text === "" ? leave() : edit(deleteForward);
       case "left":
         return edit(moveLeft);
       case "right":
@@ -302,12 +312,12 @@ export function App(props: { view: TableView }) {
    *
    * A map shares the rows between the band and the feed (see mapHeights); the feed keeps its five.
    */
-  const heights = () => {
+  const heights = createMemo(() => {
     const h = size().height;
     const combat = view.combat?.();
     const room = h - FIXED_ROWS - FEED_MIN - (notice() !== undefined && !multiline() ? 1 : 0);
     const paneWanted = multiline()
-      ? Math.max(3, Math.min((notice() ?? "").split("\n").length + 2, Math.floor(h / 2)))
+      ? Math.max(3, Math.min(paneRows(notice() ?? "") + 2, Math.floor(h / 2)))
       : 0;
     if (small())
       return {
@@ -331,7 +341,7 @@ export function App(props: { view: TableView }) {
     const keep = Math.min(layout.keepLines + BAND_FRAME.height, room - 3);
     const band = Math.max(BAND_MIN, keep, Math.min(wanted, room - paneMin));
     return { band, pane: Math.max(3, Math.min(paneWanted, room - band)), map: 0 };
-  };
+  });
 
   /**
    * The band's and the map's rows when a map shows, out of `room` (what the feed's five rows
@@ -366,6 +376,16 @@ export function App(props: { view: TableView }) {
       wanted,
       keep: Math.min(wanted, Math.max(BAND_MIN, layout.keepLines + BAND_FRAME.height)),
     };
+  }
+
+  /** The rows a reply takes in the pane, its long lines wrapped under where their text starts. */
+  function paneRows(text: string): number {
+    // The border, the padding and the scroll bar take four columns.
+    const width = Math.max(10, size().width - 4);
+    return hanging(text).reduce((rows, { lead, rest }) => {
+      const room = Math.max(1, width - Bun.stringWidth(lead));
+      return rows + Math.max(1, Math.ceil(Bun.stringWidth(rest) / room));
+    }, 0);
   }
 
   const paneHeight = () => heights().pane;
@@ -439,7 +459,20 @@ export function App(props: { view: TableView }) {
                 flexGrow={1}
                 paddingLeft={1}
               >
-                <text fg={color.text}>{text()}</text>
+                <For each={hanging(text())}>
+                  {(line) => (
+                    <box flexDirection="row" flexShrink={0}>
+                      <Show when={line.lead !== ""}>
+                        <text fg={color.text} flexShrink={0} wrapMode="none">
+                          {line.lead}
+                        </text>
+                      </Show>
+                      <text fg={color.text} flexGrow={1} flexShrink={1} minWidth={0}>
+                        {line.rest}
+                      </text>
+                    </box>
+                  )}
+                </For>
               </scrollbox>
             </box>
           </Show>

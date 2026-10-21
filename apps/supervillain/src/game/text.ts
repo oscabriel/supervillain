@@ -214,20 +214,30 @@ const LOOKALIKES: Readonly<Record<string, string>> = {
 };
 const DIGIT_LOOKALIKES: Readonly<Record<string, string>> = { "0": "o", "1": "l" };
 
-/**
- * What a name looks like, for telling whether two names would be mistaken for each other:
- * compatibility-normalised (NFKC), invisible characters removed, lookalike letters folded to
- * Latin, lowercased, and 0 and 1 read as o and l. "Vex", "VEX", "Ｖｅｘ" and "Vеx" with a
- * Cyrillic е all look like "vex".
- */
-export function nameKey(name: string): string {
-  const folded = [...name.normalize("NFKC").replace(INVISIBLE, "")]
+/** A name folded to what it looks like, spaces and punctuation still in. See `nameKey`. */
+function folded(name: string): string {
+  const latin = [...name.normalize("NFKC").replace(INVISIBLE, "")]
     .map((char) => LOOKALIKES[char] ?? char)
     .join("")
+    // A capital I draws like a lowercase l, and lowercasing would lose which it was.
+    .replace(/I/g, "l")
     .toLowerCase();
-  return [...folded]
+  return [...latin]
     .map((char) => DIGIT_LOOKALIKES[char] ?? char)
     .join("")
+    .replace(/rn/g, "m")
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/**
+ * What a name looks like, for telling whether two names would be mistaken for each other:
+ * compatibility-normalised (NFKC), invisible characters removed, lookalike letters folded to
+ * Latin, a capital I read as an l, lowercased, 0 and 1 read as o and l and rn as m, and spaces
+ * and punctuation (but brackets) dropped. "Vex", "VEX", "Ｖｅｘ", "V e x." and "Vеx" with a
+ * Cyrillic е all look like "vex".
+ */
+export const nameKey = (name: string): string => folded(name).replace(/(?![()])[\s\p{P}]/gu, "");
+
+/** Whether a name reads like a guest's default label, "guest-7f3a". */
+export const looksLikeGuestLabel = (name: string): boolean => folded(name).startsWith("guest-");

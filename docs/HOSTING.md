@@ -10,7 +10,7 @@ This page covers installing the binary, starting a table, and the three ways pla
 
 ## Install
 
-Each release has one self-contained executable per platform, plus `SHA256SUMS`:
+There is no release of the rebuild yet: build the binary yourself (below) or run from source (`bun install`, then `bun supervillain …` from the repo root). The releases on GitHub up to v0.2.0 are the archived build and don't have these files. Once a release is tagged, it has one self-contained executable per platform, plus `SHA256SUMS`:
 
 | File | For |
 | --- | --- |
@@ -28,7 +28,7 @@ sudo install -m 0755 supervillain-linux-x64 /usr/local/bin/supervillain
 supervillain --version
 ```
 
-Replace `<tag>` with the release you want (`gh release list -R oscabriel/supervillain`; releases from before the rebuild, up to v0.2.0, are the archived build and don't have these files), and the file name with your platform's. Downloading with `gh` or `curl` is fine on macOS. If you download with a browser, macOS quarantines the file and won't open it. Clear that with `xattr -d com.apple.quarantine supervillain-darwin-arm64`.
+Replace `<tag>` with the release you want (`gh release list -R oscabriel/supervillain`), and the file name with your platform's. Downloading with `gh` or `curl` is fine on macOS. If you download with a browser, macOS quarantines the file and won't open it. Clear that with `xattr -d com.apple.quarantine supervillain-darwin-arm64`.
 
 To build it yourself from a checkout, run `bun install`, then `bun run release:build`. That writes `dist/supervillain-<os>-<arch>` for your machine. Use `--all` for every platform after `bun install --os="*" --cpu="*"`.
 
@@ -39,7 +39,7 @@ supervillain new ~/campaigns/first-fight --example
 supervillain host ~/campaigns/first-fight
 ```
 
-`new --example` copies the sample campaign: four heroes, the bandits and the map for one fight. Without `--example` you get empty `heroes/`, `monsters/` and `maps/` folders. The folder's README explains the file formats.
+`new --example` copies the sample campaign: four heroes, the bandits and the map for one fight. Without `--example` you get empty `heroes/`, `monsters/` and `maps/` folders. The folder's README explains the file formats. `host` opens a folder that's there and refuses one that isn't (`there's no campaign at …; make one with: supervillain new …`), so a mistyped path never starts an empty table under a new host key.
 
 `host` prints what to send your players:
 
@@ -49,7 +49,9 @@ players join with: ssh -p 2222 first-fight@127.0.0.1
 host key SHA256:gkYn722z8+JIXdkwJa/9amF10Y2+zkGdElyWlj0LZHk
 ```
 
-Send players the join command, with your address in place of `127.0.0.1` (see below), and the host key. When ssh first connects it shows them that fingerprint, and comparing the two is how they know they reached you. Ctrl-C at your seat closes the table. While players are seated it asks you to press it again.
+Send players the join command, with your address in place of `127.0.0.1` (see below), and the host key. When ssh first connects it shows them that fingerprint, and comparing the two is how they know they reached you. Your seat covers that output once it opens, so while you sit alone its band shows `players join with: ssh -p 2222 first-fight@127.0.0.1 · host key SHA256:…`, and the end of `/help` and `host.log` have both too. Ctrl-C at your seat closes the table. While players are seated it asks you to press it again.
+
+If the port is taken, by another table say, `host` says so and stops: `port 2222 on 127.0.0.1 is in use (another table?); pick another with --port, or --port 0 for any free one`.
 
 | Option | What it does |
 | --- | --- |
@@ -68,7 +70,7 @@ The campaign folder is yours alone (mode 700). The host writes these files into 
 - `host_key`: the table's SSH identity. Keep it, or players' ssh will warn that the key changed.
 - `events.lock`: while a host runs, so only one host at a time writes to a campaign.
 - `host.log`: what the host did, when you have the GM's seat.
-- `relay_known`: the relay key this campaign trusts, written on the first link to a relay.
+- `relay_known`: the relay key this campaign trusts, written on the first link to a relay (the `--relay-key`, if you passed one).
 
 The host refuses a `host_key` other users can read (`chmod 600` it). Players are capped so one stranger can't take the table down: 8 connections and 16 sessions from one address, 64 of each in all, 20 seconds to log in, and a few lines a second per player.
 
@@ -179,6 +181,7 @@ GMs dial 0.0.0.0:7022 (supervillain host --relay <this host>:7022)
 relay key SHA256:qvkXv/0oq8giV0/7z4dtuBdvLT5onmKPQztKIMFOEtQ
   GMs pin it with: --relay-key SHA256:qvkXv/0oq8giV0/7z4dtuBdvLT5onmKPQztKIMFOEtQ
 host key SHA256:eaIkljiTdK8kbQz3HpTcvu1vxAfazjOz5/vcRD4fDWA (what players' ssh sees)
+a room's claim lapses after 30 days with no GM linked
 ```
 
 The relay key is what GMs' hosts pin. The host key is what players' ssh shows them the first time. `/var/lib/supervillain-relay` holds both keys (`relay_key`, `host_key`) and `rooms.json`, and nothing else: the relay keeps no logs of play and renders nothing. Back the folder up. If the keys are lost, every GM's host and every player's ssh will see a new relay. Without `--dir`, the relay keeps its files in `~/.supervillain-relay`.
@@ -211,21 +214,34 @@ supervillain host ~/campaigns/first-fight --room first-fight \
   --relay table.example.com --relay-key SHA256:<the relay's key fingerprint>
 ```
 
-`--relay` takes `host:port`, and the port defaults to 7022. With `--relay-key`, the host trusts only that key. Without it, the first link stores the relay's key in `<campaign>/relay_known`, and later links must match it. Your band then says `relay key SHA256:… trusted on first use`, and `host.log` says the same, so compare it with the journal. Pass `--relay-key` whenever you can.
+`--relay` takes `host:port`, and the port defaults to 7022. With `--relay-key`, the host trusts only that key. Without it, the first link stores the relay's key in `<campaign>/relay_known`, and later links must match it. A link with `--relay-key` stores that key there too, if there's none yet, so a later start without the flag stays pinned. Your band then says `relay key SHA256:… trusted on first use`, and `host.log` says the same, so compare it with the journal. Pass `--relay-key` whenever you can.
 
 A relay that shows a different key is refused, loudly: your band says `relay refused: its key … doesn't match …`, and the host stops dialing it. If the relay's key really changed (its folder was lost), check the new fingerprint with whoever runs it, put it in `relay_known` (or pass the new `--relay-key`), and the host links again within a few seconds.
 
-While the link isn't up, the header at the top of your seat says so beside the room, whatever else is on screen: `relay: connecting…`, `relay: down, redialing`, `relay: refused, redialing`, or `relay: refused, see host.log`. The band below it says more while you sit alone: `players join with: ssh -p 2222 first-fight@table.example.com` once it's up, `relay: connecting…` with the last error while it isn't, and `relay refused: …` if the relay turned the room down or its key was wrong. If the link drops, the host redials on its own, waiting 1 second, then 2, 4 and so on up to 30. The join command assumes the relay's player port is 2222; if it isn't, tell the host with `--relay-player-port`.
+While the link isn't up, the header at the top of your seat says so beside the room, whatever else is on screen: `relay: connecting…`, `relay: down, redialing`, `relay: refused, redialing`, or `relay: refused, see host.log`. The band below it says more while you sit alone: `players join with: ssh -p 2222 first-fight@table.example.com` once it's up, `relay: connecting…` with the last error while it isn't, and `relay refused: …` if the relay turned the room down (saying why: `this address claims rooms too fast`, `the relay holds its most rooms`, `the relay has its most GMs linked`) or its key was wrong. A refused host redials with the same backoff. If the link drops, the host redials on its own, waiting 1 second, then 2, 4 and so on up to 30. The join command assumes the relay's player port is 2222; if it isn't, tell the host with `--relay-player-port`.
 
 The host still listens on `--port` and `--bind` as before, so local players can connect directly while remote ones come through the relay. Room names on a relay are 1 to 32 characters of `a-z`, `0-9` and `-`, starting with a letter. Pass `--room` if your folder's name doesn't fit.
 
-Players run `ssh -p 2222 first-fight@table.example.com`. The first time, ssh shows them the relay's host key, not your table's, so give them the relay's fingerprint (`host key SHA256:… (what players' ssh sees)` in its journal). Pass it to your host with `--relay-host-key` and it's printed with the join command and in your `/help`; without it, the host says to ask whoever runs the relay. Your table's own host key is for players who connect directly. If your machine is off, they're told `The table first-fight isn't open right now.` A room nobody has linked is `There's no table called first-fight here.` If your host stops or its link drops while they're seated, they're told `The GM closed the table.` or `The table closed.`, and can connect again once your host is back.
+Players run `ssh -p 2222 first-fight@table.example.com`. The first time, ssh shows them the relay's host key, not your table's, so give them the relay's fingerprint (`host key SHA256:… (what players' ssh sees)` in its journal). Pass it to your host with `--relay-host-key` and it's printed with the join command, in your `/help` and in `host.log`; without it, the host says to ask whoever runs the relay. Your table's own host key is for players who connect directly, and all three say so. If your machine is off, they're told `The table first-fight isn't open right now.` A room nobody has linked is `There's no table called first-fight here.` If your host stops or its link drops while they're seated, they're told `The GM closed the table.` or `The table closed.`, and can connect again once your host is back.
 
 ### Room claims
 
-The first host to link a room claims it for its host key (the campaign's `host_key`), and the relay writes that to `rooms.json`. After that, the relay refuses that room to any other host key, so nobody else can take your room while you're away. A refused host keeps redialing, and its band shows `relay: connecting… (the link closed before the relay logged in; if this keeps up, another GM's host key may hold room first-fight there)`. The relay's journal names the host key it refused.
+A claim is the relay's record that a room belongs to one GM's host key (the campaign's `host_key`). The first host to link a room claims it, and the relay writes the claim to `rooms.json`: the room, the host key's fingerprint and when a GM was last linked to it.
 
-A GM who moves to a new machine without copying the campaign folder, or who loses `host_key`, needs the claim released. On the VPS:
+```json
+{
+  "first-fight": {
+    "key": "SHA256:WwzfvSCl3H6phF79dwAJgz3vuWlNTCJptC8mHSKc24I",
+    "linked": "2026-10-21T19:04:11.000Z"
+  }
+}
+```
+
+After that, the relay refuses that room to any other host key, so nobody else can take your room while you're away. A refused host keeps redialing, and its band shows `relay: connecting… (the link closed before the relay logged in; if this keeps up, another GM's host key may hold room first-fight there)`. The relay's journal names the host key it refused.
+
+The relay renews a claim's time whenever its GM links and again when the link ends, so a room in use never lapses. A claim no GM has linked for 30 days lapses: the next host key to link the room claims it, and the journal says `room first-fight: dropped the claim of GM host key SHA256:…, last linked …`. Change the 30 with `--claim-days` on `supervillain relay`. A GM who comes back with the same host key after the claim has lapsed keeps the room, unless someone else claimed it first.
+
+A GM who moves to a new machine without copying the campaign folder, or who loses `host_key`, needs the claim released sooner. On the VPS:
 
 ```sh
 sudo -u supervillain supervillain relay forget first-fight --dir /var/lib/supervillain-relay
@@ -235,7 +251,9 @@ Run it as the relay's user, so `rooms.json` stays the relay's to read.
 
 The next host to link `first-fight` claims it, and replaces the host linked now, if there is one. A running relay picks this up without a restart.
 
-Claiming a room costs nothing but a link, so someone could claim a name you're likely to use before you do; the room's name defaults to your campaign folder's. If a room you want is taken, pick another with `--room`, or ask whoever runs the relay. To slow squatting, the relay lets one address claim 3 new rooms, then one an hour, and holds at most 1024 rooms. Claims don't expire: `relay forget` is how a stale one goes.
+Claiming a room costs nothing but a link, so someone could claim a name you're likely to use before you do; the room's name defaults to your campaign folder's. If a room you want is taken, pick another with `--room`, or ask whoever runs the relay. To slow squatting, one address claims 3 new rooms, then one an hour. An IPv6 address counts by its /64, and each /48 also claims at most 10, then 4 an hour, however many /64s it uses. Relinking a room you hold claims nothing. A refused claim shows in the journal as `room first-fight: refused: 203.0.113.7 claims rooms too fast`.
+
+The relay holds at most 1024 claims. When it's full, a new claim drops the claim whose GM linked longest ago, and the journal says which, ending `to make room for <room>`. A claim with a GM linked now is never dropped. If every claim has a GM linked, the new one is refused: `room first-fight: refused: the relay holds its most rooms (1024), each with a GM linked now`.
 
 ### Upgrading
 

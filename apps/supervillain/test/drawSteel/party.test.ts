@@ -88,7 +88,7 @@ describe("claiming heroes", () => {
     const t = party();
     expect(t.hero("vex").player).toBe(ALICE);
     expect(t.lastFeed()).toEqual(["abcdefgh takes Vex."]);
-    expect(t.submit(BOB, { type: "play", hero: "vex" })).toBe("Vex is taken.");
+    expect(t.submit(BOB, { type: "play", hero: "vex" })).toBe("Vex is played by abcdefgh.");
     expect(t.submit(ALICE, { type: "play", hero: "kor" })).toBe("You already play Vex.");
     expect(t.submit(BOB, { type: "play", hero: "kor", player: "Alice", playerActor: ALICE })).toBe(
       "Only the GM can give a hero to someone else.",
@@ -115,6 +115,54 @@ describe("claiming heroes", () => {
     expect(t.lastFeed()).toEqual(["Zyxwvuts takes Kor."]);
     t.run(GM, { type: "unplay", hero: "kor" });
     expect(t.lastFeed()).toEqual(["Nobody plays Kor now."]);
+  });
+});
+
+describe("claiming heroes after a drop", () => {
+  const GUEST = "guest:7f3a0000-0000-4000-8000-000000000000";
+  const GUEST_AGAIN = "guest:9b1c0000-0000-4000-8000-000000000000";
+
+  test("a hero whose guest has left goes to whoever asks for it, player or GM", () => {
+    const t = party();
+    t.run(GUEST, { type: "play", hero: "kor" });
+    // Seated, the guest keeps their hero.
+    expect(t.submit(GUEST_AGAIN, { type: "play", hero: "kor", seated: [GUEST, GUEST_AGAIN] })).toBe(
+      "Kor is played by guest-7f3a.",
+    );
+    // Gone, the guest can never come back as themselves: their hero is free to take.
+    t.run(GUEST_AGAIN, { type: "play", hero: "kor", seated: [GUEST_AGAIN] });
+    expect(t.hero("kor").player).toBe(GUEST_AGAIN);
+    expect(t.lastFeed()).toEqual(["guest-9b1c takes Kor."]);
+    t.run(GM, {
+      type: "play",
+      hero: "kor",
+      player: "Bob",
+      playerActor: BOB,
+      seated: [BOB],
+    });
+    expect(t.hero("kor").player).toBe(BOB);
+  });
+
+  test("a player with a key keeps their hero while away, and the refusal says what to do", () => {
+    const t = party();
+    expect(t.submit(BOB, { type: "play", hero: "vex", seated: [BOB] })).toBe(
+      "Vex is played by abcdefgh, who isn't here; ask the GM to /unplay vex if they aren't coming back.",
+    );
+    expect(
+      t.submit(GM, { type: "play", hero: "vex", player: "Bob", playerActor: BOB, seated: [BOB] }),
+    ).toBe("Vex is played by abcdefgh, who isn't here; /unplay vex first.");
+  });
+
+  test("a hero not in the party yet, and /play alone, say what there is", () => {
+    const t = party();
+    expect(t.submit(BOB, { type: "play", hero: "wren" })).toBe(
+      "Nobody in the party is called 'wren'; the GM brings heroes in with /hero.",
+    );
+    expect(t.submit(BOB, { type: "play" })).toBe("Usage: /play <hero>. Free to play: Kor.");
+    t.run(BOB, { type: "play", hero: "kor" });
+    expect(t.submit(GUEST, { type: "play" })).toBe(
+      "Usage: /play <hero>. Every hero is taken; the GM brings more in with /hero.",
+    );
   });
 });
 

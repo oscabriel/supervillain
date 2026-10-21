@@ -8,7 +8,7 @@ export interface FakeViewOptions {
   readonly present?: ReadonlyArray<Present>;
   readonly myName?: string;
   /** What submit resolves to for a line; undefined by default. */
-  readonly reply?: (line: string) => string | undefined;
+  readonly reply?: (line: string) => string | undefined | Promise<string | undefined>;
   readonly complete?: (line: string) => ReadonlyArray<string>;
   readonly debug?: string;
   readonly joinHint?: string;
@@ -73,6 +73,7 @@ export const line = (seq: number, who: string, text: string, kind = "chat"): Fee
   who,
   kind,
   text,
+  gm: false,
 });
 
 export const gm: Present = { actor: "gm", label: "Oscar", gm: true };

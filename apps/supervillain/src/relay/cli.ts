@@ -1,4 +1,5 @@
-// `supervillain relay [--player-port 2222] [--gm-port 7022] [--bind 0.0.0.0] [--dir ~/.supervillain-relay]`
+// `supervillain relay [--player-port 2222] [--gm-port 7022] [--bind 0.0.0.0] [--claim-days 30]
+//                     [--dir ~/.supervillain-relay]`
 // `supervillain relay forget <room> [--dir …]`
 import { access, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -10,6 +11,7 @@ import { checkRelayDir, forgetRoom } from "./rooms.ts";
 import { Relay, RelayError } from "./server.ts";
 
 const DEFAULT_DIR = "~/.supervillain-relay";
+const DEFAULT_CLAIM_DAYS = 30;
 
 const expandHome = (path: string) =>
   path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
@@ -39,6 +41,12 @@ const relay = Command.make("relay", {
     Flag.withDefault("0.0.0.0"),
     Flag.withDescription("Address to listen on, both ports"),
   ),
+  claimDays: Flag.Int("claim-days").pipe(
+    Flag.withDefault(DEFAULT_CLAIM_DAYS),
+    Flag.withDescription(
+      "Days a room's claim lasts with no GM linked, before another GM may take it",
+    ),
+  ),
 }).pipe(
   Command.withSharedFlags({
     dir: Flag.String("dir").pipe(
@@ -52,6 +60,10 @@ const run = relay.pipe(
   Command.withHandler((o) =>
     Effect.gen(function* () {
       const dir = relayDir(o.dir);
+      if (o.claimDays < 1)
+        return yield* new RelayError({
+          message: `--claim-days takes a number of days from 1, not ${o.claimDays}`,
+        });
       yield* Effect.tryPromise({
         try: () => mkdir(dir, { recursive: true, mode: 0o700 }),
         catch: (e) =>
@@ -62,6 +74,7 @@ const run = relay.pipe(
         playerPort: o.playerPort,
         gmPort: o.gmPort,
         bind: o.bind,
+        gm: { claimDays: o.claimDays },
       });
       const shown = o.bind === "0.0.0.0" || o.bind === "::" ? "<this host>" : o.bind;
       yield* Console.log(`supervillain relay: keeping its keys and rooms in ${dir}`);
@@ -72,6 +85,9 @@ const run = relay.pipe(
       yield* Console.log(`relay key ${info.relayKeyFingerprint}`);
       yield* Console.log(`  GMs pin it with: --relay-key ${info.relayKeyFingerprint}`);
       yield* Console.log(`host key ${info.hostKeyFingerprint} (what players' ssh sees)`);
+      yield* Console.log(
+        `a room's claim lapses after ${o.claimDays} day${o.claimDays === 1 ? "" : "s"} with no GM linked`,
+      );
       return yield* Effect.never;
     }).pipe(
       Effect.scoped,

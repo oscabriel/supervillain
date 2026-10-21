@@ -37,7 +37,8 @@ If your terminal looks garbled after the table drops (odd characters when you mo
 ## Who you are
 
 - **If you have an SSH key** (`~/.ssh/id_ed25519` or similar), it is who you are. The table remembers your name and your hero for that key, so use the same key every time. Make one with `ssh-keygen -t ed25519` if you'd like the table to remember you.
-- **If you don't have one,** you come in as a guest. You don't need a password. A guest is new every time they connect, so your name lasts only until you leave. Your hero stays with the guest you were, so when you come back, ask the GM to `/unplay <hero>` before you `/play` it again. To come in as a guest even if you have a key, add `-o PubkeyAuthentication=no`.
+- **If you don't have one,** you come in as a guest. You don't need a password. A guest is new every time they connect, so your name lasts only until you leave. When you come back, pick your name again and `/play` your hero: a hero whose guest has left is free to take. To come in as a guest even if you have a key, add `-o PubkeyAuthentication=no`.
+- **If your key is RSA** and your ssh is set to sign with `rsa-sha2-512` only (`PubkeyAcceptedAlgorithms rsa-sha2-512` in `~/.ssh/config`), ssh skips the key: you come in as a guest, or see `Permission denied (publickey)`. The table's SSH library never offers `rsa-sha2-512`. ssh's defaults fall back to `rsa-sha2-256` and work, so add `-o PubkeyAcceptedAlgorithms=+rsa-sha2-256` to the command, or make an ed25519 key.
 
 The table asks **what should the table call you?** the first time. Type a name and press Enter. Change it later with `/name Ilsa`. Names are 1 to 24 characters, and nobody can take a name that looks like someone else's.
 
@@ -54,9 +55,9 @@ The input line at the bottom always has the keyboard. Nothing you type does anyt
 | Esc | Cancel a completion or close a message |
 | Ctrl-A, Ctrl-E | Jump to the start or end of the line |
 | Ctrl-W, Ctrl-U | Delete a word, or everything before the cursor |
-| Ctrl-C, or `/quit` | Leave the table |
+| Ctrl-C, Ctrl-D on an empty line, or `/quit` | Leave the table |
 
-Plain text is chat. Anything that starts with `/` is a command. `/help` lists them all, and `/help move` explains one.
+Plain text is chat. Anything that starts with `/` is a command. `/help` lists them all, and `/help move` explains one. A bare `help`, `exit` or `quit` is answered first (did you mean `/help`?); press Enter again to say it to the table. When the table refuses a line, it says why and empties the input, so your next line starts clean; press Up to get the refused one back and fix it.
 
 ## What you'll type
 
@@ -67,10 +68,11 @@ Your GM brings heroes and monsters in, starts combat and runs the Director's sid
 | `hello all` | Say something (the same as `/say hello all`) |
 | `/me draws her sword` | Act something out |
 | `/roll 2d10+3` | Roll dice for everyone to see |
-| `/play brann` | Play a hero the GM brought in. A unique start of a name is enough: `/play bra` |
+| `/play brann` | Play a hero the GM brought in. A unique start of a name is enough: `/play bra`. `/play` alone lists the heroes nobody plays |
 | `/sheet brann` | Show a hero's or creature's sheet, to you alone |
 | `/turn` | Start your hero's turn; `/done` ends it |
-| `/pr brann Judgment Strike` | Make a power roll with an ability: 2d10 plus the characteristic, and the tier's result |
+| `/pr brann Judgment Strike` | Make a power roll with an ability: 2d10 plus the characteristic, the tier's result and the ability's effect. An ability with no roll is used, its cost spent |
+| `/pr brann driving on b1` | The same at a target: the tier's damage goes to each target named after `on` |
 | `/pr brann +2 edge` | Make a power roll with a bonus, and an edge or bane (`edge`, `bane`, `edge2`, `bane2`) |
 | `/dmg brann 7 fire`, `/heal brann 5`, `/temp brann 4` | Take damage, regain Stamina, or gain temporary Stamina |
 | `/recover brann` | Spend a Recovery |
@@ -88,7 +90,7 @@ Your GM brings heroes and monsters in, starts combat and runs the Director's sid
 
 Squares are written as a column letter and a row number, like `c5`. Columns run `a` to `z` from the left, then `aa`, `ab` and so on. Row 1 is the top row. The letters are along the top of the map and the numbers down its side.
 
-On the map, `·` is floor, a solid block is wall and `~` is difficult terrain. Tokens are marks: a hero's is a capital letter (`B` for Brann), a creature's a small one (`b` for the Bandit Chief), with a digit when two would share a letter (`b1`, `b2`). In combat the band at the top shows each token's mark beside its name. A mark works in commands wherever a square does, and it's case-sensitive: `/dist B b`. When you're about to move, the squares you can reach are tinted and marked `•`, or `≈` on difficult terrain. A move costs 1 a square, diagonals too, and difficult terrain or an enemy's square costs 1 more. In combat you move only on your own turn, up to your speed over the whole turn.
+On the map, `·` is floor, a solid block is wall and `~` is difficult terrain. Tokens are marks: a hero's is a capital letter (`B` for Brann), a creature's a small one from the last word of its name (`c` for the Bandit Chief), with a digit when two would share a letter (`b1`, `b2`). In combat the band at the top shows each token's mark beside its name. A mark works in commands wherever a square does, and it's case-sensitive: `/dist B b`. When you're about to move, the squares you can reach are tinted and marked `•`, or `≈` on difficult terrain. A move costs 1 a square, diagonals too, and difficult terrain or an enemy's square costs 1 more. In combat you move only on your own turn, up to your speed over the whole turn.
 
 On a map bigger than your screen, the view follows whoever is acting. `/view f5` or `/view bandit-chief` centres it until the turn passes. `/view map` gives the map more room, `/view feed` hides it, and `/view` switches it on and off.
 
@@ -104,7 +106,7 @@ The GM can undo anyone's latest change with `/undo <who>`.
 
 ## "widen your terminal"
 
-The table needs at least 80 columns and 24 rows. On a smaller window it shows `widen your terminal to 80x24 · it is 60x20` and only the feed and the input line. Make the window bigger or the font smaller, and the table comes back right away without reconnecting.
+The table needs at least 80 columns and 24 rows. On a smaller window it shows `widen your terminal to 80x24 · it is 60x20` and only the feed and the input line. Make the window bigger or the font smaller, and the table comes back right away without reconnecting. 80x24 works, but a fight with a map is tight there: about 100x30 shows the whole band, more of the map and a longer feed.
 
 ## One command at a time
 

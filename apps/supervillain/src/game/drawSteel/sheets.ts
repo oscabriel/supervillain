@@ -4,7 +4,10 @@
  * and replay never reads a file.
  */
 
-export type Characteristic = "might" | "agility" | "reason" | "intuition" | "presence";
+/** The five characteristics, in the order sheets print them. */
+export const CHARACTERISTICS = ["might", "agility", "reason", "intuition", "presence"] as const;
+
+export type Characteristic = (typeof CHARACTERISTICS)[number];
 
 export type Characteristics = Readonly<Record<Characteristic, number>>;
 
@@ -86,4 +89,50 @@ export interface StatBlock {
   readonly abilities: ReadonlyArray<Ability>;
   /** What a minion squad gains while it has a captain, as printed. */
   readonly withCaptain?: string;
+}
+
+/** A trait is always on: there's nothing to use or roll. */
+export const isTrait = (ability: Ability): boolean => /^\s*trait\b/i.test(ability.kind ?? "");
+
+/** Whether using it is a main action or a triggered action, which bleeding follows. */
+export const isActionThatBleeds = (ability: Ability): boolean =>
+  /\b(main|triggered) action\b/i.test(ability.kind ?? "");
+
+/**
+ * How far an ability reaches, from its distance as printed: the most squares any "Melee N" or
+ * "Ranged N" in it names. Undefined when it names neither (Self, a burst, a line).
+ */
+export function reachOf(ability: Ability): number | undefined {
+  const reaches = [...(ability.distance ?? "").matchAll(/\b(?:melee|ranged)\s+(\d+)/gi)].map((m) =>
+    Number(m[1]),
+  );
+  return reaches.length === 0 ? undefined : Math.max(...reaches);
+}
+
+const LETTERS: Readonly<Record<string, Characteristic>> = {
+  M: "might",
+  A: "agility",
+  R: "reason",
+  I: "intuition",
+  P: "presence",
+};
+
+/** The characteristic a tier's "N + M" names, by its letter. */
+export const characteristicOfLetter = (letter: string): Characteristic | undefined =>
+  LETTERS[letter];
+
+/**
+ * The damage a tier's text deals, as printed: "6 + M damage" with Might 2 is 8, "6 holy damage"
+ * is 6 holy. Undefined when the text deals none.
+ */
+export function tierDamage(
+  text: string | undefined,
+  scores: Characteristics | undefined,
+): { readonly amount: number; readonly type?: string } | undefined {
+  const match = /\b(\d+)(?:\s*\+\s*([MARIP]))?(?:\s+([a-z]+))?\s+damage\b/i.exec(text ?? "");
+  if (match === null) return undefined;
+  const letter = match[2] === undefined ? undefined : characteristicOfLetter(match[2]);
+  const amount = Number(match[1]) + (letter === undefined ? 0 : (scores?.[letter] ?? 0));
+  const type = match[3]?.toLowerCase();
+  return type === undefined ? { amount } : { amount, type };
 }

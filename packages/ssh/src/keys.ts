@@ -7,6 +7,22 @@ import ssh2, { type ParsedKey } from "ssh2";
 export const fingerprintOf = (publicKeyBlob: Buffer): string =>
   `SHA256:${createHash("sha256").update(publicKeyBlob).digest("base64").replace(/=+$/, "")}`;
 
+/** Whether text is an OpenSSH SHA256 key fingerprint, as `fingerprintOf` makes and `ssh-keygen -lf` prints. */
+export const isFingerprint = (text: string): boolean => /^SHA256:[A-Za-z0-9+/]{43}$/.test(text);
+
+/**
+ * Elliptic-curve key exchange only, offered by the server and the client alike. ssh2 also offers
+ * finite-field groups up to 8192 bits, and one such handshake costs the host's only thread
+ * seconds of CPU before anyone has logged in.
+ */
+export const KEX: Array<ssh2.KexAlgorithm> = [
+  "curve25519-sha256",
+  "curve25519-sha256@libssh.org",
+  "ecdh-sha2-nistp256",
+  "ecdh-sha2-nistp384",
+  "ecdh-sha2-nistp521",
+];
+
 /** Parses one key in any form ssh2 reads (PEM, OpenSSH, an authorized_keys line), or undefined. */
 export const parseKey = (input: string | Buffer): ParsedKey | undefined => {
   const parsed = ssh2.utils.parseKey(input);
@@ -14,7 +30,7 @@ export const parseKey = (input: string | Buffer): ParsedKey | undefined => {
   return Array.isArray(parsed) ? parsed[0] : parsed;
 };
 
-export interface HostKey {
+interface HostKey {
   readonly pem: Buffer;
   readonly fingerprint: string;
 }

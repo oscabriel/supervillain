@@ -28,9 +28,14 @@ describe("starting a combat", () => {
     expect(t.hero("kor").resource).toBe(2);
     expect(t.ds.combat).toMatchObject({ active: true, round: 1, roll: 7 });
     expect(t.lastFeed()).toEqual([
-      "Combat begins, round 1. d10: 7, so the players pick who goes first (/first heroes or /first director). Malice +5 (2 for Victories, 2 heroes, round 1) → 5. Vex +2 Wrath, Kor +2 Ferocity.",
+      "Combat begins, round 1. d10: 7, so the players pick who goes first, and the GM types /first heroes or /first director. Malice +5 (2 for Victories, 2 heroes, round 1) → 5. Vex +2 Wrath, Kor +2 Ferocity. The party has no hero tokens; /token reset gives one per hero.",
     ]);
     expect(t.submit(GM, { type: "start" })).toBe("A combat is already running; /end it first.");
+    // With tokens to spend, nothing more is said.
+    t.run(GM, { type: "end" });
+    t.run(GM, { type: "token", change: "reset" });
+    t.run(GM, { type: "start" }, fixedDice(7));
+    expect(t.lastFeed()[0]).not.toContain("hero tokens");
   });
 
   test("below 6 the Director picks; Malice from average Victories rounds down", () => {
@@ -48,6 +53,13 @@ describe("starting a combat", () => {
     expect(t.submit(ALICE, { type: "start" })).toBe("Only the GM can use /start.");
     expect(t.submit(GM, { type: "first", side: "heroes" })).toBe(
       "No combat is running; /start one.",
+    );
+    // A player can't /start, so they're told who can.
+    expect(t.submit(ALICE, { type: "turn" })).toBe(
+      "No combat is running; the GM starts one with /start.",
+    );
+    expect(t.submit(ALICE, { type: "done" })).toBe(
+      "No combat is running; the GM starts one with /start.",
     );
   });
 });
