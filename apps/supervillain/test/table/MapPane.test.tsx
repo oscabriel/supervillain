@@ -3,7 +3,7 @@ import { RGBA, TextAttributes } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { columnLabel } from "../../src/game/drawSteel/index.ts";
-import { type Focus, focusOf } from "../../src/table/map.ts";
+import { type Focus, focusOf, mapLayout } from "../../src/table/map.ts";
 import { MapPane } from "../../src/table/MapPane.tsx";
 import { color } from "../../src/table/theme.ts";
 import type { MapView } from "../../src/table/view.ts";
@@ -240,6 +240,30 @@ describe("a map bigger than the pane", () => {
     const spans = spansOf(t);
     expect(spans.find((s) => s.text.trim() === "↘")?.fg.equals(hex(color.you))).toBe(true);
     expect(spans.find((s) => s.text.trim() === "▸")?.fg.equals(hex(color.director))).toBe(true);
+  });
+});
+
+describe("when the reach doesn't fit", () => {
+  /** Vex, speed 5, in the middle of the ford's bigger cousin: every square within five. */
+  const open: MapView = {
+    ...ford,
+    width: 16,
+    height: 12,
+    terrain: Array.from({ length: 12 }, () => ".".repeat(16)),
+    tokens: [token({ id: "vex", mark: "V", x: 3, y: 3, side: "heroes", mine: true, acting: true })],
+    reach: Array.from({ length: 12 * 16 }, (_, i) => ({ x: i % 16, y: Math.floor(i / 16) })).filter(
+      ({ x, y }) => Math.abs(x - 3) + Math.abs(y - 3) <= 5,
+    ),
+  };
+
+  test("the layout says so, so the table can point at /view map", () => {
+    // Four rows of squares under the letters, as at 80x24 beside a full band: rows 2 to 5 of 1 to 9.
+    expect(mapLayout(open, 76, 5).reachClipped).toBe(true);
+    // Ten rows show it all, and so does a map with no reach at all.
+    expect(mapLayout(open, 76, 11).reachClipped).toBe(false);
+    expect(mapLayout({ ...open, reach: [] }, 76, 5).reachClipped).toBe(false);
+    // Too narrow is clipped too.
+    expect(mapLayout(open, 12, 11).reachClipped).toBe(true);
   });
 });
 

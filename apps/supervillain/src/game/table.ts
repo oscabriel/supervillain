@@ -16,7 +16,8 @@ type Modules = (typeof modules)[number];
 export type TableState = StateOf<Modules>;
 export type Command = CommandOf<Modules>;
 
-const composed = compose(modules);
+/** Refusals name actors the way the feed does, by display name. */
+const composed = compose(modules, { label: (state, actor) => labelOf(state)(actor) });
 
 /** The engine rules for the room. */
 export const rules = composed.rules;

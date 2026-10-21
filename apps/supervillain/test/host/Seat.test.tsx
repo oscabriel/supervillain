@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test";
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing";
-import { Effect, Exit, Scope } from "effect";
+import { Effect, Exit, Scope, SubscriptionRef } from "effect";
 import { mountTable, openSeat } from "../../src/host/Seat.ts";
 import { type TableServices, tableServices } from "../../src/host/services.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
@@ -62,6 +62,35 @@ const type = (s: Seated, text: string) =>
   });
 
 describe("a seat over a real room", () => {
+  effect(
+    "follows a view to undefined and back: the GM's relay alert clears once the link is up",
+    () =>
+      atTable(
+        Effect.gen(function* () {
+          const alert = yield* SubscriptionRef.make<string | undefined>("relay: connecting…");
+          const view = yield* openSeat({
+            actor: "gm",
+            room: "den",
+            leave: () => undefined,
+            alert: { get: SubscriptionRef.get(alert), changes: SubscriptionRef.changes(alert) },
+          });
+          const settled = (want: string | undefined) =>
+            Effect.promise(async () => {
+              const start = Date.now();
+              while (view.alert?.() !== want) {
+                if (Date.now() - start > 2000) throw new Error(`alert stayed ${view.alert?.()}`);
+                await Bun.sleep(10);
+              }
+            });
+          yield* settled("relay: connecting…");
+          yield* SubscriptionRef.set(alert, undefined);
+          yield* settled(undefined);
+          yield* SubscriptionRef.set(alert, "relay: down, redialing");
+          yield* settled("relay: down, redialing");
+        }),
+      ),
+  );
+
   effect("asks a new player's name, then chat reaches every seat's feed", () =>
     atTable(
       Effect.gen(function* () {

@@ -1,72 +1,63 @@
 # supervillain
 
-A terminal-first virtual tabletop for Draw Steel. Players type `ssh <room>@<host>` and are sitting at a live table, with nothing to install and no account to make. The GM's machine is the authority, and the campaign is a plain append-only log on the GM's disk.
+A terminal-first virtual tabletop for Draw Steel. Players type `ssh <room>@<host>` and are sitting at a live table, with nothing to install and no account to make. The GM's machine is the authority: it runs the rules, draws every player's screen and keeps the campaign as a plain append-only log (`events.jsonl`) on the GM's disk.
 
-It's being rebuilt small and runs from source for now: chat, names, dice, minimum Draw Steel (a party from hero sheets, monsters from stat blocks, combat with Stamina, conditions, power rolls and resources), a text map with movement and forced movement, and undo. `ASSESSMENT.md` is the plan. The previous build is at tag `archive/2026-09-exploration`.
+What's in it: chat, names and dice; minimum Draw Steel (a party from hero sheets, monsters from stat blocks, combat with Stamina, conditions, power rolls and resources); a text map with movement and forced movement; undo; and a relay, so players can reach a GM's machine that has no open port. It's being rebuilt small and hasn't met a real table yet. `ASSESSMENT.md` is the plan.
 
-## Run it
+## Install
 
-You need [Bun](https://bun.sh) and an OpenSSH client. Run these from the repo root after `bun install`.
-
-**Start a campaign.** A campaign is a folder. `new` makes one with `heroes/` and `monsters/` for sheets and `maps/` for maps; `--example` copies the sample campaign instead (four level-1 heroes, the bandits and the map for one fight, see `examples/campaign/README.md`).
+**A release binary.** Each release has one self-contained executable per platform (`supervillain-linux-x64`, `-linux-arm64`, `-darwin-arm64`, `-darwin-x64`) and `SHA256SUMS`. Nothing else to install. The repository is private for now, so download with the GitHub CLI:
 
 ```sh
-bun supervillain new ~/campaigns/ford --example
+gh release download <tag> -R oscabriel/supervillain -p supervillain-linux-x64 -p SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+sudo install -m 0755 supervillain-linux-x64 /usr/local/bin/supervillain
 ```
 
-**Host a table.** The campaign folder is created if missing and defaults to `./campaign`.
+[docs/HOSTING.md](docs/HOSTING.md#install) has the macOS steps and how to build one yourself (`bun run release:build`).
+
+**From source.** You need [Bun](https://bun.sh). After `bun install`, run `bun supervillain …` from the repo root wherever this page says `supervillain …`.
+
+Players need only an OpenSSH client, which macOS, Linux and Windows 10 and later already have.
+
+## Host in one minute
 
 ```sh
-bun supervillain host ~/campaigns/ford
+supervillain new ~/campaigns/ford --example
+supervillain host ~/campaigns/ford
 ```
 
-The host prints the command players use and its host key fingerprint, then opens the table in your terminal as the GM; until someone joins, the join command stays in the band at the top (/help shows it too once the party fills the band). Ctrl-C (or `/quit`) leaves the table and shuts the host down. With players at the table, Ctrl-C asks you to press it again first, and each player is told "The GM closed the table." While your seat is open, host logs go to `<campaign>/host.log`.
+`new --example` copies the sample campaign: four level-1 heroes, the bandits and the map for one fight (`examples/campaign/README.md` has the file formats). `host` prints the command players use and the table's host key, then opens the table in your terminal as the GM. Ctrl-C or `/quit` closes it.
 
-| Flag | Default | What it does |
-|---|---|---|
-| `--port` | `2222` | SSH port for players |
-| `--bind` | `127.0.0.1` | Address to listen on; `0.0.0.0` lets other machines in |
-| `--room` | the folder's name | The room's name, shown in the header and in the join command |
-| `--headless` | off | No GM seat: the host runs in the background of this terminal and logs to stdout |
+By default the table listens only on this machine (`127.0.0.1:2222`). To let others in:
 
-The campaign folder holds `events.jsonl` (the log, one JSON event per line), `events.lock` (held while a host has the campaign open, so only one can), `host_key` and `host.log`. A new campaign folder is made readable by you alone, and the host refuses a `host_key` that other users can read (`chmod 600` it).
+- **Same network or Tailscale:** `supervillain host ~/campaigns/ford --bind 0.0.0.0`.
+- **A tunnel:** bore or `ssh -R` through a VPS.
+- **The relay:** run `supervillain relay` on a small VPS, and `supervillain host ~/campaigns/ford --relay table.example.com --relay-key SHA256:…` dials out to it. Your machine opens no port. Players type `ssh -p 2222 ford@table.example.com`, and their ssh sees the relay's host key, not your table's.
 
-Players are capped so one stranger can't take the table down: 8 connections and 16 sessions from one address, 64 of each in all, 20 seconds to log in, and a few lines a second per player. A key is rated as itself wherever it connects from, and guests share one rate per address; keys cost nothing to make, so the connection caps are what bound a flood from one address. Through a tunnel every player arrives from the same address, so they share the per-address caps.
+[docs/HOSTING.md](docs/HOSTING.md) walks through all three, the relay's service and firewall, and every flag.
 
-**Join as a player.**
+## Join as a player
 
 ```sh
-ssh -p 2222 ford@127.0.0.1
+ssh -p 2222 ford@127.0.0.1                  # sit at the table
+ssh -p 2222 ford@127.0.0.1 roll 2d10+3      # or run one command and leave
 ```
 
-Your SSH key is your identity, so there's no account. The first time, the table asks what to call you, and it remembers the name for your key. A name can't look like someone else's (case, lookalike letters from other scripts and invisible characters don't make it different), and can't hold the table's own markers, `(GM)` and `(you)`. Plain text is chat, `/` starts a command, Tab completes, Up and Down recall what you typed, PgUp and PgDn scroll, `/help` lists the commands, and Ctrl-C (or `/quit`) leaves. A refused line stays in the input for you to fix.
+Your SSH key is who you are, so there's no account; a client with no key comes in as a guest. The first time, the table asks what to call you. Plain text is chat, `/` starts a command, Tab completes, `/help` lists everything, and Ctrl-C leaves. [docs/PLAYING.md](docs/PLAYING.md) is the page to send your players.
 
-**Guests.** A client with no key gets in as a guest, with a new identity for each connection. A guest's name is held only while they're seated, so a guest who reconnects can take it back. To try it from a machine that has keys: `ssh -o PubkeyAuthentication=no -p 2222 ford@127.0.0.1`.
-
-Recent OpenSSH clients warn that the session "may be vulnerable to store now, decrypt later attacks". The table's SSH library offers only elliptic-curve key exchange (curve25519 and the NIST curves), not the post-quantum hybrids that warning asks for; the session is still encrypted and the warning is expected.
-
-**One command at a time.** Put an input line after the ssh command and the table runs it as you, prints the result and exits. A refusal goes to stderr with exit status 1. `roll`, `dist`, `undo`, `redo`, `help` and `sheet` work without their slash; commands that take free text (`/name`, `/me`, `/say`) need it, so chat that starts with "me" or "name" stays chat. With no command and no terminal (`ssh host </dev/null`), the table says to use `ssh -t` and exits.
+## More commands
 
 ```sh
-ssh -p 2222 ford@127.0.0.1 roll 2d10+3
-ssh -p 2222 ford@127.0.0.1 /name Vex
-ssh -p 2222 ford@127.0.0.1 "hello everyone"
-ssh -p 2222 ford@127.0.0.1 help
+supervillain check ~/campaigns/ford      # replay a log without opening it: summary, feed, final state
+supervillain import ~/data-bestiary-json --into ~/campaigns/ford "Goblin Warrior"   # Steel Compendium monsters
+supervillain relay --dir ~/relay         # a relay; `relay forget <room>` releases a room's claim
+supervillain --help                      # every command and flag
 ```
 
-**Import monsters.** With a local copy of Steel Compendium's `data-bestiary-json`, `import` writes creatures into a campaign's `monsters/` as monster files. Name the creatures you want (exact name or id first, then a unique start of one), or none for all of them. It never replaces a file that's there unless you pass `--overwrite`, and it lists what it couldn't read. It exits 1 if any creature it found or you named wasn't imported (a JSON file it can't read is listed, not counted). A campaign folder it has to make is readable by you alone.
+`check` works while the host runs and exits 1 if the log has an event it can't apply. `import` reads a local copy of Steel Compendium's `data-bestiary-json` and writes monster files into the campaign's `monsters/`, never replacing one unless you pass `--overwrite`.
 
-```sh
-bun supervillain import ~/data-bestiary-json --into ~/campaigns/ford "Goblin Warrior" "Goblin Spinecleaver"
-```
-
-**Read a campaign.** `check` replays the log without opening it, so it works while the host runs. It prints a summary, the feed and the final state, and lists unknown events it skipped on stderr. It exits 1 if the log has an event it can't apply.
-
-```sh
-bun supervillain check ~/campaigns/ford
-```
-
-## Draw Steel at the table
+## Draw Steel quick reference
 
 **Content.** Heroes are `heroes/<id>.yaml` and monsters `monsters/<id>.yaml` in the campaign folder; the file name is the id. The fields are listed in `examples/campaign/README.md`. The host reads a file when `/hero` or `/add` brings it in, so you can edit one mid-session and bring it in again. A file with a mistake is refused, naming the file and the field (`heroes/vex.yaml: characteristics.might must be a whole number from -5 to 5`); a file that loads is one the table accepts. Text may run over several lines in the file; the table reads it as one. The sheet goes into the log with the event, so replay never reads a file and a later edit can't change the past.
 
@@ -176,10 +167,14 @@ Every command works one at a time over exec too, with its slash: `ssh -p 2222 fo
 
 ```sh
 bun install
-bun run build
-bun test
-bun run check
+bun run build          # tsc -b
+bun test               # from the repo root
+bun run check          # oxlint and oxfmt
+bun run release:build  # dist/supervillain-<os>-<arch> for this machine (--all for every platform)
+bun run release:smoke dist/supervillain-linux-x64
 ```
+
+`AGENTS.md` describes the layout and the rules for working in it.
 
 ## License
 

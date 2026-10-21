@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/engine" },
     { "path": "packages/ssh" },
-    { "path": "apps/supervillain" }
+    { "path": "apps/supervillain" },
+    { "path": "scripts" }
   ]
 }

@@ -380,6 +380,30 @@ describe("outside combat", () => {
     expect(bandRows(t).join("\n")).toContain("no heroes yet");
   });
 
+  test("to a GM sitting alone, a join note (the relay's state) takes the join hint's place", async () => {
+    const band = async (joinNote?: string) => {
+      setup?.renderer.destroy();
+      setup = await testRender(
+        () => (
+          <Band
+            me={gm.actor}
+            present={[gm]}
+            joinHint="ssh -p 2222 den@relay.example"
+            joinNote={joinNote}
+            maxHeight={10}
+          />
+        ),
+        { width: 100, height: 30 },
+      );
+      await setup.renderOnce();
+      return bandRows(setup).join("\n");
+    };
+    expect(await band()).toContain("players join with: ssh -p 2222 den@relay.example");
+    const connecting = await band("relay: connecting…");
+    expect(connecting).toContain("relay: connecting…");
+    expect(connecting).not.toContain("players join with");
+  });
+
   test("without a combat view the band shows who is at the table", async () => {
     const t = await mount(undefined, 100, 30);
     const band = bandRows(t).join("\n");

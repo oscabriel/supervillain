@@ -1,5 +1,11 @@
 import { join } from "node:path";
-import { type ExecSession, type SessionInfo, type SshError, serve } from "@supervillain/ssh";
+import {
+  addressBucket,
+  type ExecSession,
+  type SessionInfo,
+  type SshError,
+  serve,
+} from "@supervillain/ssh";
 import { Clock, Context, Effect, Layer } from "effect";
 import { CampaignContent } from "../content/index.ts";
 import { plainText } from "../game/index.ts";
@@ -7,6 +13,7 @@ import { execLine, runLine } from "./line.ts";
 import { Presence } from "./Presence.ts";
 import { mountTable, openSeat } from "./Seat.ts";
 import { type Rate, rateLimiter } from "./rate.ts";
+import { RelayLink, type RelayLinkOptions, type RelayLinkService } from "./RelayLink.ts";
 import type { TableServices } from "./services.ts";
 import { TableRoom } from "./TableRoom.ts";
 
@@ -16,10 +23,13 @@ export interface TableServerOptions {
   readonly port: number;
   readonly bind: string;
   /**
-   * How fast one address may run one-off commands, each a new connection, whatever they are.
+   * How fast one address (or, behind a relay, one player) may run one-off commands, each a new
+   * connection, whatever they are.
    * What those commands write is held to the room's rate as well, by `rateKeyOf`.
    */
   readonly execRate?: Rate;
+  /** Also take players through a relay: the host dials it and keeps the link up. */
+  readonly relay?: Pick<RelayLinkOptions, "host" | "port" | "playerPort" | "relayKey" | "timeouts">;
 }
 
 /** Plenty for a person or a script at a table; a flood from one address is turned away. */
@@ -48,11 +58,21 @@ export const rateKeyOf = (info: SessionInfo): string => {
   return `address:${info.remoteAddress}`;
 };
 
+/**
+ * Whose budget a one-off command spends. Each is a new connection, so a direct one is rated by
+ * where it came from. Behind a relay everyone comes from the relay's address, and the relay limits
+ * each player by their own: there, a command is rated as its player, as their lines are.
+ */
+export const execRateKeyOf = (info: SessionInfo): string =>
+  info.relayedActor !== undefined
+    ? rateKeyOf(info)
+    : `address:${addressBucket(info.remoteAddress)}`;
+
 /** Runs one exec command as an input line and prints what it came to. Its number is the exit status. */
-const execCommand = (session: ExecSession, allowed: (address: string, now: number) => boolean) =>
+const execCommand = (session: ExecSession, allowed: (key: string, now: number) => boolean) =>
   Effect.gen(function* () {
     const actor = actorOf(session.info);
-    if (!allowed(session.info.remoteAddress, yield* Clock.currentTimeMillis)) {
+    if (!allowed(execRateKeyOf(session.info), yield* Clock.currentTimeMillis)) {
       session.writeError("Too many commands from your address; wait a moment.\n");
       return 1;
     }
@@ -80,7 +100,12 @@ const execCommand = (session: ExecSession, allowed: (address: string, now: numbe
  */
 export class TableServer extends Context.Service<
   TableServer,
-  { readonly port: number; readonly hostKeyFingerprint: string }
+  {
+    readonly port: number;
+    readonly hostKeyFingerprint: string;
+    /** The link to the relay, when one was asked for. */
+    readonly relay?: RelayLinkService;
+  }
 >()("supervillain/host/TableServer") {
   static readonly layer = (
     options: TableServerOptions,
@@ -121,7 +146,21 @@ export class TableServer extends Context.Service<
             }).pipe(Effect.provideContext(services)),
           onExec: (session) => execCommand(session, allowed).pipe(Effect.provideContext(services)),
         });
-        return TableServer.of({ port: server.port, hostKeyFingerprint: server.hostKeyFingerprint });
+        // Linked after the server, so the server's own finalizers say goodbye on the link first.
+        const relay =
+          options.relay === undefined
+            ? undefined
+            : yield* RelayLink.make({
+                ...options.relay,
+                room: options.room,
+                campaignDir: options.campaignDir,
+                attach: server.attach,
+              });
+        return TableServer.of({
+          port: server.port,
+          hostKeyFingerprint: server.hostKeyFingerprint,
+          ...(relay === undefined ? {} : { relay }),
+        });
       }),
     );
 }

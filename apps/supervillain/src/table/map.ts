@@ -37,6 +37,8 @@ export interface MapLayout {
   /** The tokens out of view, as arrow and mark (` ↖B ▴g `), or "" when everything shows. */
   readonly bottomTitle: string;
   readonly lines: ReadonlyArray<MapLine>;
+  /** Some of the highlighted reach is out of view: the table points at `/view map`. */
+  readonly reachClipped: boolean;
 }
 
 /** Border, padding and the border again: what the pane's box takes from the screen. */
@@ -104,8 +106,8 @@ function axis(size: number, room: number, centre: number, at: ReadonlyArray<numb
   return { ...place(), before, after };
 }
 
-/** Who a pane follows: the one acting, else the seat's own hero. */
-const followed = (tokens: ReadonlyArray<MapToken>) => {
+/** Who a pane follows: the one acting, else the seat's own hero. Their reach is the one shown. */
+export const followed = (tokens: ReadonlyArray<MapToken>) => {
   const alive = tokens.filter((t) => !t.dead);
   return alive.find((t) => t.acting) ?? alive.find((t) => t.mine);
 };
@@ -238,7 +240,7 @@ export function mapLayout(map: MapView, width: number, height: number, focus?: F
     );
     return { across, down, labelRows };
   };
-  const inView = (v: ReturnType<typeof viewAt>, t: MapToken) =>
+  const inView = (v: ReturnType<typeof viewAt>, t: Focus) =>
     t.x >= v.across.origin &&
     t.x < v.across.origin + v.across.span &&
     t.y >= v.down.origin &&
@@ -332,6 +334,7 @@ export function mapLayout(map: MapView, width: number, height: number, focus?: F
   }
   return {
     title,
+    reachClipped: map.reach.some((r) => !inView(view, r)),
     bottomTitle: offscreenTitle(
       off.map((t) => `${arrowOf(t)}${t.mark}`),
       width,

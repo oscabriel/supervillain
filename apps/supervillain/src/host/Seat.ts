@@ -34,6 +34,10 @@ export interface SeatOptions {
   readonly helpFooter?: string;
   /** How players join, shown on this seat while nobody else is at the table (for the GM). */
   readonly joinHint?: string;
+  /** Said instead of the join hint, as it changes: how the relay link is doing (for the GM). */
+  readonly joinNote?: View<string>;
+  /** Trouble with the way in, for the header whatever is on screen (for the GM). */
+  readonly alert?: View<string | undefined>;
 }
 
 /** A Solid accessor following a View, updated at most once per batch, for the life of the scope. */
@@ -44,8 +48,8 @@ const follow = <A>(view: View<A>): Effect.Effect<Accessor<A>, never, Scope.Scope
       Stream.groupedWithin(1024, BATCH),
       Stream.runForEach((batch) =>
         Effect.sync(() => {
-          const last = batch.at(-1);
-          if (last !== undefined) set(() => last);
+          // By length, not by value: a view may well change to undefined.
+          if (batch.length > 0) set(() => batch[batch.length - 1] as A);
         }),
       ),
       Effect.forkScoped,
@@ -95,6 +99,8 @@ export const openSeat = (
     const state = yield* follow(room.state);
     const recent = yield* follow(room.recent);
     const here = yield* follow(presence.here);
+    const joinNote = options.joinNote === undefined ? undefined : yield* follow(options.joinNote);
+    const alert = options.alert === undefined ? undefined : yield* follow(options.alert);
     // In-flight submits end with the seat.
     const run = yield* FiberSet.makeRuntimePromise<TableServices>();
     const rows = keepRows();
@@ -138,6 +144,8 @@ export const openSeat = (
         actor === GM ? debugText(state(), recent()) : "Only the GM can see the table's state.",
       leave: options.leave,
       ...(options.joinHint === undefined ? {} : { joinHint: options.joinHint }),
+      ...(joinNote === undefined ? {} : { joinNote }),
+      ...(alert === undefined ? {} : { alert }),
     } satisfies TableView;
   });
 

@@ -4,12 +4,23 @@ import { createServer, type Socket } from "node:net";
 import { CliRenderEvents, type CliRenderer, createCliRenderer, NativeSession } from "@opentui/core";
 import { Cause, Deferred, Effect, Exit, FiberSet, type Scope } from "effect";
 import ssh2, { type AuthContext, type Connection, type ServerChannel } from "ssh2";
+import { addressBucket, normalizeAddress } from "./address.ts";
 import { fingerprintOf, loadHostKey, parseKey } from "./keys.ts";
+import { rateLimiter } from "./rate.ts";
 import { isRelayableActor } from "./relay.ts";
-import { type Pty, rendererStreams, sanitizePty, sanitizeSize, takeEnv } from "./terminal.ts";
+import {
+  type Pty,
+  rendererStreams,
+  sanitizePty,
+  sanitizeSize,
+  TERMINAL_RESET,
+  takeEnv,
+} from "./terminal.ts";
 import {
   type AttachOptions,
   type Identity,
+  type RawExit,
+  type RawRequest,
   type ServeOptions,
   type SessionInfo,
   SshError,
@@ -56,15 +67,18 @@ const crlf = (text: string) => text.replace(/\r?\n/g, "\r\n");
 
 const guestId = () => randomBytes(12).toString("base64url");
 
-const normalizeAddress = (address: string | undefined) =>
-  !address ? "unknown" : address.startsWith("::ffff:") ? address.slice("::ffff:".length) : address;
-
 /** One accepted socket, as the connection on it sees it. */
 interface Link {
   readonly socket: Socket;
   readonly address: string;
+  /** What per-address limits count it by: the address, or its /64 for IPv6. */
+  readonly bucket: string;
   /** Relay keys believed on this socket only. */
   readonly extraTrust: ReadonlySet<string>;
+  /** Set on a relay's link: decides keys neither list trusts, and refuses everyone else. */
+  readonly admitRelay: ((fingerprint: string) => boolean) | undefined;
+  /** Never cut for carrying no session. */
+  readonly persistent: boolean;
   /** Called once the client has logged in. */
   readonly authenticated: () => void;
 }
@@ -75,6 +89,17 @@ const verifiedKey = (ctx: Extract<AuthContext, { method: "publickey" }>) => {
   const key = parseKey(`${ctx.key.algo} ${ctx.key.data.toString("base64")}`);
   if (!key || key.verify(ctx.blob, ctx.signature, ctx.hashAlgo) !== true) return undefined;
   return { fingerprint: fingerprintOf(ctx.key.data), algorithm: key.type };
+};
+
+/**
+ * Says yes to a publickey query, naming the algorithm the client asked about, as RFC 4252 wants.
+ * ssh2 1.16 has already rewritten `rsa-sha2-256`/`-512` to `ssh-rsa` and would echo that, and
+ * OpenSSH, which doesn't accept `ssh-rsa`, then gives up on the whole login: so put it back.
+ */
+const acceptQuery = (ctx: Extract<AuthContext, { method: "publickey" }>) => {
+  if (ctx.key.algo === "ssh-rsa" && ctx.hashAlgo === "sha256") ctx.key.algo = "rsa-sha2-256";
+  else if (ctx.key.algo === "ssh-rsa" && ctx.hashAlgo === "sha512") ctx.key.algo = "rsa-sha2-512";
+  ctx.accept();
 };
 
 /**
@@ -101,9 +126,10 @@ const closeUnstarted = (client: Connection, session: ssh2.Session): boolean => {
 };
 
 /** Ends a channel after its last write, with an exit status; closes it outright if the peer stalls. */
-const endChannel = (channel: ServerChannel, status: number) => {
+const endChannel = (channel: ServerChannel, how: RawExit) => {
   try {
-    channel.exit(status);
+    if (typeof how === "number") channel.exit(how);
+    else channel.exit(how.signal, how.coreDumped ?? false, how.message ?? "");
     channel.end();
     setTimeout(() => {
       try {
@@ -177,7 +203,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
       }
       connections.add(client);
       const remoteAddress = link.address;
-      const counts = countsFor(remoteAddress);
+      const counts = countsFor(link.bucket);
       let identity: Identity | undefined;
       let user = "";
       let relay = false;
@@ -196,14 +222,14 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
       };
       const startIdle = () => {
         stopIdle();
-        if (!closed && startedSessions === 0)
+        if (!closed && startedSessions === 0 && !link.persistent)
           idle = setTimeout(() => link.socket.destroy(), timeouts.sessionStartMs);
       };
 
       client.on("authentication", (ctx) => {
         if (ctx.method === "publickey") {
           // The first pass only asks whether the key is acceptable; any key is.
-          if (!ctx.signature) return ctx.accept();
+          if (!ctx.signature) return acceptQuery(ctx);
           const key = verifiedKey(ctx);
           if (!key) return ctx.reject(authMethods);
           identity = {
@@ -213,10 +239,17 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
             algorithm: key.algorithm,
           };
           relay = trusted.has(key.fingerprint) || link.extraTrust.has(key.fingerprint);
+          if (!relay && link.admitRelay) {
+            relay = link.admitRelay(key.fingerprint);
+            if (!relay) {
+              identity = undefined;
+              return ctx.reject(authMethods);
+            }
+          }
           user = ctx.username;
           return ctx.accept();
         }
-        if (ctx.method === "keyboard-interactive" && options.allowGuests) {
+        if (ctx.method === "keyboard-interactive" && options.allowGuests && !link.admitRelay) {
           identity = { kind: "guest", actor: `guest:${guestId()}` };
           user = ctx.username;
           return ctx.accept();
@@ -255,7 +288,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
           connectionSessions--;
           openSessions--;
           counts.sessions--;
-          forget(remoteAddress);
+          forget(link.bucket);
           if (started && --startedSessions === 0) startIdle();
         };
         live.add(release);
@@ -274,7 +307,8 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
         const startDeadline = setTimeout(() => {
           const closedAlone = closeUnstarted(client, session);
           release();
-          if (!closedAlone || (startedSessions === 0 && !relay)) link.socket.destroy();
+          if (!closedAlone || (startedSessions === 0 && !relay && !link.persistent))
+            link.socket.destroy();
         }, timeouts.sessionStartMs);
         let pty: Pty = sanitizePty(undefined);
         let hasPty = false;
@@ -319,11 +353,22 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
         /** Whether this channel may start. A relay's channel must name its player. */
         const mayStart = () => !started && (!relay || relayedActor !== undefined);
 
+        const onResize = (onResize: (cols: number, rows: number) => void) => (resize = onResize);
+
         session.on("shell", (accept, reject) => {
-          if (!mayStart()) return reject?.();
+          const { onRaw, onShell } = options;
+          if (!mayStart() || (!onRaw && !onShell)) return reject?.();
           start();
           const channel = accept();
-          if (!hasPty) {
+          if (onRaw) {
+            const sessionInfo = info();
+            const request: RawRequest = { kind: "shell" };
+            return void runSession(
+              sessionInfo.identity.actor,
+              rawSession(client, channel, sessionInfo, request, hasPty, onRaw, onResize),
+            );
+          }
+          if (!hasPty || !onShell) {
             // A renderer would pour escape codes into a pipe and never notice the input ending.
             channel.stderr.write(`${options.noPtyMessage ?? NO_PTY_MESSAGE}\n`);
             return endChannel(channel, 1);
@@ -331,15 +376,23 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
           const sessionInfo = info();
           runSession(
             sessionInfo.identity.actor,
-            shellSession(channel, sessionInfo, (onResize) => (resize = onResize)),
+            shellSession(channel, sessionInfo, onShell, onResize),
           );
         });
         session.on("exec", (accept, reject, { command }) => {
-          const onExec = options.onExec;
-          if (!mayStart() || !onExec) return reject?.();
+          const { onRaw, onExec } = options;
+          if (!mayStart() || (!onRaw && !onExec)) return reject?.();
           start();
           const channel = accept();
           const sessionInfo = info();
+          if (onRaw) {
+            const request: RawRequest = { kind: "exec", command };
+            return void runSession(
+              sessionInfo.identity.actor,
+              rawSession(client, channel, sessionInfo, request, hasPty, onRaw, onResize),
+            );
+          }
+          if (!onExec) return;
           runSession(
             sessionInfo.identity.actor,
             execSession(channel, sessionInfo, command, onExec, hasPty ? crlf : (text) => text),
@@ -379,6 +432,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
     const shellSession = (
       channel: ServerChannel,
       info: SessionInfo,
+      onShell: NonNullable<ServeOptions["onShell"]>,
       onResize: (resize: (cols: number, rows: number) => void) => void,
     ): Effect.Effect<void, never, Scope.Scope> =>
       Effect.gen(function* () {
@@ -453,7 +507,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
         });
         if (state.gone) return;
         yield* Effect.raceFirst(
-          options.onShell({ info, renderer: live, close: end }),
+          onShell({ info, renderer: live, close: end }),
           Deferred.await(ended),
         );
       });
@@ -492,17 +546,106 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
         );
       });
 
+    /** A session handed over as bytes: the handler forwards it, the server only guards and ends it. */
+    const rawSession = (
+      client: Connection,
+      channel: ServerChannel,
+      info: SessionInfo,
+      request: RawRequest,
+      pty: boolean,
+      onRaw: NonNullable<ServeOptions["onRaw"]>,
+      onResize: (resize: (cols: number, rows: number) => void) => void,
+    ): Effect.Effect<void, never, Scope.Scope> =>
+      Effect.gen(function* () {
+        const { ended, end, state } = yield* watchChannel(channel);
+        // ssh2 holds a closed channel's "close" until its input is read, which a handler that hasn't
+        // started forwarding yet doesn't do: a connection that goes ends the session all the same.
+        const onConnectionGone = () => {
+          state.gone = true;
+          end();
+        };
+        client.once("close", onConnectionGone);
+        let exited = false;
+        // A handler that dies or is cut off reports failure.
+        let status: RawExit = 1;
+        yield* Effect.addFinalizer(() =>
+          Effect.suspend(() => {
+            if (state.gone || exited) {
+              client.removeListener("close", onConnectionGone);
+              return Effect.void;
+            }
+            exited = true;
+            // What was forwarded may have left the client's terminal in any mode: a pty gets it
+            // put back, and the notice on a line of its own, not inside the old frame.
+            if (!accepting && options.shutdownNotice !== undefined && request.kind === "shell")
+              channel.write(
+                pty
+                  ? `${TERMINAL_RESET}\r\n${crlf(`${options.shutdownNotice}\n`)}`
+                  : `${options.shutdownNotice}\n`,
+              );
+            endChannel(channel, status);
+            // Wait for the close to go out, so a server that's shutting down doesn't cut the
+            // connection ahead of it.
+            return Deferred.await(ended).pipe(
+              Effect.timeout(RESTORE_TIMEOUT_MS),
+              Effect.ignore,
+              Effect.ensuring(Effect.sync(() => client.removeListener("close", onConnectionGone))),
+            );
+          }),
+        );
+        const listeners = new Set<(cols: number, rows: number) => void>();
+        onResize((cols, rows) => {
+          for (const listener of listeners) listener(cols, rows);
+        });
+        const exit = (how: RawExit) => {
+          if (exited || state.gone) return;
+          exited = true;
+          endChannel(channel, how);
+          end();
+        };
+        yield* Effect.raceFirst(
+          onRaw({
+            info,
+            request,
+            pty,
+            stream: channel,
+            stderr: channel.stderr,
+            onResize: (listener) => void listeners.add(listener),
+            exit,
+          }).pipe(
+            Effect.map(() => {
+              status = 0;
+            }),
+          ),
+          Deferred.await(ended),
+        );
+      });
+
     // Every connection, listened or attached, arrives as a socket we hold, so closing can destroy it.
     const sockets = new Set<Socket>();
-    const serveSocket = (socket: Socket, extraTrust: ReadonlySet<string>) => {
+    const connectAllowed = options.limits?.connectRate
+      ? rateLimiter(options.limits.connectRate)
+      : () => true;
+    /** A refused socket is said in the log, at most a few times a minute for one address. */
+    const refusalLogged = rateLimiter({ burst: 3, perSecond: 1 / 60 });
+    const serveSocket = (socket: Socket, attachOptions: AttachOptions = {}) => {
+      const extraTrust = new Set(attachOptions.trustedRelayKeys ?? []);
       const address = normalizeAddress(socket.remoteAddress);
-      const counts = countsFor(address);
-      if (
-        !accepting ||
-        sockets.size >= limits.connections ||
-        counts.connections >= limits.connectionsPerAddress
-      ) {
-        forget(address);
+      const bucket = addressBucket(address);
+      const counts = countsFor(bucket);
+      const refusal = !accepting
+        ? undefined
+        : sockets.size >= limits.connections
+          ? `the server holds its most connections (${limits.connections})`
+          : counts.connections >= limits.connectionsPerAddress
+            ? `${bucket} has its most connections open (${limits.connectionsPerAddress})`
+            : !connectAllowed(bucket, Date.now())
+              ? `${bucket} connects too fast`
+              : null;
+      if (refusal !== null) {
+        forget(bucket);
+        if (refusal !== undefined && refusalLogged(bucket, Date.now()))
+          void fork(Effect.logInfo(`ssh: refused a connection from ${address}: ${refusal}`));
         return void socket.destroy();
       }
       sockets.add(socket);
@@ -513,7 +656,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
         clearTimeout(login);
         sockets.delete(socket);
         counts.connections--;
-        forget(address);
+        forget(bucket);
       });
       socket.setNoDelay(true);
       // One ssh2 server per socket, so the connection handler knows its socket, through public API only.
@@ -528,7 +671,10 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
           onConnection(client, {
             socket,
             address,
+            bucket,
             extraTrust,
+            admitRelay: attachOptions.admitRelay,
+            persistent: attachOptions.persistent === true,
             authenticated: () => clearTimeout(login),
           }),
       );
@@ -538,8 +684,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
       // @types/ssh2 sees @types/node 18's Socket, Bun's types see node 26's: the same object.
       ssh.injectSocket(socket as Parameters<ssh2.Server["injectSocket"]>[0]);
     };
-    const noExtraTrust: ReadonlySet<string> = new Set();
-    const listener = createServer((socket) => serveSocket(socket, noExtraTrust));
+    const listener = createServer((socket) => serveSocket(socket));
     // Two @types/node versions in one program leave net.Server without its EventEmitter methods.
     const listenerEvents = listener as unknown as EventEmitter;
 
@@ -587,7 +732,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
     );
 
     const attach = (socket: Socket, attachOptions?: AttachOptions) =>
-      serveSocket(socket, new Set(attachOptions?.trustedRelayKeys ?? []));
+      serveSocket(socket, attachOptions);
 
     return { port, hostKeyFingerprint: hostKey.fingerprint, attach } satisfies SshServer;
   });

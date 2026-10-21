@@ -75,6 +75,16 @@ export interface TableView {
   readonly leave: () => void;
   /** How players join (`ssh -p 2222 den@host`), shown on the GM's seat while nobody else is here. */
   readonly joinHint?: string;
+  /**
+   * Said instead of `players join with: <joinHint>`, when set: how the way in is doing, e.g.
+   * `relay: connecting…` while the table goes through a relay.
+   */
+  readonly joinNote?: Accessor<string>;
+  /**
+   * Trouble with the way in, in the header whatever else is on screen, e.g. `relay: down,
+   * redialing` (for the GM). Undefined while all is well.
+   */
+  readonly alert?: Accessor<string | undefined>;
   /** The Draw Steel band. Absent until the host provides it; undefined while there is no party or combat. */
   readonly combat?: Accessor<CombatView | undefined>;
   /** The text map. Absent until the host provides it; undefined while no map is loaded. */

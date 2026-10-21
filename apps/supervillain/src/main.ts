@@ -1,15 +1,40 @@
 #!/usr/bin/env bun
-// The one binary: `bun supervillain …` from the repo root, or this file from anywhere.
+// The one binary: `supervillain …` compiled (scripts/build.ts), `bun supervillain …` from the repo
+// root, or this file from anywhere.
 //   supervillain host [campaign-dir] [--port 2222] [--bind 127.0.0.1] [--room name] [--headless]
+//                     [--relay host:port] [--relay-key SHA256:…] [--relay-player-port 2222]
+//                     [--relay-host-key SHA256:…]
 //   supervillain new <campaign-dir> [--example]
 //   supervillain import <bestiary-json-path> --into <campaign-dir> [names...] [--overwrite]
 //   supervillain check <campaign-dir>
-import { chmod, cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+//   supervillain relay [--player-port 2222] [--gm-port 7022] [--bind 0.0.0.0] [--dir ~/.supervillain-relay]
+//   supervillain relay forget <room> [--dir …]
+import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { Cause, Console, Effect, Exit, Layer, Logger, Option, Runtime, Schema } from "effect";
+import {
+  Cause,
+  Console,
+  Effect,
+  Exit,
+  Layer,
+  Logger,
+  Option,
+  Runtime,
+  Schema,
+  Stream,
+} from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { checkLog } from "./host/check.ts";
+import { relayCommand } from "./relay/cli.ts";
+import {
+  isFingerprint,
+  joinNote,
+  linkAlert,
+  parseRelayAddress,
+  roomSlug,
+} from "./host/RelayLink.ts";
+import { isRoomName } from "./relay/protocol.ts";
 
 /** A failure with a message for the person at the terminal: printed plainly, exit status 1. */
 class CheckError extends Schema.TaggedError<CheckError>()("CheckError", {
@@ -26,8 +51,28 @@ class CampaignError extends Schema.TaggedError<CampaignError>()("CampaignError",
   message: Schema.String,
 }) {}
 
-/** The sample campaign `new --example` copies. */
-const EXAMPLE = join(import.meta.dir, "../../../examples/campaign");
+/** Whether this is the compiled binary (scripts/build.ts), whose own files live in Bun's embedded fs. */
+const COMPILED = import.meta.dir.startsWith("/$bunfs/");
+
+/** The sample campaign `new --example` copies: embedded beside the code in the binary, else the repo's. */
+const EXAMPLE = COMPILED
+  ? join(import.meta.dir, "campaign")
+  : join(import.meta.dir, "../../../examples/campaign");
+
+/** How the person at the terminal runs this program again. */
+const SELF = COMPILED ? "supervillain" : "bun supervillain";
+
+/** Copies a folder file by file: `fs.cp` can't copy out of a binary's embedded files. */
+const copyTree = async (from: string, to: string): Promise<void> => {
+  for (const entry of await readdir(from, { withFileTypes: true })) {
+    const source = join(from, entry.name);
+    const target = join(to, entry.name);
+    if (entry.isDirectory()) {
+      await mkdir(target);
+      await copyTree(source, target);
+    } else await writeFile(target, await readFile(source));
+  }
+};
 
 /** Prints a failure plainly and sets the exit status. */
 const fail = (e: { readonly message: string }) =>
@@ -64,7 +109,31 @@ const host = Command.make(
     ),
     room: Flag.String("room").pipe(
       Flag.optional,
-      Flag.withDescription("The room's name (default: the campaign folder's name)"),
+      Flag.withDescription("The room's name (default: the campaign folder's name, slugged)"),
+    ),
+    relay: Flag.String("relay").pipe(
+      Flag.optional,
+      Flag.withDescription(
+        "Also take players through this relay (host:port, port 7022 if left out); the host dials it",
+      ),
+    ),
+    relayKey: Flag.String("relay-key").pipe(
+      Flag.optional,
+      Flag.withDescription(
+        "The relay's key fingerprint to trust (SHA256:…, the relay prints it); else <campaign>/relay_known, filled on first link",
+      ),
+    ),
+    relayPlayerPort: Flag.Int("relay-player-port").pipe(
+      Flag.optional,
+      Flag.withDescription(
+        "The relay's port for players, for the join command you're shown (default 2222, the relay's own)",
+      ),
+    ),
+    relayHostKey: Flag.String("relay-host-key").pipe(
+      Flag.optional,
+      Flag.withDescription(
+        "The relay's host key (SHA256:…, what players' ssh sees there; the relay prints it), shown with the join command for players to check",
+      ),
     ),
     headless: Flag.Boolean("headless").pipe(
       Flag.withDefault(false),
@@ -73,7 +142,30 @@ const host = Command.make(
   },
   Effect.fn(function* (o) {
     const dir = resolve(o.campaignDir);
-    const room = Option.getOrElse(o.room, () => basename(dir));
+    const room = Option.getOrElse(o.room, () => roomSlug(basename(dir)));
+    const relayText = Option.getOrUndefined(o.relay);
+    const relayAddress = relayText === undefined ? undefined : parseRelayAddress(relayText);
+    if (relayText !== undefined && relayAddress === undefined)
+      return yield* new HostError({ message: `--relay takes host:port, not ${relayText}` });
+    const relayKey = Option.getOrUndefined(o.relayKey);
+    const relayPlayerPort = Option.getOrUndefined(o.relayPlayerPort);
+    if (relayPlayerPort !== undefined && (relayPlayerPort < 1 || relayPlayerPort > 65_535))
+      return yield* new HostError({
+        message: `--relay-player-port takes a port from 1 to 65535, not ${relayPlayerPort}`,
+      });
+    if (relayKey !== undefined && !isFingerprint(relayKey))
+      return yield* new HostError({
+        message: `--relay-key takes a key fingerprint like SHA256:…, not ${relayKey}`,
+      });
+    const relayHostKey = Option.getOrUndefined(o.relayHostKey);
+    if (relayHostKey !== undefined && !isFingerprint(relayHostKey))
+      return yield* new HostError({
+        message: `--relay-host-key takes a key fingerprint like SHA256:…, not ${relayHostKey}`,
+      });
+    if (relayAddress !== undefined && !isRoomName(room))
+      return yield* new HostError({
+        message: `a relay's room is 1-32 of a-z, 0-9 and -, starting with a letter: pick one with --room, not ${room}`,
+      });
     // The log is every word said at the table: a new campaign folder is its owner's alone.
     yield* Effect.tryPromise({
       try: () => mkdir(dir, { recursive: true, mode: 0o700 }),
@@ -87,9 +179,21 @@ const host = Command.make(
     const { TableServer } = yield* Effect.promise(() => import("./host/TableServer.ts"));
     const { localSeat } = yield* Effect.promise(() => import("./host/LocalSeat.ts"));
 
-    const layer = TableServer.layer({ campaignDir: dir, room, port: o.port, bind: o.bind }).pipe(
-      Layer.provideMerge(tableServices(dir)),
-    );
+    const layer = TableServer.layer({
+      campaignDir: dir,
+      room,
+      port: o.port,
+      bind: o.bind,
+      ...(relayAddress === undefined
+        ? {}
+        : {
+            relay: {
+              ...relayAddress,
+              ...(relayKey === undefined ? {} : { relayKey }),
+              ...(relayPlayerPort === undefined ? {} : { playerPort: relayPlayerPort }),
+            },
+          }),
+    }).pipe(Layer.provideMerge(tableServices(dir)));
     // The GM's seat owns this terminal, and log lines would tear its frame: they go to a file.
     const logs = o.headless
       ? Layer.empty
@@ -99,16 +203,48 @@ const host = Command.make(
 
     yield* Effect.gen(function* () {
       const server = yield* TableServer;
-      const joining = joinCommand(room, o.bind, server.port);
+      const relay = server.relay;
+      const direct = joinCommand(room, o.bind, server.port);
+      const joining = relay?.joinCommand ?? direct;
+      // Through a relay, players' ssh meets the relay's host key, never this table's.
+      const relayHostKeyText =
+        relayHostKey ?? "ask whoever runs the relay (it prints it as its host key)";
       yield* Console.log(`supervillain: hosting "${room}" from ${dir}`);
-      yield* Console.log(`players join with: ${joining}`);
-      yield* Console.log(`host key ${server.hostKeyFingerprint}`);
-      yield* Effect.logInfo(`hosting "${room}" on ${o.bind}:${server.port}, players: ${joining}`);
+      yield* Console.log(`players join with: ${joining}${relay ? " (through the relay)" : ""}`);
+      if (relay !== undefined && relayAddress !== undefined) {
+        yield* Console.log(`  players' ssh sees the relay's host key: ${relayHostKeyText}`);
+        yield* Console.log(`players here can also join directly: ${direct}`);
+        yield* Console.log(
+          `relay ${relayAddress.host}:${relayAddress.port}, trusting ${relayKey ?? `the key in ${join(dir, "relay_known")} (pinned on first link)`}`,
+        );
+      }
+      yield* Console.log(
+        `host key ${server.hostKeyFingerprint}${relay ? " (this table's: direct connections only)" : ""}`,
+      );
+      yield* Effect.logInfo(
+        relay
+          ? `hosting "${room}" on ${o.bind}:${server.port} (direct: ${direct}); through the relay: ${joining}`
+          : `hosting "${room}" on ${o.bind}:${server.port}, players: ${joining}`,
+      );
       if (o.headless) return yield* Effect.never;
       yield* localSeat({
         room,
-        helpFooter: `Players join with: ${joining}\nHost key: ${server.hostKeyFingerprint}`,
+        helpFooter: relay
+          ? `Players join through the relay with: ${joining}\nThe relay's host key, which their ssh sees: ${relayHostKeyText}\nPlayers here can join directly: ${direct} (host key ${server.hostKeyFingerprint})`
+          : `Players join with: ${joining}\nHost key: ${server.hostKeyFingerprint}`,
         joinHint: joining,
+        ...(relay === undefined
+          ? {}
+          : {
+              joinNote: {
+                get: Effect.map(relay.status.get, (s) => joinNote(s, relay.joinCommand)),
+                changes: Stream.map(relay.status.changes, (s) => joinNote(s, relay.joinCommand)),
+              },
+              alert: {
+                get: Effect.map(relay.status.get, linkAlert),
+                changes: Stream.map(relay.status.changes, linkAlert),
+              },
+            }),
       });
       yield* Effect.logInfo("the GM left the table; shutting down");
     }).pipe(Effect.provide(layer), Effect.provide(logs));
@@ -151,7 +287,11 @@ const make = Command.make(
         await mkdir(dir, { recursive: true, mode: 0o700 });
         await chmod(dir, 0o700);
         if (o.example) {
-          await cp(EXAMPLE, dir, { recursive: true });
+          // A copy that fails halfway leaves the folder as it found it: empty, for another try.
+          await copyTree(EXAMPLE, dir).catch(async (e: unknown) => {
+            for (const name of await readdir(dir)) await rm(join(dir, name), { recursive: true });
+            throw e;
+          });
           return;
         }
         await mkdir(join(dir, "heroes"));
@@ -168,7 +308,7 @@ const make = Command.make(
     yield* Console.log(
       `supervillain: made ${dir}${o.example ? " from the sample campaign" : " with heroes/, monsters/ and maps/"}`,
     );
-    yield* Console.log(`host it with: bun supervillain host ${o.campaignDir}`);
+    yield* Console.log(`host it with: ${SELF} host ${o.campaignDir}`);
   }),
 ).pipe(
   Command.withDescription(
@@ -247,8 +387,9 @@ const check = Command.make(
 
 Command.make("supervillain").pipe(
   Command.withDescription("A terminal-first virtual tabletop for Draw Steel"),
-  Command.withSubcommands([host, make, importMonsters, check]),
-  Command.run({ version: "0.0.0" }),
+  Command.withSubcommands([host, make, importMonsters, check, relayCommand]),
+  // scripts/build.ts sets the release's version; from source it's the development one.
+  Command.run({ version: process.env.SUPERVILLAIN_VERSION ?? "0.0.0" }),
   // Failures we expect (a bad log, a held lock, a busy port) read as one line, not a trace.
   Effect.catchTags({
     CampaignError: fail,

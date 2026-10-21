@@ -269,6 +269,22 @@ describe("first ten seconds", () => {
     expect(await settle(t)).not.toContain(hint);
   });
 
+  test("the GM sees the relay link's trouble in the header, party or fight on screen", async () => {
+    const fake = fakeView({
+      me: "gm",
+      present: [gm, alice],
+      combat: fight(ford),
+      alert: "relay: down, redialing",
+    });
+    const t = await mount(fake, 80, 24);
+    const top = () => rowsOf(t.captureCharFrame())[0]!;
+    expect(top()).toContain("den · relay: down, redialing");
+    expect(top()).toContain("here: Oscar (GM)");
+    fake.setAlert(undefined);
+    await settle(t);
+    expect(top()).not.toContain("relay");
+  });
+
   test("a player's /state goes to the host like any other line", async () => {
     const fake = fakeView({ myName: "Alice", reply: () => "Only the GM can use /state." });
     const t = await mount(fake);
@@ -794,6 +810,45 @@ describe("the map", () => {
     const short = "Bandit Bruiser 2 can reach: speed 5";
     const u = await mount(seated({ map: { ...courtyard, reachLabel: short } }), 80, 24);
     expect(rowsOf(u.captureCharFrame()).at(-2)).toBe(` ${short} · /view · /help`);
+  });
+
+  test("at 80x24 beside a full band, a reach that doesn't fit points at /view map", async () => {
+    const reach = Array.from({ length: 12 * 16 }, (_, i) => ({
+      x: i % 16,
+      y: Math.floor(i / 16),
+    })).filter(({ x, y }) => Math.abs(x - 3) + Math.abs(y - 3) <= 5);
+    const crowd = fight([vex, spearmen, brakka, ogre, sera, sniper, ...goblins(40)]);
+    const fake = seated({ map: { ...courtyard, reach }, combat: crowd });
+    const t = await mount(fake, 80, 24);
+    expect(rowsOf(t.captureCharFrame()).at(-2)).toBe(
+      " Vex can reach: speed 5 · /view map to see all your reach",
+    );
+    // With the map given the room, the reach shows whole and the keys come back.
+    const rows = rowsOf(await enter(t, "/view map"));
+    expect(rows.at(-2)).toBe(
+      " Vex can reach: speed 5 · Tab completes · /view · /help · Ctrl-C leaves",
+    );
+    setup?.renderer.destroy();
+    // Someone else's reach: the hint doesn't call it yours.
+    const goblin = {
+      ...courtyard,
+      reach,
+      tokens: courtyard.tokens.map((k) => ({ ...k, acting: false })),
+      reachLabel: "Goblin can reach: speed 5",
+    };
+    goblin.tokens.push({
+      ...courtyard.tokens[1]!,
+      id: "goblin",
+      mark: "g",
+      x: 3,
+      y: 3,
+      acting: true,
+    });
+    goblin.tokens[0] = { ...goblin.tokens[0]!, x: 0, y: 11 };
+    const u = await mount(seated({ map: goblin, combat: crowd }), 80, 24);
+    expect(rowsOf(u.captureCharFrame()).at(-2)).toBe(
+      " Goblin can reach: speed 5 · /view map to see all of it",
+    );
   });
 
   test("below the smallest seat the map gives way like the band", async () => {

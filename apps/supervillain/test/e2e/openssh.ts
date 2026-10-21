@@ -24,11 +24,15 @@ const env = () => {
   return rest;
 };
 
-/** A fresh ed25519 key pair in `dir`, with the fingerprint ssh-keygen reports for it. */
-export const clientKey = (dir: string, name: string) =>
+/** A fresh key pair in `dir` (ed25519 unless asked), with the fingerprint ssh-keygen reports for it. */
+export const clientKey = (
+  dir: string,
+  name: string,
+  type: "ed25519" | "rsa" | "ecdsa" = "ed25519",
+) =>
   Effect.promise(async (): Promise<ClientKey> => {
     const path = join(dir, name);
-    const made = await run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", name, "-f", path]);
+    const made = await run(["ssh-keygen", "-q", "-t", type, "-N", "", "-C", name, "-f", path]);
     if (made.exitCode !== 0) throw new Error(`ssh-keygen: ${made.stderr}`);
     const listed = await run(["ssh-keygen", "-lf", `${path}.pub`]);
     const fingerprint = listed.stdout.split(" ")[1];

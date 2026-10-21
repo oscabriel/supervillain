@@ -7,9 +7,11 @@ A ready-to-play campaign folder for trying supervillain: four level-1 heroes, th
 The host writes into the campaign folder: the log (`events.jsonl`), the host key and `host.log`. Make a copy first, so this one stays clean:
 
 ```sh
-bun supervillain new ~/campaigns/first-fight --example
-bun supervillain host ~/campaigns/first-fight
+supervillain new ~/campaigns/first-fight --example
+supervillain host ~/campaigns/first-fight
 ```
+
+From a checkout of the source, run `bun supervillain …` from its root instead.
 
 Players join with the `ssh` command the host prints. The table's Draw Steel commands (see `/help`) bring a hero or monster in by its id, the file name without `.yaml`. A unique start of the id is enough: `bra` for `brann`.
 
@@ -92,7 +94,7 @@ No other character may be a square, so nothing on the map looks like a token; th
 If you have a local copy of Steel Compendium's `data-bestiary-json`, the import command turns its creatures into monster files:
 
 ```sh
-bun supervillain import ~/data-bestiary-json --into ~/campaigns/first-fight "Goblin Warrior"
+supervillain import ~/data-bestiary-json --into ~/campaigns/first-fight "Goblin Warrior"
 ```
 
 It looks for a creature's exact name or id first, then a unique start of one. It never overwrites a file that's already there unless you pass `--overwrite`. Anything it can't read is left out, listed in the file's header comments and reported when the import finishes. Their data stays on your disk: supervillain doesn't bundle it.

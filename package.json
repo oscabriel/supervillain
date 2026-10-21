@@ -12,7 +12,9 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "check": "oxlint --disable-nested-config && oxfmt --check",
-    "fix": "oxlint --disable-nested-config --fix && oxfmt"
+    "fix": "oxlint --disable-nested-config --fix && oxfmt",
+    "release:build": "bun scripts/build.ts",
+    "release:smoke": "bash scripts/smoke.sh"
   },
   "devDependencies": {
     "@types/bun": "1.4.0",

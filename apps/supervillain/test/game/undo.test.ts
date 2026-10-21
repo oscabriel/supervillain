@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { fold } from "@supervillain/engine";
-import { core } from "../../src/game/core.ts";
+import { core, labelOf } from "../../src/game/core.ts";
 import { compose, type Module } from "../../src/game/module.ts";
 import { feedLines, plainText, tableLabel } from "../../src/game/index.ts";
-import { VEX } from "../drawSteel/harness.ts";
+import { KOR, VEX } from "../drawSteel/harness.ts";
 import { ALICE, BOB, env, GM, START, Table } from "./table.ts";
 
 type CounterCommand =
@@ -11,21 +11,38 @@ type CounterCommand =
   | { readonly type: "pin"; readonly at: number }
   | { readonly type: "spin" }
   | { readonly type: "look" }
-  | { readonly type: "set"; readonly from: number; readonly to: number };
+  | { readonly type: "set"; readonly from: number; readonly to: number }
+  | { readonly type: "tag"; readonly tag: string }
+  | { readonly type: "cap"; readonly at: number };
 
-type Counter = { readonly n: number; readonly pin?: number };
+type Counter = {
+  readonly n: number;
+  readonly pin?: number;
+  readonly tag?: string;
+  readonly cap?: number;
+};
 
 /**
  * A stand-in game module: `counter.bumped` is retractable, `counter.pinned` lives in the same
  * slice but isn't, the way a hero claim sits beside damage in Draw Steel. `counter.spun` rolls a
  * die; `counter.looked` changes nothing, like a measurement, and can't be applied while the
  * counter is 0; `counter.set` holds only where the counter is what it was decided against.
+ * `counter.tagged` is retractable and touches only the tag, so it never depends on a bump;
+ * `counter.capped` isn't retractable, and a later bump stops at the cap.
  */
 const counter: Module<"counter", Counter, CounterCommand> = {
   key: "counter",
   initial: { n: 0 },
-  events: ["counter.bumped", "counter.pinned", "counter.spun", "counter.looked", "counter.set"],
-  retractable: ["counter.bumped", "counter.spun", "counter.set"],
+  events: [
+    "counter.bumped",
+    "counter.pinned",
+    "counter.spun",
+    "counter.looked",
+    "counter.set",
+    "counter.tagged",
+    "counter.capped",
+  ],
+  retractable: ["counter.bumped", "counter.spun", "counter.set", "counter.tagged"],
   rolled: (envelope) => envelope.type === "counter.spun",
   commands: {
     bump: {
@@ -48,6 +65,18 @@ const counter: Module<"counter", Counter, CounterCommand> = {
       gmOnly: false,
       parse: (args) => ({ type: "set", from: 0, to: Number(args) }),
     },
+    tag: {
+      usage: "/tag <t>",
+      summary: "Tag.",
+      gmOnly: false,
+      parse: (tag) => ({ type: "tag", tag }),
+    },
+    cap: {
+      usage: "/cap <n>",
+      summary: "Cap.",
+      gmOnly: false,
+      parse: (args) => ({ type: "cap", at: Number(args) }),
+    },
   },
   decide: (slice, _shared, _actor, command, dice) => {
     switch (command.type) {
@@ -61,13 +90,17 @@ const counter: Module<"counter", Counter, CounterCommand> = {
         return { events: [{ type: "counter.looked", payload: {} }] };
       case "set":
         return { events: [{ type: "counter.set", payload: { from: slice.n, to: command.to } }] };
+      case "tag":
+        return { events: [{ type: "counter.tagged", payload: { tag: command.tag } }] };
+      case "cap":
+        return { events: [{ type: "counter.capped", payload: { at: command.at } }] };
     }
   },
   apply: (slice, envelope) => {
     switch (envelope.type) {
       case "counter.bumped": {
         const { by } = envelope.payload as { by: number };
-        const n = slice.n + by;
+        const n = Math.min(slice.n + by, slice.cap ?? Number.POSITIVE_INFINITY);
         return { slice: { ...slice, n }, feed: { kind: "counter", text: `+${by} → ${n}` } };
       }
       case "counter.spun": {
@@ -83,6 +116,14 @@ const counter: Module<"counter", Counter, CounterCommand> = {
         if (slice.n !== from) throw new Error(`set from ${from}, but it's ${slice.n}`);
         return { slice: { ...slice, n: to }, feed: { kind: "counter", text: `set to ${to}.` } };
       }
+      case "counter.tagged": {
+        const { tag } = envelope.payload as { tag: string };
+        return { slice: { ...slice, tag }, feed: { kind: "counter", text: `tagged ${tag}` } };
+      }
+      case "counter.capped": {
+        const { at } = envelope.payload as { at: number };
+        return { slice: { ...slice, cap: at }, feed: { kind: "counter", text: `capped at ${at}` } };
+      }
       default: {
         const { at } = envelope.payload as { at: number };
         return { slice: { ...slice, pin: at }, feed: { kind: "counter", text: `pinned at ${at}` } };
@@ -91,7 +132,7 @@ const counter: Module<"counter", Counter, CounterCommand> = {
   },
 };
 
-const toy = compose([core, counter]);
+const toy = compose([core, counter], { label: (state, actor) => labelOf(state)(actor) });
 const undo = { type: "undo" } as const;
 const redo = { type: "redo" } as const;
 const at = (seconds: number) => new Date(Date.parse(START) + seconds * 1000).toISOString();
@@ -231,6 +272,18 @@ describe("undo, in compose and the fold", () => {
       seq: 3,
       message: "the retraction at seq 3 would break a later change: set from 1, but it's 0",
     });
+    // A later change that would come out differently: replay never disagrees with the feed.
+    expect(
+      halted(
+        env(1, "counter.bumped", { by: 1 }, GM, at(0)),
+        env(2, "counter.bumped", { by: 1 }, ALICE, at(1)),
+        env(3, "core.retracted", { seqs: [1], undone: ["+1 → 1"] }, GM, at(2)),
+      ),
+    ).toEqual({
+      seq: 3,
+      message:
+        'the retraction at seq 3 would change a later change at seq 2: "+1 → 2" would read "+1 → 1"',
+    });
     expect(halted(env(1, "core.retracted", { seqs: [1], undone: [] }))).toEqual({
       seq: 1,
       message: "the retraction at seq 1 has nothing to take back",
@@ -280,10 +333,10 @@ describe("a player's undo", () => {
     t.run(GM, { type: "bump", by: [5] });
     expect(t.submit(ALICE, withNow(t))).toBe("Only the GM can take back someone else's change.");
     t.run(ALICE, { type: "bump", by: [2] });
-    t.run(BOB, { type: "bump", by: [1] });
+    t.run(BOB, { type: "tag", tag: "red" });
     t.run(ALICE, withNow(t));
-    // Bob's bump stays: it is folded again onto the counter as it was before Alice's.
-    expect(t.state.counter).toEqual({ n: 6 });
+    // Bob's tag stays: it is folded again onto the counter as it was before Alice's.
+    expect(t.state.counter).toEqual({ n: 5, tag: "red" });
     expect(t.state.feed.at(-1)?.text).toBe("undid: +2 → 7");
     expect(t.state.undo.map((b) => b.actor)).toEqual([GM, BOB]);
     t.run(GM, undo);
@@ -292,15 +345,42 @@ describe("a player's undo", () => {
 
   test("not when a later change depends on it; the GM takes that back first", () => {
     const t = new Table(toy.rules);
+    t.run(BOB, { type: "name", name: "Bob" });
     t.run(ALICE, { type: "bump", by: [2] });
     t.run(BOB, { type: "set", from: 0, to: 7 });
-    expect(t.submit(ALICE, withNow(t))).toBe("A later change depends on it; ask the GM.");
+    expect(t.submit(ALICE, withNow(t))).toBe(
+      'A later change depends on it: Bob\'s "set to 7". Undo that first, or ask the GM.',
+    );
     expect(t.submit(GM, { type: "undo", who: "Alice", whose: ALICE })).toBe(
-      "A later change depends on it; undo that first.",
+      'A later change depends on it: Bob\'s "set to 7". Undo that first.',
     );
     t.run(GM, undo);
     t.run(ALICE, withNow(t));
     expect(t.state.counter).toEqual({ n: 0 });
+  });
+
+  test("not when a later change would come out differently: its feed line would be wrong", () => {
+    const t = new Table(toy.rules);
+    t.run(BOB, { type: "name", name: "Bob" });
+    t.run(ALICE, { type: "bump", by: [2] });
+    t.run(BOB, { type: "bump", by: [1] });
+    t.run(GM, { type: "tag", tag: "red" });
+    t.run(GM, { type: "bump", by: [4] });
+    // Bob's "+1 → 3" would read "+1 → 1", and the GM's "+4 → 7" "+4 → 5": both are named, the
+    // tag isn't, and nothing is written.
+    const refusal =
+      'Later changes depend on it: Bob\'s "+1 → 3"; GM\'s "+4 → 7". Undo those first, or ask the GM.';
+    expect(t.submit(ALICE, withNow(t))).toBe(refusal);
+    expect(t.submit(GM, { type: "undo", who: "Alice", whose: ALICE })).toBe(
+      'Later changes depend on it: Bob\'s "+1 → 3"; GM\'s "+4 → 7". Undo those first.',
+    );
+    expect(t.envelopes.at(-1)?.type).toBe("counter.bumped");
+    expect(t.state.counter).toEqual({ n: 7, tag: "red" });
+    // Once those are taken back, newest first, Alice's is hers to take back again.
+    t.run(GM, undo);
+    t.run(GM, { type: "undo", who: "Bob", whose: BOB });
+    t.run(ALICE, withNow(t));
+    expect(t.state.counter).toEqual({ n: 0, tag: "red" });
   });
 
   test("never a batch that rolled dice: the GM's alone, so nobody rolls again by undoing", () => {
@@ -337,6 +417,31 @@ describe("a player's undo", () => {
 });
 
 describe("undo at the Draw Steel table", () => {
+  test("a player can't change the result of a later change by taking back their own", () => {
+    const t = new Table();
+    t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+    t.run(GM, { type: "hero", hero: "kor", sheet: KOR });
+    t.run(ALICE, { type: "play", hero: "vex" });
+    t.run(GM, { type: "dmg", who: "vex", amount: 10 });
+    t.run(ALICE, { type: "temp", who: "vex", amount: 5 });
+    t.run(GM, { type: "dmg", who: "vex", amount: 6 });
+    const hit = t.state.feed.at(-1)!.text;
+    expect(hit).toBe("Vex takes 6 damage (5 to temporary Stamina) → 10/21 · winded");
+    // Without the temporary Stamina, the GM's hit would read "→ 5/21 · winded" now.
+    expect(t.submit(ALICE, { type: "undo", now: t.now })).toBe(
+      `A later change depends on it: GM's "${hit}". Undo that first, or ask the GM.`,
+    );
+    expect(t.state.ds.heroes[0]).toMatchObject({ stamina: 10, temp: 0 });
+    // Damage to someone else doesn't depend on it, so it doesn't stand in the way.
+    t.run(GM, undo);
+    t.run(GM, { type: "dmg", who: "kor", amount: 3 });
+    t.run(ALICE, { type: "undo", now: t.now });
+    expect(t.state.ds.heroes.map((h) => [h.stamina, h.temp])).toEqual([
+      [11, 0],
+      [21, 0],
+    ]);
+  });
+
   test("the feed says who undid what, in the undone lines' own words", () => {
     const t = new Table();
     t.run(GM, { type: "name", name: "Oscar" });
@@ -425,6 +530,24 @@ describe("redo", () => {
     t.run(ALICE, { type: "undo", now: t.now });
     t.run(BOB, { type: "bump", by: [1] });
     expect(t.submit(ALICE, redo)).toBe("Nothing to redo.");
+  });
+
+  test("not when it would come out differently now; replay halts on such a redo", () => {
+    const t = new Table(toy.rules);
+    t.run(GM, { type: "bump", by: [5] });
+    t.run(GM, undo);
+    t.run(GM, { type: "cap", at: 3 });
+    // "+5 → 5" would read "+5 → 3".
+    expect(t.submit(GM, redo)).toBe("That can't be put back now: the game has changed under it.");
+    const folded = fold(
+      toy.rules,
+      [...t.envelopes, env(4, "core.redone", { seqs: [1] }, GM, at(9))],
+      { strict: true },
+    );
+    expect(folded.error).toEqual({
+      seq: 4,
+      message: 'the redo at seq 4 would come out differently: "+5 → 5" would read "+5 → 3"',
+    });
   });
 
   test("a change that isn't retractable doesn't end it, and a redone log replays", () => {

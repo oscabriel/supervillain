@@ -8,6 +8,14 @@ export interface Pty {
   readonly rows: number;
 }
 
+/**
+ * Puts back what forwarded bytes may have changed in a client's terminal when they stop mid-frame:
+ * attributes, the alternate screen, the cursor, mouse and focus reports, bracketed paste and the
+ * keyboard modes. Best effort; a terminal ignores what it doesn't know.
+ */
+export const TERMINAL_RESET =
+  "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\x1b[>4;0m";
+
 const DEFAULT_PTY: Pty = { term: "xterm-256color", cols: 80, rows: 24 };
 /** A renderer's memory and every frame's cost grow with its size, so a client can't ask for more. */
 const MAX_SIZE = { cols: 300, rows: 100 };

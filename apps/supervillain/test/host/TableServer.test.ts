@@ -6,6 +6,8 @@ import { tableServices } from "../../src/host/services.ts";
 import type { TableRoomOptions } from "../../src/host/TableRoom.ts";
 import { rateKeyOf, TableServer, type TableServerOptions } from "../../src/host/TableServer.ts";
 import { clientKey, sshExec, sshShell, waitFor } from "../e2e/openssh.ts";
+import { startRelay } from "../relay/harness.ts";
+import { sshExec as relayExec } from "../relay/openssh.ts";
 import { effect } from "./effect.ts";
 import { tempDir } from "./tempDir.ts";
 
@@ -68,6 +70,32 @@ describe("TableServer", () => {
           stdout: "",
           stderr: "Too many commands from your address; wait a moment.\n",
         });
+      }),
+    20_000,
+  );
+
+  effect(
+    "behind a relay, each player's one-off commands are rated as that player, not the relay's address",
+    () =>
+      Effect.gen(function* () {
+        const relay = yield* startRelay();
+        yield* servedTable({
+          execRate: { burst: 2, perSecond: 0.01 },
+          relay: { host: "127.0.0.1", port: relay.gmPort, relayKey: relay.relayKeyFingerprint },
+        });
+        yield* waitFor("the link", () => relay.linkedRooms().includes("den"), 10_000);
+        const keys = yield* tempDir;
+        const vex = yield* clientKey(keys, "vex");
+        const kai = yield* clientKey(keys, "kai");
+        const through = (key: typeof vex) => relayExec(relay.playerPort, ["help"], { key });
+        expect((yield* through(vex)).exitCode).toBe(0);
+        expect((yield* through(vex)).exitCode).toBe(0);
+        expect(yield* through(vex)).toMatchObject({
+          exitCode: 1,
+          stderr: "Too many commands from your address; wait a moment.\n",
+        });
+        // Everyone through the relay comes from its address; Kai has a budget of their own.
+        expect((yield* through(kai)).exitCode).toBe(0);
       }),
     20_000,
   );

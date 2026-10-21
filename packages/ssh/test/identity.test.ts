@@ -64,6 +64,26 @@ describe("identity", () => {
     }),
   );
 
+  effect(
+    "an RSA key logs in as itself with OpenSSH's defaults, even offered before another key",
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* tempDir;
+        const rsa = yield* clientKey(dir, "rsa", "rsa");
+        const ed = yield* clientKey(dir, "ed", "ed25519");
+        const { port } = yield* whoami(false);
+        // OpenSSH signs with rsa-sha2-*, and gives up on a server whose PK_OK names ssh-rsa instead.
+        const alone = yield* sshExec(port, ["whoami"], { key: rsa });
+        expect(alone.stderr).toBe("");
+        expect(alone.exitCode).toBe(0);
+        expect(alone.stdout).toBe(`key:${rsa.fingerprint}`);
+        // ssh tries ~/.ssh/id_rsa first by default: the key it offers first is who you are.
+        const both = yield* sshExec(port, ["whoami"], { key: ed, flags: ["-i", rsa.path] });
+        expect(both.exitCode).toBe(0);
+        expect(both.stdout).toBe(`key:${rsa.fingerprint}`);
+      }),
+  );
+
   effect("a key holder is still a key when guests are allowed", () =>
     Effect.gen(function* () {
       const alice = yield* clientKey(yield* tempDir, "alice");

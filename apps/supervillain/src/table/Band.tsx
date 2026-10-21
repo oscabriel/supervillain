@@ -35,6 +35,8 @@ export function Band(props: {
   me: string;
   present: ReadonlyArray<Present>;
   joinHint?: string;
+  /** Said instead of `players join with: <joinHint>`, e.g. `relay: connecting…`. */
+  joinNote?: string | undefined;
   combat?: CombatView | undefined;
   maxHeight: number;
   /** A reply pane shares the screen: creatures give way and no hero's row is cut. */
@@ -83,8 +85,16 @@ function Combat(props: { combat: CombatView; maxHeight: number; heroesWhole: boo
   );
 }
 
-function Presence(props: { me: string; present: ReadonlyArray<Present>; joinHint?: string }) {
+function Presence(props: {
+  me: string;
+  present: ReadonlyArray<Present>;
+  joinHint?: string;
+  joinNote?: string | undefined;
+}) {
   const alone = () => people(props.present).every((p) => p.actor === props.me);
+  const note = () =>
+    props.joinNote ??
+    (props.joinHint === undefined ? undefined : `players join with: ${props.joinHint}`);
   return (
     <box
       border
@@ -107,8 +117,8 @@ function Presence(props: { me: string; present: ReadonlyArray<Present>; joinHint
             )}
           </For>
         </Show>
-        <Show when={props.joinHint !== undefined && alone()}>
-          <span style={{ fg: color.dim }}>{`   players join with: ${props.joinHint}`}</span>
+        <Show when={alone() ? note() : undefined}>
+          {(text) => <span style={{ fg: color.dim }}>{`   ${text()}`}</span>}
         </Show>
       </text>
     </box>

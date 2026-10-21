@@ -86,7 +86,10 @@ export interface UndoBatch {
   /** Whose change it is: who wrote it, or for a redone change, who wrote it first. */
   readonly actor: string;
   readonly timestamp: string;
-  /** The feed text of each of its events, for the line that says what was undone. */
+  /**
+   * The feed text of each of its events, for the line that says what was undone. It is also the
+   * batch's result: an undo or redo that folds it again must get the very same lines back.
+   */
   readonly undone: ReadonlyArray<string>;
   /**
    * The slices of every module with retractable events, as they were before the batch, with
@@ -109,6 +112,8 @@ export interface RedoEntry {
   readonly by: string;
   readonly events: ReadonlyArray<Envelope>;
   readonly rolled: boolean;
+  /** Its feed text when it was taken back: putting it back must read the same. */
+  readonly undone: ReadonlyArray<string>;
 }
 
 /** The parts of the table state every module shares. */
@@ -191,6 +196,12 @@ export interface TableCommandSpec<S, C> extends Omit<CommandSpec<C, S>, "complet
   readonly complete?: (state: S, partial: string, actor: string) => ReadonlyArray<string>;
 }
 
+/** What compose may be told about the table beyond its modules. */
+export interface ComposeOptions<S> {
+  /** How a refusal names an actor ("Bob's …"); without it, by actor id. */
+  readonly label?: (state: S, actor: string) => string;
+}
+
 export interface Composed<S, C> {
   readonly rules: Rules<S, C>;
   /** Every command of every module, in module order. */
@@ -202,6 +213,7 @@ export interface Composed<S, C> {
 /** Builds one engine `Rules` and one command registry from a list of modules, with /undo. */
 export function compose<const Ms extends ReadonlyArray<AnyModule>>(
   modules: Ms,
+  options: ComposeOptions<StateOf<Ms[number]>> = {},
 ): Composed<StateOf<Ms[number]>, CommandOf<Ms[number]>> {
   type S = StateOf<Ms[number]>;
   type C = CommandOf<Ms[number]>;
@@ -333,18 +345,52 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
 
   /**
    * The state with the batch at `index` taken back: the slices from before it, with every later
-   * batch folded again on top (each keeping a snapshot of what is now before it). Throws when a
-   * later batch no longer applies: it depended on the one taken back.
+   * batch folded again on top (each keeping a snapshot of what is now before it). A later batch
+   * must come out exactly as it did, the same feed lines, or the feed and the band would disagree
+   * and one seat's undo would rewrite another's result; else `changed` names every later batch
+   * that wouldn't, up to the first that no longer applies at all.
    */
-  const without = (state: S, index: number): { restored: S; batch: UndoBatch } => {
+  const without = (
+    state: S,
+    index: number,
+  ): { restored: S; batch: UndoBatch } | { changed: ReadonlyArray<Changed> } => {
     const batch = state.undo[index]!;
     let slices: Record<string, unknown> = { ...batch.before };
     const kept: UndoBatch[] = state.undo.slice(0, index);
+    const changed: Changed[] = [];
     for (const later of state.undo.slice(index + 1)) {
       kept.push({ ...later, before: slices });
-      slices = refold(slices, later.events).slices;
+      let refolded: ReturnType<typeof refold>;
+      try {
+        refolded = refold(slices, later.events);
+      } catch (e) {
+        changed.push({
+          batch: later,
+          why: e instanceof Error ? e.message : String(e),
+          broken: true,
+        });
+        break;
+      }
+      const why = difference(later.undone, refolded.texts);
+      if (why !== undefined) changed.push({ batch: later, why, broken: false });
+      slices = refolded.slices;
     }
+    if (changed.length > 0) return { changed };
     return { restored: { ...state, ...slices, undo: kept }, batch };
+  };
+
+  /** Names the later changes an undo would change: `Bob's "Brann regains 5 Stamina → 17/24"`. */
+  const dependents = (state: S, actor: string, changed: ReadonlyArray<Changed>): string => {
+    const label = (who: string) => options.label?.(state, who) ?? who;
+    const named = changed.map(({ batch }) =>
+      batch.undone.length === 0
+        ? `${label(batch.actor)}'s change`
+        : `${label(batch.actor)}'s "${joinLines(batch.undone).replace(/\.$/, "")}"`,
+    );
+    const one = changed.length === 1;
+    const head = one ? "A later change depends on it" : "Later changes depend on it";
+    const fix = `Undo ${one ? "that" : "those"} first${actor === GM ? "" : ", or ask the GM"}.`;
+    return `${head}: ${named.join("; ")}. ${fix}`;
   };
 
   /** The batch a retraction names: all its seqs, and none but what a lenient reader skipped. */
@@ -382,16 +428,8 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
           refusal: `Too late: you can take back your own change for ${UNDO_WINDOW_MS / 1000} seconds. Ask the GM.`,
         };
     }
-    try {
-      without(state, index);
-    } catch {
-      return {
-        refusal:
-          actor === GM
-            ? "A later change depends on it; undo that first."
-            : "A later change depends on it; ask the GM.",
-      };
-    }
+    const taken = without(state, index);
+    if ("changed" in taken) return { refusal: dependents(state, actor, taken.changed) };
     const batch = stack[index]!;
     return { events: [{ type: RETRACTED, payload: { seqs: batch.seqs, undone: batch.undone } }] };
   };
@@ -401,11 +439,13 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
     if (top === undefined) return { refusal: "Nothing to redo." };
     if (actor !== GM && top.by !== actor)
       return { refusal: "Only the GM can redo someone else's undo." };
+    let same: boolean;
     try {
-      refold(snapshot(state), top.events);
+      same = difference(top.undone, refold(snapshot(state), top.events).texts) === undefined;
     } catch {
-      return { refusal: "That can't be put back now: the game has changed under it." };
+      same = false;
     }
+    if (!same) return { refusal: "That can't be put back now: the game has changed under it." };
     return { events: [{ type: REDONE, payload: { seqs: top.seqs } }] };
   };
 
@@ -424,12 +464,13 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
       );
     if (undone.some(hasTerminalControls))
       throw new Error(`unsafe text in the retraction at seq ${envelope.seq}`);
-    let taken: { restored: S; batch: UndoBatch };
-    try {
-      taken = without(state, index);
-    } catch (e) {
+    const taken = without(state, index);
+    if ("changed" in taken) {
+      const first = taken.changed[0]!;
       throw new Error(
-        `the retraction at seq ${envelope.seq} would break a later change: ${e instanceof Error ? e.message : String(e)}`,
+        first.broken
+          ? `the retraction at seq ${envelope.seq} would break a later change: ${first.why}`
+          : `the retraction at seq ${envelope.seq} would change a later change at seq ${first.batch.seqs[0]}: ${first.why}`,
       );
     }
     const { restored, batch } = taken;
@@ -439,6 +480,7 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
       by: envelope.actor,
       events: batch.events,
       rolled: batch.rolled,
+      undone: batch.undone,
     };
     return {
       kind: UNDO_KIND,
@@ -458,6 +500,9 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
     )
       throw new Error(`the redo at seq ${envelope.seq} isn't of the latest undo`);
     const { slices, texts } = refold(snapshot(state), top.events);
+    const why = difference(top.undone, texts);
+    if (why !== undefined)
+      throw new Error(`the redo at seq ${envelope.seq} would come out differently: ${why}`);
     const batch: UndoBatch = {
       seqs: [envelope.seq],
       actor: top.actor,
@@ -559,6 +604,24 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
     },
   };
   return { rules, commands, feedFormat: (kind) => formats.get(kind) ?? DEFAULT_FORMAT };
+}
+
+/** A later batch an undo would change, and how. */
+interface Changed {
+  readonly batch: UndoBatch;
+  readonly why: string;
+  /** It wouldn't apply at all, rather than read differently. */
+  readonly broken: boolean;
+}
+
+/** How a batch's feed lines, folded again, differ from what they were; undefined when they don't. */
+function difference(was: ReadonlyArray<string>, now: ReadonlyArray<string>): string | undefined {
+  const at = Array.from({ length: Math.max(was.length, now.length) }, (_, i) => i).find(
+    (i) => was[i] !== now[i],
+  );
+  if (at === undefined) return undefined;
+  const line = (text: string | undefined) => (text === undefined ? "nothing" : `"${text}"`);
+  return `${line(was[at])} would read ${line(now[at])}`;
 }
 
 const sliceOf = (state: TableBase, module: AnyModule): unknown =>

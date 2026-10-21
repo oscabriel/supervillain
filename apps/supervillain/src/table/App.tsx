@@ -37,7 +37,7 @@ import {
   tableCompletions,
 } from "./input.ts";
 import { InputLine } from "./InputLine.tsx";
-import { type Focus, focusOf, mapRowsWanted } from "./map.ts";
+import { type Focus, focusOf, followed, MAP_FRAME, mapLayout, mapRowsWanted } from "./map.ts";
 import { MapPane } from "./MapPane.tsx";
 import { color, people } from "./theme.ts";
 import type { CombatView, MapView, TableView } from "./view.ts";
@@ -49,6 +49,14 @@ const HINT = "Tab completes · ↑↓ history · PgUp/PgDn scroll · /help · Ct
  * beside the label is shown, and none if none does, so the label is never cut.
  */
 const MAP_HINTS = ["Tab completes · /view · /help · Ctrl-C leaves", "/view · /help", ""];
+/**
+ * Beside the label, when the map pane can't show the whole reach (a full band at 80x24 leaves it a
+ * few rows): where to see it, longest first, for the seat's own hero or someone else.
+ */
+const CLIPPED_HINTS = {
+  mine: ["/view map to see all your reach", "/view map", ""],
+  theirs: ["/view map to see all of it", "/view map", ""],
+} as const;
 const NAME_HINT = "type the name you want, then Enter · Ctrl-C leaves";
 const PANE_HINT = "Esc closes · PgUp/PgDn scroll it · keep typing as usual";
 const CONFIRM_LEAVE = "Players are still here. Ctrl-C again closes the table for everyone.";
@@ -115,7 +123,22 @@ export function App(props: { view: TableView }) {
     if (lead === undefined) return HINT;
     // The row's padding takes two columns, and " · " three between the label and the keys.
     const room = size().width - 2 - Bun.stringWidth(lead) - 3;
-    return MAP_HINTS.find((h) => Bun.stringWidth(h) <= room) ?? "";
+    const hints = reachClipped()
+      ? CLIPPED_HINTS[followed(shownMap()?.tokens ?? [])?.mine ? "mine" : "theirs"]
+      : MAP_HINTS;
+    return hints.find((h) => Bun.stringWidth(h) <= room) ?? "";
+  };
+  /**
+   * Whether the map pane leaves some of the reach out of view, or isn't drawn at all for want of
+   * rows. On `/view map` there is no more room to give, so the keys stay.
+   */
+  const reachClipped = () => {
+    const map = shownMap();
+    if (map === undefined || map.reach.length === 0 || split() === "map") return false;
+    const rows = mapHeight();
+    if (rows === 0) return true;
+    return mapLayout(map, size().width - MAP_FRAME.width, rows - MAP_FRAME.height, focus())
+      .reachClipped;
   };
   const small = () => size().width < MIN_SEAT.width || size().height < MIN_SEAT.height;
   /**
@@ -351,7 +374,7 @@ export function App(props: { view: TableView }) {
 
   return (
     <box flexDirection="column" width="100%" height="100%">
-      <Header room={view.room} me={view.me} present={view.present()} />
+      <Header room={view.room} me={view.me} present={view.present()} alert={view.alert?.()} />
       <Show
         when={!small()}
         fallback={
@@ -366,6 +389,7 @@ export function App(props: { view: TableView }) {
           me={view.me}
           present={view.present()}
           joinHint={view.joinHint}
+          joinNote={view.joinNote?.()}
           combat={view.combat?.()}
           maxHeight={bandHeight()}
           heroesWhole={multiline() || (shownMap() !== undefined && split() !== "map")}

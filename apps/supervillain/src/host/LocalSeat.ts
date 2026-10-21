@@ -1,4 +1,5 @@
 import { createCliRenderer } from "@opentui/core";
+import type { View } from "@supervillain/engine";
 import { Deferred, Effect, Exit } from "effect";
 import { GM } from "../game/index.ts";
 import { mountTable, openSeat } from "./Seat.ts";
@@ -10,6 +11,10 @@ export interface LocalSeatOptions {
   readonly helpFooter?: string;
   /** How players join, shown while the GM sits alone. */
   readonly joinHint?: string;
+  /** Said instead of the join hint, as it changes: how the relay link is doing. */
+  readonly joinNote?: View<string>;
+  /** Trouble with the way in, in the header whatever is on screen: the relay link down, say. */
+  readonly alert?: View<string | undefined>;
 }
 
 /**
@@ -34,6 +39,8 @@ export const localSeat = (options: LocalSeatOptions): Effect.Effect<void, never,
       leave: () => void Deferred.doneUnsafe(left, Exit.void),
       ...(options.helpFooter === undefined ? {} : { helpFooter: options.helpFooter }),
       ...(options.joinHint === undefined ? {} : { joinHint: options.joinHint }),
+      ...(options.joinNote === undefined ? {} : { joinNote: options.joinNote }),
+      ...(options.alert === undefined ? {} : { alert: options.alert }),
     });
     yield* mountTable(renderer, view);
     yield* Deferred.await(left);

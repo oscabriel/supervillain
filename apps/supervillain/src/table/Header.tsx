@@ -7,12 +7,19 @@ import type { Present } from "./view.ts";
 const PADDING = 2;
 
 /**
- * One row: the room, and who is here with the GM marked. Labels that don't fit are dropped whole
- * and counted ("+2"), never cut in the middle; the seat's own label always stays.
+ * One row: the room, any alert (the relay link's trouble, for the GM), and who is here with the GM
+ * marked. Labels that don't fit are dropped whole and counted ("+2"), never cut in the middle; the
+ * seat's own label always stays.
  */
-export function Header(props: { room: string; me: string; present: ReadonlyArray<Present> }) {
+export function Header(props: {
+  room: string;
+  me: string;
+  present: ReadonlyArray<Present>;
+  alert?: string | undefined;
+}) {
   const size = useTerminalDimensions();
-  const lead = () => `supervillain · ${props.room}   here: `;
+  const lead = () =>
+    `supervillain · ${props.room}${props.alert === undefined ? "" : ` · ${props.alert}`}   here: `;
   const fitted = () => {
     const here = people(props.present);
     const labels = here.map((p) => personLabel(p, props.me));
@@ -29,6 +36,14 @@ export function Header(props: { room: string; me: string; present: ReadonlyArray
         <span style={{ fg: color.brand, bold: true }}>supervillain</span>
         <span style={{ fg: color.dim }}>{" · "}</span>
         <span style={{ fg: color.bright, bold: true }}>{props.room}</span>
+        <Show when={props.alert}>
+          {(alert) => (
+            <>
+              <span style={{ fg: color.dim }}>{" · "}</span>
+              <span style={{ fg: color.notice, bold: true }}>{alert()}</span>
+            </>
+          )}
+        </Show>
         <span style={{ fg: color.dim }}>{"   here: "}</span>
         <For each={fitted().shown}>
           {(p, i) => (

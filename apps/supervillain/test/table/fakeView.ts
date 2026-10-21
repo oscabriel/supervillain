@@ -12,6 +12,8 @@ export interface FakeViewOptions {
   readonly complete?: (line: string) => ReadonlyArray<string>;
   readonly debug?: string;
   readonly joinHint?: string;
+  /** How the way in is doing, in the header; when given, the view has an `alert` accessor. */
+  readonly alert?: string | null;
   /** The Draw Steel band; when given, the view has a `combat` accessor (which may return undefined). */
   readonly combat?: CombatView | null;
   /** The text map; when given, the view has a `map` accessor (null: no map loaded yet). */
@@ -25,6 +27,7 @@ export function fakeView(options: FakeViewOptions = {}) {
   const [myName, setMyName] = createSignal<string | undefined>(options.myName);
   const [combat, setCombat] = createSignal<CombatView | undefined>(options.combat ?? undefined);
   const [map, setMap] = createSignal<MapView | undefined>(options.map ?? undefined);
+  const [alert, setAlert] = createSignal<string | undefined>(options.alert ?? undefined);
   const submitted: string[] = [];
   const completed: string[] = [];
   let left = 0;
@@ -49,6 +52,7 @@ export function fakeView(options: FakeViewOptions = {}) {
     ...(options.joinHint === undefined ? {} : { joinHint: options.joinHint }),
     ...(options.combat === undefined ? {} : { combat }),
     ...(options.map === undefined ? {} : { map }),
+    ...(options.alert === undefined ? {} : { alert }),
   };
   return {
     view,
@@ -60,6 +64,7 @@ export function fakeView(options: FakeViewOptions = {}) {
     setMyName,
     setCombat,
     setMap,
+    setAlert,
   };
 }
 

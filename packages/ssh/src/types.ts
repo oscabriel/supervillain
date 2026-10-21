@@ -1,4 +1,5 @@
 import type { Socket } from "node:net";
+import type { Duplex, Writable } from "node:stream";
 import type { CliRenderer } from "@opentui/core";
 import type { Effect, Scope } from "effect";
 import { Schema } from "effect";
@@ -52,6 +53,40 @@ export interface ExecSession {
   readonly writeError: (text: string) => void;
 }
 
+/** What a raw session's client asked for. */
+export type RawRequest =
+  | { readonly kind: "shell" }
+  | { readonly kind: "exec"; readonly command: string };
+
+/** How a raw session ends for its client: an exit status, or a signal's name (`TERM`, not `SIGTERM`). */
+export type RawExit =
+  | number
+  | { readonly signal: string; readonly coreDumped?: boolean; readonly message?: string };
+
+/**
+ * A session as bytes, for a handler that forwards it rather than draws it (a relay). Nothing is
+ * rendered, nothing rewritten and a shell without a pty is not refused: `pty` says what was asked.
+ */
+export interface RawSession {
+  readonly info: SessionInfo;
+  readonly request: RawRequest;
+  /** Whether the client asked for a pty; `info` holds its term and size. */
+  readonly pty: boolean;
+  /**
+   * The channel's bytes: read what the client sends, write what it sees, with the channel's flow
+   * control. It ends when the client sends EOF. Don't end it yourself: `exit` does.
+   */
+  readonly stream: Duplex;
+  readonly stderr: Writable;
+  /** Called with each window-change, sized as the pty request is (clamped to 300×100). */
+  readonly onResize: (listener: (cols: number, rows: number) => void) => void;
+  /**
+   * Ends the session: after what's been written, the client gets this exit, EOF and close, and the
+   * session's scope closes. A handler that returns without calling it ends with 0; one that dies, 1.
+   */
+  readonly exit: (how: RawExit) => void;
+}
+
 /** Caps on what the server holds open. Over a cap, a socket is closed and a session refused. */
 export interface Limits {
   /** Open connections, logged in or not. Default 64. */
@@ -66,6 +101,11 @@ export interface Limits {
   readonly sessionsPerAddress?: number;
   /** Open sessions across the server. Default 64. */
   readonly sessions?: number;
+  /**
+   * How fast one remote address may open connections, listened or attached; over it, a new socket
+   * is closed at once. Unlimited by default: a relay or tunnel brings everyone from one address.
+   */
+  readonly connectRate?: { readonly burst: number; readonly perSecond: number };
 }
 
 export interface Timeouts {
@@ -74,8 +114,8 @@ export interface Timeouts {
   /**
    * How long a session channel has to ask for a shell or exec before it is closed, and how long a
    * logged-in connection may go without a started session (after login, or once its last session
-   * ends) before it is cut. A missed start cuts the connection too when it leaves nothing started,
-   * unless it carries a relay. Default 10 s.
+   * ends) before it is cut, unless it was attached as `persistent`. A missed start cuts the
+   * connection too when it leaves nothing started, unless it carries a relay. Default 10 s.
    */
   readonly sessionStartMs?: number;
   /** How often a quiet client is pinged; after `keepaliveCount` unanswered pings it is cut. Default 15 s. */
@@ -100,18 +140,39 @@ export interface ServeOptions {
   readonly noPtyMessage?: string;
   /** Written to each open shell, after its terminal is restored, when the server closes. */
   readonly shutdownNotice?: string;
-  /** Runs for each shell. The session ends when it returns, when it calls `close()`, or when the client goes. */
-  readonly onShell: (session: ShellSession) => Effect.Effect<void, never, Scope.Scope>;
+  /**
+   * Runs for each shell. The session ends when it returns, when it calls `close()`, or when the
+   * client goes. Without it (or with `onRaw`), a shell is not drawn.
+   */
+  readonly onShell?: (session: ShellSession) => Effect.Effect<void, never, Scope.Scope>;
   /**
    * Runs for each exec request; its number is the exit status. Without it, exec is refused.
    * When the client asked for a pty, `\n` in what it writes goes out as `\r\n`.
    */
   readonly onExec?: (session: ExecSession) => Effect.Effect<number, never, Scope.Scope>;
+  /**
+   * Takes every shell and exec as raw bytes instead; `onShell`, `onExec` and `noPtyMessage` are
+   * then unused. Every other guard (limits, timeouts, guests, the env allow-list, relay trust)
+   * applies as before. The session ends when it returns, when it calls `exit`, or when the client goes.
+   */
+  readonly onRaw?: (session: RawSession) => Effect.Effect<void, never, Scope.Scope>;
 }
 
 export interface AttachOptions {
   /** Relay keys believed on this connection only, on top of `trustedRelayKeys`. */
   readonly trustedRelayKeys?: ReadonlyArray<string>;
+  /**
+   * Makes this connection a relay's link, which only a relay may log in on. A verified key in
+   * neither trusted list is passed here: true logs it in as a relay (the caller pinned it, say, or
+   * trusts it on first use), false refuses it. Guests are refused. Without this, any key logs in as
+   * itself, as on a listened connection.
+   */
+  readonly admitRelay?: (fingerprint: string) => boolean;
+  /**
+   * Exempt from the idle cut: a link that carries nobody, or no longer does, stays up for the next
+   * player. Keepalives still cut one whose far end stops answering.
+   */
+  readonly persistent?: boolean;
 }
 
 export interface SshServer {
