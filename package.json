@@ -10,8 +10,8 @@
   "scripts": {
     "build": "tsc -b",
     "clean": "tsc -b --clean",
-    "check": "oxlint && oxfmt --check",
-    "fix": "oxlint --fix && oxfmt"
+    "check": "oxlint --disable-nested-config && oxfmt --check",
+    "fix": "oxlint --disable-nested-config --fix && oxfmt"
   },
   "devDependencies": {
     "@types/bun": "1.4.0",

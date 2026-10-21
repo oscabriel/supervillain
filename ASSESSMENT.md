@@ -456,7 +456,7 @@ _Dropped (2026-09-27): a scratch session on the archived build. Four patches (in
 
 **Phase 2: rebuild small (about three to five weeks, a guess)**
 
-_Status (2026-10-20): started, in parallel with Phase 1 rather than after it. The tree on `main` was cleared to a fresh skeleton; the first milestone is a table friends can sit at, not the product. It begins with fewer packages than the sketch below: `packages/engine` and `apps/supervillain`, with the table, Draw Steel and the relay as folders in the app until a boundary hurts. The architecture is the one Spike D tested (§9)._
+_Status (2026-10-20): started, in parallel with Phase 1 rather than after it. The tree on `main` was cleared to a fresh skeleton; the first milestone is a table friends can sit at, not the product. It begins with fewer packages than the sketch below: `packages/engine` and `apps/supervillain`, with the table, Draw Steel and the relay as folders in the app until a boundary hurts. The architecture is the one Spike D tested (§9). Slice 1, the engine, is done: the log reader, the fold, `CampaignLog` and the single-writer `Room`, test-first._
 
 A starting sketch, to be revised by Phase 1:
 
@@ -507,7 +507,7 @@ _Each entry: the question, what was decided, and the evidence (a date and what h
 - Q7 — _open_
 - Q8 — _open_
 - Q9 — _open_
-- Q10 — _open_
+- Q10 — _open._ Engine tests (2026-10-20, `packages/engine`) pass for both automated halves: a host killed with `kill -9` mid-append reopens cleanly (a real child process; about a third of kills leave a half-written line, which is cut on open), and a rule that throws writes nothing. Still to do: read a real session's log by eye and with `jq`.
 - Q11 — _open_
 
 ---
