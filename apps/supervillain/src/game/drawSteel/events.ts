@@ -6,6 +6,9 @@ const Id = Schema.String;
 const Condition = Schema.Literals(CONDITIONS);
 const Side = Schema.Literals(["heroes", "director"]);
 const Characteristic = Schema.Literals(["might", "agility", "reason", "intuition", "presence"]);
+const Square = Schema.Struct({ x: Schema.Int, y: Schema.Int });
+/** A token or a bare square, as /dist measured it. */
+const Point = Schema.Struct({ id: Schema.optionalKey(Id), at: Square });
 
 /**
  * Every Draw Steel event's payload. Each carries what decide worked out, rolls and sheets
@@ -43,13 +46,19 @@ export const Payloads = {
     gain: Schema.optionalKey(Schema.Int),
     rolls: Schema.optionalKey(Schema.Array(Schema.Int)),
   }),
-  /** The EoT conditions that end, and a d10 for each save-ends condition. */
+  /** The EoT conditions that end, and a d10 for each save-ends condition: on 6+ it `ends`. */
   "ds.turn-ended": Schema.Struct({
     id: Id,
     ended: Schema.Array(Condition),
-    saves: Schema.Array(Schema.Struct({ condition: Condition, roll: Schema.Int })),
+    saves: Schema.Array(
+      Schema.Struct({ condition: Condition, roll: Schema.Int, ends: Schema.Boolean }),
+    ),
   }),
-  "ds.combat-ended": Schema.Struct({}),
+  /**
+   * `cleared` are the tokens taken off the map, and only those: every creature's, since they
+   * leave, and the dead heroes'.
+   */
+  "ds.combat-ended": Schema.Struct({ cleared: Schema.optionalKey(Schema.Array(Id)) }),
   /** `dead` are the heroes who were dead at the respite, and don't recover. */
   "ds.rested": Schema.Struct({ dead: Schema.optionalKey(Schema.Array(Id)) }),
   "ds.power-rolled": Schema.Struct({
@@ -75,6 +84,8 @@ export const Payloads = {
     dealt: Schema.Int,
     /** The creature whose free strike it was. */
     source: Schema.optionalKey(Id),
+    /** How far the striker stood from the target, when both were on the map. */
+    apart: Schema.optionalKey(Schema.Int),
     /** For a squad's free strike, how many minions struck together. */
     minions: Schema.optionalKey(Schema.Int),
   }),
@@ -88,7 +99,13 @@ export const Payloads = {
     duration: Schema.Literals(["eot", "save", "end"]),
   }),
   "ds.condition-removed": Schema.Struct({ id: Id, condition: Condition }),
-  "ds.saved": Schema.Struct({ id: Id, condition: Condition, roll: Schema.Int }),
+  /** A d10 against a save-ends condition: on 6+ it `ends`. */
+  "ds.saved": Schema.Struct({
+    id: Id,
+    condition: Condition,
+    roll: Schema.Int,
+    ends: Schema.Boolean,
+  }),
   "ds.resource-changed": Schema.Struct({ id: Id, by: Schema.Int }),
   "ds.surges-changed": Schema.Struct({ id: Id, by: Schema.Int }),
   /** `reason` is what the GM said it was for, as typed. */
@@ -96,6 +113,47 @@ export const Payloads = {
   "ds.tokens-changed": Schema.Struct({ by: Schema.Int }),
   "ds.tokens-reset": Schema.Struct({ tokens: Schema.Int }),
   "ds.victories-changed": Schema.Struct({ ids: Schema.Array(Id), by: Schema.Int }),
+  /** The grid the host read from `maps/<id>.txt`. Every token comes off. */
+  "ds.map-loaded": Schema.Struct({
+    id: Id,
+    name: Schema.String,
+    terrain: Schema.Array(Schema.String),
+  }),
+  "ds.map-cleared": Schema.Struct({}),
+  "ds.placed": Schema.Struct({ id: Id, at: Square }),
+  /**
+   * `path` is every square entered, the last where it stops; `cost` the movement it took. For the
+   * acting creature in combat, `spent` is its movement this turn with this move, of `allowance`
+   * (its speed, or twice that once its main action went on moving: `main`).
+   */
+  "ds.moved": Schema.Struct({
+    id: Id,
+    path: Schema.Array(Square),
+    cost: Schema.Int,
+    speed: Schema.Int,
+    spent: Schema.optionalKey(Schema.Int),
+    allowance: Schema.optionalKey(Schema.Int),
+    main: Schema.optionalKey(Schema.Boolean),
+  }),
+  /**
+   * A push, pull or slide of `distance`, less the target's `stability`, along `path`. A slam's
+   * damage follows as `ds.damaged` events in the same batch.
+   */
+  "ds.force-moved": Schema.Struct({
+    id: Id,
+    kind: Schema.Literals(["push", "pull", "slide"]),
+    source: Schema.optionalKey(Id),
+    distance: Schema.Int,
+    stability: Schema.Int,
+    path: Schema.Array(Square),
+    slam: Schema.optionalKey(Schema.Struct({ into: Schema.String, remaining: Schema.Int })),
+    /** The map's edge stopped it. */
+    edge: Schema.optionalKey(Schema.Boolean),
+    /** How far the source stood from the target, when both were on the map. */
+    apart: Schema.optionalKey(Schema.Int),
+  }),
+  /** For the whole table to see; it changes nothing, so it's never undone. */
+  "ds.measured": Schema.Struct({ from: Point, to: Point, distance: Schema.Int }),
 } as const;
 
 export type EventType = keyof typeof Payloads;

@@ -1,6 +1,6 @@
 import { type Envelope, Refusal } from "@supervillain/engine";
-import { Effect } from "effect";
-import { CampaignContent, type LoadError } from "../content/index.ts";
+import { DateTime, Effect } from "effect";
+import { CampaignContent, type LoadError, type MapLoadError } from "../content/index.ts";
 import {
   BARE_OVER_EXEC,
   type Command,
@@ -11,14 +11,17 @@ import {
   helpText,
   hostNeeds,
   labelOf,
+  mapNeed,
   parseInputLine,
   sheetOf,
   type Surface,
   tableLabel,
   type TableState,
   withHostFact,
+  withMapGrid,
 } from "../game/index.ts";
 import { nameKey } from "../game/text.ts";
+import { shownState } from "./check.ts";
 import { Presence } from "./Presence.ts";
 import type { TableServices } from "./services.ts";
 import { TableRoom } from "./TableRoom.ts";
@@ -36,7 +39,7 @@ export type Reply =
 const GM_ONLY: ReadonlySet<string> = new Set(commands.filter((c) => c.gmOnly).map((c) => c.name));
 
 /** A sheet that won't load, refused on one line: a seat gives a one-line refusal back to fix. */
-const refused = (e: LoadError) =>
+const refused = (e: LoadError | MapLoadError) =>
   new Refusal({
     message: e._tag === "SheetInvalid" ? `${e.file}: ${e.problems.join("; ")}` : e.message,
   });
@@ -58,10 +61,10 @@ const actorLabelled = (
 
 /**
  * Adds what the host knows and the rules can't see: who is seated, for a name to be checked
- * against; the sheet a /hero or /add brings in, read from the campaign folder now so the event
- * carries it; and the actor a GM's /play names. A sheet that can't be read is refused, naming
- * the file and the field. Nothing is read for a GM-only command someone else sent: the rules
- * refuse it as it is.
+ * against; the time now, for a player's /undo window, and whose change a GM's `/undo <who>` means; the sheet a /hero or /add brings in, or the
+ * map a /map loads, read from the campaign folder now so the event carries it; and the actor a
+ * GM's /play names. A file that can't be read is refused, naming the file and what's wrong.
+ * Nothing is read for a GM-only command someone else sent: the rules refuse it as it is.
  */
 const withHostFacts = (
   actor: string,
@@ -72,9 +75,28 @@ const withHostFacts = (
       const seated = yield* (yield* Presence).here.get;
       return { ...command, seated };
     }
-    const need = hostNeeds(command);
-    if (need === undefined || (actor !== GM && GM_ONLY.has(command.type))) return command;
+    // The same clock the room stamps envelopes with, so the window is measured on one clock; and
+    // for `/undo <who>`, whose change, found the way a GM's /play finds a player.
+    if (command.type === "undo") {
+      const now = DateTime.formatIso(yield* DateTime.now);
+      if (command.who === undefined) return { ...command, now };
+      const state = yield* (yield* TableRoom).state.get;
+      const seated = yield* (yield* Presence).here.get;
+      const whose =
+        nameKey(command.who) === nameKey(labelOf(state)(GM))
+          ? GM
+          : actorLabelled(state, seated, command.who);
+      return whose === undefined ? { ...command, now } : { ...command, now, whose };
+    }
+    if (actor !== GM && GM_ONLY.has(command.type)) return command;
     const content = yield* CampaignContent;
+    const mapId = mapNeed(command);
+    if (mapId !== undefined) {
+      const { id, grid } = yield* content.map(mapId).pipe(Effect.mapError(refused));
+      return withMapGrid(command, grid, id);
+    }
+    const need = hostNeeds(command);
+    if (need === undefined) return command;
     switch (need.kind) {
       case "hero": {
         const sheet = yield* content.hero(need.id).pipe(Effect.mapError(refused));
@@ -159,9 +181,9 @@ export function execLine(command: string): string {
   return word !== undefined && BARE_OVER_EXEC.has(word.toLowerCase()) ? `/${command}` : command;
 }
 
-/** The state pane: the state as JSON (the feed only counted, since it's on screen), then the last envelopes. */
+/** The state pane: the state as JSON (see `shownState`), then the last envelopes. */
 export function debugText(state: TableState, recent: ReadonlyArray<Envelope>): string {
-  const shown = { ...state, feed: `[${state.feed.length} lines]` };
+  const shown = shownState(state);
   return [
     JSON.stringify(shown, null, 2),
     "",

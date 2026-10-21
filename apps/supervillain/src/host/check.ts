@@ -1,5 +1,24 @@
 import { fold, parseLog } from "@supervillain/engine";
-import { feedLines, labelOf, plainText, rules, tableLabel } from "../game/index.ts";
+import {
+  feedLines,
+  labelOf,
+  plainText,
+  rules,
+  type TableState,
+  tableLabel,
+} from "../game/index.ts";
+
+/**
+ * The state as the state pane and `check` print it: the feed only counted, since it's on screen,
+ * and the undo and redo stacks only counted, since each batch holds a copy of the slices it would
+ * restore or the events it would put back.
+ */
+export const shownState = (state: TableState) => ({
+  ...state,
+  feed: `[${state.feed.length} lines]`,
+  undo: `[${state.undo.length} ${state.undo.length === 1 ? "batch" : "batches"}]`,
+  redo: `[${state.redo.length} ${state.redo.length === 1 ? "batch" : "batches"}]`,
+});
 
 export interface CheckReport {
   /** The summary, the feed and the final state, for stdout. */
@@ -43,7 +62,7 @@ export function checkLog(path: string, text: string): CheckReport {
     ),
     "",
     "state:",
-    JSON.stringify({ ...state, feed: `[${state.feed.length} lines]` }, null, 2),
+    JSON.stringify(shownState(state), null, 2),
   ];
 
   const error = parsed.error

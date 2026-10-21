@@ -8,6 +8,7 @@ import type {
   Organization,
   StatBlock,
 } from "../game/drawSteel/sheets.ts";
+import { sheetProblems } from "../game/drawSteel/schema.ts";
 import { ContentReadError } from "./errors.ts";
 import { CHARACTERISTICS, decodeMonster, monsterYaml, ORGANIZATIONS } from "./sheetFiles.ts";
 
@@ -387,6 +388,20 @@ export const importBestiary = (
         continue;
       }
       const { sheet, skipped } = converted;
+      // The GM never chose this id, so a problem with it names the slug, not a file name.
+      const problems = sheetProblems(sheet);
+      if (problems.some((p) => p.field === "id")) {
+        failed.push({
+          name: sheet.name,
+          source: creature.source,
+          problems: problems.map(({ field, problem }) =>
+            field === "id"
+              ? `id ${show(sheet.id)} (made from the name) ${problem}`
+              : `${field} ${problem}`,
+          ),
+        });
+        continue;
+      }
       const file = `monsters/${sheet.id}.yaml`;
       if (written.has(sheet.id)) {
         failed.push({

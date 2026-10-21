@@ -137,7 +137,9 @@ const make = Command.make(
     ),
     example: Flag.Boolean("example").pipe(
       Flag.withDefault(false),
-      Flag.withDescription("Copy the sample campaign: four heroes and the bandits for one fight"),
+      Flag.withDescription(
+        "Copy the sample campaign: four heroes, the bandits and the map for one fight",
+      ),
     ),
   },
   Effect.fn(function* (o) {
@@ -154,22 +156,23 @@ const make = Command.make(
         }
         await mkdir(join(dir, "heroes"));
         await mkdir(join(dir, "monsters"));
+        await mkdir(join(dir, "maps"));
         await writeFile(
           join(dir, "README.md"),
-          `# ${basename(dir)}\n\nA supervillain campaign: hero sheets go in heroes/<id>.yaml, monster stat blocks in monsters/<id>.yaml, and the host keeps the log in events.jsonl.\n`,
+          `# ${basename(dir)}\n\nA supervillain campaign: hero sheets go in heroes/<id>.yaml, monster stat blocks in monsters/<id>.yaml, text maps in maps/<id>.txt, and the host keeps the log in events.jsonl.\n`,
         );
       },
       catch: (e) =>
         new CampaignError({ message: `can't make a campaign in ${dir}: ${messageOf(e)}` }),
     });
     yield* Console.log(
-      `supervillain: made ${dir}${o.example ? " from the sample campaign" : " with heroes/ and monsters/"}`,
+      `supervillain: made ${dir}${o.example ? " from the sample campaign" : " with heroes/, monsters/ and maps/"}`,
     );
     yield* Console.log(`host it with: bun supervillain host ${o.campaignDir}`);
   }),
 ).pipe(
   Command.withDescription(
-    "Make a campaign folder: heroes/ and monsters/ for sheets, or the sample campaign with --example",
+    "Make a campaign folder: heroes/ and monsters/ for sheets, maps/ for maps, or the sample campaign with --example",
   ),
 );
 

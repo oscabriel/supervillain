@@ -2,6 +2,7 @@ import { describe, expect } from "bun:test";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber, Random } from "effect";
+import { TestClock } from "effect/testing";
 import {
   CampaignLog,
   type Envelope,
@@ -67,6 +68,36 @@ describe("makeRoom", () => {
       }),
     );
   }
+
+  effect("stamps each submission later than the one before, even when the clock stands still", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      // A log whose last event is a little ahead of the clock, as after a clock step back.
+      yield* Effect.promise(() =>
+        writeFile(
+          join(dir, "events.jsonl"),
+          JSON.stringify({ ...env(1, "added", { n: 1 }), timestamp: "1970-01-01T00:00:05.000Z" }) +
+            "\n",
+        ),
+      );
+      const written = yield* withRoom(dir, (room) =>
+        Effect.gen(function* () {
+          const a = yield* room.submit("gm", { type: "add", n: 1 });
+          const b = yield* room.submit("gm", { type: "add", n: 1 });
+          yield* TestClock.adjust("10 seconds");
+          const c = yield* room.submit("gm", { type: "add", n: 1 });
+          return [...a, ...b, ...c].map((e) => e.timestamp);
+        }),
+      ).pipe(Effect.provide(TestClock.layer()));
+      // The test clock reads the epoch: one millisecond after the log's last, then one more,
+      // then the clock again once it has passed them.
+      expect(written).toEqual([
+        "1970-01-01T00:00:05.001Z",
+        "1970-01-01T00:00:05.002Z",
+        "1970-01-01T00:00:10.000Z",
+      ]);
+    }),
+  );
 
   effect("replays the log on reopen without deciding or rolling", () =>
     Effect.gen(function* () {

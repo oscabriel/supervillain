@@ -203,4 +203,45 @@ describe("a seat over a real room", () => {
       }),
     ),
   );
+
+  effect("draws the map from the room, with each seat's own hero and where it can reach", () =>
+    atTable(
+      Effect.gen(function* () {
+        const g = yield* seat("gm");
+        const a = yield* seat(alice);
+        expect(g.view.map?.()).toBeUndefined();
+        yield* type(a, "Alice");
+        yield* type(g, "/hero brann");
+        yield* type(a, "/play brann");
+        yield* type(g, "/map ford-road");
+        yield* frameWhere(a, "the map's column letters", (f) => f.includes("The Ford Road"));
+        yield* type(a, "/place brann b5");
+        yield* frameWhere(g, "Brann's token", () => (g.view.map?.()?.tokens.length ?? 0) > 0);
+        const mine = a.view.map?.();
+        expect(mine).toMatchObject({ name: "The Ford Road", width: 20, height: 10 });
+        expect(mine?.tokens).toEqual([
+          {
+            id: "brann",
+            mark: "B",
+            name: "Brann",
+            x: 1,
+            y: 4,
+            side: "heroes",
+            mine: true,
+            acting: false,
+            dead: false,
+          },
+        ]);
+        // Brann's speed is 5: from b5 he reaches a5 to g5 along his row, and no wall square.
+        expect(mine?.reachLabel).toBe("Brann can reach: speed 5");
+        const reach = new Set(mine?.reach.map((r) => `${r.x},${r.y}`));
+        for (const x of [0, 2, 3, 4, 5, 6]) expect(reach.has(`${x},4`)).toBe(true);
+        expect(reach.has("7,4")).toBe(false);
+        expect(reach.has("1,1")).toBe(false);
+        // The GM has no hero, so sees the token but no reach until a creature acts.
+        expect(g.view.map?.()?.tokens.map((t) => [t.mark, t.mine])).toEqual([["B", false]]);
+        expect(g.view.map?.()?.reach).toEqual([]);
+      }),
+    ),
+  );
 });

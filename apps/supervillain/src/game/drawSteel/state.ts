@@ -1,5 +1,7 @@
 import { GM, type Refused } from "../module.ts";
 import { quote } from "../text.ts";
+import type { Square } from "./map.ts";
+import { marksOf } from "./marks.ts";
 import type { Characteristic, HeroSheet, StatBlock } from "./sheets.ts";
 
 export type Side = "heroes" | "director";
@@ -72,6 +74,25 @@ export interface Combat {
   /** Ids that have started a turn this round, in order. */
   readonly acted: ReadonlyArray<string>;
   readonly acting?: string;
+  /**
+   * The movement the acting creature has spent this turn, and whether its main action went on a
+   * second move (Combat, "Main Actions"). Gone when its turn ends.
+   */
+  readonly moved?: { readonly id: string; readonly spent: number; readonly main: boolean };
+}
+
+/** The text map (ASSESSMENT Q7): the grid the GM loaded and where each token stands. */
+export interface Board {
+  /** The map file's id, `maps/<id>.txt`. */
+  readonly id: string;
+  readonly name: string;
+  /** One string per row, all the same width. */
+  readonly terrain: ReadonlyArray<string>;
+  /**
+   * Where each placed hero or creature stands, by id. A token stays while its creature is at the
+   * table, dead ones as dead marks, until /end clears the dead and the creatures.
+   */
+  readonly tokens: Readonly<Record<string, Square>>;
 }
 
 /** The Draw Steel slice: the party, the creatures in the fight, the combat, Malice and hero tokens. */
@@ -86,6 +107,8 @@ export interface DrawSteelState {
   readonly malice: number;
   /** The party's hero tokens. */
   readonly tokens: number;
+  /** The text map, while one is loaded. */
+  readonly map?: Board;
 }
 
 export const NO_COMBAT: Combat = { active: false, round: 0, acted: [] };
@@ -190,15 +213,37 @@ export function matching<T>(
   return items.filter((item) => keys(item).some((k) => beginsWord(k, q))).map(id);
 }
 
-/** Resolves a typed name to a hero or creature, by id or name. */
-export const resolve = (slice: DrawSteelState, typed: string): Who | Refused =>
-  pick(
-    everyone(slice),
-    (w) => [w.id, w.name],
-    (w) => w.name,
-    typed,
-    `Nobody at the table is called '${quote(typed)}'.`,
+/** Every hero's and creature's mark on the map (marks.ts), by id. */
+export const marks = (slice: DrawSteelState): ReadonlyMap<string, string> =>
+  marksOf(everyone(slice));
+
+/** The hero or creature whose mark is exactly `typed`, case and all ("B" is Brann, "b" a bandit). */
+export function byMark(slice: DrawSteelState, typed: string): Who | undefined {
+  const q = typed.trim();
+  for (const [id, mark] of marks(slice)) if (mark === q) return findWho(slice, id);
+  return undefined;
+}
+
+/**
+ * Resolves a typed name to a hero or creature: an exact id or name first, then an exact mark
+ * ("b1"), then a unique start of an id, name or word (see `pick`).
+ */
+export function resolve(slice: DrawSteelState, typed: string): Who | Refused {
+  const all = everyone(slice);
+  const q = typed.trim().toLowerCase();
+  const exact = all.find((w) => w.id.toLowerCase() === q || w.name.toLowerCase() === q);
+  if (exact !== undefined) return exact;
+  return (
+    byMark(slice, typed) ??
+    pick(
+      all,
+      (w) => [w.id, w.name],
+      (w) => w.name,
+      typed,
+      `Nobody at the table is called '${quote(typed)}'.`,
+    )
   );
+}
 
 /** The Stamina at or below which a creature is winded: half its max, rounded down. */
 export const windedAt = (max: number): number => Math.floor(max / 2);

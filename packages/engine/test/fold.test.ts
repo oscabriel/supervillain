@@ -32,6 +32,23 @@ describe("fold", () => {
     expect(result.error).toBeUndefined();
   });
 
+  test("lenient: tells the rules what it skipped, if they ask, so they can keep count", () => {
+    const seen: number[] = [];
+    const counting = {
+      ...tally,
+      skip: (state: typeof tally.initial, envelope: { seq: number }) => {
+        seen.push(envelope.seq);
+        return { ...state, total: state.total + 100 };
+      },
+    };
+    const events = [env(1, "added", { n: 2 }), env(2, "teleported", {}), env(3, "added", { n: 1 })];
+    expect(fold(counting, events, { strict: false }).state).toEqual({ total: 103, rolls: [] });
+    expect(seen).toEqual([2]);
+    // A strict fold halts instead, and never asks.
+    expect(fold(counting, events, { strict: true }).error?.seq).toBe(2);
+    expect(seen).toEqual([2]);
+  });
+
   test("stops where apply throws, strict or not", () => {
     const events = [env(1, "added", { n: 2 }), env(2, "poisoned", {}), env(3, "added", { n: 1 })];
     for (const strict of [true, false]) {

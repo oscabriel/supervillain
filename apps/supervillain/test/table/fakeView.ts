@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import type { CombatView, FeedLine, Present, TableView } from "../../src/table/view.ts";
+import type { CombatView, FeedLine, MapView, Present, TableView } from "../../src/table/view.ts";
 
 export interface FakeViewOptions {
   readonly me?: string;
@@ -14,6 +14,8 @@ export interface FakeViewOptions {
   readonly joinHint?: string;
   /** The Draw Steel band; when given, the view has a `combat` accessor (which may return undefined). */
   readonly combat?: CombatView | null;
+  /** The text map; when given, the view has a `map` accessor (null: no map loaded yet). */
+  readonly map?: MapView | null;
 }
 
 /** A TableView backed by plain signals, recording what the App asks of it. */
@@ -22,6 +24,7 @@ export function fakeView(options: FakeViewOptions = {}) {
   const [present, setPresent] = createSignal<ReadonlyArray<Present>>(options.present ?? []);
   const [myName, setMyName] = createSignal<string | undefined>(options.myName);
   const [combat, setCombat] = createSignal<CombatView | undefined>(options.combat ?? undefined);
+  const [map, setMap] = createSignal<MapView | undefined>(options.map ?? undefined);
   const submitted: string[] = [];
   const completed: string[] = [];
   let left = 0;
@@ -45,6 +48,7 @@ export function fakeView(options: FakeViewOptions = {}) {
     },
     ...(options.joinHint === undefined ? {} : { joinHint: options.joinHint }),
     ...(options.combat === undefined ? {} : { combat }),
+    ...(options.map === undefined ? {} : { map }),
   };
   return {
     view,
@@ -55,6 +59,7 @@ export function fakeView(options: FakeViewOptions = {}) {
     setPresent,
     setMyName,
     setCombat,
+    setMap,
   };
 }
 

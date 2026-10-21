@@ -24,6 +24,7 @@ import {
   restoreDraft,
   sanitize,
   submitLine,
+  tableCompletions,
 } from "../../src/table/input.ts";
 
 /** Types `text` into an empty line. */
@@ -272,6 +273,28 @@ describe("intentFor", () => {
 
   test("a player's /state goes to the host, which refuses it", () => {
     expect(intentFor("/state", "chat", "key:SHA256:abc")).toEqual({ kind: "send", line: "/state" });
+  });
+
+  test("/view is the table's own, on any seat: map, feed or both, alone a toggle", () => {
+    expect(intentFor("/view map", "chat")).toEqual({ kind: "view", layout: "map" });
+    expect(intentFor("/View  FEED", "chat")).toEqual({ kind: "view", layout: "feed" });
+    expect(intentFor("/view both", "chat", "gm")).toEqual({ kind: "view", layout: "both" });
+    expect(intentFor("/view", "chat")).toEqual({ kind: "view", layout: "toggle" });
+    // Anything else is somewhere to centre the map: a square or a token, as typed, case and all.
+    expect(intentFor("/view sideways", "chat")).toEqual({ kind: "focus", at: "sideways" });
+    expect(intentFor("/view  B ", "chat")).toEqual({ kind: "focus", at: "B" });
+    expect(intentFor("/views", "chat")).toEqual({ kind: "send", line: "/views" });
+  });
+});
+
+describe("tableCompletions", () => {
+  test("the table's own commands complete like the host's: whole replacement lines", () => {
+    expect(tableCompletions("/vi")).toEqual(["/view "]);
+    expect(tableCompletions("/")).toEqual(["/view "]);
+    expect(tableCompletions("/view ")).toEqual(["/view map", "/view feed", "/view both"]);
+    expect(tableCompletions("/view f")).toEqual(["/view feed"]);
+    expect(tableCompletions("/roll ")).toEqual([]);
+    expect(tableCompletions("hello")).toEqual([]);
   });
 });
 

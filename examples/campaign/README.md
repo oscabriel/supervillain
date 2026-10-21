@@ -1,6 +1,6 @@
 # Sample campaign: a fight at the ford
 
-A ready-to-play campaign folder for trying supervillain: four level-1 heroes and the bandits for one encounter. **Everything here is a sample for testing.** The numbers are plausible for level 1 and the ability text is a short paraphrase. None of it is copied from the books, so check it against _Draw Steel: Heroes_ and _Draw Steel: Monsters_ before real play.
+A ready-to-play campaign folder for trying supervillain: four level-1 heroes, the bandits for one encounter and the map to fight it on. **Everything here is a sample for testing.** The numbers are plausible for level 1 and the ability text is a short paraphrase. None of it is copied from the books, so check it against _Draw Steel: Heroes_ and _Draw Steel: Monsters_ before real play.
 
 ## Hosting it
 
@@ -31,6 +31,22 @@ Players join with the `ssh` command the host prints. The table's Draw Steel comm
 
 A suggested fight: the chief, two bruisers, four cutpurses and four slingers (24 EV in all).
 
+The map is `maps/ford-road.txt`, The Ford Road, 20 columns (a to t) by 10 rows. The road runs east to west along rows 5 and 6 and crosses a shallow ford, columns l and m, which is difficult terrain from row 2 to row 9. North of the road stands a ruined wall (b2 to h4) with gaps to fight through; rubble (difficult) lies at e7, d8 and e8, brush (difficult) at p3 to q4, and a broken wall at q7 to s8 east of the ford. A good start: the heroes in the west around b5 to b7, the bandits east of the ford around o5 to p7.
+
+```text
+     a b c d e f g h i j k l m n o p q r s t
+   1     . . . . . . . . . . . . . . . .
+   2 . # # . # # # . . . . ~ ~ . . . . . . .
+   3 . # . . . . . # . . . ~ ~ . . ~ ~ . . .
+   4 . . . . . . . # . . . ~ ~ . . ~ ~ . . .
+   5 . . . . . . . . . . . ~ ~ . . . . . . .
+   6 . . . . . . . . . . . ~ ~ . . . . . . .
+   7 . . . . ~ . . . . . . ~ ~ . . . # . # .
+   8 . . . ~ ~ . . . . . . ~ ~ . . . # . . .
+   9 . . . . . . . . . . . ~ ~ . . . . . . .
+  10     . . . . . . . . . . . . . . . .
+```
+
 ## Writing your own
 
 One YAML file per hero in `heroes/<id>.yaml` and one per monster in `monsters/<id>.yaml`. The file name is the id. The host reads a file each time a hero or monster is brought in, so you can edit one mid-session and bring it in again. A mistake is reported with the file and the field, for example `heroes/vex.yaml: characteristics.might must be a whole number from -5 to 5`. In those messages `abilities[2]` means the second ability.
@@ -57,6 +73,19 @@ A text field may run over several lines (a folded `>` or literal `|` block); the
 If you edit a monster file mid-fight and `/add` it again, creatures already in the fight take its new abilities and modifiers, but a squad keeps the Stamina per minion it was added with.
 
 Ability fields: `name`, then any of `kind` (main action, maneuver…), `characteristics` (a hero's: `might` or `[might, agility]`), `bonus` (a monster's flat roll bonus), `cost` (spent when the ability is rolled: the hero's resource or the Director's Malice), `keywords` (`Melee, Strike, Weapon`), `distance`, `target`, `tier1`, `tier2`, `tier3` and `effect`.
+
+## Drawing your own map
+
+One text file per map in `maps/<id>.txt`; the file name is the id, in lower-case letters, digits and hyphens, at most 40. An optional first line `name: <name>` names the map (up to 40 characters); otherwise the id is its name. Then each line is a row of squares, top to bottom, one character per square:
+
+| Character | Square |
+| --- | --- |
+| `.` | Floor |
+| `#` | Wall: nobody stands there or moves through it |
+| `~` | Difficult terrain: costs 1 more to enter |
+| space | Outside the map, like the end of a short row |
+
+No other character may be a square, so nothing on the map looks like a token; the name line may hold any plain ASCII. A map is at most 60 columns by 40 rows, and the file at most 8 KB. The host reads the file each time the GM types `/map <id>`, so you can fix a map and load it again; tokens already placed are lost when a new map loads. A mistake is reported with the file and, for a stray character, its line and column: `maps/ford.txt line 3, column 7 is "B" (U+0042); draw maps with . floor, # wall, ~ difficult terrain and space for outside.`
 
 ## Importing monsters from Steel Compendium
 

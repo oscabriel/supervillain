@@ -1,9 +1,11 @@
 import type { Decision, Dice, NewEvent } from "@supervillain/engine";
 import { parseNotation } from "../dice.ts";
+import { clearedAtEnd, forceMove, loadMap, measure, move, place } from "./board.ts";
 import { GM, type Refused } from "../module.ts";
 import { cleanText, hasControls, quote } from "../text.ts";
 import { type DsCommand, SQUAD_SIZE } from "./commands.ts";
 import { event } from "./events.ts";
+import { distance } from "./map.ts";
 import { modifiedDamage, powerRoll } from "./math.ts";
 import { decodeHeroSheet, decodeStatBlock, ID } from "./schema.ts";
 import type { Characteristic, Characteristics } from "./sheets.ts";
@@ -32,6 +34,8 @@ const refuse = (refusal: string): Refused => ({ refusal });
 const decided = (...events: NewEvent[]): Decision => ({ events });
 
 const NO_COMBAT = "No combat is running; /start one.";
+/** A save ends its condition on 6 or more on a d10 (Classes, "Saving Throws"). */
+const SAVE = 6;
 const OWN = "You can only change your own hero.";
 
 /** One die from the host's dice, checked: a bad face is a host bug, so it throws. */
@@ -215,7 +219,10 @@ function turnEnd(slice: DrawSteelState, id: string, dice: Dice): NewEvent {
     ended: conditions.filter((c) => c.duration === "eot").map((c) => c.name),
     saves: conditions
       .filter((c) => c.duration === "save")
-      .map((c) => ({ condition: c.name, roll: roll(dice, 10) })),
+      .map((c) => {
+        const face = roll(dice, 10);
+        return { condition: c.name, roll: face, ends: face >= SAVE };
+      }),
   });
 }
 
@@ -381,7 +388,7 @@ function damage(
   who: Who,
   amount: number,
   type: string | undefined,
-  source?: { readonly id: string; readonly minions?: number },
+  source?: { readonly id: string; readonly minions?: number; readonly apart?: number },
 ): Decision {
   if (isDead(who)) return refuse(`${who.name} is dead.`);
   const { dealt, weakness, immunity } = modifiedDamage(amount, type, modifiersOf(slice, who));
@@ -395,6 +402,7 @@ function damage(
       dealt,
       ...(source !== undefined && { source: source.id }),
       ...(source?.minions !== undefined && { minions: source.minions }),
+      ...(source?.apart !== undefined && { apart: source.apart }),
     }),
   );
 }
@@ -409,14 +417,17 @@ function freeStrike(slice: DrawSteelState, command: Extract<DsCommand, { type: "
   if ("refusal" in target) return target;
   const strike = slice.blocks[striker.creature.block]?.freeStrike ?? 0;
   const { minions } = command;
-  if (minions === undefined)
-    return damage(slice, target, strike, command.damageType, { id: striker.id });
+  // Range isn't checked, since some free strikes are ranged, but the feed says how far it was.
+  const [from, to] = [slice.map?.tokens[striker.id], slice.map?.tokens[target.id]];
+  const apart = from === undefined || to === undefined ? undefined : distance(from, to);
+  const by = { id: striker.id, ...(apart !== undefined && { apart }) };
+  if (minions === undefined) return damage(slice, target, strike, command.damageType, by);
   if (striker.creature.squad === undefined)
     return refuse(`Only a minion squad strikes together; ${striker.name} is one creature.`);
   const left = minionsLeft(striker.creature);
   if (minions > left) return refuse(`${striker.name} has only ${plural(left, "minion")}.`);
   // Free strikes together add up and count as one strike, so weakness and immunity apply once.
-  return damage(slice, target, strike * minions, command.damageType, { id: striker.id, minions });
+  return damage(slice, target, strike * minions, command.damageType, { ...by, minions });
 }
 
 function heal(
@@ -515,9 +526,10 @@ function save(
   if (chosen.length === 0)
     return refuse(`${who.name} isn't ${command.condition} with a save to end it.`);
   return {
-    events: chosen.map((c) =>
-      event("ds.saved", { id: who.id, condition: c.name, roll: roll(dice, 10) }),
-    ),
+    events: chosen.map((c) => {
+      const face = roll(dice, 10);
+      return event("ds.saved", { id: who.id, condition: c.name, roll: face, ends: face >= SAVE });
+    }),
   };
 }
 
@@ -625,8 +637,13 @@ export function decide(
       return done(slice, actor, dice);
     case "round":
       return nextRound(slice, dice);
-    case "end":
-      return slice.combat.active ? decided(event("ds.combat-ended", {})) : refuse(NO_COMBAT);
+    case "end": {
+      if (!slice.combat.active) return refuse(NO_COMBAT);
+      const cleared = clearedAtEnd(slice);
+      return decided(
+        event("ds.combat-ended", cleared.length === 0 ? {} : { cleared: [...cleared] }),
+      );
+    }
     case "rest":
       if (slice.combat.active) return refuse("Finish the combat first (/end).");
       if (slice.heroes.length === 0) return refuse("There's no party to rest.");
@@ -659,5 +676,17 @@ export function decide(
       return token(slice, actor, command.change);
     case "victory":
       return victory(slice, command);
+    case "map":
+      return loadMap(slice, command);
+    case "place":
+      return place(slice, actor, command);
+    case "move":
+      return move(slice, actor, command);
+    case "dist":
+      return measure(slice, command);
+    case "push":
+    case "pull":
+    case "slide":
+      return forceMove(slice, actor, command);
   }
 }

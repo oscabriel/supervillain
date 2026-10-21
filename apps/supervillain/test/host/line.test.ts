@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Exit, Scope } from "effect";
+import { TestClock } from "effect/testing";
 import { importBestiary } from "../../src/content/index.ts";
 import { plainText } from "../../src/game/index.ts";
 import { execLine, type Reply, runLine } from "../../src/host/line.ts";
@@ -101,7 +102,7 @@ describe("runLine", () => {
       Effect.gen(function* () {
         const help = yield* runLine(vex, "/help", "exec");
         expect(help.kind === "message" && help.text).toStartWith(
-          "Plain text is chat. Commands start with /; roll, help and sheet work without it here.",
+          "Plain text is chat. Commands start with /; roll, dist, undo, redo, help and sheet work without it here.",
         );
         expect(help.kind === "message" && help.text).not.toContain("/quit");
         expect(yield* runLine(vex, "/quit", "exec")).toMatchObject({ kind: "refusal" });
@@ -367,6 +368,109 @@ describe("runLine with Draw Steel", () => {
   );
 });
 
+describe("runLine with the map and undo", () => {
+  effect("/map reads maps/<id>.txt from the campaign folder into the event", () =>
+    atSampleTable(() =>
+      Effect.gen(function* () {
+        expect(said(yield* runLine("gm", "/map ford"))).toEqual([
+          "The map is The Ford Road, 20 by 10.",
+        ]);
+        const [loaded] = yield* Effect.flatMap(TableRoom, (r) => r.recent.get);
+        expect(loaded).toMatchObject({ type: "ds.map-loaded", payload: { id: "ford-road" } });
+        const terrain = (loaded!.payload as { terrain: string[] }).terrain;
+        expect(terrain.length).toBe(10);
+        expect(terrain[1]).toBe(".##.###....~~.......");
+        // The outside corners of the first row, padded out to the full width.
+        expect(terrain[0]).toBe("  ................  ");
+        expect(said(yield* runLine("gm", "/map off"))).toEqual(["The map is put away."]);
+      }),
+    ),
+  );
+
+  effect(
+    "a map that's missing or wrong is refused naming the file; a player's /map reads none",
+    () =>
+      atSampleTable((dir) =>
+        Effect.gen(function* () {
+          expect(said(yield* runLine("gm", "/map cave"))).toBe(
+            'no map "cave" in maps/ (there are: ford-road)',
+          );
+          yield* Effect.promise(() => writeFile(join(dir, "maps", "cave.txt"), "..\n.\t\n"));
+          expect(said(yield* runLine("gm", "/map cave"))).toBe(
+            "maps/cave.txt line 2, column 2 is a tab; draw maps with . floor, # wall, ~ difficult terrain and space for outside.",
+          );
+          expect(said(yield* runLine(vex, "/map cave"))).toBe("Only the GM can use /map.");
+          expect((yield* stateNow).seq).toBe(0);
+        }),
+      ),
+  );
+
+  effect(
+    "the host says what time it is, so a player takes back their own change for 30 seconds",
+    () =>
+      atSampleTable(() =>
+        Effect.gen(function* () {
+          yield* runLine(vex, "/name Vex");
+          yield* runLine("gm", "/hero brann");
+          yield* runLine(vex, "/play brann");
+          yield* runLine("gm", "/map ford-road");
+          yield* runLine(vex, "/place brann b5");
+          expect(said(yield* runLine(vex, "/undo"))).toEqual([
+            "↶ Vex (Brann) undid: Brann is placed at b5.",
+          ]);
+          expect((yield* stateNow).ds.map?.tokens).toEqual({});
+          yield* runLine(vex, "/place brann c5");
+          yield* TestClock.adjust("31 seconds");
+          expect(said(yield* runLine(vex, "/undo"))).toBe(
+            "Too late: you can take back your own change for 30 seconds. Ask the GM.",
+          );
+          expect((yield* runLine("gm", "/undo")).kind).toBe("done");
+          expect((yield* stateNow).ds.map?.tokens).toEqual({});
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  effect(
+    "the GM takes back one person's change by their name, and the host finds who that is",
+    () =>
+      atSampleTable(() =>
+        Effect.gen(function* () {
+          yield* runLine(vex, "/name Vex");
+          yield* runLine("gm", "/hero brann");
+          yield* runLine(vex, "/play brann");
+          yield* runLine("gm", "/map ford-road");
+          yield* runLine(vex, "/place brann b5");
+          yield* runLine("gm", "/dmg brann 3");
+          expect(said(yield* runLine("gm", "/undo nobody"))).toBe(
+            "Nobody at the table is called 'nobody'.",
+          );
+          expect(said(yield* runLine("gm", "/undo vex"))).toEqual([
+            "↶ GM undid: Brann is placed at b5.",
+          ]);
+          const state = yield* stateNow;
+          expect(state.ds.map?.tokens).toEqual({});
+          expect(state.ds.heroes[0]?.stamina).toBe(state.ds.heroes[0]!.sheet.stamina - 3);
+          expect(said(yield* runLine("gm", "/redo"))).toEqual([
+            "↷ GM redid: Brann is placed at b5.",
+          ]);
+        }),
+      ),
+  );
+
+  effect("the state dump counts the undo stack instead of printing every snapshot", () =>
+    atSampleTable(() =>
+      Effect.gen(function* () {
+        // Two quick submissions in one millisecond are still two batches: the room stamps each
+        // later than the one before.
+        yield* runLine("gm", "/hero brann");
+        yield* runLine("gm", "/dmg brann 3");
+        const state = yield* runLine("gm", "/state");
+        expect(state.kind === "message" && state.text).toContain('"undo": "[2 batches]"');
+      }),
+    ),
+  );
+});
+
 describe("plainText", () => {
   test("reads each core kind the way the table shows it", () => {
     const at = (kind: string, text: string) => plainText({ who: "Vex", kind, text });
@@ -385,6 +489,9 @@ describe("execLine", () => {
     expect(execLine("help")).toBe("/help");
     // /sheet is read-only and answers the sender alone, so it's safe without its slash.
     expect(execLine("sheet kesh")).toBe("/sheet kesh");
+    expect(execLine("undo")).toBe("/undo");
+    expect(execLine("redo")).toBe("/redo");
+    expect(execLine("dist kesh chief")).toBe("/dist kesh chief");
     expect(execLine("/name Vex")).toBe("/name Vex");
     expect(execLine("hello everyone")).toBe("hello everyone");
     expect(execLine("  rolling along")).toBe("  rolling along");

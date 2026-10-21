@@ -108,6 +108,7 @@ describe("completeLine", () => {
   test("after a slash: the command names this actor can use", () => {
     const draw = ["/play ", "/unplay ", "/turn ", "/done", "/pr ", "/dmg ", "/heal ", "/temp "];
     const steel = ["/recover ", "/cond ", "/save ", "/res ", "/surge ", "/token "];
+    const map = ["/place ", "/move ", "/dist ", "/push ", "/pull ", "/slide "];
     expect(completeLine(state, ALICE, "/")).toEqual([
       "/say ",
       "/me ",
@@ -115,8 +116,12 @@ describe("completeLine", () => {
       "/roll ",
       ...draw,
       ...steel,
+      ...map,
+      "/undo ",
+      "/redo",
       "/help ",
       "/sheet ",
+      "/view ",
       "/quit",
     ]);
     expect(completeLine(state, GM, "/")).toEqual([
@@ -149,19 +154,30 @@ describe("completeLine", () => {
       "/token ",
       "/victory ",
       "/fs ",
+      "/map ",
+      "/place ",
+      "/move ",
+      "/dist ",
+      "/push ",
+      "/pull ",
+      "/slide ",
+      "/undo ",
+      "/redo",
       "/help ",
       "/sheet ",
       "/state",
+      "/view ",
       "/quit",
     ]);
   });
 
   test("a partial name narrows the list, whatever its case or leading space", () => {
-    expect(completeLine(state, ALICE, "/r")).toEqual(["/roll ", "/recover ", "/res "]);
+    expect(completeLine(state, ALICE, "/r")).toEqual(["/roll ", "/recover ", "/res ", "/redo"]);
     expect(completeLine(state, ALICE, "  /RO")).toEqual(["/roll "]);
     expect(completeLine(state, ALICE, "/n")).toEqual(["/name "]);
     expect(completeLine(state, GM, "/n")).toEqual(["/narrate ", "/name "]);
     expect(completeLine(state, ALICE, "/zz")).toEqual([]);
+    expect(completeLine(state, ALICE, "/u")).toEqual(["/unplay ", "/undo "]);
   });
 
   test("then the command's arguments", () => {
@@ -169,6 +185,7 @@ describe("completeLine", () => {
     expect(completeLine(state, ALICE, "/roll d1")).toEqual(["/roll d10", "/roll d100"]);
     expect(completeLine(state, ALICE, "/help ro")).toEqual(["/help roll"]);
     expect(completeLine(state, ALICE, "/help na")).toEqual(["/help name"]);
+    expect(completeLine(state, ALICE, "/view f")).toEqual(["/view feed"]);
     expect(completeLine(state, GM, "/help na")).toEqual(["/help narrate", "/help name"]);
   });
 
@@ -204,6 +221,20 @@ const PLAYER_DRAW_STEEL = [
   "                 Gain or spend surges.",
   "/token <+N|-N|reset>",
   "                 Spend hero tokens. The GM adds them, or resets to one per hero.",
+  "/place <who> <square>",
+  "                 Put a token on the map at a square like c5.",
+  "/move <who> <square> [main]",
+  "                 Move by the shortest path, up to speed a turn; main to move again with the main action.",
+  "/dist <who|square> <who|square>",
+  "                 Count the squares between tokens or squares.",
+  "/push <who> <n> [from <who>] [to <square>]",
+  "                 Push straight away from the source, less stability.",
+  "/pull <who> <n> [from <who>] [to <square>]",
+  "                 Pull straight toward the source, less stability.",
+  "/slide <who> <n> to <square> [from <who>]",
+  "                 Slide any way to a square, less stability.",
+  "/undo [who]      Take back your latest change within 30 s, unless it rolled; the GM, anyone's.",
+  "/redo            Put back what the latest /undo took, with the same dice.",
 ];
 
 describe("helpText", () => {
@@ -218,6 +249,8 @@ describe("helpText", () => {
         ...PLAYER_DRAW_STEEL,
         "/help [command]  List the commands, or explain one.",
         "/sheet <who>     Show a hero's or creature's sheet, to you alone.",
+        "/view [map|feed|both|<square|who>]",
+        "                 Show the map, the feed or both; alone, show or hide the map; or centre it somewhere.",
         "/quit            Leave the table.",
       ].join("\n"),
     );
@@ -226,7 +259,7 @@ describe("helpText", () => {
   test("over a one-off ssh command there is no Tab and no seat to leave", () => {
     expect(helpText(ALICE, undefined, "exec")).toBe(
       [
-        "Plain text is chat. Commands start with /; roll, help and sheet work without it here.",
+        "Plain text is chat. Commands start with /; roll, dist, undo, redo, help and sheet work without it here.",
         "/say <text>      Say something to the table (plain text does the same).",
         "/me <action>     Act something out: /me waves.",
         "/name <name>     Set the name the table calls you.",
@@ -255,10 +288,35 @@ describe("helpText", () => {
   test("one command, by name", () => {
     expect(helpText(ALICE, "roll")).toBe("/roll <dice>  Roll dice: 2d10+3, d20, 3d6-1.");
     expect(helpText(ALICE, "quit")).toBe("/quit  Leave the table.");
+    expect(helpText(ALICE, "view", "exec")).toBe("/view works only at a seat.");
     expect(helpText(ALICE, "narrate")).toBe(
       "/narrate <text>  Describe the scene, with no speaker. (GM only)",
     );
-    expect(helpText(ALICE, "zap")).toBe("Unknown command /zap. /help lists the commands.");
+    expect(helpText(ALICE, "xyzzy")).toBe("Unknown command /xyzzy. /help lists the commands.");
+    expect(helpText(ALICE, "undo")).toBe(
+      "/undo [who]  Take back your latest change within 30 s, unless it rolled; the GM, anyone's.",
+    );
+  });
+});
+
+describe("/undo", () => {
+  test("goes to the room as a command; the host adds the time", () => {
+    expect(parseInputLine("/undo")).toEqual({ kind: "command", command: { type: "undo" } });
+    expect(parseInputLine("  /UNDO  ")).toEqual({ kind: "command", command: { type: "undo" } });
+    expect(parseInputLine("/undo", "name")).toEqual({ kind: "command", command: { type: "undo" } });
+  });
+
+  test("takes at most whose change, as one word; /redo takes nothing", () => {
+    expect(parseInputLine("/undo bob")).toEqual({
+      kind: "command",
+      command: { type: "undo", who: "bob" },
+    });
+    expect(parseInputLine("/undo bob smith")).toEqual({
+      kind: "refusal",
+      message: "Usage: /undo [who]",
+    });
+    expect(parseInputLine("/redo")).toEqual({ kind: "command", command: { type: "redo" } });
+    expect(parseInputLine("/redo 2")).toEqual({ kind: "refusal", message: "Usage: /redo" });
   });
 });
 

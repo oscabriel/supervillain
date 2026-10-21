@@ -79,8 +79,12 @@ const heroBack = (s: HeroSheet): typeof HeroSheetSchema.Type => s;
 const blockBack = (s: StatBlock): typeof StatBlockSchema.Type => s;
 void [heroFits, blockFits, heroBack, blockBack];
 
-/** Ids are what commands type: lowercase letters, digits and dashes. */
+/** The longest id: ids are typed in commands and shown in the band. */
+export const ID_MAX = 40;
+/** Ids are what commands type: lowercase letters, digits and dashes, at most ID_MAX of them. */
 export const ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
+/** An id's letters, whatever its length. */
+const ID_LETTERS = /^[a-z0-9][a-z0-9-]*$/;
 
 /** "a dice notation like 1d3, or a whole number", for a resource's per-turn gain. */
 export const PER_TURN = /^(\d+|\d*d\d+([+-]\d+)?)$/;
@@ -121,7 +125,9 @@ export interface SheetProblem {
  */
 export function sheetProblems(sheet: HeroSheet | StatBlock): ReadonlyArray<SheetProblem> {
   const problems: SheetProblem[] = [];
-  if (!ID.test(sheet.id))
+  if (sheet.id.length > ID_MAX)
+    problems.push({ field: "id", problem: `must be at most ${ID_MAX} characters` });
+  if (!ID_LETTERS.test(sheet.id))
     problems.push({ field: "id", problem: "must be lowercase letters, digits and dashes" });
   const names: ReadonlyArray<readonly [string, string]> = [
     ["name", sheet.name],

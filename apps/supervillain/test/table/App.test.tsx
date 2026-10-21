@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { RGBA } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../../src/table/App.tsx";
-import { brakka, fight, goblins, ogre, sera, sniper, spearmen, vex } from "./combat.ts";
+import { color } from "../../src/table/theme.ts";
+import { brakka, fight, ford, goblins, ogre, sera, sniper, spearmen, vex } from "./combat.ts";
 import { alice, bob, fakeView, gm, line } from "./fakeView.ts";
+import { courtyard, hall } from "./maps.ts";
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 let setup: Setup | undefined;
@@ -470,6 +473,75 @@ describe("the Draw Steel band", () => {
     expect(rowsOf(frame).at(-1)).toStartWith(" >");
   });
 
+  test("at 80x24 a sheet beside the twelve-combatant fight gets a usable pane, paid for by creatures", async () => {
+    const sheet = Array.from({ length: 15 }, (_, i) => `sheet line ${i + 1}`).join("\n");
+    const fake = fakeView({
+      myName: "Alice",
+      present: [gm, alice],
+      feed,
+      combat: fight(ford),
+      reply: () => sheet,
+    });
+    const t = await mount(fake, 80, 24);
+    const frame = await enter(t, "/sheet brann");
+    const rows = rowsOf(frame);
+    expect(rows).toHaveLength(24);
+    // The pane, border to border: about 8 rows, here 7, since the four heroes' rows (six lines,
+    // two of them wrapped) and the one acting are what the band keeps.
+    const top = rows.findIndex((r) => r.includes("just for you"));
+    const bottom = rows.findIndex((r, i) => i > top && r.startsWith("└"));
+    expect(bottom - top + 1).toBeGreaterThanOrEqual(7);
+    expect(frame).toContain("sheet line 1");
+    expect(frame).toContain("sheet line 5");
+    // Every hero row stays whole.
+    for (const part of [
+      "wrath 3",
+      "recoveries 12/12",
+      "ferocity 4",
+      "1 surge",
+      "weakened (save)",
+      "focus 1",
+      "recoveries 9/10",
+      "dying (dead at -10)",
+      "bleeding",
+      "dazed (save)",
+      "insight 0",
+      "recoveries 8/8",
+    ])
+      expect(frame).toContain(part);
+    // Creatures fold into "+N more", and only creatures: shown plus hidden is all eight of them.
+    const band = rows.slice(0, top).join("\n");
+    const more = /\+(\d+) more/.exec(band);
+    expect(more).not.toBeNull();
+    const creatures = ["Chief", "Bruiser 1", "Bruiser 2", "Bruiser 3", "Bruiser 4", "Bruiser 5"];
+    const dead = ["Cutpurse A", "Slinger A"];
+    const shown = [...creatures, ...dead].filter((name) => band.includes(name)).length;
+    expect(shown + Number(more?.[1])).toBe(8);
+    // The one acting stays.
+    expect(band).toContain("▶");
+    expect(frame).toContain("message 40");
+    expect(rows.at(-1)).toStartWith(" >");
+  });
+
+  test("closing the pane gives the band back its creatures", async () => {
+    const sheet = Array.from({ length: 15 }, (_, i) => `sheet line ${i + 1}`).join("\n");
+    const fake = fakeView({
+      myName: "Alice",
+      present: [gm, alice],
+      feed,
+      combat: fight(ford),
+      reply: () => sheet,
+    });
+    const t = await mount(fake, 80, 24);
+    await enter(t, "/sheet brann");
+    t.mockInput.pressEscape();
+    await new Promise((r) => setTimeout(r, 40));
+    const frame = await settle(t);
+    expect(frame).not.toContain("sheet line 1");
+    for (const n of [1, 2, 3, 4, 5]) expect(frame).toContain(`Bruiser ${n} `);
+    expect(frame).not.toMatch(/\+\d+ more/);
+  });
+
   test("a multi-line reply, like a sheet, is not a refusal: the line is not given back", async () => {
     const fake = fakeView({
       myName: "Alice",
@@ -497,5 +569,237 @@ describe("the Draw Steel band", () => {
     expect(frame).not.toContain("at the table");
     expect(frame).toContain("party");
     expect(frame).toContain("Brakka");
+  });
+});
+
+describe("below the smallest seat, 80x24", () => {
+  for (const [width, height] of [
+    [79, 24],
+    [80, 23],
+    [60, 16],
+  ] as const) {
+    test(`at ${width}x${height} one line asks to widen the terminal, and the input still works`, async () => {
+      const fake = fakeView({
+        myName: "Alice",
+        present: [gm, alice],
+        feed: [line(1, "Bob", "anyone there?")],
+        combat: fight(ford),
+      });
+      const t = await mount(fake, width, height);
+      const frame = t.captureCharFrame();
+      const rows = rowsOf(frame);
+      expect(rows.filter((r) => r.includes("widen your terminal to 80x24"))).toHaveLength(1);
+      expect(frame).not.toContain("round 2");
+      expect(frame).not.toContain("▐");
+      expect(frame).toContain("Bob: anyone there?");
+      expect(rows.at(-1)).toStartWith(" >");
+      await enter(t, "hello");
+      expect(fake.submitted).toEqual(["hello"]);
+    });
+  }
+
+  test("at 80x24 there is no notice, and the band is back", async () => {
+    const fake = fakeView({ myName: "Alice", present: [gm, alice], combat: fight(ford) });
+    const t = await mount(fake, 80, 24);
+    const frame = t.captureCharFrame();
+    expect(frame).not.toContain("widen your terminal");
+    expect(frame).toContain("round 2");
+  });
+});
+
+describe("the map", () => {
+  const feed = Array.from({ length: 40 }, (_, i) => line(i + 1, "Bob", `message ${i + 1}`));
+  const seated = (more: Parameters<typeof fakeView>[0] = {}) =>
+    fakeView({ myName: "Alice", present: [gm, alice], feed, combat: fight(ford), ...more });
+
+  /** A bordered box's height, from the top border row whose title has `title` to its bottom border. */
+  const boxHeight = (rows: ReadonlyArray<string>, title: string) => {
+    const top = rows.findIndex((r) => r.startsWith("┌") && r.includes(title));
+    if (top < 0) return 0;
+    return rows.findIndex((r, i) => i > top && r.startsWith("└")) - top + 1;
+  };
+
+  for (const [width, height] of [
+    [100, 30],
+    [80, 24],
+  ] as const) {
+    test(`at ${width}x${height} band, map, feed and input are all on screen, the feed at least 5 rows`, async () => {
+      const t = await mount(seated({ map: courtyard }), width, height);
+      const rows = rowsOf(t.captureCharFrame());
+      expect(rows).toHaveLength(height);
+      expect(rows[1]).toContain("round 2");
+      const band = rows.findIndex((r) => r.includes("round 2"));
+      const map = rows.findIndex((r) => r.includes("map · Courtyard"));
+      const feedTop = rows.findIndex((r) => r.startsWith("┌") && r.includes(" feed "));
+      expect(band).toBeLessThan(map);
+      expect(map).toBeLessThan(feedTop);
+      // The map shows the acting token and its letters and numbers.
+      const mapRows = rows.slice(map, feedTop).join("\n");
+      expect(mapRows).toContain("V");
+      expect(mapRows).toMatch(/ a b c /);
+      expect(boxHeight(rows, " feed ")).toBeGreaterThanOrEqual(5);
+      for (const n of [38, 39, 40]) expect(rows.join("\n")).toContain(`message ${n}`);
+      expect(rows.at(-1)).toStartWith(" >");
+    });
+  }
+
+  test("at 100x30 the courtyard fits whole with the band beside it", async () => {
+    const t = await mount(seated({ map: courtyard, combat: fight([]) }), 100, 30);
+    const rows = rowsOf(t.captureCharFrame());
+    // Twelve rows, the letters and the border: fifteen.
+    expect(boxHeight(rows, "map · Courtyard")).toBe(15);
+    expect(rows.join("\n")).toContain("12 ");
+  });
+
+  test("the reach label leads the hint row, on the reach tint, and the rest still fits 80 columns", async () => {
+    for (const [width, height] of [
+      [100, 30],
+      [80, 24],
+    ] as const) {
+      const t = await mount(seated({ map: courtyard }), width, height);
+      const hint = rowsOf(t.captureCharFrame()).at(-2) ?? "";
+      expect(hint).toStartWith(" Vex can reach: speed 5 · ");
+      expect(hint).toEndWith("/help · Ctrl-C leaves");
+      expect(hint).not.toContain("...");
+      const label = t
+        .captureSpans()
+        .lines.at(-2)
+        ?.spans.find((s) => s.text.includes("Vex can reach"));
+      expect(label?.bg.equals(RGBA.fromHex(color.reach))).toBe(true);
+      setup?.renderer.destroy();
+      setup = undefined;
+    }
+  });
+
+  test("without a map, or before one is loaded, the layout is today's", async () => {
+    for (const [width, height] of [
+      [100, 30],
+      [80, 24],
+    ] as const) {
+      const before = (await mount(seated(), width, height)).captureCharFrame();
+      setup?.renderer.destroy();
+      const empty = (await mount(seated({ map: null }), width, height)).captureCharFrame();
+      expect(empty).toBe(before);
+      expect(empty).not.toContain("map ·");
+      expect(rowsOf(empty).at(-2)).toContain("Tab completes");
+      setup?.renderer.destroy();
+      setup = undefined;
+    }
+  });
+
+  test("a map the host loads appears; one it clears goes", async () => {
+    const fake = seated({ map: null });
+    const t = await mount(fake, 100, 30);
+    fake.setMap(courtyard);
+    expect(await settle(t)).toContain("map · Courtyard");
+    fake.setMap(undefined);
+    expect(await settle(t)).not.toContain("map · Courtyard");
+  });
+
+  test("/view feed hides it, /view map gives it the room, /view both shares; none is sent", async () => {
+    const fake = seated({ map: hall() });
+    const t = await mount(fake, 100, 30);
+    const shared = boxHeight(rowsOf(t.captureCharFrame()), "map · Great hall");
+    expect(shared).toBeGreaterThan(0);
+
+    let rows = rowsOf(await enter(t, "/view feed"));
+    expect(boxHeight(rows, "map · Great hall")).toBe(0);
+    expect(boxHeight(rows, " feed ")).toBeGreaterThan(5);
+
+    rows = rowsOf(await enter(t, "/view map"));
+    const big = boxHeight(rows, "map · Great hall");
+    expect(big).toBeGreaterThan(shared);
+    expect(boxHeight(rows, " feed ")).toBe(5);
+    expect(rows[1]).toContain("round 2");
+    expect(rows.at(-1)).toStartWith(" >");
+
+    rows = rowsOf(await enter(t, "/view both"));
+    expect(boxHeight(rows, "map · Great hall")).toBe(shared);
+    expect(fake.submitted).toEqual([]);
+  });
+
+  test("/view alone shows or hides the map; anything else says how", async () => {
+    const fake = seated({ map: courtyard });
+    const t = await mount(fake);
+    expect(await enter(t, "/view")).not.toContain("map · Courtyard");
+    expect(await enter(t, "/view")).toContain("map · Courtyard");
+    expect(await enter(t, "/view sideways")).toContain(
+      "› No token on the map is called 'sideways'; /view <square|who>, or map, feed or both",
+    );
+    expect(fake.submitted).toEqual([]);
+  });
+
+  test("Tab completes /view beside the host's completions", async () => {
+    const fake = seated({ map: courtyard, complete: () => [] });
+    const t = await mount(fake);
+    await t.mockInput.typeText("/view m");
+    t.mockInput.pressTab();
+    await t.renderOnce();
+    expect(inputRow(t)).toContain("> /view map");
+  });
+
+  test("a long reply puts the map away while it is open, and Esc brings it back", async () => {
+    const sheet = Array.from({ length: 30 }, (_, i) => `sheet line ${i + 1}`).join("\n");
+    const fake = seated({ map: courtyard, reply: () => sheet });
+    const t = await mount(fake, 80, 24);
+    let frame = await enter(t, "/sheet vex");
+    expect(frame).toContain("sheet line 1");
+    expect(frame).not.toContain("map · Courtyard");
+    expect(frame).toContain("message 40");
+    expect(rowsOf(frame).at(-1)).toStartWith(" >");
+    t.mockInput.pressEscape();
+    await new Promise((r) => setTimeout(r, 40));
+    frame = await settle(t);
+    expect(frame).toContain("map · Courtyard");
+  });
+
+  test("/view <who> or <square> centres the map there until the turn passes; none is sent", async () => {
+    const fake = seated({ map: hall() });
+    const t = await mount(fake, 100, 30);
+    // Vex acts at aj26, so the view starts round there, far from Brakka at c4.
+    expect(rowsOf(t.captureCharFrame()).some((r) => / 4 [·x ]+B /.test(r))).toBe(false);
+    let rows = rowsOf(await enter(t, "/view brakka"));
+    expect(rows.some((r) => r.includes(" 4 · · B "))).toBe(true);
+    rows = rowsOf(await enter(t, "/view a1"));
+    expect(rows.some((r) => r.includes(" 1 x "))).toBe(true);
+    expect(await enter(t, "/view nobody")).toContain(
+      "› No token on the map is called 'nobody'; /view <square|who>, or map, feed or both",
+    );
+    rows = rowsOf(await enter(t, "/view B"));
+    expect(rows.some((r) => r.includes(" 4 · · B "))).toBe(true);
+    // The turn passes to the ogre at k26: the view follows it again.
+    fake.setMap(hall({ acting: "ogre" }));
+    rows = rowsOf(await settle(t));
+    expect(rows.some((r) => r.startsWith("│") && r.includes("26 ") && r.includes(" O "))).toBe(
+      true,
+    );
+    expect(fake.submitted).toEqual([]);
+  });
+
+  test("at 80x24, /view map folds the band to two lines so the map gets the rows", async () => {
+    const fake = seated({ map: courtyard });
+    const t = await mount(fake, 80, 24);
+    const rows = rowsOf(await enter(t, "/view map"));
+    // The courtyard wants 15 rows; 24 less header, hint, input, the feed's 5 and a band of 4.
+    expect(boxHeight(rows, "map · Courtyard")).toBe(12);
+    expect(rows[1]).toContain("round 2");
+    expect(boxHeight(rows, " feed ")).toBe(5);
+  });
+
+  test("a long reach label keeps the hint row whole: the keys give way, never the label", async () => {
+    const label = "Bandit Bruiser 2 can reach: 3 of speed 5 left, main action spent";
+    const t = await mount(seated({ map: { ...courtyard, reachLabel: label } }), 80, 24);
+    expect(rowsOf(t.captureCharFrame()).at(-2)).toBe(` ${label}`);
+    setup?.renderer.destroy();
+    const short = "Bandit Bruiser 2 can reach: speed 5";
+    const u = await mount(seated({ map: { ...courtyard, reachLabel: short } }), 80, 24);
+    expect(rowsOf(u.captureCharFrame()).at(-2)).toBe(` ${short} · /view · /help`);
+  });
+
+  test("below the smallest seat the map gives way like the band", async () => {
+    const t = await mount(seated({ map: courtyard }), 79, 24);
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("widen your terminal");
+    expect(frame).not.toContain("map · Courtyard");
   });
 });

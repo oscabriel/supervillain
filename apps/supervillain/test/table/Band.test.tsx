@@ -3,7 +3,18 @@ import { TextAttributes } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { Band } from "../../src/table/Band.tsx";
 import type { CombatView } from "../../src/table/view.ts";
-import { brakka, combatant, fight, goblins, ogre, sera, sniper, spearmen, vex } from "./combat.ts";
+import {
+  brakka,
+  combatant,
+  fight,
+  ford,
+  goblins,
+  ogre,
+  sera,
+  sniper,
+  spearmen,
+  vex,
+} from "./combat.ts";
 import { alice, gm } from "./fakeView.ts";
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
@@ -20,9 +31,18 @@ async function mount(
   width: number,
   height: number,
   maxHeight = Math.floor(height / 2),
+  heroesWhole = false,
 ) {
   setup = await testRender(
-    () => <Band me={alice.actor} present={[gm, alice]} combat={combat} maxHeight={maxHeight} />,
+    () => (
+      <Band
+        me={alice.actor}
+        present={[gm, alice]}
+        combat={combat}
+        maxHeight={maxHeight}
+        heroesWhole={heroesWhole}
+      />
+    ),
     { width, height },
   );
   await setup.renderOnce();
@@ -195,80 +215,25 @@ describe("in combat", () => {
   });
 });
 
-/** The fight at the ford as the GM saw it at round 3: four heroes, two dead squads, the chief and five bruisers. */
-const ford = [
-  combatant({
-    id: "brann",
-    name: "Brann (Alice)",
-    side: "heroes",
-    stamina: 8,
-    max: 24,
-    health: "winded",
-    resource: "wrath 3",
-    recoveries: { left: 12, max: 12 },
-    acted: true,
-  }),
-  combatant({
-    id: "kesh",
-    name: "Kesh (Bob)",
-    side: "heroes",
-    stamina: 16,
-    max: 24,
-    resource: "ferocity 4",
-    recoveries: { left: 10, max: 10 },
-    surges: 1,
-    acted: true,
-  }),
-  combatant({
-    id: "ilsa",
-    name: "Ilsa (Dan)",
-    side: "heroes",
-    stamina: 7,
-    max: 24,
-    health: "winded",
-    conditions: ["weakened (save)"],
-    resource: "focus 1",
-    recoveries: { left: 9, max: 10 },
-  }),
-  combatant({
-    id: "wren",
-    name: "Wren (Cara)",
-    side: "heroes",
-    stamina: -7,
-    max: 21,
-    health: "dying",
-    deadAt: -10,
-    conditions: ["bleeding", "dazed (save)"],
-    resource: "insight 0",
-    recoveries: { left: 8, max: 8 },
-  }),
-  combatant({
-    id: "bandit-cutpurse-a",
-    name: "Bandit Cutpurse A",
-    stamina: 0,
-    max: 20,
-    count: 0,
-    health: "dead",
-  }),
-  combatant({
-    id: "bandit-slinger-a",
-    name: "Bandit Slinger A",
-    stamina: 0,
-    max: 20,
-    count: 0,
-    health: "dead",
-  }),
-  combatant({ id: "bandit-chief", name: "Bandit Chief", stamina: 60, max: 80, acting: true }),
-  ...[1, 2, 3, 4, 5].map((n) =>
-    combatant({
-      id: `bandit-bruiser-${n}`,
-      name: `Bandit Bruiser ${n}`,
-      stamina: 7 + n,
-      max: 20,
-      health: "winded",
-    }),
-  ),
-];
+describe("with a map", () => {
+  test("each placed combatant's mark leads its name, the legend for the map; the rest line up", async () => {
+    const marked = [
+      { ...vex, mark: "V" },
+      { ...spearmen, mark: "gA" },
+      brakka,
+      { ...ogre, mark: "o" },
+    ];
+    const t = await mount(fight(marked), 100, 30);
+    const rows = bandRows(t);
+    expect(rowWith(rows, "Vex")).toContain("▶ V  Vex ");
+    expect(rowWith(rows, "Goblin Spearmen")).toContain("✓ gA Goblin Spearmen x3");
+    expect(rowWith(rows, "Brakka")).toContain("✓    Brakka ");
+    expect(rowWith(rows, "Ogre")).toContain("· o  Ogre ");
+    // The meters still start in one column.
+    const meters = ["Vex", "Brakka", "Ogre"].map((n) => rowWith(rows, n).indexOf("▐"));
+    expect(new Set(meters).size).toBe(1);
+  });
+});
 
 describe("a full fight in a small band", () => {
   test("at 80x24 every hero keeps its numbers, every creature its own name, and the dead fold into one line", async () => {
@@ -296,6 +261,46 @@ describe("a full fight in a small band", () => {
     expect(rowWith(rows, "dead:")).toContain("Bandit Cutpurse A");
     expect(rowWith(rows, "dead:")).toContain("Bandit Slinger A");
     expect(band).not.toContain("x0");
+    expect(band).not.toContain("more");
+  });
+
+  test("kept whole for a reply pane, heroes keep every row while creatures pair, then the dead go, then the rest count as more", async () => {
+    const t = await mount(fight(ford), 80, 24, 9, true);
+    const rows = bandRows(t);
+    const band = rows.join("\n");
+    expect(rows.length).toBeLessThanOrEqual(9);
+    for (const part of [
+      "wrath 3",
+      "recoveries 12/12",
+      "ferocity 4",
+      "1 surge",
+      "weakened (save)",
+      "focus 1",
+      "recoveries 9/10",
+      "dying (dead at -10)",
+      "bleeding",
+      "dazed (save)",
+      "insight 0",
+      "recoveries 8/8",
+    ])
+      expect(band).toContain(part);
+    // A player's name may shorten to share the meter column; no hero's details are cut.
+    for (const hero of ["Brann", "Kesh", "Ilsa", "Wren"])
+      expect(rowWith(rows, hero)).not.toMatch(/ …\s*│$/);
+    expect(band).not.toContain("dead:");
+    // The acting chief stays; the others share a row two by two, and whoever is left is counted.
+    expect(band).toContain("Chief");
+    const more = /\+(\d+) more/.exec(band);
+    const shown = (band.match(/Bruiser \d/g) ?? []).length + 1;
+    expect(shown + Number(more?.[1])).toBe(8);
+    expect(rowWith(rows, "Chief")).toMatch(/Chief .*Bruiser \d/);
+  });
+
+  test("kept whole with room for every creature, the band is just as it is without a pane", async () => {
+    const t = await mount(fight(ford), 80, 24, 12, true);
+    const band = bandRows(t).join("\n");
+    for (const n of [1, 2, 3, 4, 5]) expect(band).toContain(`Bruiser ${n} `);
+    expect(rowWith(bandRows(t), "dead:")).toContain("Bandit Slinger A");
     expect(band).not.toContain("more");
   });
 

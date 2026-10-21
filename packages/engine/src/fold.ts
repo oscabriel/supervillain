@@ -30,6 +30,7 @@ export function fold<S, C>(
           error: { seq: envelope.seq, message: `unknown event type "${envelope.type}"` },
         };
       skipped.push(envelope);
+      if (rules.skip) state = rules.skip(state, envelope);
       continue;
     }
     try {

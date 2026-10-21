@@ -32,9 +32,17 @@ export const noDice: Dice = () => {
 /**
  * A room without the host: decide against the replayed state, append envelopes, and replay the
  * whole log with the engine's strict fold every time state is read, so every check is a replay.
+ * Like the room, it stamps one submission's envelopes alike and each submission later than the
+ * last: its clock moves a second per submission, so every submission is its own undo batch.
  */
 export class Table {
   readonly envelopes: Envelope[] = [];
+  private clock = Date.parse("2026-10-21T19:00:00.000Z");
+
+  /** The time on the clock, as the host would put it in a player's /undo. */
+  get now(): string {
+    return new Date(this.clock).toISOString();
+  }
 
   get state(): State {
     const folded = fold(table.rules, this.envelopes, { strict: true });
@@ -50,15 +58,17 @@ export class Table {
   submit(actor: string, command: Command, dice: Dice = noDice): string | undefined {
     const decision = table.rules.decide(this.state, actor, command, dice);
     if ("refusal" in decision) return decision.refusal;
+    const timestamp = this.now;
     for (const event of decision.events) {
       this.envelopes.push({
         actor,
         seq: this.envelopes.length + 1,
-        timestamp: "2026-10-21T19:00:00.000Z",
+        timestamp,
         type: event.type,
         payload: event.payload,
       });
     }
+    this.clock += 1000;
     return undefined;
   }
 

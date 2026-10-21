@@ -238,6 +238,30 @@ describe("importBestiary", () => {
       }),
   );
 
+  effect("a name too long for an id is reported with the id it made, not as a file name", () =>
+    Effect.gen(function* () {
+      const from = yield* tempDir;
+      const into = yield* tempDir;
+      const rat = yield* Effect.promise(() => statblock("Rats/Statblocks/Gutter Rat.json"));
+      const name = "Gutter Rat of the Long Drowned Northern Sewers";
+      yield* Effect.promise(() =>
+        writeFile(join(from, "rat.json"), JSON.stringify({ ...(rat as object), name })),
+      );
+      const report = yield* importBestiary({ from, into });
+      expect(report.imported).toEqual([]);
+      expect(report.failed).toEqual([
+        {
+          name,
+          source: "rat.json",
+          problems: [
+            `id "gutter-rat-of-the-long-drowned-northern-sewers" (made from the name) must be at most 40 characters`,
+            "name must be one line of up to 40 characters",
+          ],
+        },
+      ]);
+    }),
+  );
+
   effect("reads one file as well as a folder, and reports files that aren't JSON", () =>
     Effect.gen(function* () {
       const from = yield* tempDir;

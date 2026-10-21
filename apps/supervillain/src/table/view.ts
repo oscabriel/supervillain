@@ -22,6 +22,36 @@ export interface Present {
 // The band's view is built by the rules (game/drawSteel/view.ts), which never import the table.
 export type { Combatant, CombatView } from "../game/index.ts";
 
+/** One token on the map. */
+export interface MapToken {
+  /** The combatant id it stands for (`vex`, `goblins-a`). */
+  readonly id: string;
+  /** One or two characters drawn in the cell, e.g. "V" or "g2"; commands take it as a name. */
+  readonly mark: string;
+  /** The hero's or creature's name, for `/view <who>`. */
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly side: "heroes" | "director";
+  readonly mine: boolean;
+  readonly acting: boolean;
+  readonly dead: boolean;
+}
+
+/** The text map (ASSESSMENT Q7): terrain, tokens, and the squares the acting or chosen token can reach. */
+export interface MapView {
+  readonly name: string;
+  readonly width: number;
+  readonly height: number;
+  /** One string per row, one terrain character per square ("." floor, "#" wall, "~" difficult…). */
+  readonly terrain: ReadonlyArray<string>;
+  readonly tokens: ReadonlyArray<MapToken>;
+  /** Squares to highlight, e.g. where the acting creature can move this turn. */
+  readonly reach: ReadonlyArray<{ readonly x: number; readonly y: number }>;
+  /** What the highlight means, for the hint row ("Vex can reach: speed 5"). */
+  readonly reachLabel?: string;
+}
+
 /**
  * Everything the table needs from the host, for one seat. The App never sees the room,
  * the log or Effect: the host builds a TableView per seat and the App only reads and submits.
@@ -47,4 +77,6 @@ export interface TableView {
   readonly joinHint?: string;
   /** The Draw Steel band. Absent until the host provides it; undefined while there is no party or combat. */
   readonly combat?: Accessor<CombatView | undefined>;
+  /** The text map. Absent until the host provides it; undefined while no map is loaded. */
+  readonly map?: Accessor<MapView | undefined>;
 }

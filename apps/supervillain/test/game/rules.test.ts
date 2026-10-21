@@ -463,6 +463,8 @@ describe("replay", () => {
         { seq: 4, actor: GM, kind: "narration", text: "The door creaks." },
         { seq: 5, actor: BOB, kind: "emote", text: "waves" },
       ],
+      undo: [],
+      redo: [],
       core: { names: { [ALICE]: "Vex" } },
       ds: rules.initial.ds,
     });

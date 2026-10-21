@@ -108,6 +108,19 @@ describe("hero files", () => {
     ]);
   });
 
+  test("a file name too long to be an id says so, apart from one with the wrong letters", () => {
+    const long = "a-very-long-hero-file-name-past-forty-chars";
+    const error = failure(decodeHero(`heroes/${long}.yaml`, vex));
+    expect(error.message).toBe(
+      `heroes/${long}.yaml: the file name (the id) must be at most 40 characters`,
+    );
+    expect(failure(decodeHero("heroes/Vex.yaml", vex)).message).toBe(
+      "heroes/Vex.yaml: the file name is the id, so it must be lowercase letters, digits and dashes",
+    );
+    const forty = "x".repeat(40);
+    expect(Effect.runSync(decodeHero(`heroes/${forty}.yaml`, vex)).id).toBe(forty);
+  });
+
   test("a file that isn't YAML, or isn't a set of fields, says so", () => {
     expect(failure(decodeHero("heroes/vex.yaml", "name: [Vex\n")).message).toStartWith(
       "heroes/vex.yaml: isn't valid YAML",

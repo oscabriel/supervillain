@@ -51,6 +51,8 @@ describe("supervillain check", () => {
           seq: 5,
           actors: ["gm", vex, guest],
           feed: "[4 lines]",
+          undo: "[0 batches]",
+          redo: "[0 batches]",
           core: { names: { [vex]: "Vex" } },
           ds: {
             heroes: [],

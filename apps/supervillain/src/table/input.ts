@@ -218,22 +218,50 @@ export const NAME_PROMPT = "what should the table call you?";
 export const modeFor = (me: string, myName: string | undefined): Mode =>
   myName === undefined && me !== GM ? "name" : "chat";
 
-/** What a submitted line does: leave, toggle the debug pane, or go to the host. */
+/** How a seat with a map shares the screen: map and feed both, the map first, or the feed alone. */
+export type Layout = "both" | "map" | "feed";
+
+const LAYOUTS: ReadonlyArray<Layout> = ["map", "feed", "both"];
+
+/**
+ * What a submitted line does: leave, toggle the debug pane, change the layout, centre the map on a
+ * square or token (`/view <square|who>`, as typed), or go to the host.
+ */
 export type Intent =
   | { readonly kind: "quit" }
   | { readonly kind: "state" }
+  /** `toggle` shows or hides the map. */
+  | { readonly kind: "view"; readonly layout: Layout | "toggle" }
+  | { readonly kind: "focus"; readonly at: string }
   | { readonly kind: "send"; readonly line: string };
 
 /**
- * The table runs /quit itself, and /state on the GM's seat (anyone else's goes to the host, which
- * refuses it). In name mode, a plain line is sent as `/name <line>`.
+ * The table runs /quit and /view itself, and /state on the GM's seat (anyone else's goes to the
+ * host, which refuses it). In name mode, a plain line is sent as `/name <line>`.
  */
 export function intentFor(line: string, mode: Mode, me = ""): Intent {
   const word = line.split(" ", 1)[0]!.toLowerCase();
   if (word === "/quit") return { kind: "quit" };
   if (word === "/state" && me === GM) return { kind: "state" };
+  if (word === "/view") {
+    const arg = line.slice(word.length).trim();
+    if (arg === "") return { kind: "view", layout: "toggle" };
+    const layout = LAYOUTS.find((l) => l === arg.toLowerCase());
+    return layout === undefined ? { kind: "focus", at: arg } : { kind: "view", layout };
+  }
   if (mode === "name" && !line.startsWith("/")) return { kind: "send", line: `/name ${line}` };
   return { kind: "send", line };
+}
+
+/** Completions for the table's own commands, as whole replacement lines like the host's. */
+export function tableCompletions(line: string): ReadonlyArray<string> {
+  const start = line.trimStart().toLowerCase();
+  if (!start.startsWith("/")) return [];
+  const space = start.indexOf(" ");
+  if (space < 0) return "/view".startsWith(start) ? ["/view "] : [];
+  if (start.slice(0, space) !== "/view") return [];
+  const arg = start.slice(space + 1).trimStart();
+  return LAYOUTS.filter((l) => l.startsWith(arg)).map((l) => `/view ${l}`);
 }
 
 /** The parts of an OpenTUI KeyEvent the line reads. */

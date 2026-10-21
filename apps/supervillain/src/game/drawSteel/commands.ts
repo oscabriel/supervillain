@@ -1,5 +1,6 @@
 import type { CommandSpec, CommandSpecs, Refused } from "../module.ts";
 import { cleanText, lengthOf, quote } from "../text.ts";
+import { type MapGrid, parseSquare, type Square } from "./map.ts";
 import type { HeroSheet, StatBlock } from "./sheets.ts";
 import {
   type ConditionName,
@@ -15,6 +16,17 @@ import {
   resolve,
   type Side,
 } from "./state.ts";
+
+/** A push, pull or slide: `distance` squares, before the target's stability. */
+export interface ForcedCommand<K extends "push" | "pull" | "slide"> {
+  readonly type: K;
+  readonly who: string;
+  readonly distance: number;
+  /** Who does the moving, as typed: the acting creature or the player's hero if left out. */
+  readonly from?: string;
+  /** Where it goes: required for a slide; for a push or pull, how far along its line. */
+  readonly to?: Square;
+}
 
 export type DsCommand =
   | {
@@ -86,7 +98,26 @@ export type DsCommand =
       readonly damageType?: string;
       /** For a minion squad: how many of its minions strike the target together. */
       readonly minions?: number;
-    };
+    }
+  | {
+      readonly type: "map";
+      /** The map file's id; absent for /map off. */
+      readonly id?: string;
+      /** The grid, which the host reads from `maps/<id>.txt` and puts here; decide refuses without it. */
+      readonly grid?: MapGrid;
+    }
+  | { readonly type: "place"; readonly who: string; readonly at: Square }
+  | {
+      readonly type: "move";
+      readonly who: string;
+      readonly to: Square;
+      /** The hero's main action goes on moving too: a second speed's worth this turn. */
+      readonly main?: boolean;
+    }
+  | { readonly type: "dist"; readonly from: string; readonly to: string }
+  | ForcedCommand<"push">
+  | ForcedCommand<"pull">
+  | ForcedCommand<"slide">;
 
 /** The most a single /dmg, /heal or /temp may move. */
 export const AMOUNT_MAX = 999;
@@ -508,6 +539,120 @@ const fs: Spec<"fs"> = {
   complete: targetThen((slice, _who, typed, actor) => completeWho(slice, typed, actor)),
 };
 
+/** The most squares one push, pull or slide may name. */
+const FORCED_MAX = 20;
+
+const notASquare = (typed: string): Refused => ({
+  refusal: `'${quote(typed)}' isn't a square like c5.`,
+});
+
+const map: Spec<"map"> = {
+  usage: "/map <map id>|off",
+  summary: "Load a map from the campaign's maps folder, or put it away.",
+  gmOnly: true,
+  parse: (args) => {
+    const [id, extra] = words(args);
+    if (id === undefined || extra !== undefined) return usage(map);
+    return id.toLowerCase() === "off" ? { type: "map" } : { type: "map", id: id.toLowerCase() };
+  },
+  complete: (_slice, partial) => startingWith(["off"], partial.trim()),
+};
+
+const place: Spec<"place"> = {
+  usage: "/place <who> <square>",
+  summary: "Put a token on the map at a square like c5.",
+  gmOnly: false,
+  parse: (args) => {
+    const [who, typed, extra] = words(args);
+    if (who === undefined || typed === undefined || extra !== undefined) return usage(place);
+    const square = parseSquare(typed);
+    return square === undefined ? notASquare(typed) : { type: "place", who, at: square };
+  },
+  complete: targetThen(),
+};
+
+const move: Spec<"move"> = {
+  usage: "/move <who> <square> [main]",
+  summary:
+    "Move by the shortest path, up to speed a turn; main to move again with the main action.",
+  gmOnly: false,
+  parse: (args) => {
+    const [who, typed, extra, more] = words(args);
+    if (who === undefined || typed === undefined || more !== undefined) return usage(move);
+    if (extra !== undefined && extra.toLowerCase() !== "main") return usage(move);
+    const square = parseSquare(typed);
+    if (square === undefined) return notASquare(typed);
+    return extra === undefined
+      ? { type: "move", who, to: square }
+      : { type: "move", who, to: square, main: true };
+  },
+  complete: targetThen((_slice, _who, typed) => {
+    const word = /^(\S+\s+)(\S*)$/.exec(typed);
+    return word === null ? [] : startingWith(["main"], word[2]!).map((m) => `${word[1]}${m}`);
+  }),
+};
+
+const dist: Spec<"dist"> = {
+  usage: "/dist <who|square> <who|square>",
+  summary: "Count the squares between tokens or squares.",
+  gmOnly: false,
+  parse: (args) => {
+    const [from, to, extra] = words(args);
+    if (from === undefined || to === undefined || extra !== undefined) return usage(dist);
+    return { type: "dist", from, to };
+  },
+  complete: targetThen((slice, _who, typed, actor) => completeWho(slice, typed, actor)),
+};
+
+const forced = <K extends "push" | "pull" | "slide">(type: K, summary: string): Spec<K> => {
+  const spec: Spec<K> = {
+    usage:
+      type === "slide"
+        ? `/slide <who> <n> to <square> [from <who>]`
+        : `/${type} <who> <n> [from <who>] [to <square>]`,
+    summary,
+    gmOnly: false,
+    parse: (args) => {
+      const [who, n, ...rest] = words(args);
+      if (who === undefined || n === undefined || !/^\d+$/.test(n)) return usage(spec);
+      const distance = Number(n);
+      if (distance < 1 || distance > FORCED_MAX)
+        return { refusal: `Force move 1 to ${FORCED_MAX} squares at a time.` };
+      let from: string | undefined;
+      let to: Square | undefined;
+      for (let i = 0; i < rest.length; i += 2) {
+        const word = rest[i]!.toLowerCase();
+        const value = rest[i + 1];
+        if (value === undefined) return usage(spec);
+        if (word === "from" && from === undefined) from = value;
+        else if (word === "to" && to === undefined) {
+          to = parseSquare(value);
+          if (to === undefined) return notASquare(value);
+        } else return usage(spec);
+      }
+      if (type === "slide" && to === undefined)
+        return { refusal: `Say where: /slide ${who} ${n} to <square>.` };
+      return {
+        type,
+        who,
+        distance,
+        ...(from !== undefined && { from }),
+        ...(to !== undefined && { to }),
+      } as Extract<DsCommand, { readonly type: K }>;
+    },
+    complete: targetThen((slice, _who, typed, actor) => {
+      const source = /^(\d+\s+(?:.*\s)?from\s+)(\S*)$/i.exec(typed);
+      if (source !== null)
+        return completeWho(slice, source[2]!, actor).map((id) => `${source[1]}${id}`);
+      const word = /^(\d+\s+(?:.*\s)?)(\S*)$/.exec(typed);
+      return word === null
+        ? []
+        : startingWith(["from", "to"], word[2]!).map((w) => `${word[1]}${w}`);
+    }),
+  };
+  return spec;
+};
+
 export const commands: CommandSpecs<DsCommand, DrawSteelState> = {
   hero,
   play,
@@ -533,7 +678,33 @@ export const commands: CommandSpecs<DsCommand, DrawSteelState> = {
   token,
   victory,
   fs,
+  map,
+  place,
+  move,
+  dist,
+  push: forced("push", "Push straight away from the source, less stability."),
+  pull: forced("pull", "Pull straight toward the source, less stability."),
+  slide: forced("slide", "Slide any way to a square, less stability."),
 };
+
+/** The map file a /map needs the host to read, `maps/<id>.txt`, if it hasn't been read yet. */
+export function mapNeed<C extends { readonly type: string }>(command: C): string | undefined {
+  const c = command as unknown as DsCommand;
+  return c.type === "map" && c.id !== undefined && c.grid === undefined ? c.id : undefined;
+}
+
+/**
+ * Puts the grid the host read (see `readMapText`) into the /map that needed it, with the id of
+ * the file it came from when the host found it by a start of its id.
+ */
+export function withMapGrid<C extends { readonly type: string }>(
+  command: C,
+  grid: MapGrid,
+  id?: string,
+): C {
+  const c = command as unknown as DsCommand;
+  return (c.type === "map" ? { ...c, grid, ...(id !== undefined && { id }) } : c) as unknown as C;
+}
 
 /** What the host must look up before a command reaches the room. */
 export type HostNeed =

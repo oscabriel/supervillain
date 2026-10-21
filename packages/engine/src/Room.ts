@@ -39,6 +39,12 @@ export const makeRoom = <S, C>(
     }
     const state = yield* SubscriptionRef.make(replayed.state);
     let seq = log.envelopes.length;
+    // Every submission is stamped later than the one before, by a millisecond if the clock hasn't
+    // moved (or went back), so a submission is told apart by its actor and timestamp alone.
+    let last = log.envelopes.reduce((latest, e) => {
+      const t = Date.parse(e.timestamp);
+      return Number.isNaN(t) ? latest : Math.max(latest, t);
+    }, Number.NEGATIVE_INFINITY);
     const writer = yield* Semaphore.make(1);
     // A failed write may have left part of a line on disk, so the room stops writing until it is reopened.
     let halted: string | undefined;
@@ -50,7 +56,9 @@ export const makeRoom = <S, C>(
         const current = yield* SubscriptionRef.get(state);
         const random = yield* Random.Random;
         const dice: Dice = (sides) => Math.floor(random.nextDoubleUnsafe() * sides) + 1;
-        const timestamp = DateTime.formatIso(yield* DateTime.now);
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        const stamp = now > last ? now : last + 1;
+        const timestamp = new Date(stamp).toISOString();
         // Decide and apply before writing: a rule that throws leaves the log and the state untouched.
         const result = yield* Effect.try({
           try: () => {
@@ -76,6 +84,7 @@ export const makeRoom = <S, C>(
           ),
         );
         seq += envelopes.length;
+        last = stamp;
         yield* SubscriptionRef.set(state, next);
         return envelopes;
         // Once it holds the permit, a submit runs to the end: a caller leaving mid-write

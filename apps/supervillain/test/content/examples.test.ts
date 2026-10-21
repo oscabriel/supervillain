@@ -54,4 +54,17 @@ describe("examples/campaign", () => {
       }
     }),
   );
+
+  effect("the map loads: the ford road, with walls and difficult terrain to fight around", () =>
+    Effect.gen(function* () {
+      const { ids, ford } = yield* Effect.gen(function* () {
+        const content = yield* CampaignContent;
+        return { ids: yield* content.maps, ford: yield* content.map("ford-road") };
+      }).pipe(Effect.provide(CampaignContent.layer(example)));
+      expect(ids).toEqual(["ford-road"]);
+      expect(ford.grid.name).toBe("The Ford Road");
+      const cells = ford.grid.terrain.join("");
+      for (const terrain of [".", "#", "~", " "]) expect(cells).toContain(terrain);
+    }),
+  );
 });

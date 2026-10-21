@@ -78,6 +78,15 @@ describe("compose", () => {
       ["token", false],
       ["victory", true],
       ["fs", true],
+      ["map", true],
+      ["place", false],
+      ["move", false],
+      ["dist", false],
+      ["push", false],
+      ["pull", false],
+      ["slide", false],
+      ["undo", false],
+      ["redo", false],
     ]);
   });
 
@@ -87,6 +96,8 @@ describe("compose", () => {
       seq: 0,
       actors: [],
       feed: [],
+      undo: [],
+      redo: [],
       core: { names: {} },
       counter: { n: 0 },
     });
@@ -98,6 +109,8 @@ describe("compose", () => {
       "roll",
       "bump",
       "reset",
+      "undo",
+      "redo",
     ]);
     const start = table.rules.initial;
     expect(table.rules.decide(start, ALICE, { type: "reset" }, fixedDice())).toEqual({
@@ -120,6 +133,8 @@ describe("compose", () => {
         { seq: 2, actor: ALICE, kind: "name", text: "abcdefgh is now Vex" },
         { seq: 4, actor: GM, kind: "counter", text: "bumped" },
       ],
+      undo: [],
+      redo: [],
       core: { names: { [ALICE]: "Vex" } },
       counter: { n: 1 },
     });

@@ -21,6 +21,13 @@ export const color = {
   winded: "#e5c07b",
   dying: "#ff5f5f",
   mineBg: "#3e4452",
+  /** The map's terrain: greys and one muted olive, never a token's colour. */
+  floor: "#5c6370",
+  wall: "#8a8a8a",
+  difficult: "#87875f",
+  terrain: "#a8a8a8",
+  /** The tint under squares the acting token can reach, and under the hint row's reach label. */
+  reach: "#1f3d3d",
 } as const;
 
 /** How a feed line of one kind looks: how it reads (from its module) and its colours. */

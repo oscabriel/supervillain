@@ -12,19 +12,24 @@ const BESTIARY = join(import.meta.dir, "../content/fixtures/bestiary");
 const list = (dir: string) => Effect.promise(async () => (await readdir(dir)).toSorted());
 
 describe("supervillain new", () => {
-  effect("makes a campaign folder its owner alone can read, with heroes/ and monsters/", () =>
-    Effect.gen(function* () {
-      const dir = join(yield* tempDir, "den");
-      const made = yield* cli(["new", dir]);
-      expect(made).toMatchObject({ exitCode: 0, stderr: "" });
-      expect(made.stdout).toStartWith(`supervillain: made ${dir} with heroes/ and monsters/\n`);
-      expect(yield* list(dir)).toEqual(["README.md", "heroes", "monsters"]);
-      expect(yield* list(join(dir, "heroes"))).toEqual([]);
-      expect((yield* Effect.promise(() => stat(dir))).mode & 0o777).toBe(0o700);
-      expect(yield* Effect.promise(() => readFile(join(dir, "README.md"), "utf8"))).toContain(
-        "heroes/<id>.yaml",
-      );
-    }),
+  effect(
+    "makes a campaign folder its owner alone can read, with heroes/, monsters/ and maps/",
+    () =>
+      Effect.gen(function* () {
+        const dir = join(yield* tempDir, "den");
+        const made = yield* cli(["new", dir]);
+        expect(made).toMatchObject({ exitCode: 0, stderr: "" });
+        expect(made.stdout).toStartWith(
+          `supervillain: made ${dir} with heroes/, monsters/ and maps/\n`,
+        );
+        expect(yield* list(dir)).toEqual(["README.md", "heroes", "maps", "monsters"]);
+        expect(yield* list(join(dir, "heroes"))).toEqual([]);
+        expect(yield* list(join(dir, "maps"))).toEqual([]);
+        expect((yield* Effect.promise(() => stat(dir))).mode & 0o777).toBe(0o700);
+        const readme = yield* Effect.promise(() => readFile(join(dir, "README.md"), "utf8"));
+        expect(readme).toContain("heroes/<id>.yaml");
+        expect(readme).toContain("maps/<id>.txt");
+      }),
   );
 
   effect("copies the sample campaign with --example", () =>
@@ -33,6 +38,7 @@ describe("supervillain new", () => {
       expect((yield* cli(["new", dir, "--example"])).exitCode).toBe(0);
       expect(yield* list(join(dir, "heroes"))).toEqual(yield* list(join(SAMPLE, "heroes")));
       expect(yield* list(join(dir, "monsters"))).toEqual(yield* list(join(SAMPLE, "monsters")));
+      expect(yield* list(join(dir, "maps"))).toEqual(["ford-road.txt"]);
     }),
   );
 

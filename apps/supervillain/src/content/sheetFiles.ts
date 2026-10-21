@@ -1,6 +1,11 @@
 import { basename, extname } from "node:path";
 import { Effect, Schema, SchemaIssue } from "effect";
-import { decodeHeroSheet, decodeStatBlock, sheetProblems } from "../game/drawSteel/schema.ts";
+import {
+  decodeHeroSheet,
+  decodeStatBlock,
+  ID_MAX,
+  sheetProblems,
+} from "../game/drawSteel/schema.ts";
 import type {
   Ability,
   Characteristic,
@@ -270,10 +275,13 @@ const usable =
     decode: (raw: unknown) => A | { refusal: string },
   ) =>
   (sheet: A): Effect.Effect<A, SheetInvalid> => {
+    // The id is the file name, so a problem with it is said of the file name.
     const problems = sheetProblems(sheet).map(({ field, problem }) =>
-      field === "id"
-        ? "the file name is the id, so it must be lowercase letters, digits and dashes"
-        : `${field} ${problem}`,
+      field !== "id"
+        ? `${field} ${problem}`
+        : problem === `must be at most ${ID_MAX} characters`
+          ? `the file name (the id) ${problem}`
+          : `the file name is the id, so it ${problem}`,
     );
     if (problems.length > 0) return Effect.fail(invalid(file, problems));
     // The same gate decide runs; anything it still refuses is a gap between the two schemas.

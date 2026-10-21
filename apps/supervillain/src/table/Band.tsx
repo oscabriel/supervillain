@@ -37,18 +37,28 @@ export function Band(props: {
   joinHint?: string;
   combat?: CombatView | undefined;
   maxHeight: number;
+  /** A reply pane shares the screen: creatures give way and no hero's row is cut. */
+  heroesWhole?: boolean;
 }) {
   return (
     <Show when={props.combat} fallback={<Presence {...props} />}>
-      {(combat) => <Combat combat={combat()} maxHeight={props.maxHeight} />}
+      {(combat) => (
+        <Combat
+          combat={combat()}
+          maxHeight={props.maxHeight}
+          heroesWhole={props.heroesWhole ?? false}
+        />
+      )}
     </Show>
   );
 }
 
-function Combat(props: { combat: CombatView; maxHeight: number }) {
+function Combat(props: { combat: CombatView; maxHeight: number; heroesWhole: boolean }) {
   const size = useTerminalDimensions();
   const layout = () =>
-    bandLayout(props.combat, size().width - BAND_FRAME.width, props.maxHeight - BAND_FRAME.height);
+    bandLayout(props.combat, size().width - BAND_FRAME.width, props.maxHeight - BAND_FRAME.height, {
+      heroesWhole: props.heroesWhole,
+    });
   return (
     <box
       border

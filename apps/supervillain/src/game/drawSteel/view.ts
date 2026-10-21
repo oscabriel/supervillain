@@ -9,6 +9,7 @@ import {
   everyone,
   type Hero,
   heroHealth,
+  marks,
   minionsLeft,
   perMinion,
   nextSide,
@@ -44,6 +45,8 @@ export interface Combatant {
   readonly acting: boolean;
   /** Whether this seat's player plays it. */
   readonly mine: boolean;
+  /** Its token's mark while it's on the map ("b1"), which commands also take as its name. */
+  readonly mark?: string;
 }
 
 /** The Draw Steel band: initiative and Stamina meters while a combat runs, else the party. */
@@ -67,14 +70,17 @@ function combatant(
   who: Who,
   actor: string,
   labelOf?: (actor: string) => string,
+  marked?: ReadonlyMap<string, string>,
 ): Combatant {
   const { combat } = slice;
   const acting = combat.acting === who.id;
+  const mark = slice.map?.tokens[who.id] === undefined ? undefined : marked?.get(who.id);
   const shared = {
     id: who.id,
     side: sideOf(who),
     acted: combat.acted.includes(who.id) && !acting,
     acting,
+    ...(mark !== undefined && { mark }),
   };
   if (who.kind === "hero") {
     const h = who.hero;
@@ -135,6 +141,7 @@ export function combatView(
   if (!combat.active && slice.heroes.length === 0) return undefined;
   const shown = combat.active ? everyone(slice) : everyone(slice).filter((w) => w.kind === "hero");
   const leading = combat.first ?? "heroes";
+  const marked = slice.map === undefined ? undefined : marks(slice);
   const ordered = [
     ...shown.filter((w) => sideOf(w) === leading),
     ...shown.filter((w) => sideOf(w) !== leading),
@@ -151,7 +158,7 @@ export function combatView(
     malice: slice.malice,
     heroTokens: slice.tokens,
     ...(victories !== undefined && { victories }),
-    combatants: ordered.map((w) => combatant(slice, w, actor, labelOf)),
+    combatants: ordered.map((w) => combatant(slice, w, actor, labelOf, marked)),
   };
 }
 

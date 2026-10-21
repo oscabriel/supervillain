@@ -31,6 +31,21 @@ export interface BandLayout {
   readonly lines: ReadonlyArray<Line>;
   /** Combatants left out for lack of room, shown as `+N more`. */
   readonly more: number;
+  /**
+   * The fewest lines that hold every hero's row whole and the creature acting, if one is, with
+   * every other creature counted in `more`: what a band beside a reply pane must keep.
+   */
+  readonly keepLines: number;
+}
+
+export interface BandOptions {
+  /**
+   * Never cut a hero's row to fit: creatures pair up, then the dead line goes, then creatures are
+   * counted in `more`. For a band sharing the screen with a reply pane, which takes its rows from
+   * the creatures and never from the heroes. Without it, long rows give up their last details so
+   * every combatant still shows.
+   */
+  readonly heroesWhole?: boolean;
 }
 
 /** Cells in a Stamina meter: `▐████░░▌` is 14 of 21. */
@@ -140,14 +155,34 @@ function marker(c: Combatant): Segment {
   return c.acted ? { text: "✓ ", tone: "dim" } : { text: "· ", tone: "dim" };
 }
 
-/** The head carries the health word, so no cut ever leaves winded or dying to colour alone. */
-function cellOf(c: Combatant, combat: boolean, nameWidth: number, numberWidth: number): Cell {
+/** Columns a token's mark takes before a name, with its space: "b1 ". */
+const MARK = 3;
+
+/**
+ * The head carries the health word, so no cut ever leaves winded or dying to colour alone. With
+ * `marks`, every head leaves room for a token's mark before the name, so names and meters line up.
+ */
+function cellOf(
+  c: Combatant,
+  combat: boolean,
+  nameWidth: number,
+  numberWidth: number,
+  marks = false,
+): Cell {
   const health: Tone = c.health ?? "healthy";
   const name = label(c, nameWidth);
   const n = filled(c);
   const said = healthText(c);
   const head: Segment[] = [
     ...(combat ? [marker(c)] : []),
+    ...(marks
+      ? [
+          {
+            text: (c.mark ?? "").padEnd(MARK),
+            tone: c.health === "dead" ? ("dead" as const) : c.side,
+          },
+        ]
+      : []),
     { text: name, tone: c.health === "dead" ? "dead" : c.side, ...(c.mine ? { mine: true } : {}) },
     { text: " ".repeat(Math.max(0, nameWidth - textWidth(name)) + 1), tone: "text" },
     { text: `▐${"█".repeat(n)}${"░".repeat(METER - n)}▌`, tone: health },
@@ -165,7 +200,7 @@ function cellOf(c: Combatant, combat: boolean, nameWidth: number, numberWidth: n
       ? [{ text: `${c.surges} surge${c.surges === 1 ? "" : "s"}`, tone: "text" as const }]
       : []),
   ];
-  return { head, details, indent: (combat ? 2 : 0) + nameWidth + 1 };
+  return { head, details, indent: (combat ? 2 : 0) + (marks ? MARK : 0) + nameWidth + 1 };
 }
 
 /** The cell on one line: head, then the details after ` · `. */
@@ -218,6 +253,25 @@ function pack(
   return rows;
 }
 
+/**
+ * Heroes and creatures in turn order, laid out with creatures' names shortened so they pair up in
+ * half the width, and heroes in whole rows that wrap rather than lose their tail.
+ */
+function mixedLines(
+  shown: ReadonlyArray<Combatant>,
+  active: boolean,
+  width: number,
+  column: number,
+): ReadonlyArray<Line> {
+  const halves = column >= MIN_COLUMN;
+  const cells = cellsOf(shown, active, (c) => (halves && c.side === "director" ? column : width));
+  return pack(
+    cells.map((cell, i) => (shown[i]!.side === "director" ? fit(cell, column) : flat(cell))),
+    column,
+    (i) => wrap(cells[i]!, width),
+  );
+}
+
 /** Who stays when not everyone fits: the one acting, then the seat's own, then the living. */
 function keep(combatants: ReadonlyArray<Combatant>, room: number): ReadonlyArray<number> {
   const rank = (c: Combatant) => (c.acting ? 0 : c.mine ? 1 : c.health === "dead" ? 3 : 2);
@@ -247,12 +301,13 @@ function cellsOf(
 ): ReadonlyArray<Cell> {
   const numberWidth = Math.max(0, ...shown.map((c) => numbers(c).length));
   const natural = Math.max(0, ...shown.map((c) => textWidth(label(c, NAME_MAX))));
-  const bare = shown.map((c) => cellOf(c, combat, 0, numberWidth));
+  const marks = shown.some((c) => c.mark !== undefined);
+  const bare = shown.map((c) => cellOf(c, combat, 0, numberWidth, marks));
   const fits = shown.map(
     (c, i) => room(c) - (bare[i]!.details.length > 0 ? 2 : 0) - (widthOf(bare[i]!.head) - 1),
   );
   const nameWidth = Math.max(NAME_MIN, Math.min(natural, ...fits));
-  return shown.map((c) => cellOf(c, combat, nameWidth, numberWidth));
+  return shown.map((c) => cellOf(c, combat, nameWidth, numberWidth, marks));
 }
 
 /** The dead creatures, folded into one line: "dead: Bandit Cutpurse A, Bandit Slinger A". */
@@ -271,9 +326,16 @@ const fallenLine = (fallen: ReadonlyArray<Combatant>, width: number): Line =>
  * heroes keep whole rows; then long rows drop their last details for `…`; and when even that
  * overflows, every cell is fitted to half the width and whoever still doesn't fit is counted in
  * `more`. Dead creatures fold into one `dead:` line at the end, the first thing to go. Outside
- * combat only the heroes show, without turn markers.
+ * combat only the heroes show, without turn markers. With `heroesWhole`, no hero row is cut:
+ * after the pairing, the dead line goes and then creatures are counted in `more`, the one acting
+ * last; only when the heroes alone overflow does the last resort above apply.
  */
-export function bandLayout(view: CombatView, width: number, rows: number): BandLayout {
+export function bandLayout(
+  view: CombatView,
+  width: number,
+  rows: number,
+  options: BandOptions = {},
+): BandLayout {
   const title = titleOf(view);
   const all = view.active ? view.combatants : view.combatants.filter((c) => c.side === "heroes");
   const fallen = all.filter((c) => c.side === "director" && c.health === "dead");
@@ -282,6 +344,8 @@ export function bandLayout(view: CombatView, width: number, rows: number): BandL
   const column = Math.floor((width - GAP) / 2);
   const halves = column >= MIN_COLUMN;
   const tail = fallen.length === 0 ? [] : [fallenLine(fallen, width)];
+  const essential = shown.filter((c) => c.side === "heroes" || c.acting);
+  const keepLines = mixedLines(essential, view.active, width, column).length;
 
   const full = cellsOf(shown, view.active, () => width);
   const mixed = cellsOf(shown, view.active, (c) =>
@@ -289,23 +353,41 @@ export function bandLayout(view: CombatView, width: number, rows: number): BandL
   );
   const attempts: ReadonlyArray<() => ReadonlyArray<Line>> = [
     () => pack(full.map(flat), column, (i) => wrap(full[i]!, width)),
-    () =>
-      pack(
-        mixed.map((cell, i) => (shown[i]!.side === "director" ? fit(cell, column) : flat(cell))),
-        column,
-        (i) => wrap(mixed[i]!, width),
-      ),
-    () => pack(full.map(flat), column, (i) => [fit(full[i]!, width)]),
-    () =>
-      pack(
-        mixed.map((cell, i) => (shown[i]!.side === "director" ? fit(cell, column) : flat(cell))),
-        column,
-        (i) => [fit(mixed[i]!, width)],
-      ),
+    () => mixedLines(shown, view.active, width, column),
+    ...(options.heroesWhole
+      ? []
+      : [
+          () => pack(full.map(flat), column, (i) => [fit(full[i]!, width)]),
+          () =>
+            pack(
+              mixed.map((cell, i) =>
+                shown[i]!.side === "director" ? fit(cell, column) : flat(cell),
+              ),
+              column,
+              (i) => [fit(mixed[i]!, width)],
+            ),
+        ]),
   ];
   for (const attempt of attempts) {
     const lines = [...attempt(), ...tail];
-    if (lines.length <= room) return { title, lines, more: 0 };
+    if (lines.length <= room) return { title, lines, more: 0, keepLines };
+  }
+
+  if (options.heroesWhole) {
+    // The dead line goes first, then the creatures least worth watching: the one acting stays longest.
+    const creatures = shown.filter((c) => c.side === "director");
+    const order = creatures.toSorted((a, b) => Number(b.acting) - Number(a.acting));
+    for (let k = creatures.length; k >= 0; k--) {
+      const kept = new Set(order.slice(0, k));
+      const lines = mixedLines(
+        shown.filter((c) => c.side === "heroes" || kept.has(c)),
+        view.active,
+        width,
+        column,
+      );
+      if (lines.length <= room)
+        return { title, lines, more: creatures.length - k + fallen.length, keepLines };
+    }
   }
 
   const fitTo = halves ? column : width;
@@ -313,6 +395,6 @@ export function bandLayout(view: CombatView, width: number, rows: number): BandL
   const kept = keep(shown, halves ? room * 2 : room).map((i) => fit(narrow[i]!, fitTo));
   const lines = pack(kept, column, (i) => [kept[i]!]);
   if (lines.length < room && tail.length > 0)
-    return { title, lines: [...lines, ...tail], more: shown.length - kept.length };
-  return { title, lines, more: shown.length - kept.length + fallen.length };
+    return { title, lines: [...lines, ...tail], more: shown.length - kept.length, keepLines };
+  return { title, lines, more: shown.length - kept.length + fallen.length, keepLines };
 }

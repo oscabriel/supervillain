@@ -9,6 +9,7 @@ import {
   type FeedLine,
   feedLines,
   GM,
+  mapView,
   nameOf,
   tableLabel,
 } from "../game/index.ts";
@@ -81,7 +82,7 @@ const replyText = (reply: Reply): string | undefined =>
 /**
  * Opens one seat: enters presence for the life of the scope and builds the TableView the App
  * reads. Labels are resolved here, from the current names and heroes, every time the feed is
- * projected, and so is this seat's Draw Steel band.
+ * projected, and so are this seat's Draw Steel band and map.
  */
 export const openSeat = (
   options: SeatOptions,
@@ -107,6 +108,7 @@ export const openSeat = (
       }),
       myName: createMemo(() => nameOf(state(), actor)),
       combat: createMemo(() => bandOf(state(), actor)),
+      map: createMemo(() => mapView(state().ds, actor)),
     }));
     yield* Effect.addFinalizer(() => Effect.sync(derived.dispose));
 
@@ -118,6 +120,7 @@ export const openSeat = (
       present: derived.present,
       myName: derived.myName,
       combat: derived.combat,
+      map: derived.map,
       submit: (line) =>
         run(
           runLine(actor, line, "seat", options.rateKey ?? actor).pipe(

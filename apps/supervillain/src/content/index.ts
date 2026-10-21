@@ -1,9 +1,16 @@
-// Hero and monster content at the host edge: the YAML files a GM writes, the loader that reads
-// them from a campaign folder, and the Steel Compendium import. The rules never see a file; the
-// host loads a sheet here and puts it in the command.
-export { CampaignContent, type LoadError } from "./CampaignContent.ts";
+// Content at the host edge: the YAML sheets and text maps a GM writes, the loader that reads them
+// from a campaign folder, and the Steel Compendium import. The rules never see a file; the host
+// loads a sheet or map here and puts it in the command.
+export {
+  CampaignContent,
+  type LoadedMap,
+  type LoadError,
+  type MapLoadError,
+} from "./CampaignContent.ts";
 export {
   ContentReadError,
+  MapInvalid,
+  MapNotFound,
   SheetAmbiguous,
   SheetInvalid,
   SheetKind,
@@ -27,3 +34,4 @@ export {
   importReportText,
   slug,
 } from "./steelCompendium.ts";
+export { decodeMap, MAP_BYTES } from "./mapFiles.ts";

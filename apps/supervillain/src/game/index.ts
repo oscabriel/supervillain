@@ -14,6 +14,8 @@ export {
   type FeedFormat,
   GM,
   type TableCommandSpec,
+  type UndoBatch,
+  type UndoCommand,
 } from "./module.ts";
 export {
   type Combatant,
@@ -21,7 +23,12 @@ export {
   type HostFact,
   type HostNeed,
   hostNeeds,
+  type MapGrid,
+  mapNeed,
+  mapView,
+  readMapText,
   withHostFact,
+  withMapGrid,
 } from "./drawSteel/index.ts";
 export {
   bandOf,

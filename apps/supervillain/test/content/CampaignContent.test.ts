@@ -137,3 +137,146 @@ describe("CampaignContent", () => {
     }),
   );
 });
+
+describe("CampaignContent maps", () => {
+  const ford = "name: The Ford\n..~..\n.#~..\n..~..\n";
+
+  effect("lists maps/<id>.txt by id and loads one by exact id or a unique prefix", () =>
+    Effect.gen(function* () {
+      const dir = yield* campaign({
+        "maps/ford.txt": ford,
+        "maps/forest-edge.txt": "...\n...\n",
+        "maps/notes.md": "not a map",
+        "maps/.hidden.txt": "...",
+      });
+      const [ids, exact, prefix] = yield* withContent(dir, (c) =>
+        Effect.all([c.maps, c.map("FORD"), c.map("forest")]),
+      );
+      expect(ids).toEqual(["ford", "forest-edge"]);
+      expect(exact).toEqual({
+        id: "ford",
+        grid: { name: "The Ford", terrain: ["..~..", ".#~..", "..~.."] },
+      });
+      // No name line: the id is the name.
+      expect(prefix).toEqual({
+        id: "forest-edge",
+        grid: { name: "forest-edge", terrain: ["...", "..."] },
+      });
+    }),
+  );
+
+  effect("a map it can't find, or can't tell apart, names the choices", () =>
+    Effect.gen(function* () {
+      const dir = yield* campaign({ "maps/ford.txt": ford, "maps/forest.txt": "..\n" });
+      const empty = yield* campaign({});
+      const [missing, ambiguous, none] = yield* Effect.all([
+        withContent(dir, (c) => Effect.flip(c.map("cave"))),
+        withContent(dir, (c) => Effect.flip(c.map("fo"))),
+        withContent(empty, (c) => Effect.flip(c.map("ford"))),
+      ]);
+      expect([missing._tag, missing.message]).toEqual([
+        "MapNotFound",
+        `no map "cave" in maps/ (there are: ford, forest)`,
+      ]);
+      expect(ambiguous.message).toBe(`"fo" could be any of these maps: ford, forest`);
+      expect(none.message).toBe(`no map "ford" in maps/ (it has no .txt files)`);
+    }),
+  );
+
+  effect("a file too big, not text, or with a character a cell can't draw names where", () =>
+    Effect.gen(function* () {
+      const dir = yield* campaign({
+        "maps/huge.txt": `${".".repeat(60)}\n`.repeat(200),
+        "maps/tabs.txt": "name: Tabs\n.....\n..\t..\n",
+        "maps/accents.txt": "....\n...é\n",
+        "maps/wide.txt": `${".".repeat(61)}\n`,
+        "maps/bell.txt": "..\x07.\n",
+      });
+      yield* Effect.promise(() =>
+        writeFile(join(dir, "maps/binary.txt"), new Uint8Array([0x2e, 0xff, 0xfe, 0x0a])),
+      );
+      const problems = yield* withContent(dir, (c) =>
+        Effect.forEach(["huge", "tabs", "accents", "wide", "bell", "binary"], (id) =>
+          Effect.flip(c.map(id)).pipe(Effect.map((e) => [e._tag, e.message])),
+        ),
+      );
+      expect(problems).toEqual([
+        [
+          "MapInvalid",
+          "maps/huge.txt is 12 KB; a map file is at most 8 KB (60 columns by 40 rows).",
+        ],
+        [
+          "MapInvalid",
+          "maps/tabs.txt line 3, column 3 is a tab; draw maps with . floor, # wall, ~ difficult terrain and space for outside.",
+        ],
+        [
+          "MapInvalid",
+          'maps/accents.txt line 2, column 4 is "é" (U+00E9); draw maps with . floor, # wall, ~ difficult terrain and space for outside.',
+        ],
+        ["MapInvalid", "maps/wide.txt is 61 columns wide; keep maps to 60 columns and 40 rows."],
+        [
+          "MapInvalid",
+          "maps/bell.txt line 1, column 3 is a control character (U+0007); draw maps with . floor, # wall, ~ difficult terrain and space for outside.",
+        ],
+        ["MapInvalid", "maps/binary.txt isn't UTF-8 text."],
+      ]);
+    }),
+  );
+
+  effect(
+    "only files whose name can be a map id are maps; the rest are named when nothing fits",
+    () =>
+      Effect.gen(function* () {
+        const long = "a".repeat(45);
+        const dir = yield* campaign({
+          "maps/ford.txt": ford,
+          "maps/Cave-Big.TXT": "...\n...\n",
+          "maps/Bad Name.txt": "...\n",
+          [`maps/${long}.txt`]: "...\n",
+        });
+        const [ids, cave, missing] = yield* withContent(dir, (c) =>
+          Effect.all([c.maps, c.map("cave"), Effect.flip(c.map("bad"))]),
+        );
+        expect(ids).toEqual(["cave-big", "ford"]);
+        expect(cave.id).toBe("cave-big");
+        expect(missing.message).toBe(
+          `no map "bad" in maps/ (there are: cave-big, ford); not maps, since a map's file name is its id (lower-case letters, digits and hyphens, at most 40): Bad Name.txt, ${long}.txt`,
+        );
+      }),
+  );
+
+  effect("a letter in the terrain would read as a token, and errors name the file as it is", () =>
+    Effect.gen(function* () {
+      const dir = yield* campaign({
+        "maps/letters.txt": "name: Letters\n..B.x..\n",
+        "maps/Cave-Big.TXT": `${".".repeat(61)}\n`,
+      });
+      const problems = yield* withContent(dir, (c) =>
+        Effect.forEach(["letters", "cave"], (id) =>
+          Effect.flip(c.map(id)).pipe(Effect.map((e) => e.message)),
+        ),
+      );
+      expect(problems).toEqual([
+        'maps/letters.txt line 2, column 3 is "B" (U+0042); draw maps with . floor, # wall, ~ difficult terrain and space for outside.',
+        "maps/Cave-Big.TXT is 61 columns wide; keep maps to 60 columns and 40 rows.",
+      ]);
+    }),
+  );
+
+  effect("reads the file again on every load, so a GM's edit counts at once", () =>
+    Effect.gen(function* () {
+      const dir = yield* campaign({ "maps/ford.txt": ford });
+      const [before, after] = yield* withContent(dir, (c) =>
+        Effect.gen(function* () {
+          const before = yield* c.map("ford");
+          yield* Effect.promise(() =>
+            writeFile(join(dir, "maps/ford.txt"), "name: Dry Ford\n..\n"),
+          );
+          return [before, yield* c.map("ford")] as const;
+        }),
+      );
+      expect(before.grid.name).toBe("The Ford");
+      expect(after.grid).toEqual({ name: "Dry Ford", terrain: [".."] });
+    }),
+  );
+});

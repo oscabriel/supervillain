@@ -2,13 +2,13 @@
 
 A terminal-first virtual tabletop for Draw Steel. Players type `ssh <room>@<host>` and are sitting at a live table, with nothing to install and no account to make. The GM's machine is the authority, and the campaign is a plain append-only log on the GM's disk.
 
-It's being rebuilt small and runs from source for now: chat, names, dice and minimum Draw Steel (a party from hero sheets, monsters from stat blocks, combat with Stamina, conditions, power rolls and resources). `ASSESSMENT.md` is the plan. The previous build is at tag `archive/2026-09-exploration`.
+It's being rebuilt small and runs from source for now: chat, names, dice, minimum Draw Steel (a party from hero sheets, monsters from stat blocks, combat with Stamina, conditions, power rolls and resources), a text map with movement and forced movement, and undo. `ASSESSMENT.md` is the plan. The previous build is at tag `archive/2026-09-exploration`.
 
 ## Run it
 
 You need [Bun](https://bun.sh) and an OpenSSH client. Run these from the repo root after `bun install`.
 
-**Start a campaign.** A campaign is a folder. `new` makes one with `heroes/` and `monsters/` for sheets; `--example` copies the sample campaign instead (four level-1 heroes and the bandits for one fight, see `examples/campaign/README.md`).
+**Start a campaign.** A campaign is a folder. `new` makes one with `heroes/` and `monsters/` for sheets and `maps/` for maps; `--example` copies the sample campaign instead (four level-1 heroes, the bandits and the map for one fight, see `examples/campaign/README.md`).
 
 ```sh
 bun supervillain new ~/campaigns/ford --example
@@ -45,7 +45,7 @@ Your SSH key is your identity, so there's no account. The first time, the table 
 
 Recent OpenSSH clients warn that the session "may be vulnerable to store now, decrypt later attacks". The table's SSH library offers only elliptic-curve key exchange (curve25519 and the NIST curves), not the post-quantum hybrids that warning asks for; the session is still encrypted and the warning is expected.
 
-**One command at a time.** Put an input line after the ssh command and the table runs it as you, prints the result and exits. A refusal goes to stderr with exit status 1. `roll`, `help` and `sheet` work without their slash; commands that take free text (`/name`, `/me`, `/say`) need it, so chat that starts with "me" or "name" stays chat. With no command and no terminal (`ssh host </dev/null`), the table says to use `ssh -t` and exits.
+**One command at a time.** Put an input line after the ssh command and the table runs it as you, prints the result and exits. A refusal goes to stderr with exit status 1. `roll`, `dist`, `undo`, `redo`, `help` and `sheet` work without their slash; commands that take free text (`/name`, `/me`, `/say`) need it, so chat that starts with "me" or "name" stays chat. With no command and no terminal (`ssh host </dev/null`), the table says to use `ssh -t` and exits.
 
 ```sh
 ssh -p 2222 ford@127.0.0.1 roll 2d10+3
@@ -70,9 +70,9 @@ bun supervillain check ~/campaigns/ford
 
 **Content.** Heroes are `heroes/<id>.yaml` and monsters `monsters/<id>.yaml` in the campaign folder; the file name is the id. The fields are listed in `examples/campaign/README.md`. The host reads a file when `/hero` or `/add` brings it in, so you can edit one mid-session and bring it in again. A file with a mistake is refused, naming the file and the field (`heroes/vex.yaml: characteristics.might must be a whole number from -5 to 5`); a file that loads is one the table accepts. Text may run over several lines in the file; the table reads it as one. The sheet goes into the log with the event, so replay never reads a file and a later edit can't change the past.
 
-**Naming things.** Commands name a hero or creature by its id or name, a unique start of either (`bra` for Brann), or a unique start of any word in one (`chief` for `bandit-chief`, `bruiser-1` for `bandit-bruiser-1`). Abilities are named the same way (`smoke` for Strike From Smoke). Added creatures get ids such as `bandit-chief`, `bandit-bruiser-2` and, for a minion squad, `bandit-cutpurse-a`. Tab completes ids, abilities and conditions.
+**Naming things.** Commands name a hero or creature by its id or name, its mark on the map (`B`, `b1`; see below), a unique start of an id or name (`bra` for Brann), or a unique start of any word in one (`chief` for `bandit-chief`, `bruiser-1` for `bandit-bruiser-1`). Abilities are named the same way (`smoke` for Strike From Smoke). Added creatures get ids such as `bandit-chief`, `bandit-bruiser-2` and, for a minion squad, `bandit-cutpurse-a`. Tab completes ids, abilities and conditions.
 
-**Who can do what.** The GM (marked GM below) runs the creatures and can change anyone. A player claims a hero with `/play` and from then on is labelled with it, "Alice (Brann)"; a player changes only their own hero, and starts its turn only when it's the heroes' side to act.
+**Who can do what.** The GM (marked GM below) runs the creatures and can change anyone. A player claims a hero with `/play` and from then on is labelled with it, "Alice (Brann)"; a player changes only their own hero, and starts its turn only when it's the heroes' side to act. The one exception is forced movement, which a player's hero can do to anyone, as abilities do (see the map below).
 
 | Party | |
 |---|---|
@@ -110,6 +110,28 @@ bun supervillain check ~/campaigns/ford
 
 The band above the feed shows the party outside combat, and in combat every combatant in turn order (the side that goes first leading) with a Stamina meter, winded, dying (with the Stamina at which they die) or dead in words, conditions (a dying hero is bleeding) and, for heroes, their resource, Recoveries and surges. Dead creatures fold into one `dead:` line. When the band is short of room, creatures' names shorten first, keeping their number or squad letter (`…Bruiser 1`), before any hero loses a number. Its title has the round, the side to act next, Malice, hero tokens and Victories.
 
+**The map.** A map is a text file, `maps/<id>.txt` in the campaign folder, drawn one character per square: `.` floor, `#` wall, `~` difficult terrain and a space for outside the map, and nothing else, so no square looks like a token. An optional first line `name: The Ford Road` names it; otherwise the id is its name. The file name is the id, so it is lower-case letters, digits and hyphens, at most 40 (`Ford-Road.TXT` is `ford-road`; a file whose name can't be an id isn't a map, and is named when `/map` finds nothing). Rows may be short (the rest of the row is outside), and a map is at most 60 columns by 40 rows and 8 KB. The host reads the file when the GM types `/map <id>` (a unique start of the id is enough), so the GM can fix a map and load it again; a file with a mistake is refused, naming the file and, for a stray character, its line and column (`maps/ford.txt line 3, column 7 is a tab; …`). Like a sheet, the grid goes into the log with the event. The sample campaign has `maps/ford-road.txt`.
+
+A square is its column letter and row number, as on the map's edges: `a1` is the top left, `c5` is the third column of the fifth row, and past `z` the columns go `aa`, `ab` (the map then labels its columns on two rows, the first letter over the second). Tokens are drawn with a mark: a hero's initial in capitals (`B`), a creature's in lower case with its number or squad letter (`b2`, `bA`; past 9, its initial and a digit, `b0`). The band shows each placed combatant's mark before its name, and commands take a mark as a name, case and all (`/dmg b1 3`; in `/dist` a placed token's mark wins over the square it spells). Your own hero is green, the acting creature is underlined, the dead show as `x` and stay where they fell, and the squares the acting creature can still reach this turn (or, outside its turn, where your hero could reach) are tinted, with a bigger dot, or `≈` on difficult terrain.
+
+A map bigger than its pane follows the acting creature, else your own hero, else the spot where the most tokens can be seen at once. An edge row or column has arrows toward tokens past it only when there are some and room for it, and the bottom border names everything out of view. On a seat, `/view <square|who>` centres the map there (`/view k20`, `/view chief`) until the turn passes; `/view map` gives the map the room, folding the band to two lines; `/view feed` hides it, `/view both` splits again (and stops a `/view <square|who>`), and `/view` alone shows or hides it; below 80x24 the map is hidden.
+
+Movement follows Draw Steel's grid. Every step to an adjacent square costs 1, diagonals included, but not past the corner of a wall (the map's edge is no wall). Difficult terrain, and an enemy's square, cost 1 more to enter; allies can be passed through, but nobody ends a move on another living creature. Prone adds 1 per square; slowed makes speed 2, grabbed or restrained 0. `/move` takes the cheapest path. In combat a player moves their hero only on its turn, and that turn's moves add up to no more than its speed; `/move brann j7 main` spends the main action on moving too, for a second speed's worth (Combat, "Main Actions"). The GM moves anyone between turns, and the GM's moves of the acting creature count toward its turn but may go over it; the feed then says "over speed 5".
+
+Forced movement goes the distance less the target's stability, and ignores difficult terrain. A push goes straight away from the source; a pull straight toward it, along whichever of the eight straight lines brings it closest, stopping beside it; a slide goes any way to the square you name. The source is the hero you play, or for the GM the acting creature; `from <who>` names another, and nobody force moves themselves (that's a `/move`). `to <square>` on an empty square picks how far along the line to go; `to` a wall or a creature, a pull's own source included, sends the target into it with everything it has left, as a slide to one does. A target that hits a wall takes 2 damage plus 1 for each square it had left; one that hits a creature takes 1 for each square left, and so does that creature. A diagonal past a wall's corner counts as hitting the wall. The map's edge just stops it, and the feed says so. Range isn't checked, since abilities reach differently, but when the source isn't adjacent the feed says how far it stood (`Kor is pushed 1 square to f1 (Vex is 4 squares away).`), and a free strike's line does the same. A restrained creature can't be force moved; who has a grabbed creature, and size, aren't tracked. `/end` takes the creatures' tokens off the map, and dead heroes'. A minion squad is one token on one square for now.
+
+| Map | |
+|---|---|
+| `/map <id>\|off` | GM. Load `maps/<id>.txt`, or put the map away |
+| `/place <who> <square>` | Put a token on the map; a player places their own hero (in combat, once) |
+| `/move <who> <square> [main]` | Move by the cheapest path; `main` spends the main action on moving too |
+| `/dist <who\|square> <who\|square>` | Count the squares between two tokens or squares, for the whole table; never undone |
+| `/push <who> <n> [from <who>] [to <square>]`, `/pull …` | Push or pull, less stability |
+| `/slide <who> <n> to <square> [from <who>]` | Slide, less stability |
+| `/undo [who]`, `/redo` | Take back a change, or put back what the latest undo took |
+
+**Undo.** `/undo` takes back a change to the game: everything one command did, such as a move with the damage its slam dealt. The GM's `/undo` takes back the latest change and can keep going back, up to the last 20; `/undo <who>` takes back that person's latest change. A player's `/undo` takes back their own latest change for 30 seconds, even with someone else's change after it, and after that asks the GM. Either way the changes after it stay, folded again onto the game as it is without it, and a change that depended on it (a push of a creature the undone move put there) is refused until that one is undone first. A change that rolled dice (a power roll, a save, a turn that rolled for its resource or its saves) is the GM's alone to take back, so nobody rolls again by undoing. `/redo` puts back what the latest undo took, from the log, so its dice are the same; a player redoes only their own undo, and any new change ends the redo. Chat, names, `/roll`, measurements and a player taking or giving up a hero are never taken back. Nothing leaves the log: the undo and the redo are events of their own, and the feed keeps the line taken back and adds one marked ↶ or ↷ (`↶ GM undid: Bandit Bruiser takes 5 damage → 15/20`).
+
 **An example session.** The GM hosts the sample campaign; Alice and Bob join over SSH.
 
 ```text
@@ -117,18 +139,31 @@ GM     /hero brann
 GM     /hero kesh
 Alice  /play brann           Alice takes Brann.
 Bob    /play kesh            Bob takes Kesh.
-GM     /add bandit-cutpurse x4
+GM     /map ford             The map is The Ford Road, 20 by 10.
+GM     /add bandit-bruiser
 GM     /add bandit-chief
+Alice  /place brann b5       Brann is placed at b5.
+Bob    /place kesh b7        Kesh is placed at b7.
+GM     /place bandit-bruiser h5
+GM     /place bandit-chief p5
 GM     /start                Combat begins, round 1. d10: 7, so the players pick who goes first …
 GM     /first heroes
 Alice  /turn                 Brann's turn. wrath +2 → 2.
-Alice  /pr brann driving     Brann uses Driving Blow: [9, 2] +2 = 13 · tier 2 — 5 + M damage; push 1
-GM     /dmg bandit-cutpurse-a 7
-                             Bandit Cutpurse A takes 7 damage → 13/20 · 1 minion dies, 3 left
-Alice  /cond brann slowed save
-Alice  /done                 Brann's turn ends. Save against slowed: 6, it ends.
+Alice  /move brann k5        Refused: Brann can't move that far: k5 takes 9 squares of movement, and Brann's speed is 5.
+Alice  /move brann f5        Brann moves to f5 (4 squares of movement).
+Alice  /undo                 ↶ Alice (Brann) undid: Brann moves to f5 (4 squares of movement).
+Alice  /move brann g5        Brann moves to g5 (5 squares of movement).
+Alice  /pr brann driving     Brann uses Driving Blow: [9, 5] +2 = 16 · tier 2 — 5 + M (2) = 7 damage; push 1
+GM     /dmg bandit-bruiser 7 Bandit Bruiser takes 7 damage → 13/20
+Alice  /push bandit-bruiser 1
+                             Bandit Bruiser is pushed but doesn't move (push 1, stability 2).
+Alice  /dist brann bandit-bruiser
+                             Alice (Brann) measures Brann (g5) to Bandit Bruiser (h5): 1 square.
+Alice  /done                 Brann's turn ends.
 GM     /turn bandit-chief
-GM     /fs bandit-chief kesh Bandit Chief free strikes: Kesh takes 4 damage → 20/24
+GM     /move bandit-chief k5 Bandit Chief moves to k5 (7 squares of movement, over speed 5).
+GM     /undo                 ↶ GM undid: Bandit Chief moves to k5 (7 squares of movement, over speed 5).
+GM     /move bandit-chief n5 Bandit Chief moves to n5 (2 squares of movement).
 GM     /done
 Bob    /turn                 Kesh's turn. ferocity +2 (1d3: 2) → 2.
 …

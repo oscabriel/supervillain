@@ -55,7 +55,7 @@ export const completeSheet = (
 /** One feed line as it is shown: the table's `FeedLine`, built here so the rules never import the table. */
 export interface FeedLine {
   readonly seq: number;
-  /** The actor's label now. */
+  /** The actor's label now, after the kind's mark if it has one ("↶ Oscar"). */
   readonly who: string;
   readonly kind: string;
   readonly text: string;
@@ -77,6 +77,9 @@ export interface FeedLine {
  * Draw Steel's `ds`, `ds-roll` and `ds-turn` lines name their subject and have no speaker; a
  * `ds-act` line follows its label ("Alice (Brann) spends 1 hero token → 2"), and a `ds-claim` line
  * the player's name alone, whoever wrote it ("Alice takes Brann.").
+ *
+ * An `undo` line, from a retraction, follows its marked label and quotes the lines it took back:
+ * "↶ Oscar undid: Vex takes 14 damage → 7/21 · winded". Those lines stay in the feed.
  */
 export function feedLines(
   state: TableState,
@@ -85,9 +88,11 @@ export function feedLines(
   const plain = labelOf(state);
   return state.feed.map((e) => {
     const speaker = e.speaker ?? e.actor;
+    const format = feedFormat(e.kind);
+    const who = format.plainLabel ? plain(speaker) : label(speaker);
     return {
       seq: e.seq,
-      who: feedFormat(e.kind).plainLabel ? plain(speaker) : label(speaker),
+      who: format.mark === undefined ? who : `${format.mark} ${who}`,
       kind: e.kind,
       text: e.text,
       gm: speaker === GM,

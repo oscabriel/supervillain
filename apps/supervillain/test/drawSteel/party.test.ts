@@ -44,6 +44,21 @@ describe("heroes join from their sheets", () => {
     );
   });
 
+  test("an id that is only too long is refused for its length, not its letters", () => {
+    const t = new Table();
+    const long = "a-very-long-hero-id-that-runs-past-forty-c";
+    expect(long.length).toBe(42);
+    expect(t.submit(GM, { type: "hero", hero: long, sheet: { ...VEX, id: long } })).toEndWith(
+      "' can't be used: id must be at most 40 characters.",
+    );
+    expect(t.submit(GM, { type: "hero", hero: "Vex", sheet: { ...VEX, id: "Vex" } })).toBe(
+      "'Vex' can't be used: id must be lowercase letters, digits and dashes.",
+    );
+    const forty = "x".repeat(40);
+    t.run(GM, { type: "hero", hero: forty, sheet: { ...VEX, id: forty } });
+    expect(t.hero(forty).sheet.id).toBe(forty);
+  });
+
   test("the host learns which commands need a sheet or a player looked up", () => {
     expect(hostNeeds({ type: "hero", hero: "vex" })).toEqual({ kind: "hero", id: "vex" });
     expect(hostNeeds({ type: "add", monster: "goblin-warrior", count: 2 })).toEqual({

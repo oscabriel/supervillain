@@ -32,3 +32,16 @@ export class SheetAmbiguous extends Schema.TaggedError<SheetAmbiguous>()("SheetA
 export class ContentReadError extends Schema.TaggedError<ContentReadError>()("ContentReadError", {
   message: Schema.String,
 }) {}
+
+/** No map file's id is or starts with the query, or several start with it and none is it. */
+export class MapNotFound extends Schema.TaggedError<MapNotFound>()("MapNotFound", {
+  query: Schema.String,
+  message: Schema.String,
+}) {}
+
+/** A map file the table can't draw: too big, not text, a stray character, or the wrong shape. */
+export class MapInvalid extends Schema.TaggedError<MapInvalid>()("MapInvalid", {
+  /** The file, relative to the campaign folder: "maps/ford.txt". */
+  file: Schema.String,
+  message: Schema.String,
+}) {}

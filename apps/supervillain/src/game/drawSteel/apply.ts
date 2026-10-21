@@ -4,11 +4,13 @@ import { signed } from "../dice.ts";
 import type { FeedNote } from "../module.ts";
 import { hasTerminalControls } from "../text.ts";
 import { type EventType, type Payload, Payloads } from "./events.ts";
+import { distance, formatSquare, misshapen, type Square, standable } from "./map.ts";
 
 import { safeSheet } from "./schema.ts";
 import type { Characteristic, HeroSheet } from "./sheets.ts";
 import {
   andList,
+  type Board,
   capitalized,
   type Condition,
   type Creature,
@@ -277,7 +279,8 @@ function turnStarted(slice: DrawSteelState, envelope: Envelope): Applied {
   if (slice.combat.acting !== undefined) bad(envelope, "starts a turn during another");
   const found = who(slice, envelope, id);
   const acted = slice.combat.acted.includes(id) ? slice.combat.acted : [...slice.combat.acted, id];
-  let next: DrawSteelState = { ...slice, combat: { ...slice.combat, acted, acting: id } };
+  const { moved: _moved, ...combat } = slice.combat;
+  let next: DrawSteelState = { ...slice, combat: { ...combat, acted, acting: id } };
   let text = `${found.name}'s turn.`;
   if (gain !== undefined) {
     const h = hero(slice, envelope, id);
@@ -292,8 +295,8 @@ function turnEnded(slice: DrawSteelState, envelope: Envelope): Applied {
   const { id, ended, saves } = decode("ds.turn-ended", envelope);
   if (slice.combat.acting !== id) bad(envelope, `ends a turn '${id}' isn't taking`);
   if (saves.some((s) => s.roll < 1 || s.roll > 10)) bad(envelope, "has a save that isn't a d10");
-  const gone = new Set([...ended, ...saves.filter((s) => s.roll >= 6).map((s) => s.condition)]);
-  const { acting: _acting, ...combat } = slice.combat;
+  const gone = new Set([...ended, ...saves.filter((s) => s.ends).map((s) => s.condition)]);
+  const { acting: _acting, moved: _moved, ...combat } = slice.combat;
   const next = withWho({ ...slice, combat }, envelope, id, (x) => ({
     ...x,
     conditions: x.conditions.filter((c) => !gone.has(c.name)),
@@ -302,7 +305,7 @@ function turnEnded(slice: DrawSteelState, envelope: Envelope): Applied {
     `${nameOf(slice, id)}'s turn ends.`,
     ...ended.map((c) => `${capitalized(c)} ends.`),
     ...saves.map(
-      (s) => `Save against ${s.condition}: ${s.roll}, ${s.roll >= 6 ? "it ends" : "it goes on"}.`,
+      (s) => `Save against ${s.condition}: ${s.roll}, ${s.ends ? "it ends" : "it goes on"}.`,
     ),
   ];
   return { slice: next, feed: { kind: "ds-turn", text: parts.join(" ") } };
@@ -314,11 +317,27 @@ function turnEnded(slice: DrawSteelState, envelope: Envelope): Applied {
  * fight ends (Combat, "Temporary Stamina", "End of Combat"). Winded and dying are Stamina, so stay.
  */
 function combatEnded(slice: DrawSteelState, envelope: Envelope): Applied {
-  decode("ds.combat-ended", envelope);
+  const { cleared = [] } = decode("ds.combat-ended", envelope);
   if (!slice.combat.active) bad(envelope, "comes outside combat");
+  // The creatures leave the table, so a creature's token left off the list can't stay behind.
+  const gone = new Set(cleared);
+  const left = slice.creatures.find(
+    (c) => slice.map?.tokens[c.id] !== undefined && !gone.has(c.id),
+  );
+  if (left !== undefined) bad(envelope, `leaves '${left.id}' on the map`);
+  const map =
+    slice.map === undefined
+      ? undefined
+      : {
+          ...slice.map,
+          tokens: Object.fromEntries(
+            Object.entries(slice.map.tokens).filter(([id]) => !gone.has(id)),
+          ),
+        };
   return {
     slice: {
       ...slice,
+      ...(map !== undefined && { map }),
       combat: NO_COMBAT,
       creatures: [],
       blocks: {},
@@ -479,8 +498,9 @@ function damaged(slice: DrawSteelState, envelope: Envelope): Applied {
   }
   if (p.minions !== undefined && p.minions < 1) bad(envelope, "has a squad strike of no minions");
   const together = p.minions === undefined ? "" : ` (${plural(p.minions, "minion")})`;
+  const far = p.apart !== undefined && p.apart > 1 ? ` from ${plural(p.apart, "square")} away` : "";
   const source =
-    p.source === undefined ? "" : `${nameOf(slice, p.source)} free strikes${together}: `;
+    p.source === undefined ? "" : `${nameOf(slice, p.source)} free strikes${together}${far}: `;
   const text = `${source}${target.name} takes ${p.dealt}${p.type !== undefined ? ` ${p.type}` : ""} damage${details.length > 0 ? ` (${details.join("; ")})` : ""} → ${meter(next, p.id)}${squad}`;
   return { slice: next, feed: { kind: "ds", text } };
 }
@@ -491,6 +511,11 @@ function healed(slice: DrawSteelState, envelope: Envelope): Applied {
   if (amount < 0) bad(envelope, "heals a negative amount");
   if (target.kind === "creature" && target.creature.squad !== undefined)
     bad(envelope, "heals minions");
+  const [stamina, max] =
+    target.kind === "hero"
+      ? [target.hero.stamina, target.hero.sheet.stamina]
+      : [target.creature.stamina, target.creature.max];
+  if (stamina + amount > max) bad(envelope, `heals '${id}' past full Stamina`);
   const next = withWho(slice, envelope, id, (x) => ({ ...x, stamina: x.stamina + amount }));
   return {
     slice: next,
@@ -556,10 +581,9 @@ function conditionRemoved(slice: DrawSteelState, envelope: Envelope): Applied {
 }
 
 function saved(slice: DrawSteelState, envelope: Envelope): Applied {
-  const { id, condition, roll } = decode("ds.saved", envelope);
+  const { id, condition, roll, ends } = decode("ds.saved", envelope);
   const target = who(slice, envelope, id);
   if (roll < 1 || roll > 10) bad(envelope, `has a d10 of ${roll}`);
-  const ends = roll >= 6;
   const next = ends
     ? withWho(slice, envelope, id, (x) => ({
         ...x,
@@ -658,6 +682,160 @@ function victoriesChanged(slice: DrawSteelState, envelope: Envelope): Applied {
   };
 }
 
+/** The loaded map, or a halt: a map event without one can't be applied. */
+const boardOf = (slice: DrawSteelState, envelope: Envelope): Board =>
+  slice.map ?? bad(envelope, "comes with no map loaded");
+
+const withToken = (
+  slice: DrawSteelState,
+  board: Board,
+  id: string,
+  at: Square,
+): DrawSteelState => ({
+  ...slice,
+  map: { ...board, tokens: { ...board.tokens, [id]: at } },
+});
+
+/** Checks a decided path: each square next to the one before and one a creature can stand on. */
+function checkPath(
+  envelope: Envelope,
+  board: Board,
+  from: Square,
+  path: ReadonlyArray<Square>,
+): void {
+  let here = from;
+  for (const square of path) {
+    if (distance(here, square) !== 1 || !standable(board.terrain, square))
+      bad(envelope, `has a path that can't go to ${formatSquare(square)}`);
+    here = square;
+  }
+}
+
+/**
+ * A map the event carries. Replay checks only what drawing it needs (rows of one width, in
+ * printable ASCII, a plain name), never today's size limits, so tightening those later never
+ * stops an old log.
+ */
+function mapLoaded(slice: DrawSteelState, envelope: Envelope): Applied {
+  const { id, name, terrain } = decode("ds.map-loaded", envelope);
+  const why = misshapen({ name, terrain });
+  if (why !== undefined) bad(envelope, `has a bad grid: ${why}`);
+  const width = terrain[0]!.length;
+  return {
+    slice: { ...slice, map: { id, name, terrain: [...terrain], tokens: {} } },
+    feed: { kind: "ds", text: `The map is ${name}, ${width} by ${terrain.length}.` },
+  };
+}
+
+function mapCleared(slice: DrawSteelState, envelope: Envelope): Applied {
+  decode("ds.map-cleared", envelope);
+  boardOf(slice, envelope);
+  const { map: _map, ...rest } = slice;
+  return { slice: rest, feed: { kind: "ds", text: "The map is put away." } };
+}
+
+function placed(slice: DrawSteelState, envelope: Envelope): Applied {
+  const { id, at } = decode("ds.placed", envelope);
+  const board = boardOf(slice, envelope);
+  const found = who(slice, envelope, id);
+  if (!standable(board.terrain, at)) bad(envelope, `places '${id}' where nobody can stand`);
+  return {
+    slice: withToken(slice, board, id, at),
+    feed: { kind: "ds", text: `${found.name} is placed at ${formatSquare(at)}.` },
+  };
+}
+
+function moved(slice: DrawSteelState, envelope: Envelope): Applied {
+  const { id, path, cost, speed, spent, allowance, main } = decode("ds.moved", envelope);
+  const board = boardOf(slice, envelope);
+  const found = who(slice, envelope, id);
+  const from = board.tokens[id] ?? bad(envelope, `moves '${id}', who isn't on the map`);
+  const to = path.at(-1) ?? bad(envelope, "has an empty path");
+  checkPath(envelope, board, from, path);
+  if (cost < path.length) bad(envelope, "costs less than its squares");
+  let next = withToken(slice, board, id, to);
+  let turn = "";
+  let over = cost > speed ? `, over speed ${speed}` : "";
+  if (spent !== undefined || allowance !== undefined) {
+    if (spent === undefined || allowance === undefined) bad(envelope, "has half a turn's movement");
+    if (slice.combat.acting !== id) bad(envelope, `counts a turn '${id}' isn't taking`);
+    if (spent < cost) bad(envelope, "spends less than it moves");
+    next = { ...next, combat: { ...next.combat, moved: { id, spent, main: main === true } } };
+    if (spent > cost || main === true)
+      turn = `, ${spent} of ${allowance} this turn${main === true ? " with the main action" : ""}`;
+    over = spent > allowance ? `, over speed ${speed}` : "";
+  }
+  return {
+    slice: next,
+    feed: {
+      kind: "ds",
+      text: `${found.name} moves to ${formatSquare(to)} (${plural(cost, "square")} of movement${turn}${over}).`,
+    },
+  };
+}
+
+const FORCED_VERBS = { push: "pushed", pull: "pulled", slide: "slid" } as const;
+
+/** " (a; b)" from the parts that say something, or nothing. */
+const parenthesis = (parts: ReadonlyArray<string>) => {
+  const said = parts.filter((p) => p !== "");
+  return said.length === 0 ? "" : ` (${said.join("; ")})`;
+};
+
+function forceMoved(slice: DrawSteelState, envelope: Envelope): Applied {
+  const p = decode("ds.force-moved", envelope);
+  const board = boardOf(slice, envelope);
+  const found = who(slice, envelope, p.id);
+  const from = board.tokens[p.id] ?? bad(envelope, `moves '${p.id}', who isn't on the map`);
+  checkPath(envelope, board, from, p.path);
+  if (p.slam !== undefined && p.slam.remaining < 1) bad(envelope, "slams with nothing left");
+  const into =
+    p.slam === undefined
+      ? undefined
+      : p.slam.into === "wall"
+        ? "a wall"
+        : who(slice, envelope, p.slam.into).name;
+  const to = p.path.at(-1);
+  const verb = FORCED_VERBS[p.kind];
+  const text = [
+    `${found.name} is ${verb}`,
+    to === undefined
+      ? " but doesn't move"
+      : ` ${plural(p.path.length, "square")} to ${formatSquare(to)}`,
+    p.slam === undefined
+      ? ""
+      : ` and slams into ${into} with ${plural(p.slam.remaining, "square")} to go`,
+    p.edge === true ? ", stopped by the map's edge" : "",
+    parenthesis([
+      p.stability > 0 ? `${p.kind} ${p.distance}, stability ${p.stability}` : "",
+      p.apart !== undefined && p.apart > 1 && p.source !== undefined
+        ? `${nameOf(slice, p.source)} is ${plural(p.apart, "square")} away`
+        : "",
+    ]),
+    ".",
+  ].join("");
+  return {
+    slice: to === undefined ? slice : withToken(slice, board, p.id, to),
+    feed: { kind: "ds", text },
+  };
+}
+
+function measured(slice: DrawSteelState, envelope: Envelope): Applied {
+  const { from, to, distance: squares } = decode("ds.measured", envelope);
+  if (squares < 0) bad(envelope, "measures a negative distance");
+  const label = (point: { readonly id?: string; readonly at: Square }) =>
+    point.id === undefined
+      ? formatSquare(point.at)
+      : `${who(slice, envelope, point.id).name} (${formatSquare(point.at)})`;
+  return {
+    slice,
+    feed: {
+      kind: "ds-act",
+      text: `measures ${label(from)} to ${label(to)}: ${plural(squares, "square")}.`,
+    },
+  };
+}
+
 const appliers: Readonly<
   Record<EventType, (slice: DrawSteelState, envelope: Envelope) => Applied>
 > = {
@@ -686,6 +864,12 @@ const appliers: Readonly<
   "ds.tokens-changed": tokensChanged,
   "ds.tokens-reset": tokensReset,
   "ds.victories-changed": victoriesChanged,
+  "ds.map-loaded": mapLoaded,
+  "ds.map-cleared": mapCleared,
+  "ds.placed": placed,
+  "ds.moved": moved,
+  "ds.force-moved": forceMoved,
+  "ds.measured": measured,
 };
 
 /** Folds one Draw Steel event. Throws on one it can't apply, so the writer halts. */

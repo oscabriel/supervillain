@@ -19,4 +19,9 @@ export interface Rules<S, C> {
   readonly decide: (state: S, actor: string, command: C, dice: Dice) => Decision;
   /** Folds one event. Throws on an event it can't apply. */
   readonly apply: (state: S, envelope: Envelope) => S;
+  /**
+   * Told about an event a lenient fold skipped because `knows` said no, so the rules can keep
+   * count of it (a later event may name it). Optional; a strict fold halts instead.
+   */
+  readonly skip?: (state: S, envelope: Envelope) => S;
 }

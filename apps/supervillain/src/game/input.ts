@@ -90,6 +90,20 @@ const entries: ReadonlyArray<Entry> = [
     run: () => ({ kind: "state" }),
   },
   {
+    // The App changes its own layout on /view and never sends it; it's here for /help and Tab.
+    name: "view",
+    usage: "/view [map|feed|both|<square|who>]",
+    summary: "Show the map, the feed or both; alone, show or hide the map; or centre it somewhere.",
+    gmOnly: false,
+    seatOnly: true,
+    run: () => ({
+      kind: "refusal",
+      message: "/view changes a seat's own screen; this one has none.",
+    }),
+    complete: (_state, _actor, partial) =>
+      ["map", "feed", "both"].filter((l) => l.startsWith(partial.trim().toLowerCase())),
+  },
+  {
     name: "quit",
     usage: "/quit",
     summary: "Leave the table.",
@@ -101,9 +115,18 @@ const entries: ReadonlyArray<Entry> = [
 
 /**
  * Commands that run without their slash over exec: none takes free text, so chat can't start one.
- * /sheet is read-only and answers the sender alone, so "sheet kesh" said as chat would be the slip.
+ * /sheet is read-only and answers the sender alone, so "sheet kesh" said as chat would be the slip;
+ * a bare "undo" or "dist kesh chief" said as chat would be a slip too.
  */
-export const BARE_OVER_EXEC: ReadonlySet<string> = new Set(["roll", "help", "sheet", "state"]);
+export const BARE_OVER_EXEC: ReadonlySet<string> = new Set([
+  "roll",
+  "dist",
+  "undo",
+  "redo",
+  "help",
+  "sheet",
+  "state",
+]);
 
 const say = commands.find((c) => c.name === "say");
 const name = commands.find((c) => c.name === "name");
@@ -217,7 +240,8 @@ const helpLine = (e: Entry, width: number, gmMark: string) => {
 export function helpText(actor: string, topic?: string, surface: Surface = "seat"): string {
   if (topic !== undefined) {
     const entry = find(topic.replace(/^\//, ""));
-    if (!entry || (entry.seatOnly && surface !== "seat")) return unknown(topic);
+    if (!entry) return unknown(topic);
+    if (entry.seatOnly && surface !== "seat") return `/${entry.name} works only at a seat.`;
     return helpLine(entry, 0, actor === GM ? "(GM)" : "(GM only)");
   }
   const shown = visibleTo(actor, surface);
