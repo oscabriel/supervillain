@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "overrides": [
+    {
+      "files": ["game/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["*", "!./*", "!effect/Schema"],
+                "message": "game/ is pure: it may import only effect/Schema and its own files."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

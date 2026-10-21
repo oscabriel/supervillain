@@ -1,0 +1,26 @@
+{
+  "name": "spike-d-effect-table",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "host": "bun cli.ts host",
+    "relay": "bun cli.ts relay",
+    "check": "bun cli.ts check",
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "oxlint -c .oxlintrc.json ."
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.5",
+    "@opentui/core": "0.6.6",
+    "@opentui/solid": "0.6.6",
+    "@opentui/ssh": "0.6.6",
+    "effect": "4.0.5",
+    "solid-js": "1.9.12",
+    "ssh2": "1.16.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "@types/ssh2": "1.15.5",
+    "typescript": "7.0.2"
+  }
+}
