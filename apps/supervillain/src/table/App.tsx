@@ -345,11 +345,13 @@ export function App(props: { view: TableView }) {
 
   /**
    * The band's and the map's rows when a map shows, out of `room` (what the feed's five rows
-   * leave). The band keeps every hero's row whole and the one acting (creatures fold into `+N
-   * more`; they are on the map too). Sharing (`/view both`), the map asks for half the room, at
-   * least MAP_MIN, and the band gets the rest up to what it wants; whatever either leaves goes to
-   * the other, then to the feed. `/view map` folds the band to two lines (heroes' rows may give up
-   * their details, creatures count in `+N more`) and gives the map all it wants beyond that.
+   * leave). Sharing (`/view both`), the band keeps a row for every living combatant (each hero on
+   * one row, its last details cut with `…`, creatures paired, the dead line gone) and the map gives
+   * up its rows for that first, down to none: `/view map` shows it whole. Beyond that the map asks
+   * for half the room, at least MAP_MIN, and the band gets the rest up to what it wants; whatever
+   * either leaves goes to the other, then to the feed. `/view map` folds the band to two lines
+   * (heroes' rows may give up their details, creatures count in `+N more`) and gives the map all it
+   * wants beyond that.
    */
   function mapHeights(map: MapView, combat: CombatView | undefined, room: number, cap: number) {
     const wanted = mapRowsWanted(map);
@@ -360,21 +362,19 @@ export function App(props: { view: TableView }) {
       return { band: Math.max(folded, room - mapH), map: mapH < MAP_FLOOR ? 0 : mapH };
     }
     const share = Math.min(wanted, Math.max(MAP_MIN, Math.floor(room / 2)));
-    const bandH = Math.max(band.keep, Math.min(band.wanted, room - share));
+    const bandH = Math.min(room, Math.max(band.keep, Math.min(band.wanted, room - share)));
     const mapH = Math.min(wanted, room - bandH);
     return { band: bandH, map: mapH < MAP_FLOOR ? 0 : mapH };
   }
 
-  /** The rows the band wants beside a map, and the fewest it keeps: every hero and the one acting. */
+  /** The rows the band wants beside a map, and the fewest it keeps: every living combatant's row. */
   function bandRows(combat: CombatView | undefined, cap: number) {
     if (combat === undefined) return { wanted: BAND_MIN, keep: BAND_MIN };
-    const layout = bandLayout(combat, size().width - BAND_FRAME.width, cap - BAND_FRAME.height, {
-      heroesWhole: true,
-    });
+    const layout = bandLayout(combat, size().width - BAND_FRAME.width, cap - BAND_FRAME.height);
     const wanted = Math.max(BAND_MIN, layout.lines.length + BAND_FRAME.height);
     return {
       wanted,
-      keep: Math.min(wanted, Math.max(BAND_MIN, layout.keepLines + BAND_FRAME.height)),
+      keep: Math.min(wanted, Math.max(BAND_MIN, layout.livingLines + BAND_FRAME.height)),
     };
   }
 
@@ -412,7 +412,7 @@ export function App(props: { view: TableView }) {
           joinNote={view.joinNote?.()}
           combat={view.combat?.()}
           maxHeight={bandHeight()}
-          heroesWhole={multiline() || (shownMap() !== undefined && split() !== "map")}
+          heroesWhole={multiline()}
         />
       </Show>
 

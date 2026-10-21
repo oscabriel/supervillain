@@ -8,6 +8,7 @@ import { Effect } from "effect";
 import { effect, waitFor } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
 import { clientKey, sshExec, sshShell } from "../relay/openssh.ts";
+import { campaignDir } from "./cli.ts";
 
 const main = join(import.meta.dir, "../../src/main.ts");
 const root = join(import.meta.dir, "../../../..");
@@ -132,7 +133,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
     () =>
       Effect.gen(function* () {
         const relayDir = yield* tempDir;
-        const campaign = yield* tempDir;
+        const campaign = yield* campaignDir;
         const keys = yield* tempDir;
         const vex = yield* clientKey(keys, "vex");
         const kai = yield* clientKey(keys, "kai");
@@ -215,7 +216,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
         expect(offered).toMatchObject({ exitCode: 0, stdout: expect.stringMatching(/rolled 1d2/) });
 
         // A second GM, with its own host key, can't take the room.
-        const usurper = yield* startHost(yield* tempDir, ports.gm);
+        const usurper = yield* startHost(yield* campaignDir, ports.gm);
         yield* waitFor(
           "the relay to refuse the second GM",
           () => relay.output().includes(`refused a GM with host key ${usurper.hostKey}`),
@@ -286,7 +287,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
         const kai = yield* clientKey(yield* tempDir, "kai");
         const ports = { player: yield* freePort, gm: yield* freePort };
         const relay = yield* startRelay(yield* tempDir, ports);
-        const host = yield* startHost(yield* tempDir, ports.gm);
+        const host = yield* startHost(yield* campaignDir, ports.gm);
         yield* waitFor("the link", () => links(host) === 1, 10_000);
         const terminal = yield* sshShell(
           ports.player,
@@ -319,7 +320,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
     () =>
       Effect.gen(function* () {
         const relayDir = yield* tempDir;
-        const campaign = yield* tempDir;
+        const campaign = yield* campaignDir;
         const kai = yield* clientKey(yield* tempDir, "kai");
         const ports = { player: yield* freePort, gm: yield* freePort };
         yield* startRelay(relayDir, ports);
@@ -348,7 +349,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
     "a host refuses a relay whose key isn't the one in relay_known, and keeps the pin",
     () =>
       Effect.gen(function* () {
-        const campaign = yield* tempDir;
+        const campaign = yield* campaignDir;
         const vex = yield* clientKey(yield* tempDir, "vex");
         const realPorts = { player: yield* freePort, gm: yield* freePort };
         const real = yield* startRelay(yield* tempDir, realPorts);

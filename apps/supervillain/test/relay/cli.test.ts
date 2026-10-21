@@ -55,6 +55,8 @@ describe("supervillain relay", () => {
         const key = /relay key (SHA256:[A-Za-z0-9+/]{43})/.exec(relay.output())?.[1];
         expect(key).toBeDefined();
         expect(relay.output()).toContain(`--relay-key ${key}`);
+        // Long enough that a group meeting monthly, or taking a season off, keeps its room's name.
+        expect(relay.output()).toContain("a room's claim lapses after 180 days with no GM linked");
         const playerPort = Number(/ssh -p (\d+) <room>@/.exec(relay.output())?.[1]);
         const vex = yield* clientKey(yield* tempDir, "vex");
         const ran = yield* sshExec(playerPort, ["hi"], { key: vex, user: "den" });

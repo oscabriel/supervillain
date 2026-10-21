@@ -494,6 +494,26 @@ describe("relay: limits", () => {
     }),
   );
 
+  effect("only a claim made counts against the rate: failed logins for a free room don't", () =>
+    Effect.gen(function* () {
+      // The default rate: three claims, then one an hour.
+      const relay = yield* startRelay();
+      const gm = yield* gmTable();
+      for (let i = 1; i <= 3; i++) {
+        // The GM's host pins another relay key, so the login fails after the hello is answered.
+        const failed = yield* linkGm(gm, relay.gmPort, "den", "SHA256:not-this-relay");
+        expect(failed.answer).toBe("OK");
+        yield* waitFor(`failed login ${i} to end`, failed.closed);
+      }
+      expect(relay.linkedRooms()).toEqual([]);
+      const good = yield* linkGm(gm, relay.gmPort, "den", relay.relayKeyFingerprint);
+      expect(good.answer).toBe("OK");
+      yield* linked(relay, "den");
+      expect(relay.logs.join("\n")).toContain("room den: claimed by GM host key");
+      expect(relay.logs.join("\n")).not.toContain("claims rooms too fast");
+    }),
+  );
+
   effect("GM links are capped per address, and a silent one is cut", () =>
     Effect.gen(function* () {
       const relay = yield* startRelay({ gm: { linksPerAddress: 2, lineTimeoutMs: 200 } });
@@ -525,7 +545,15 @@ describe("relay: claim rates", () => {
   effect("claims count per IPv4 address, and per IPv6 /64 and /48 both", () =>
     Effect.sync(() => {
       const one = { burst: 1, perSecond: 1 / 3600 };
-      const allowed = claimLimiter(one, { burst: 2, perSecond: 1 / 3600 });
+      const limiter = claimLimiter(one, { burst: 2, perSecond: 1 / 3600 });
+      // Looking spends nothing; a claim made spends.
+      expect(limiter.over("198.51.100.1", 0)).toBeUndefined();
+      expect(limiter.over("198.51.100.1", 0)).toBeUndefined();
+      const allowed = (address: string, now: number) => {
+        const over = limiter.over(address, now);
+        if (over === undefined) limiter.spend(address, now);
+        return over;
+      };
       expect(allowed("203.0.113.7", 0)).toBeUndefined();
       expect(allowed("203.0.113.7", 1)).toBe("203.0.113.7");
       expect(allowed("203.0.113.8", 1)).toBeUndefined();

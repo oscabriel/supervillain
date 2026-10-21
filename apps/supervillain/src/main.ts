@@ -3,12 +3,12 @@
 // root, or this file from anywhere.
 //   supervillain host [campaign-dir] [--port 2222] [--bind 127.0.0.1] [--room name] [--headless]
 //                     [--relay host:port] [--relay-key SHA256:…] [--relay-player-port 2222]
-//                     [--relay-host-key SHA256:…]   (the folder must exist: `new` makes one)
+//                     [--relay-host-key SHA256:…]   (a campaign folder: `new` makes one)
 //   supervillain new <campaign-dir> [--example]
 //   supervillain import <bestiary-json-path> --into <campaign-dir> [names...] [--overwrite]
 //   supervillain check <campaign-dir>
 //   supervillain relay [--player-port 2222] [--gm-port 7022] [--bind 0.0.0.0] [--dir ~/.supervillain-relay]
-//                      [--claim-days 30]
+//                      [--claim-days 180]
 //   supervillain relay forget <room> [--dir …]
 import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -188,6 +188,20 @@ const host = Command.make(
       });
     if (!folder.isDirectory())
       return yield* new HostError({ message: `${dir} isn't a folder, so it can't be a campaign` });
+    // Nor would an empty or unrelated folder, which would silently get a log and a host key.
+    const looks = yield* Effect.tryPromise({
+      try: () => looksLikeCampaign(dir),
+      catch: (e) =>
+        new HostError({ message: `can't open the campaign folder ${dir}: ${messageOf(e)}` }),
+    });
+    if (looks !== true)
+      return yield* new HostError({
+        message: `${dir} isn't a campaign: it has no ${CAMPAIGN_MARKS.join(", ").replace(/, ([^,]*)$/, " or $1")}; ${
+          looks === "empty"
+            ? `make one there with: ${SELF} new ${o.campaignDir}`
+            : `make one in a new folder with: ${SELF} new <folder>`
+        } (--example for the sample)`,
+      });
     // The table (OpenTUI and Solid) loads only here, so `check` never needs it. Its JSX needs the
     // Solid transform, which bunfig.toml preloads only when run from the repo root.
     yield* Effect.promise(() => import("../preload.ts"));
@@ -286,6 +300,21 @@ const host = Command.make(
     "Open the table: the campaign log, the SSH server and (unless --headless) the GM's seat",
   ),
 );
+
+/** What `new` or a host leaves in a campaign folder: any one of them makes a folder a campaign. */
+const CAMPAIGN_MARKS = ["events.jsonl", "host_key", "heroes/", "monsters/", "maps/"] as const;
+
+/** Whether `dir` holds any of CAMPAIGN_MARKS; if not, whether it is empty or holds other things. */
+const looksLikeCampaign = async (dir: string): Promise<true | "empty" | "unrelated"> => {
+  const names = await readdir(dir, { withFileTypes: true });
+  const found = CAMPAIGN_MARKS.some((mark) =>
+    names.some((d) =>
+      mark.endsWith("/") ? d.isDirectory() && `${d.name}/` === mark : d.isFile() && d.name === mark,
+    ),
+  );
+  if (found) return true;
+  return names.length === 0 ? "empty" : "unrelated";
+};
 
 /** Whether `dir` is missing or empty, so `new` can make a campaign there without losing anything. */
 const isFree = (dir: string) =>

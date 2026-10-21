@@ -7,7 +7,7 @@ export {
   connectClient,
 } from "./client.ts";
 export { fingerprintOf, isFingerprint, loadHostKey } from "./keys.ts";
-export { type Rate, rateLimiter } from "./rate.ts";
+export { type Rate, rateLimiter, type TokenBuckets, tokenBuckets } from "./rate.ts";
 export { isRelayableActor } from "./relay.ts";
 export { serve } from "./server.ts";
 export { TERMINAL_RESET } from "./terminal.ts";

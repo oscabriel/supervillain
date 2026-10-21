@@ -671,6 +671,39 @@ describe("movement over a turn (Combat, 'Advance', 'Can't Exceed Speed')", () =>
     );
   });
 
+  test("a bleeding hero's main action spent as a move bleeds, once, like any main action (Classes, 'Bleeding')", () => {
+    const t = vexTurn();
+    t.run(GM, { type: "cond", who: "vex", condition: "bleeding", duration: "save" });
+    const level = t.hero("vex").sheet.level;
+    const before = t.hero("vex").stamina;
+    // A move within the speed is no main action: no bleeding.
+    ok(t, ALICE, "/move vex e5", fixedDice(6));
+    expect(t.envelopes.at(-1)).toMatchObject({ type: "ds.moved" });
+    ok(t, ALICE, "/move vex j5 main", fixedDice(3));
+    expect(t.envelopes.slice(-2)).toMatchObject([
+      { type: "ds.moved", payload: { main: true } },
+      { type: "ds.bled", payload: { id: "vex", roll: 3, level } },
+    ]);
+    expect(t.hero("vex").stamina).toBe(before - 3 - level);
+    // The main action is spent already: moving on with it bleeds no more.
+    ok(t, ALICE, "/move vex j4 main", fixedDice(5));
+    expect(t.envelopes.at(-1)).toMatchObject({ type: "ds.moved" });
+    expect(t.hero("vex").stamina).toBe(before - 3 - level);
+  });
+
+  test("a move that spends no main action bleeds nothing, even with main typed (Classes, 'Bleeding')", () => {
+    const t = vexTurn();
+    t.run(GM, { type: "cond", who: "vex", condition: "bleeding", duration: "save" });
+    const before = t.hero("vex").stamina;
+    t.run(ALICE, { type: "done" });
+    // Between Vex's turns the GM moves Vex: no turn of Vex's, so no main action to spend.
+    ok(t, GM, "/move vex e5 main", fixedDice(4));
+    ok(t, GM, "/move vex f5 main", fixedDice(4));
+    expect(t.envelopes.at(-1)).toMatchObject({ type: "ds.moved" });
+    expect(t.envelopes.some((e) => e.type === "ds.bled")).toBe(false);
+    expect(t.hero("vex").stamina).toBe(before);
+  });
+
   test("a new turn starts afresh; a player moves only on their hero's turn", () => {
     const t = vexTurn();
     ok(t, ALICE, "/move vex f5");

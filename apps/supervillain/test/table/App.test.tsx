@@ -3,9 +3,22 @@ import { RGBA } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../../src/table/App.tsx";
 import { color } from "../../src/table/theme.ts";
-import { brakka, fight, ford, goblins, ogre, sera, sniper, spearmen, vex } from "./combat.ts";
+import {
+  brakka,
+  fight,
+  ford,
+  goblins,
+  ogre,
+  sampleFord,
+  sampleFordMidFight,
+  sera,
+  showsStamina,
+  sniper,
+  spearmen,
+  vex,
+} from "./combat.ts";
 import { alice, bob, fakeView, gm, line } from "./fakeView.ts";
-import { courtyard, hall } from "./maps.ts";
+import { courtyard, fordRoad, hall } from "./maps.ts";
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 let setup: Setup | undefined;
@@ -743,6 +756,34 @@ describe("the map", () => {
       expect(boxHeight(rows, " feed ")).toBeGreaterThanOrEqual(5);
       for (const n of [38, 39, 40]) expect(rows.join("\n")).toContain(`message ${n}`);
       expect(rows.at(-1)).toStartWith(" >");
+    });
+  }
+
+  for (const [when, roster] of [
+    ["healthy", sampleFord],
+    ["mid-fight", sampleFordMidFight],
+  ] as const) {
+    test(`at 80x24 the sample fight ${when} beside The Ford Road: every living combatant's Stamina shows, the feed keeps 3 rows`, async () => {
+      const t = await mount(seated({ map: fordRoad, combat: fight(roster) }), 80, 24);
+      const rows = rowsOf(t.captureCharFrame());
+      expect(rows).toHaveLength(24);
+      const bandTop = rows.findIndex((r) => r.includes("round 2"));
+      const bandEnd = rows.findIndex((r, i) => i > bandTop && r.startsWith("└"));
+      const band = rows.slice(bandTop, bandEnd + 1).join("\n");
+      const living = roster.filter((c) => c.health !== "dead");
+      for (const c of living) expect(showsStamina(band, c)).toBe(true);
+      // Only the dead may be counted in `+N more`.
+      expect(Number(/\+(\d+) more/.exec(band)?.[1] ?? 0)).toBeLessThanOrEqual(
+        roster.length - living.length,
+      );
+      // Each hero on one row: every line inside the band holds a meter or the dead.
+      for (const r of rows.slice(bandTop + 1, bandEnd)) expect(r).toMatch(/▐|dead:/);
+      expect(boxHeight(rows, " feed ")).toBeGreaterThanOrEqual(5);
+      expect(rows.join("\n")).toContain("message 40");
+      expect(rows.at(-1)).toStartWith(" >");
+      // The map gave up rows, not the enemies: /view map shows it whole.
+      expect(rows.join("\n")).toContain("map · The Ford Road");
+      expect(rows.at(-2)).toContain("/help");
     });
   }
 

@@ -1,8 +1,17 @@
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
+import { tempDir } from "../host/tempDir.ts";
 
 const root = join(import.meta.dir, "../../../..");
 const main = join(root, "apps/supervillain/src/main.ts");
+
+/** A fresh campaign folder, as `supervillain new` makes it but its README, for the scope's life. */
+export const campaignDir = Effect.tap(tempDir, (dir) =>
+  Effect.promise(async () => {
+    for (const sub of ["heroes", "monsters", "maps"]) await mkdir(join(dir, sub));
+  }),
+);
 
 /** Runs `supervillain <args>` to completion, from the repo root as `bun supervillain` does, or from `cwd`. */
 export const cli = (args: ReadonlyArray<string>, cwd = root) =>

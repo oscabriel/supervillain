@@ -19,6 +19,7 @@ import {
   serve,
   TERMINAL_RESET,
   type Timeouts,
+  tokenBuckets,
 } from "@supervillain/ssh";
 import { Clock, Context, Effect, FiberSet, Layer, Schema, type Scope, Semaphore } from "effect";
 import {
@@ -65,7 +66,10 @@ export interface GmLimits {
    * is refused if every claim has one. Default 1024.
    */
   readonly maxRooms?: number;
-  /** A claim no GM has linked for this many days lapses, and another key may claim it. Default 30. */
+  /**
+   * A claim no GM has linked for this many days lapses, and another key may claim it. Default 180,
+   * so a group meeting monthly, or taking a season off, keeps its room.
+   */
   readonly claimDays?: number;
   /**
    * How fast one address (an IPv4 address or IPv6 /64) may claim rooms nobody holds; GMs relinking
@@ -129,7 +133,7 @@ const GM_DEFAULTS = {
   linksPerAddress: 8,
   linkRate: { burst: 10, perSecond: 1 / 6 },
   maxRooms: 1024,
-  claimDays: 30,
+  claimDays: 180,
   claimRate: { burst: 3, perSecond: 1 / 3600 },
   siteClaimRate: { burst: 10, perSecond: 4 / 3600 },
   lineTimeoutMs: LINE_TIMEOUT_MS,
@@ -153,18 +157,30 @@ const fullRoomMessage = (room: string): string => `The table ${room} is full rig
 
 /**
  * How fast an address may claim rooms: by `perAddress` for its IPv4 address or IPv6 /64, and for
- * IPv6 by `perSite` for its /48 too, so a site with many /64s can't claim a room from each. Returns
- * the bucket over its rate, or undefined when the claim may go ahead (and is counted).
+ * IPv6 by `perSite` for its /48 too, so a site with many /64s can't claim a room from each. `over`
+ * returns the bucket over its rate, or undefined when a claim may go ahead, and spends nothing:
+ * only `spend`, once a claim is made, counts it. So a hello whose login then fails costs nothing.
  */
 export const claimLimiter = (perAddress: Rate, perSite: Rate) => {
-  const byAddress = rateLimiter(perAddress);
-  const bySite = rateLimiter(perSite);
-  return (address: string, now: number): string | undefined => {
-    const bucket = addressBucket(address);
-    if (!byAddress(bucket, now)) return bucket;
-    const site = addressBucket(address, 48);
-    if (site !== bucket && !bySite(site, now)) return site;
-    return undefined;
+  const byAddress = tokenBuckets(perAddress);
+  const bySite = tokenBuckets(perSite);
+  const site = (address: string) => {
+    const s = addressBucket(address, 48);
+    return s === addressBucket(address) ? undefined : s;
+  };
+  return {
+    over: (address: string, now: number): string | undefined => {
+      const bucket = addressBucket(address);
+      if (!byAddress.has(bucket, now)) return bucket;
+      const s = site(address);
+      if (s !== undefined && !bySite.has(s, now)) return s;
+      return undefined;
+    },
+    spend: (address: string, now: number): void => {
+      byAddress.take(addressBucket(address), now);
+      const s = site(address);
+      if (s !== undefined) bySite.take(s, now);
+    },
   };
 };
 
@@ -215,7 +231,7 @@ const make = (
     // Socket callbacks read the time from the same clock the Effect code does.
     const clock = yield* Clock.Clock;
     const claims = yield* Semaphore.make(1);
-    const claimOver = claimLimiter(gmLimits.claimRate, gmLimits.siteClaimRate);
+    const claimRate = claimLimiter(gmLimits.claimRate, gmLimits.siteClaimRate);
     /** The claim rules now: rooms with a GM linked keep their claims however old. */
     const claimPolicy = (): ClaimPolicy => ({
       maxRooms: gmLimits.maxRooms,
@@ -282,16 +298,30 @@ const make = (
         );
         // The host key is proven now. Claims are serialized, so two first links can't both win,
         // and a link that can't be kept (the relay stopping, or at its most links) claims nothing.
+        // Only a claim made counts against the address's rate, checked again here in case others
+        // claimed since its hello.
         const proven = client.hostKeyFingerprint;
         const claim = yield* claims.withPermits(1)(
           Effect.gen(function* () {
             if (!accepting || client.closed()) return { gone: true } as const;
             if (linkFull()) return { linkFull: true } as const;
-            return yield* claimRoom(roomsFile, room, proven, claimPolicy());
+            const now = yield* Clock.currentTimeMillis;
+            const fresh =
+              judgeClaim(yield* readRooms(roomsFile), room, proven, now, claimPolicy()).kind ===
+              "free";
+            const over = fresh ? claimRate.over(address, now) : undefined;
+            if (over !== undefined) return { tooFast: over } as const;
+            const made = yield* claimRoom(roomsFile, room, proven, claimPolicy());
+            if ("claimed" in made && made.claimed) claimRate.spend(address, now);
+            return made;
           }),
         );
         if ("gone" in claim) return;
         if ("linkFull" in claim) return yield* Effect.logWarning(fullRefusal);
+        if ("tooFast" in claim)
+          return yield* Effect.logWarning(
+            `room ${room}: refused: ${claim.tooFast} claims rooms too fast`,
+          );
         if ("full" in claim) return yield* Effect.logWarning(fullRooms(room));
         const { holder, claimed, dropped } = claim;
         for (const old of dropped)
@@ -345,8 +375,9 @@ const make = (
      * Whether a hello for `room` from `address` may go on to log in, judged before SSH so the GM's
      * host hears why on the answer line: for a reason that is about the relay or the address, not
      * the host key, which only the login proves. Claiming a room nobody holds costs a GM nothing,
-     * so one address claims only so fast; a GM relinking a room it holds claims nothing. Returns
-     * the journal's line and the answer's reason, or undefined to go on.
+     * so one address claims only so fast; a GM relinking a room it holds claims nothing. The rate
+     * is only looked at here: the claim made after the login spends it. Returns the journal's
+     * line and the answer's reason, or undefined to go on.
      */
     const judgeHello = (room: string, address: string) =>
       claims.withPermits(1)(
@@ -364,7 +395,7 @@ const make = (
               journal: fullRooms(room),
               reason: "the relay holds its most rooms, each with a GM linked now",
             };
-          const over = verdict.kind === "free" ? claimOver(address, now) : undefined;
+          const over = verdict.kind === "free" ? claimRate.over(address, now) : undefined;
           if (over !== undefined)
             return {
               journal: `room ${room}: refused: ${over} claims rooms too fast`,

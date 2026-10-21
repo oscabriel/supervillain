@@ -1,4 +1,4 @@
-// `supervillain relay [--player-port 2222] [--gm-port 7022] [--bind 0.0.0.0] [--claim-days 30]
+// `supervillain relay [--player-port 2222] [--gm-port 7022] [--bind 0.0.0.0] [--claim-days 180]
 //                     [--dir ~/.supervillain-relay]`
 // `supervillain relay forget <room> [--dir …]`
 import { access, mkdir } from "node:fs/promises";
@@ -11,7 +11,7 @@ import { checkRelayDir, forgetRoom } from "./rooms.ts";
 import { Relay, RelayError } from "./server.ts";
 
 const DEFAULT_DIR = "~/.supervillain-relay";
-const DEFAULT_CLAIM_DAYS = 30;
+const DEFAULT_CLAIM_DAYS = 180;
 
 const expandHome = (path: string) =>
   path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;

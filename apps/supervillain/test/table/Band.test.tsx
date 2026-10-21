@@ -10,7 +10,10 @@ import {
   ford,
   goblins,
   ogre,
+  sampleFord,
+  sampleFordMidFight,
   sera,
+  showsStamina,
   sniper,
   spearmen,
   vex,
@@ -304,6 +307,44 @@ describe("a full fight in a small band", () => {
     expect(rowWith(rows, "Chief")).toMatch(/Chief .*Bruiser \d/);
   });
 
+  for (const [when, roster, maxHeight] of [
+    ["healthy", sampleFord, 9],
+    ["mid-fight", sampleFordMidFight, 8],
+  ] as const) {
+    test(`beside the map at 80x24, the sample fight ${when}: each hero on one row, every living combatant's Stamina shown`, async () => {
+      const t = await mount(fight(roster), 80, 24, maxHeight);
+      const rows = bandRows(t);
+      const band = rows.join("\n");
+      expect(rows.length).toBeLessThanOrEqual(maxHeight);
+      const living = roster.filter((c) => c.health !== "dead");
+      for (const c of living) expect(showsStamina(band, c)).toBe(true);
+      // No hero wraps onto a second line: every line inside the border holds a meter or the dead.
+      for (const r of rows.slice(1, -1)) expect(r).toMatch(/▐|dead:/);
+      for (const hero of ["Brann", "Ilsa", "Kesh", "Wren"].filter((h) => band.includes(h)))
+        expect(rows.filter((r) => r.includes(hero))).toHaveLength(1);
+      // Only the dead may be counted in `+N more`.
+      const more = Number(/\+(\d+) more/.exec(band)?.[1] ?? 0);
+      expect(more).toBeLessThanOrEqual(roster.length - living.length);
+    });
+  }
+
+  test("a living creature's row comes before the dead line, which goes first", async () => {
+    // Six lines: three living heroes, the five creatures paired in three; Brann's dead line goes.
+    const t = await mount(fight(sampleFordMidFight), 80, 24, 8);
+    const band = bandRows(t).join("\n");
+    expect(band).not.toContain("dead:");
+    expect(band).toContain("+1 more");
+    for (const c of sampleFordMidFight.filter((c) => c.health !== "dead"))
+      expect(showsStamina(band, c)).toBe(true);
+  });
+
+  test("squads cut to their last word's start stay apart", async () => {
+    const t = await mount(fight(sampleFordMidFight), 80, 24, 8);
+    const band = bandRows(t).join("\n");
+    expect(band).toMatch(/cA C\S* A x2/);
+    expect(band).toMatch(/sA S\S* A x2/);
+  });
+
   test("beside the map at 80x24, four heroes and four creature groups each keep one row: every enemy's Stamina shows", async () => {
     const [brann, kesh, ilsa, wren] = ford;
     const heroes = [
@@ -330,7 +371,7 @@ describe("a full fight in a small band", () => {
         count: 4,
       }),
     ];
-    const t = await mount(fight([...heroes, ...enemies]), 80, 24, 8, true);
+    const t = await mount(fight([...heroes, ...enemies]), 80, 24, 8);
     const band = bandRows(t).join("\n");
     for (const part of [
       "60/80",

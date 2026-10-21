@@ -378,6 +378,30 @@ function bleed(slice: DrawSteelState, who: Who, bleeds: boolean, dice: Dice): Ne
 
 const MIGHT_OR_AGILITY: ReadonlyArray<Characteristic> = ["might", "agility"];
 
+/**
+ * A move; one that spends the main action on moving (`main`, the first time this turn) is a main
+ * action, so a bleeding mover bleeds after it as after any other.
+ */
+function moveAndBleed(
+  slice: DrawSteelState,
+  actor: string,
+  command: Extract<DsCommand, { type: "move" }>,
+  dice: Dice,
+): Decision {
+  const moved = move(slice, actor, command);
+  if (!("events" in moved)) return moved;
+  // Only a move that spends the creature's main action on its own turn bleeds; `main` typed off-turn spends nothing.
+  const spends = moved.events.some(
+    (e) => e.type === "ds.moved" && (e.payload as { main?: boolean }).main === true,
+  );
+  if (!spends) return moved;
+  const who = resolve(slice, command.who);
+  if ("refusal" in who) return moved;
+  const { moved: turn } = slice.combat;
+  const spentAlready = turn?.id === who.id && turn.main;
+  return { events: [...moved.events, ...bleed(slice, who, !spentAlready, dice)] };
+}
+
 /** The targets typed after `on`, each at the table and alive, with how far from `who` they stand. */
 function targetsOf(
   slice: DrawSteelState,
@@ -835,7 +859,7 @@ export function decide(
     case "place":
       return place(slice, actor, command);
     case "move":
-      return move(slice, actor, command);
+      return moveAndBleed(slice, actor, command, dice);
     case "dist":
       return measure(slice, command);
     case "push":

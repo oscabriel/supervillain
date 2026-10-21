@@ -78,3 +78,34 @@ export const courtyard: MapView = {
   ],
   reachLabel: "Vex can reach: speed 5",
 };
+
+/** The sample campaign's map (examples/campaign/maps/ford-road.txt), with its fight set up on it. */
+export const fordRoad: MapView = {
+  name: "The Ford Road",
+  width: 20,
+  height: 10,
+  terrain: [
+    "  ................  ",
+    ".##.###....~~.......",
+    ".#.....#...~~..~~...",
+    ".......#...~~..~~...",
+    "...........~~.......",
+    "...........~~.......",
+    "....~......~~...#.#.",
+    "...~~......~~...#...",
+    "...........~~.......",
+    "  ................  ",
+  ],
+  tokens: [
+    token({ id: "brann", mark: "B", x: 1, y: 4, side: "heroes", mine: true }),
+    token({ id: "ilsa", mark: "I", x: 1, y: 5, side: "heroes" }),
+    token({ id: "kesh", mark: "K", x: 2, y: 5, side: "heroes" }),
+    token({ id: "wren", mark: "W", x: 1, y: 6, side: "heroes" }),
+    token({ id: "bandit-chief", mark: "c", x: 15, y: 5, acting: true }),
+    token({ id: "bandit-bruiser-1", mark: "b1", x: 14, y: 4 }),
+    token({ id: "bandit-bruiser-2", mark: "b2", x: 14, y: 6 }),
+    token({ id: "bandit-cutpurse-a", mark: "cA", x: 15, y: 4 }),
+    token({ id: "bandit-slinger-a", mark: "sA", x: 15, y: 6 }),
+  ],
+  reach: [],
+};

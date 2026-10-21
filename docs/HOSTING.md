@@ -39,7 +39,7 @@ supervillain new ~/campaigns/first-fight --example
 supervillain host ~/campaigns/first-fight
 ```
 
-`new --example` copies the sample campaign: four heroes, the bandits and the map for one fight. Without `--example` you get empty `heroes/`, `monsters/` and `maps/` folders. The folder's README explains the file formats. `host` opens a folder that's there and refuses one that isn't (`there's no campaign at …; make one with: supervillain new …`), so a mistyped path never starts an empty table under a new host key.
+`new --example` copies the sample campaign: four heroes, the bandits and the map for one fight. Without `--example` you get empty `heroes/`, `monsters/` and `maps/` folders. The folder's README explains the file formats. `host` opens a campaign folder and refuses one that isn't there (`there's no campaign at …; make one with: supervillain new …`), and a folder with none of `events.jsonl`, `host_key`, `heroes/`, `monsters/` or `maps/` in it (`… isn't a campaign: …`), so a mistyped path never starts an empty table under a new host key, and your home folder never gets a log.
 
 `host` prints what to send your players:
 
@@ -181,7 +181,7 @@ GMs dial 0.0.0.0:7022 (supervillain host --relay <this host>:7022)
 relay key SHA256:qvkXv/0oq8giV0/7z4dtuBdvLT5onmKPQztKIMFOEtQ
   GMs pin it with: --relay-key SHA256:qvkXv/0oq8giV0/7z4dtuBdvLT5onmKPQztKIMFOEtQ
 host key SHA256:eaIkljiTdK8kbQz3HpTcvu1vxAfazjOz5/vcRD4fDWA (what players' ssh sees)
-a room's claim lapses after 30 days with no GM linked
+a room's claim lapses after 180 days with no GM linked
 ```
 
 The relay key is what GMs' hosts pin. The host key is what players' ssh shows them the first time. `/var/lib/supervillain-relay` holds both keys (`relay_key`, `host_key`) and `rooms.json`, and nothing else: the relay keeps no logs of play and renders nothing. Back the folder up. If the keys are lost, every GM's host and every player's ssh will see a new relay. Without `--dir`, the relay keeps its files in `~/.supervillain-relay`.
@@ -239,7 +239,7 @@ A claim is the relay's record that a room belongs to one GM's host key (the camp
 
 After that, the relay refuses that room to any other host key, so nobody else can take your room while you're away. A refused host keeps redialing, and its band shows `relay: connecting… (the link closed before the relay logged in; if this keeps up, another GM's host key may hold room first-fight there)`. The relay's journal names the host key it refused.
 
-The relay renews a claim's time whenever its GM links and again when the link ends, so a room in use never lapses. A claim no GM has linked for 30 days lapses: the next host key to link the room claims it, and the journal says `room first-fight: dropped the claim of GM host key SHA256:…, last linked …`. Change the 30 with `--claim-days` on `supervillain relay`. A GM who comes back with the same host key after the claim has lapsed keeps the room, unless someone else claimed it first.
+The relay renews a claim's time whenever its GM links and again when the link ends, so a room in use never lapses. A claim no GM has linked for 180 days lapses: the next host key to link the room claims it, and the journal says `room first-fight: dropped the claim of GM host key SHA256:…, last linked …`. The 180 is long enough that a group meeting monthly, or taking a season off, keeps its room's name; change it with `--claim-days` on `supervillain relay`. A GM who comes back with the same host key after the claim has lapsed keeps the room, unless someone else claimed it first.
 
 A GM who moves to a new machine without copying the campaign folder, or who loses `host_key`, needs the claim released sooner. On the VPS:
 
@@ -251,7 +251,7 @@ Run it as the relay's user, so `rooms.json` stays the relay's to read.
 
 The next host to link `first-fight` claims it, and replaces the host linked now, if there is one. A running relay picks this up without a restart.
 
-Claiming a room costs nothing but a link, so someone could claim a name you're likely to use before you do; the room's name defaults to your campaign folder's. If a room you want is taken, pick another with `--room`, or ask whoever runs the relay. To slow squatting, one address claims 3 new rooms, then one an hour. An IPv6 address counts by its /64, and each /48 also claims at most 10, then 4 an hour, however many /64s it uses. Relinking a room you hold claims nothing. A refused claim shows in the journal as `room first-fight: refused: 203.0.113.7 claims rooms too fast`.
+Claiming a room costs nothing but a link, so someone could claim a name you're likely to use before you do; the room's name defaults to your campaign folder's. If a room you want is taken, pick another with `--room`, or ask whoever runs the relay. To slow squatting, one address claims 3 new rooms, then one an hour. Only a claim made counts: a link whose login fails (a GM's host that doesn't trust the relay's key yet, say) costs nothing. An IPv6 address counts by its /64, and each /48 also claims at most 10, then 4 an hour, however many /64s it uses. Relinking a room you hold claims nothing. A refused claim shows in the journal as `room first-fight: refused: 203.0.113.7 claims rooms too fast`.
 
 The relay holds at most 1024 claims. When it's full, a new claim drops the claim whose GM linked longest ago, and the journal says which, ending `to make room for <room>`. A claim with a GM linked now is never dropped. If every claim has a GM linked, the new one is refused: `room first-fight: refused: the relay holds its most rooms (1024), each with a GM linked now`.
 

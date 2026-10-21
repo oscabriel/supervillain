@@ -1,11 +1,11 @@
 import { describe, expect } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { effect } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
-import { cli, startHost } from "./cli.ts";
+import { campaignDir, cli, startHost } from "./cli.ts";
 import { clientKey, sshExec, sshShell, waitFor } from "./openssh.ts";
 
 const logOf = (dir: string) =>
@@ -21,7 +21,7 @@ describe("supervillain host --headless", () => {
     "players reach the table over real ssh: exec commands, a pty seat, and a clean stop",
     () =>
       Effect.gen(function* () {
-        const campaign = yield* tempDir;
+        const campaign = yield* campaignDir;
         const vex = yield* clientKey(yield* tempDir, "vex");
         const host = yield* startHost([campaign, "--headless", "--room", "den"]);
         expect(host.output()).toContain(`ssh -p ${host.port} den@127.0.0.1`);
@@ -91,7 +91,7 @@ describe("supervillain host --headless", () => {
     () =>
       Effect.gen(function* () {
         const elsewhere = yield* tempDir;
-        yield* Effect.promise(() => mkdir(join(elsewhere, "ford")));
+        yield* Effect.promise(() => mkdir(join(elsewhere, "ford", "heroes"), { recursive: true }));
         const host = yield* startHost(["ford", "--headless"], elsewhere);
         expect((yield* sshExec(host.port, "help")).exitCode).toBe(0);
         expect(existsSync(join(elsewhere, "ford", "host_key"))).toBe(true);
@@ -114,9 +114,32 @@ describe("supervillain host --headless", () => {
       }),
   );
 
+  effect(
+    "an empty or unrelated folder is refused, pointing at `new`, and nothing is written in it",
+    () =>
+      Effect.gen(function* () {
+        const empty = yield* tempDir;
+        const refused = yield* cli(["host", empty, "--headless", "--port", "0"]);
+        expect(refused.exitCode).toBe(1);
+        expect(refused.stderr.trim().split("\n")).toEqual([
+          `supervillain: ${empty} isn't a campaign: it has no events.jsonl, host_key, heroes/, monsters/ or maps/; make one there with: bun supervillain new ${empty} (--example for the sample)`,
+        ]);
+        expect(yield* Effect.promise(() => readdir(empty))).toEqual([]);
+
+        const unrelated = yield* tempDir;
+        yield* Effect.promise(() => writeFile(join(unrelated, "notes.txt"), "groceries\n"));
+        const also = yield* cli(["host", unrelated, "--headless", "--port", "0"]);
+        expect(also.exitCode).toBe(1);
+        expect(also.stderr.trim().split("\n")).toEqual([
+          `supervillain: ${unrelated} isn't a campaign: it has no events.jsonl, host_key, heroes/, monsters/ or maps/; make one in a new folder with: bun supervillain new <folder> (--example for the sample)`,
+        ]);
+        expect(yield* Effect.promise(() => readdir(unrelated))).toEqual(["notes.txt"]);
+      }),
+  );
+
   effect("a port in use is one plain line saying what to do", () =>
     Effect.gen(function* () {
-      const campaign = yield* tempDir;
+      const campaign = yield* campaignDir;
       const busy = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
       try {
         const result = yield* cli(["host", campaign, "--headless", "--port", String(busy.port)]);
