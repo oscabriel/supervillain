@@ -8,6 +8,7 @@
   ],
   "type": "module",
   "scripts": {
+    "supervillain": "bun apps/supervillain/src/main.ts",
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "check": "oxlint --disable-nested-config && oxfmt --check",

@@ -3,10 +3,12 @@ import type { Accessor } from "solid-js";
 /** One rendered feed line. The table styles by `kind`, never by parsing `text`. */
 export interface FeedLine {
   readonly seq: number;
-  /** The actor's label at the time of the event: display name, else a short key label. */
+  /** The actor's current label (display name, else a short key label), resolved when the feed is projected. */
   readonly who: string;
   readonly kind: string;
   readonly text: string;
+  /** Whether the GM wrote it: the GM's label is drawn in the GM's colour, so a name can't pass for the GM. */
+  readonly gm?: boolean;
 }
 
 /** Someone with a seat open right now. */
@@ -33,8 +35,10 @@ export interface TableView {
   readonly submit: (line: string) => Promise<string | undefined>;
   /** Completions for the whole input line; each is a full replacement line. */
   readonly complete: (line: string) => ReadonlyArray<string>;
-  /** The debug pane's text (`/state`): the full state as JSON plus the last few envelopes. */
+  /** The state pane's text (`/state`, the GM's seat only): the full state as JSON plus the last few envelopes. */
   readonly debug: () => string;
   /** Leaves the table: closes this seat. */
   readonly leave: () => void;
+  /** How players join (`ssh -p 2222 den@host`), shown on the GM's seat while nobody else is here. */
+  readonly joinHint?: string;
 }

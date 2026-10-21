@@ -1,0 +1,158 @@
+// Players' text is drawn on other players' terminals, so nothing a terminal would act on may reach the state.
+// Matching control characters is the point of these patterns.
+/* oxlint-disable no-control-regex */
+
+// ESC sequences: CSI (ESC [ ... final), OSC/DCS/SOS/PM/APC strings (ending in BEL or ESC \), then any other ESC pair.
+const ESCAPES =
+  /\x1b\[[0-?]*[ -/]*[@-~]?|\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[\s\S]?|\x9b[0-?]*[ -/]*[@-~]?/g;
+// C0 and C1 controls and DEL, except the whitespace ones.
+const CONTROLS = /[\x00-\x08\x0e-\x1f\x7f-\x9f]/g;
+
+/* oxlint-enable no-control-regex */
+
+// What draws as nothing, or reorders what is drawn: format characters (zero-width spaces and
+// joiners, bidi marks and overrides, the soft hyphen, tags), every other default-ignorable code
+// point (the Hangul fillers, variation selectors) and the blank braille pattern.
+const INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}⠀]/gu;
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}⠀]/u;
+const MARK = /\p{M}/u;
+
+/** Combining marks kept on one character. Real scripts need two or three; zalgo needs dozens. */
+const MARKS_MAX = 3;
+
+/** Drops combining marks with nothing to sit on, and any past the third on one character. */
+function tidyMarks(text: string): string {
+  let out = "";
+  let marks = 0;
+  let base = false;
+  for (const char of text) {
+    if (MARK.test(char)) {
+      if (base && marks < MARKS_MAX) {
+        out += char;
+        marks++;
+      }
+      continue;
+    }
+    out += char;
+    base = char !== " ";
+    marks = 0;
+  }
+  return out;
+}
+
+/**
+ * Makes untrusted text safe for one feed line: escape sequences, control characters and
+ * invisible characters go, accents are composed (NFC) with stray or stacked ones dropped,
+ * every run of whitespace (pasted newlines and tabs included) becomes one space, and the ends are trimmed.
+ */
+export function cleanText(raw: string): string {
+  const text = raw
+    .replace(ESCAPES, "")
+    .replace(CONTROLS, "")
+    .normalize("NFC")
+    .replace(INVISIBLE, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return tidyMarks(text).trim();
+}
+
+/** Whether text holds anything a terminal would act on, or that draws as nothing or reorders what it shows. */
+export const hasControls = (text: string): boolean => UNSAFE.test(text);
+
+/** Length in code points, so an emoji counts once rather than as two UTF-16 units. */
+export const lengthOf = (text: string): number => [...text].length;
+
+/** Untrusted text quoted back in a message: cleaned and cut short. */
+export const quote = (raw: string, max = 24): string => {
+  const text = cleanText(raw);
+  return lengthOf(text) > max ? `${[...text].slice(0, max - 1).join("")}…` : text;
+};
+
+// Letters from other scripts that draw like Latin ones, by case, and digits that draw like
+// lowercase letters. Not all of Unicode's confusables, but the ones a keyboard switch reaches.
+const LOOKALIKES: Readonly<Record<string, string>> = {
+  // Cyrillic
+  А: "A",
+  В: "B",
+  Е: "E",
+  К: "K",
+  М: "M",
+  Н: "H",
+  О: "O",
+  Р: "P",
+  С: "C",
+  Т: "T",
+  У: "Y",
+  Х: "X",
+  І: "I",
+  Ј: "J",
+  Ѕ: "S",
+  Ԛ: "Q",
+  Ԝ: "W",
+  Ү: "Y",
+  Һ: "H",
+  Ӏ: "I",
+  а: "a",
+  е: "e",
+  о: "o",
+  р: "p",
+  с: "c",
+  у: "y",
+  х: "x",
+  і: "i",
+  ј: "j",
+  ѕ: "s",
+  ԁ: "d",
+  ԛ: "q",
+  ԝ: "w",
+  һ: "h",
+  ӏ: "l",
+  ү: "y",
+  // Greek
+  Α: "A",
+  Β: "B",
+  Ε: "E",
+  Ζ: "Z",
+  Η: "H",
+  Ι: "I",
+  Κ: "K",
+  Μ: "M",
+  Ν: "N",
+  Ο: "O",
+  Ρ: "P",
+  Τ: "T",
+  Υ: "Y",
+  Χ: "X",
+  α: "a",
+  ι: "i",
+  κ: "k",
+  ν: "v",
+  ο: "o",
+  ρ: "p",
+  υ: "u",
+  χ: "x",
+  γ: "y",
+  // Latin
+  ı: "i",
+  ɑ: "a",
+  ɡ: "g",
+};
+const DIGIT_LOOKALIKES: Readonly<Record<string, string>> = { "0": "o", "1": "l" };
+
+/**
+ * What a name looks like, for telling whether two names would be mistaken for each other:
+ * compatibility-normalised (NFKC), invisible characters removed, lookalike letters folded to
+ * Latin, lowercased, and 0 and 1 read as o and l. "Vex", "VEX", "Ｖｅｘ" and "Vеx" with a
+ * Cyrillic е all look like "vex".
+ */
+export function nameKey(name: string): string {
+  const folded = [...name.normalize("NFKC").replace(INVISIBLE, "")]
+    .map((char) => LOOKALIKES[char] ?? char)
+    .join("")
+    .toLowerCase();
+  return [...folded]
+    .map((char) => DIGIT_LOOKALIKES[char] ?? char)
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+}

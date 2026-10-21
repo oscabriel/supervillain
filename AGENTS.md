@@ -8,7 +8,7 @@ We are rebuilding small, from a cleared tree. `ASSESSMENT.md` at the root is the
 
 - The previous build is tagged `archive/2026-09-exploration`, with its ADRs, wayfinder and benchmarks under `.agents/`; nothing in it binds. Copy from it with care (ASSESSMENT §5 lists what's worth lifting), one file and its tests at a time, from a worktree: `git worktree add ../supervillain-archive archive/2026-09-exploration`.
 - Spikes A and B import the archived packages, so they live at tag `archive/2026-09-spikes`. Spike C (paper) and Spike D (the runnable Effect table that settled the architecture) live in `spikes/`. Lift lessons from them, not code; root lint and format skip that folder.
-- The rebuild goes in slices toward a table friends can sit at: engine, then SSH table with names and chat, chat-first input and layout, minimum Draw Steel, undo and the text map, then the relay.
+- The rebuild goes in slices toward a table friends can sit at: engine, then SSH table with names and chat, chat-first input and layout, minimum Draw Steel, undo and the text map, then the relay. The first three are in: `bun supervillain host` runs a table you can join over SSH.
 - The issue backlog from that phase is frozen. New issues come from play.
 
 ## Rules
@@ -33,12 +33,16 @@ Bun workspaces, TypeScript 7 with `tsc -b`, oxlint and oxfmt on defaults, `bun t
 
 - **Rules are pure.** `decide(state, actor, command, dice)` returns events or a refusal, and `apply(state, envelope)` folds one event. No Effect runtime, I/O, clock or `Math.random` in rules.
 - **Effect 4 runs the host edge:** the log file, the single writer, sessions and their lifetimes, as `Context.Service` classes with layers. Effect's own agent guide ships at `node_modules/effect/AGENTS.md`.
-- **The table** arrives in slice 2: Solid on OpenTUI 0.6.6, one App for the GM's terminal and every SSH seat.
+- **The table** is Solid on OpenTUI 0.6.6: one App for the GM's terminal and every SSH seat. It sees only the `TableView` in `table/view.ts`, never the room, the log or Effect.
 
 - `packages/engine`: the envelope, the log reader, the fold, `CampaignLog` and the single-writer `Room`. Generic over a game's rules.
-- `apps/supervillain`: the one binary. The table, Draw Steel and the relay start as folders here and become packages only when a boundary hurts.
+- `packages/ssh`: our SSH server on ssh2. A key is an identity and a keyless client can be a guest; each shell gets a renderer and each session its own Effect scope. It is open to strangers, so it caps connections and sessions (per address and in all), times out logins and idle sessions, cuts dead peers by keepalive and offers only elliptic-curve key exchange.
+- `apps/supervillain`: the one binary (`src/main.ts`, effect/cli). Folders become packages only when a boundary hurts:
+  - `game/`: the pure rules as modules (core: chat, names, dice), composed into one engine `Rules` and one command registry that drives parsing, completion and `/help`.
+  - `table/`: the chat-first App over `view.ts`.
+  - `host/`: the Effect edge. `TableRoom` (the room, with the log provided inside its layer), `Presence`, `Seat` (one `TableView` per seat), `TableServer` (SSH shells and exec) and `LocalSeat` (the GM's terminal).
 
-Build with `bun run build`, test with `bun test`, lint and format-check with `bun run check`.
+Build with `bun run build`, test with `bun test`, lint and format-check with `bun run check`. Run the table from the root with `bun supervillain host` (the root `bunfig.toml` preloads the Solid JSX transform).
 
 ## References
 
