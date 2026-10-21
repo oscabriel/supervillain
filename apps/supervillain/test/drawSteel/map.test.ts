@@ -695,7 +695,8 @@ describe("movement over a turn (Combat, 'Advance', 'Can't Exceed Speed')", () =>
     const t = vexTurn();
     t.run(GM, { type: "cond", who: "vex", condition: "bleeding", duration: "save" });
     const before = t.hero("vex").stamina;
-    t.run(ALICE, { type: "done" });
+    // Ending the turn rolls the save for bleeding: a 1 fails it, so Vex is still bleeding.
+    t.run(ALICE, { type: "done" }, fixedDice(1));
     // Between Vex's turns the GM moves Vex: no turn of Vex's, so no main action to spend.
     ok(t, GM, "/move vex e5 main", fixedDice(4));
     ok(t, GM, "/move vex f5 main", fixedDice(4));
