@@ -40,6 +40,14 @@ import { InputLine } from "./InputLine.tsx";
 import { hanging } from "./hanging.ts";
 import { type Focus, focusOf, followed, MAP_FRAME, mapLayout, mapRowsWanted } from "./map.ts";
 import { MapPane } from "./MapPane.tsx";
+import {
+  ArtMap,
+  artRowsWanted,
+  PROTOCOLS,
+  type Protocol,
+  VARIANTS,
+  type Variant,
+} from "./prototype-map-art/ArtMap.tsx";
 import { color, people } from "./theme.ts";
 import type { CombatView, MapView, TableView } from "./view.ts";
 
@@ -105,6 +113,15 @@ export function App(props: { view: TableView }) {
    * holds until the turn passes or a layout word (`/view both`) puts the map back to following.
    */
   const [pin, setPin] = createSignal<{ readonly square: Focus } | { readonly token: string }>();
+  /** PROTOTYPE (branch prototype/map-art): this seat's map look (F2) and image protocol (F3). */
+  const [art, setArt] = createSignal<Variant>(
+    (VARIANTS as ReadonlyArray<string>).includes(process.env.SV_MAP_ART ?? "")
+      ? (process.env.SV_MAP_ART as Variant)
+      : "text",
+  );
+  const [protocol, setProtocol] = createSignal<Protocol>("auto");
+  const [transport, setTransport] = createSignal<"zlib" | "raw">("zlib");
+  const cycle = <T,>(all: ReadonlyArray<T>, now: T) => all[(all.indexOf(now) + 1) % all.length]!;
   /** The GM pressed Ctrl-C with players here, and the next Ctrl-C closes the table. */
   const [leaving, setLeaving] = createSignal(false);
   /** The line a hint just answered: sent again as it is, it goes ahead. */
@@ -250,6 +267,13 @@ export function App(props: { view: TableView }) {
   }
 
   useKeyboard((key: KeyEvent) => {
+    if (key.name === "f2" || key.name === "f3" || key.name === "f4") {
+      key.preventDefault();
+      if (key.name === "f2") setArt(cycle(VARIANTS, art()));
+      else if (key.name === "f3") setProtocol(cycle(PROTOCOLS, protocol()));
+      else setTransport(transport() === "zlib" ? "raw" : "zlib");
+      return;
+    }
     const action = keyAction(key);
     if (action.kind === "none") return;
     key.preventDefault();
@@ -354,7 +378,7 @@ export function App(props: { view: TableView }) {
    * wants beyond that.
    */
   function mapHeights(map: MapView, combat: CombatView | undefined, room: number, cap: number) {
-    const wanted = mapRowsWanted(map);
+    const wanted = art() === "text" ? mapRowsWanted(map) : artRowsWanted(map);
     const band = bandRows(combat, cap);
     if (split() === "map") {
       const folded = Math.min(band.wanted, BAND_FOLDED);
@@ -417,7 +441,22 @@ export function App(props: { view: TableView }) {
       </Show>
 
       <Show when={mapHeight() > 0 ? shownMap() : undefined}>
-        {(map) => <MapPane map={map()} height={mapHeight()} focus={focus()} />}
+        {(map) => (
+          <Show
+            when={art() !== "text" ? (art() as Exclude<Variant, "text">) : undefined}
+            fallback={<MapPane map={map()} height={mapHeight()} focus={focus()} />}
+          >
+            {(variant) => (
+              <ArtMap
+                map={map()}
+                height={mapHeight()}
+                variant={variant()}
+                protocol={protocol()}
+                transport={transport()}
+              />
+            )}
+          </Show>
+        )}
       </Show>
 
       <box flexDirection="row" flexGrow={1} minHeight={0}>

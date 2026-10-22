@@ -448,6 +448,17 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
     ): Effect.Effect<void, never, Scope.Scope> =>
       Effect.gen(function* () {
         const { ended, end, state } = yield* watchChannel(channel);
+        // PROTOTYPE (branch prototype/map-art): count what this seat is sent, for the map-art title.
+        const counted = { bytes: 0 };
+        const write = channel.write.bind(channel) as (
+          chunk: unknown,
+          ...rest: unknown[]
+        ) => boolean;
+        (channel as { write: unknown }).write = (chunk: unknown, ...rest: unknown[]) => {
+          counted.bytes +=
+            typeof chunk === "string" ? Buffer.byteLength(chunk) : (chunk as Uint8Array).length;
+          return write(chunk, ...rest);
+        };
         const streams = rendererStreams(channel, info.cols, info.rows);
         const nativeSession = new NativeSession(channel);
         // Runs last, after the renderer has restored the client's terminal.
@@ -509,6 +520,8 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
         );
         if (created === undefined) return;
         renderer = created;
+        const registry = globalThis as { __svWire?: WeakMap<object, { bytes: number }> };
+        (registry.__svWire ??= new WeakMap()).set(created, counted);
         const live = created;
         live.on(CliRenderEvents.DESTROY, end);
         onResize((cols, rows) => {
