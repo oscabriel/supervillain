@@ -55,6 +55,11 @@ export function decodeMap(
   }
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const named = /^name:/i.test(lines[0] ?? "");
+  // PROTOTYPE (prototype-map-gen): a `style: mekmode` map is written in letters the rules check.
+  if (lines.slice(0, 2).some((line) => /^style:\s*mekmode\s*$/i.test(line))) {
+    const grid = readMapText(id, text, file);
+    return "refusal" in grid ? invalid(grid.refusal) : Effect.succeed(grid);
+  }
   for (const [row, line] of lines.entries()) {
     const chars = [...line];
     const allowed = named && row === 0 ? PRINTABLE : TERRAIN;

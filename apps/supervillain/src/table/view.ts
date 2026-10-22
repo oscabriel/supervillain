@@ -34,6 +34,8 @@ export interface MapView {
   readonly height: number;
   /** One string per row, one terrain character per square ("." floor, "#" wall, "~" difficult…). */
   readonly terrain: ReadonlyArray<string>;
+  /** PROTOTYPE (prototype-map-gen): the MEKMODE letter drawn on each square, when the map has them. */
+  readonly dressing?: ReadonlyArray<string>;
   readonly tokens: ReadonlyArray<MapToken>;
   /** Squares to highlight, e.g. where the acting creature can move this turn. */
   readonly reach: ReadonlyArray<{ readonly x: number; readonly y: number }>;

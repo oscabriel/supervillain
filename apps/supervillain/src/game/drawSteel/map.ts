@@ -4,6 +4,7 @@
  * event carries it and replay never reads a file.
  */
 import type { Refused } from "../module.ts";
+import { terrainOf } from "../prototype-map-gen/legend.ts";
 
 /** One square: `x` is the column from 0 (a), `y` the row from 0 (row 1). */
 export interface Square {
@@ -15,6 +16,11 @@ export interface Square {
 export interface MapGrid {
   readonly name: string;
   readonly terrain: ReadonlyArray<string>;
+  /**
+   * PROTOTYPE (prototype-map-gen): the MEKMODE letter drawn on each square, from a `style:
+   * mekmode` map file; the rules read `terrain`, which the legend makes from it.
+   */
+  readonly dressing?: ReadonlyArray<string>;
 }
 
 export const MAP_WIDTH = 60;
@@ -85,7 +91,11 @@ export function checkGrid(id: string, grid: MapGrid, file = `maps/${id}.txt`): M
   const name = grid.name.trim();
   if (name === "" || name.length > NAME_MAX || !DRAWABLE.test(name))
     return { refusal: `${file} needs a plain name of up to ${NAME_MAX} characters.` };
-  return { name, terrain: rows.map((row) => row.trimEnd().padEnd(width, " ")) };
+  const terrain = rows.map((row) => row.trimEnd().padEnd(width, " "));
+  const dressing = grid.dressing
+    ?.slice(0, rows.length)
+    .map((row) => row.slice(0, width).padEnd(width, " "));
+  return dressing ? { name, terrain, dressing } : { name, terrain };
 }
 
 /**
@@ -93,10 +103,33 @@ export function checkGrid(id: string, grid: MapGrid, file = `maps/${id}.txt`): M
  * then one line per row of terrain.
  */
 export function readMapText(id: string, text: string, file?: string): MapGrid | Refused {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const named = /^name:\s*(.*)$/i.exec(lines[0] ?? "");
-  const name = named === null ? id : named[1]!;
-  return checkGrid(id, { name, terrain: named === null ? lines : lines.slice(1) }, file);
+  let lines = text.replace(/\r\n?/g, "\n").split("\n");
+  let name = id;
+  let mekmode = false;
+  // PROTOTYPE: header lines `name: <name>` and `style: mekmode`, in either order.
+  for (;;) {
+    const named = /^name:\s*(.*)$/i.exec(lines[0] ?? "");
+    const styled = /^style:\s*mekmode\s*$/i.test(lines[0] ?? "");
+    if (named) name = named[1]!;
+    else if (styled) mekmode = true;
+    else break;
+    lines = lines.slice(1);
+  }
+  if (!mekmode) return checkGrid(id, { name, terrain: lines }, file);
+  const terrain: string[] = [];
+  for (const [row, line] of lines.entries()) {
+    let out = "";
+    for (const [column, letter] of [...line].entries()) {
+      const t = terrainOf(letter);
+      if (t === undefined)
+        return {
+          refusal: `${file ?? `maps/${id}.txt`} row ${row + 1}, column ${column + 1} is "${letter}", which isn't a MEKMODE map letter.`,
+        };
+      out += t;
+    }
+    terrain.push(out);
+  }
+  return checkGrid(id, { name, terrain, dressing: lines }, file);
 }
 
 /**

@@ -4,6 +4,7 @@
 import type { MapToken, MapView } from "../view.ts";
 import { DINGS_ATLAS } from "./dings.ts";
 import { TEXT_ATLAS } from "./text.ts";
+import { LEGEND, type Tone } from "../../game/prototype-map-gen/legend.ts";
 
 /** Pixels per square in a painted image. A square is 4 columns by 2 rows of the terminal. */
 export const TILE = 36;
@@ -158,6 +159,20 @@ export const paintTokenTile = (c: Canvas, ox: number, oy: number, t: MapToken, b
     }
 };
 
+/** Each tone's glyph and ground colours, for maps written in MEKMODE letters. */
+const TONES: Record<Tone, { fg: Rgb; bg: Rgb }> = {
+  ground: { fg: hex("#6b6f5a"), bg: hex("#1a1c18") },
+  grass: { fg: hex("#6f9a4f"), bg: hex("#172015") },
+  tree: { fg: hex("#4f8a3f"), bg: hex("#121e10") },
+  rock: { fg: hex("#958e80"), bg: hex("#1f1e1b") },
+  water: { fg: hex("#5f9fcf"), bg: hex("#10202e") },
+  stone: { fg: hex("#b0aa9a"), bg: hex("#26262b") },
+  wood: { fg: hex("#b08050"), bg: hex("#261d16") },
+  roof: { fg: hex("#c0664c"), bg: hex("#2a1814") },
+  floor: { fg: hex("#857e70"), bg: hex("#201e1b") },
+  iron: { fg: hex("#8a9aac"), bg: hex("#1a1e22") },
+};
+
 export const paintPainted = (map: MapView, w: Window): Canvas => {
   const c = new Canvas(w.cols * TILE, w.rows * TILE);
   const reach = reachSet(map);
@@ -169,7 +184,9 @@ export const paintPainted = (map: MapView, w: Window): Canvas => {
       const ox = sx * TILE;
       const oy = sy * TILE;
       const ch = map.terrain[y]?.[x] ?? " ";
-      const terrain = TERRAIN_DING[ch];
+      const letter = map.dressing?.[y]?.[x];
+      const dressed = letter !== undefined && letter !== " " ? LEGEND[letter] : undefined;
+      const terrain = dressed ? { ding: letter!, ...TONES[dressed.tone] } : TERRAIN_DING[ch];
       if (terrain === undefined) {
         c.rect(ox, oy, TILE, TILE, C.void);
         continue;

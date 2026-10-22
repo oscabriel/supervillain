@@ -668,6 +668,7 @@ export function setMap(slice: SetState, actor: string): MapView | undefined {
     width: slice.map.terrain[0]?.length ?? 0,
     height: slice.map.terrain.length,
     terrain: slice.map.terrain,
+    ...(slice.map.dressing ? { dressing: slice.map.dressing } : {}),
     tokens: slice.fighters
       .filter((f) => f.at !== undefined)
       .map((f) => ({
