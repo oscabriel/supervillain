@@ -32,6 +32,7 @@ export {
 } from "./drawSteel/index.ts";
 export {
   bandOf,
+  mapOf,
   type Command,
   commands,
   type FeedLine,

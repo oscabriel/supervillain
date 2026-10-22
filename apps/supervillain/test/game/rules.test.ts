@@ -481,6 +481,7 @@ describe("replay", () => {
       redo: [],
       core: { names: { [ALICE]: "Vex" } },
       ds: rules.initial.ds,
+      sw: rules.initial.sw,
     });
   });
 

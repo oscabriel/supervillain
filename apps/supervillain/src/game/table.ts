@@ -8,9 +8,19 @@ import {
   withHeroes,
 } from "./drawSteel/index.ts";
 import { compose, type CommandOf, GM, type Refused, type StateOf } from "./module.ts";
+import {
+  setActive,
+  setBand,
+  setMap,
+  setSheet,
+  setWorld,
+  type SetState,
+} from "./prototype-set-world/index.ts";
+import { type MapView, mapView } from "./drawSteel/index.ts";
 
 /** The table's modules, in registry order. */
-const modules = [core, drawSteel] as const;
+// PROTOTYPE (branch prototype/set-world): the Set module beside Draw Steel.
+const modules = [core, drawSteel, setWorld] as const;
 type Modules = (typeof modules)[number];
 
 export type TableState = StateOf<Modules>;
@@ -32,7 +42,7 @@ export const feedFormat = composed.feedFormat;
  * Labels actors as the table shows them, now: a display name (else the default label), and the
  * hero a player plays beside it, "Alice (Brann)". Read it when projecting, never store it.
  */
-export const tableLabel = (state: TableState): ((actor: string) => string) =>
+export const tableLabel = (state: Pick<TableState, "ds" | "core">): ((actor: string) => string) =>
   withHeroes(state.ds, labelOf(state));
 
 /**
@@ -40,13 +50,28 @@ export const tableLabel = (state: TableState): ((actor: string) => string) =>
  * played by someone else carries their name ("Brann (Alice)"); the seat's own hero is `mine`.
  */
 export const bandOf = (
-  state: Pick<TableState, "ds" | "core">,
+  state: Pick<TableState, "ds" | "core"> & { readonly sw?: SetState },
   actor: string,
-): CombatView | undefined => combatView(state.ds, actor, labelOf(state));
+): CombatView | undefined =>
+  state.sw && setActive(state.sw)
+    ? setBand(state.sw, actor)
+    : combatView(state.ds, actor, labelOf(state));
+
+/** The map for one seat: a Set fight's while there is one (PROTOTYPE), else Draw Steel's. */
+export const mapOf = (
+  state: Pick<TableState, "ds"> & { readonly sw?: SetState },
+  actor: string,
+): MapView | undefined =>
+  state.sw && setActive(state.sw) ? setMap(state.sw, actor) : mapView(state.ds, actor);
 
 /** The /sheet text for a hero or creature, as commands name them, or why there's none. */
-export const sheetOf = (state: TableState, who: string): string | Refused =>
-  sheetText(state.ds, who);
+export const sheetOf = (state: TableState, who: string): string | Refused => {
+  if (setActive(state.sw)) {
+    const set = setSheet(state.sw, who);
+    if (typeof set === "string") return set;
+  }
+  return sheetText(state.ds, who);
+};
 
 /** What Tab offers after /sheet: the heroes and creatures, the actor's own hero first. */
 export const completeSheet = (
@@ -85,7 +110,7 @@ export interface FeedLine {
  * "↶ Oscar undid: Vex takes 14 damage → 7/21 · winded". Those lines stay in the feed.
  */
 export function feedLines(
-  state: TableState,
+  state: Pick<TableState, "feed" | "core">,
   label: (actor: string) => string,
 ): ReadonlyArray<FeedLine> {
   const plain = labelOf(state);

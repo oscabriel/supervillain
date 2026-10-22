@@ -21,6 +21,7 @@ import {
   withHostFact,
   withMapGrid,
 } from "../game/index.ts";
+import { birthOf } from "../game/prototype-set-world/index.ts";
 import { nameKey } from "../game/text.ts";
 import { shownState } from "./check.ts";
 import { Presence } from "./Presence.ts";
@@ -94,6 +95,28 @@ const withHostFacts = (
     }
     if (actor !== GM && GM_ONLY.has(command.type)) return command;
     const content = yield* CampaignContent;
+    // PROTOTYPE (branch prototype/set-world): a Set fight's map, and characters rolled by set.world.
+    if (command.type === "arena") {
+      const { id, grid } = yield* content.map(command.id).pipe(Effect.mapError(refused));
+      return { ...command, id, grid };
+    }
+    if (command.type === "recruit" || command.type === "foe") {
+      const seed = command.seed ?? crypto.getRandomValues(new Uint32Array(1))[0]!;
+      const birth = yield* Effect.tryPromise({
+        try: async () => {
+          const response = await fetch(`https://set.world/api/roll/character?seed=${seed}`, {
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!response.ok) throw new Error(`set.world answered ${response.status}`);
+          return birthOf((await response.json()) as Record<string, unknown>);
+        },
+        catch: (e) =>
+          new Refusal({
+            message: `Couldn't roll at set.world: ${e instanceof Error ? e.message : e}`,
+          }),
+      });
+      return { ...command, birth };
+    }
     const mapId = mapNeed(command);
     if (mapId !== undefined) {
       const { id, grid } = yield* content.map(mapId).pipe(Effect.mapError(refused));

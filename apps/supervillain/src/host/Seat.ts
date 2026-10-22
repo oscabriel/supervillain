@@ -9,7 +9,7 @@ import {
   type FeedLine,
   feedLines,
   GM,
-  mapView,
+  mapOf,
   nameOf,
   tableLabel,
 } from "../game/index.ts";
@@ -117,10 +117,11 @@ export const openSeat = (
         // The band and the map read the Draw Steel slice and the names, which a chat line leaves
         // as they were: then neither is built, nor drawn, again.
         const ds = createMemo(() => state().ds);
+        const sw = createMemo(() => state().sw);
         const names = createMemo(() => state().core.names);
         return {
-          combat: createMemo(() => bandOf({ ds: ds(), core: { names: names() } }, actor)),
-          map: createMemo(() => mapView(ds(), actor)),
+          combat: createMemo(() => bandOf({ ds: ds(), sw: sw(), core: { names: names() } }, actor)),
+          map: createMemo(() => mapOf({ ds: ds(), sw: sw() }, actor)),
         };
       })(),
     }));
