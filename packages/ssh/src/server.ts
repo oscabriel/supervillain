@@ -5,7 +5,7 @@ import { CliRenderEvents, type CliRenderer, createCliRenderer, NativeSession } f
 import { Cause, Deferred, Effect, Exit, FiberSet, type Scope } from "effect";
 import ssh2, { type AuthContext, type Connection, type ServerChannel } from "ssh2";
 import { addressBucket, normalizeAddress } from "./address.ts";
-import { fingerprintOf, KEX, loadHostKey, parseKey } from "./keys.ts";
+import { COMPRESS, fingerprintOf, IDENT, KEX, loadHostKey, parseKey } from "./keys.ts";
 import { rateLimiter } from "./rate.ts";
 import { isRelayableActor } from "./relay.ts";
 import {
@@ -54,6 +54,18 @@ const printable = (text: string) => JSON.stringify(text);
 /** Line ends for a client terminal in raw mode, which a pty request puts it in. */
 const crlf = (text: string) => text.replace(/\r?\n/g, "\r\n");
 
+const CLIENT_CHARS_MAX = 64;
+
+/**
+ * A client's software as it names itself, safe to log: printable ASCII only, cut to 64 characters.
+ * It comes from a stranger's version line, so nothing in it is trusted.
+ */
+export const clientName = (text: string): string =>
+  text
+    .replace(/^SSH-[^-]*-/, "")
+    .replace(/[^\x20-\x7e]/g, "?")
+    .slice(0, CLIENT_CHARS_MAX) || "?";
+
 const guestId = () => randomBytes(12).toString("base64url");
 
 /** One accepted socket, as the connection on it sees it. */
@@ -70,6 +82,8 @@ interface Link {
   readonly persistent: boolean;
   /** Called once the client has logged in. */
   readonly authenticated: () => void;
+  /** The client's software, as `clientName` cleans it. */
+  readonly client: string;
 }
 
 /** Verifies a signed publickey attempt. ssh2 hands us the signature but does not check it. */
@@ -303,6 +317,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
         let hasPty = false;
         const env: Record<string, string> = {};
         let relayedActor: string | undefined;
+        let relayedClient: string | undefined;
         let resize: ((cols: number, rows: number) => void) | undefined;
 
         session.on("pty", (accept, reject, info) => {
@@ -317,6 +332,12 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
             // Only a trusted relay names the player, and only as a player.
             if (!relay || !isRelayableActor(val)) return reject?.();
             relayedActor = val;
+            return accept?.();
+          }
+          if (key === "SV_CLIENT") {
+            // A trusted relay says which software its player connected with.
+            if (!relay) return reject?.();
+            relayedClient = clientName(val);
             return accept?.();
           }
           return takeEnv(env, key, val) ? accept?.() : reject?.();
@@ -336,6 +357,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
           rows: pty.rows,
           env: { ...env },
           remoteAddress,
+          client: relayedClient ?? link.client,
           ...(relayedActor === undefined ? {} : { relayedActor }),
         });
 
@@ -652,12 +674,14 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
       const ssh = new ssh2.Server(
         {
           hostKeys: [hostKey.pem],
-          algorithms: { kex: KEX },
+          ident: IDENT,
+          algorithms: { kex: KEX, compress: COMPRESS },
           keepaliveInterval: timeouts.keepaliveMs,
           keepaliveCountMax: timeouts.keepaliveCount,
         },
-        (client) =>
+        (client, info) =>
           onConnection(client, {
+            client: clientName(info.header.identRaw),
             socket,
             address,
             bucket,

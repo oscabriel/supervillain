@@ -25,12 +25,15 @@ import { Clock, Context, Effect, FiberSet, Layer, Schema, type Scope, Semaphore 
 import {
   closedRoomMessage,
   errLine,
+  isReservedRoom,
   isRoomName,
+  JOIN_HINT,
   LINE_TIMEOUT_MS,
   OK_LINE,
   parseHello,
   RELAY_USERNAME,
   RELAYED_ACTOR_ENV,
+  RELAYED_CLIENT_ENV,
   readLine,
   TABLE_CLOSED_MESSAGE,
 } from "./protocol.ts";
@@ -146,11 +149,12 @@ const SEAT_TIMEOUT = "10 seconds";
 const SHUTDOWN_NOTICE = "The relay is shutting down.";
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** What a player hears for a room no GM has ever linked. A name that can't be a room isn't echoed. */
+/**
+ * What a player hears for a room no GM has ever linked. A name that can't be a room isn't echoed:
+ * it's most likely the local username a bare `ssh` sent, so they're told how to join instead.
+ */
 const unknownRoomMessage = (room: string): string =>
-  isRoomName(room)
-    ? `There's no table called ${room} here.`
-    : "There's no table by that name here.";
+  isRoomName(room) && !isReservedRoom(room) ? `There's no table called ${room} here.` : JOIN_HINT;
 
 /** What a player hears for a room that carries all the sessions it may. */
 const fullRoomMessage = (room: string): string => `The table ${room} is full right now.`;
@@ -540,6 +544,7 @@ const make = (
         if (!link?.alive) {
           const known =
             isRoomName(room) &&
+            !isReservedRoom(room) &&
             (yield* readRooms(roomsFile).pipe(
               Effect.map((rooms) => rooms[room] !== undefined),
               Effect.catchTag("RoomsError", (e) =>
@@ -567,10 +572,13 @@ const make = (
             link.sessions--;
           }),
         );
-        // The player's name first; then only the terminal env our server let through.
-        const env: Record<string, string> = { [RELAYED_ACTOR_ENV]: actor };
+        // The player's name and software first; then only the terminal env our server let through.
+        const env: Record<string, string> = {
+          [RELAYED_ACTOR_ENV]: actor,
+          [RELAYED_CLIENT_ENV]: info.client,
+        };
         for (const [key, value] of Object.entries(info.env))
-          if (key !== RELAYED_ACTOR_ENV) env[key] = value;
+          if (key !== RELAYED_ACTOR_ENV && key !== RELAYED_CLIENT_ENV) env[key] = value;
 
         const channel = yield* seat(link, session, env).pipe(
           Effect.map((opened): ClientSession | undefined => opened),

@@ -27,6 +27,18 @@ export const KEX: Array<ssh2.KexAlgorithm> = [
   "ecdh-sha2-nistp521",
 ];
 
+/**
+ * What our end calls itself in the version line, `SSH-2.0-supervillain`. ssh2's default names
+ * the library and its version, which our patched build no longer is.
+ */
+export const IDENT = "supervillain";
+
+/**
+ * No compression, whatever a client asks for (`ssh -C`). A zlib stream per session would cost the
+ * host's one thread CPU and memory on every frame, for frames that are small already.
+ */
+export const COMPRESS: Array<ssh2.CompressionAlgorithm> = ["none"];
+
 /** Parses one key in any form ssh2 reads (PEM, OpenSSH, an authorized_keys line), or undefined. */
 export const parseKey = (input: string | Buffer): ParsedKey | undefined => {
   const parsed = ssh2.utils.parseKey(input);

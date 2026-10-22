@@ -163,6 +163,11 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
+# No capabilities at all (on port 22, CAP_NET_BIND_SERVICE: see below).
+CapabilityBoundingSet=
+# Every player's session is a socket, and every GM's link one more.
+LimitNOFILE=8192
+MemoryMax=512M
 
 [Install]
 WantedBy=multi-user.target
@@ -203,7 +208,7 @@ sudo ufw enable
 
 Open the same ports in your provider's firewall too, if it has one.
 
-To let players type `ssh <room>@table.example.com` without `-p`, the player port must be 22. That means first moving the VPS's own sshd to another port (and allowing that port), then running the relay with `--player-port 22` and `AmbientCapabilities=CAP_NET_BIND_SERVICE` in the unit. GMs then pass `--relay-player-port 22` to their hosts, so the join command they're shown has no `-p`. Leave it on 2222 until you're sure of the rest.
+To let players type `ssh <room>@table.example.com` without `-p`, the player port must be 22. That means first moving the VPS's own sshd to another port (and allowing that port), then running the relay with `--player-port 22`, and in the unit `AmbientCapabilities=CAP_NET_BIND_SERVICE` with `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`. GMs then pass `--relay-player-port 22` to their hosts, so the join command they're shown has no `-p`. Leave it on 2222 until you're sure of the rest. On port 22, someone who types a bare `ssh table.example.com` arrives with their own username, and scanners try `root` and the like all day: the relay keeps names like those (`root`, `admin`, `ubuntu`, `pi`, `git`, `lobby`, `help` and others) from ever being a room, and answers them with how to join instead.
 
 ### Pin the relay's key
 
@@ -216,11 +221,11 @@ supervillain host ~/campaigns/first-fight --room first-fight \
 
 `--relay` takes `host:port`, and the port defaults to 7022. With `--relay-key`, the host trusts only that key. Without it, the first link stores the relay's key in `<campaign>/relay_known`, and later links must match it. A link with `--relay-key` stores that key there too, if there's none yet, so a later start without the flag stays pinned. Your band then says `relay key SHA256:… trusted on first use`, and `host.log` says the same, so compare it with the journal. Pass `--relay-key` whenever you can.
 
-A relay that shows a different key is refused, loudly: your band says `relay refused: its key … doesn't match …`, and the host stops dialing it. If the relay's key really changed (its folder was lost), check the new fingerprint with whoever runs it, put it in `relay_known` (or pass the new `--relay-key`), and the host links again within a few seconds.
+A relay that shows a different key is refused, loudly: your band says `relay refused: its key … doesn't match …`, and the host stops dialing it. If the relay's key really changed (its folder was lost), check the new fingerprint with whoever runs it, put it in `relay_known` (or pass the new `--relay-key`), and the host links again within a few seconds. `relay_known` takes one fingerprint a line, and `#` starts a comment: a relay that is moving to a new key can tell its GMs ahead, and a host with both lines links with either.
 
 While the link isn't up, the header at the top of your seat says so beside the room, whatever else is on screen: `relay: connecting…`, `relay: down, redialing`, `relay: refused, redialing`, or `relay: refused, see host.log`. The band below it says more while you sit alone: `players join with: ssh -p 2222 first-fight@table.example.com` once it's up, `relay: connecting…` with the last error while it isn't, and `relay refused: …` if the relay turned the room down (saying why: `this address claims rooms too fast`, `the relay holds its most rooms`, `the relay has its most GMs linked`) or its key was wrong. A refused host redials with the same backoff. If the link drops, the host redials on its own, waiting 1 second, then 2, 4 and so on up to 30. The join command assumes the relay's player port is 2222; if it isn't, tell the host with `--relay-player-port`.
 
-The host still listens on `--port` and `--bind` as before, so local players can connect directly while remote ones come through the relay. Room names on a relay are 1 to 32 characters of `a-z`, `0-9` and `-`, starting with a letter. Pass `--room` if your folder's name doesn't fit.
+The host still listens on `--port` and `--bind` as before, so local players can connect directly while remote ones come through the relay. Room names on a relay are 1 to 32 characters of `a-z`, `0-9` and `-`, starting with a letter, and not one of the names the relay keeps (`root`, `admin`, `ubuntu`, `pi`, `git`, `lobby`, `help` and the like; the host says so). Pass `--room` if your folder's name doesn't fit.
 
 Players run `ssh -p 2222 first-fight@table.example.com`. The first time, ssh shows them the relay's host key, not your table's, so give them the relay's fingerprint (`host key SHA256:… (what players' ssh sees)` in its journal). Pass it to your host with `--relay-host-key` and it's printed with the join command, in your `/help` and in `host.log`; without it, the host says to ask whoever runs the relay. Your table's own host key is for players who connect directly, and all three say so. If your machine is off, they're told `The table first-fight isn't open right now.` A room nobody has linked is `There's no table called first-fight here.` If your host stops or its link drops while they're seated, they're told `The GM closed the table.` or `The table closed.`, and can connect again once your host is back.
 

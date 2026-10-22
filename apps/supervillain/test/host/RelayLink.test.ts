@@ -245,11 +245,20 @@ describe("RelayLink", () => {
             relayKey.fingerprint,
           );
 
-          // The GM decides the relay's key really changed and says so in the file.
-          yield* Effect.promise(() => writeFile(known, `${mallory.fingerprint}\n`));
+          // The relay is rotating its key: the GM adds the new one and keeps the old, either links.
+          yield* Effect.promise(() =>
+            writeFile(
+              known,
+              `${relayKey.fingerprint}\n# the relay's new key\n${mallory.fingerprint}\n`,
+            ),
+          );
           yield* advance("5 seconds");
           yield* waitFor("the link after the fix", () => relay.links.length === 3);
           expect(yield* relay.exec(mallory, "who")).toMatchObject({ stdout: PLAYER, exitCode: 0 });
+          yield* waitFor("the drop", () => status().state === "connecting");
+          yield* advance("1 second");
+          yield* waitFor("the redial", () => relay.links.length === 4);
+          expect(yield* relay.exec(relayKey, "who")).toMatchObject({ stdout: PLAYER, exitCode: 0 });
         }),
       ),
     30_000,

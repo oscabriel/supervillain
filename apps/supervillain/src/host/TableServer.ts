@@ -41,6 +41,10 @@ const NO_PTY =
 const SHUTDOWN = "The GM closed the table.";
 
 /** The player a session speaks for: the one a trusted relay seated, else the connection's own. */
+/** A seat's time at the table for the log: seconds under a minute, then minutes. */
+export const minutes = (ms: number): string =>
+  ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`;
+
 const actorOf = (info: SessionInfo) => info.relayedActor ?? info.identity.actor;
 
 /**
@@ -132,9 +136,21 @@ export class TableServer extends Context.Service<
           onShell: (session) =>
             Effect.gen(function* () {
               const actor = actorOf(session.info);
-              const { cols, rows, remoteAddress } = session.info;
-              yield* Effect.logInfo(`seat open: ${actor} from ${remoteAddress} (${cols}x${rows})`);
-              yield* Effect.addFinalizer(() => Effect.logInfo(`seat closed: ${actor}`));
+              const { cols, rows, remoteAddress, client, env } = session.info;
+              // Which clients sit down, and in what terminals, is evidence for the layout and colours.
+              const colour =
+                env.COLORTERM === undefined ? "no COLORTERM" : `COLORTERM=${env.COLORTERM}`;
+              yield* Effect.logInfo(
+                `seat open: ${actor} from ${remoteAddress} (${cols}x${rows}, ${session.info.term}, ${colour}, ${client})`,
+              );
+              const openedAt = yield* Clock.currentTimeMillis;
+              yield* Effect.addFinalizer(() =>
+                Clock.currentTimeMillis.pipe(
+                  Effect.flatMap((now) =>
+                    Effect.logInfo(`seat closed: ${actor} after ${minutes(now - openedAt)}`),
+                  ),
+                ),
+              );
               const view = yield* openSeat({
                 actor,
                 rateKey: rateKeyOf(session.info),

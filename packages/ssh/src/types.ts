@@ -30,6 +30,11 @@ export interface SessionInfo {
   readonly env: Readonly<Record<string, string>>;
   readonly remoteAddress: string;
   /**
+   * The client's software from its SSH version line, e.g. `OpenSSH_10.0p2 Debian-5`: printable
+   * ASCII, at most 64 characters, `?` for any other. For a relayed player, the relay's `SV_CLIENT`.
+   */
+  readonly client: string;
+  /**
    * The player a trusted relay seated on this channel (`key:SHA256:…` or `guest:…`), from its `SV_ACTOR`.
    * Set only on a connection authenticated with a trusted relay key, whose channels are refused
    * without it; never `gm`.

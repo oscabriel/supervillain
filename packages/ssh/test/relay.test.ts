@@ -59,6 +59,37 @@ describe("relay trust", () => {
     }),
   );
 
+  effect(
+    "SV_CLIENT from a trusted relay names the player's software, cleaned; from others, refused",
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* tempDir;
+        const relayKey = yield* clientKey(dir, "relay");
+        const mallory = yield* clientKey(dir, "mallory");
+        const server = yield* testServer({
+          trustedRelayKeys: [relayKey.fingerprint],
+          onExec: (session) =>
+            Effect.sync(() => session.write(session.info.client)).pipe(Effect.as(0)),
+        });
+        const relay = yield* ssh2Client({ port: server.port, key: relayKey });
+        const said = (env: Record<string, string>) =>
+          ssh2Exec(relay, "who", { SV_ACTOR: PLAYER, ...env }).pipe(Effect.map((r) => r.stdout));
+        expect(yield* said({ SV_CLIENT: "OpenSSH_10.0p2 Debian-5" })).toBe(
+          "OpenSSH_10.0p2 Debian-5",
+        );
+        expect(yield* said({ SV_CLIENT: `PuTTY\x1b[31m${"x".repeat(80)}` })).toBe(
+          `PuTTY?[31m${"x".repeat(54)}`,
+        );
+        // Without it, the connection's own software: here the test's stock ssh2 client.
+        expect(yield* said({})).toBe("ssh2js1.16.0");
+        const direct = yield* ssh2Client({ port: server.port, key: mallory });
+        const refused = yield* ssh2Exec(direct, "who", { SV_CLIENT: "Forged" }).pipe(
+          Effect.map((r) => r.stdout),
+        );
+        expect(refused).toBe("ssh2js1.16.0");
+      }),
+  );
+
   effect("SV_ACTOR from any other key is ignored", () =>
     Effect.gen(function* () {
       const dir = yield* tempDir;

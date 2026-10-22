@@ -4,7 +4,7 @@ import { connect } from "node:net";
 import { join } from "node:path";
 import { TERMINAL_RESET } from "@supervillain/ssh";
 import { Effect, Exit, Fiber, Scope } from "effect";
-import { closedRoomMessage, readLine } from "../../src/relay/protocol.ts";
+import { closedRoomMessage, JOIN_HINT, readLine } from "../../src/relay/protocol.ts";
 import { forgetRoom } from "../../src/relay/rooms.ts";
 import { claimLimiter } from "../../src/relay/server.ts";
 import { effect, waitFor } from "../host/effect.ts";
@@ -106,7 +106,7 @@ describe("relay: players reach the GM's table", () => {
         terminal
           .output()
           .includes(
-            `seat key:${key.fingerprint} xterm-256color 100x30 pty=true env={"COLORTERM":"truecolor"}|`,
+            `seat key:${key.fingerprint} xterm-256color 100x30 pty=true env={"COLORTERM":"truecolor"} client=OpenSSH|`,
           ),
       );
       terminal.resize(120, 40);
@@ -159,8 +159,11 @@ describe("relay: rooms", () => {
         stderr: "There's no table called nowhere here.\n",
         exitCode: 1,
       });
-      const odd = yield* sshExec(relay.playerPort, ["hi"], { key, user: "Not_A-Room" });
-      expect(odd).toMatchObject({ stderr: "There's no table by that name here.\n", exitCode: 1 });
+      // A bare `ssh relay` sends the local username, or a name that can't be a room: teach the form.
+      for (const user of ["Not_A-Room", "root", "ubuntu"]) {
+        const odd = yield* sshExec(relay.playerPort, ["hi"], { key, user });
+        expect(odd).toMatchObject({ stderr: `${JOIN_HINT}\n`, exitCode: 1 });
+      }
       const shell = yield* sshShell(
         relay.playerPort,
         { cols: 80, rows: 24 },

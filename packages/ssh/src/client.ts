@@ -1,7 +1,7 @@
 import type { Duplex, Readable } from "node:stream";
 import { Effect, type Scope } from "effect";
 import ssh2, { type ClientChannel } from "ssh2";
-import { fingerprintOf, KEX } from "./keys.ts";
+import { COMPRESS, fingerprintOf, IDENT, KEX } from "./keys.ts";
 import { type RawExit, type RawRequest, SshError } from "./types.ts";
 
 /** How long a closing link waits for its disconnect to go out before cutting the socket. */
@@ -168,7 +168,8 @@ export const connectClient = (
         sock: options.socket as never,
         username: options.username,
         privateKey: options.privateKey,
-        algorithms: { kex: KEX },
+        ident: IDENT,
+        algorithms: { kex: KEX, compress: COMPRESS },
         readyTimeout: options.readyTimeoutMs ?? 20_000,
         keepaliveInterval: options.keepaliveMs ?? 15_000,
         keepaliveCountMax: options.keepaliveCount ?? 3,

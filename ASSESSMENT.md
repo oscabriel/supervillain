@@ -483,7 +483,7 @@ A standing session. After each one, fix what the table hit, and keep a short "wh
 
 In likely order:
 
-1. The public relay at supervillain.app and a one-page static site.
+1. The public relay at supervillain.sh and a one-page static site.
 2. `supervillain export` to HTML or Markdown recaps.
 3. Everything in §7's deferred list, each when its trigger fires.
 

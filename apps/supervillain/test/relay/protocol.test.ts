@@ -3,6 +3,7 @@ import { connect, createServer, type Server, type Socket } from "node:net";
 import {
   errLine,
   helloLine,
+  isReservedRoom,
   isRoomName,
   LineError,
   MAX_LINE_BYTES,
@@ -52,6 +53,28 @@ describe("the hello line", () => {
     expect(isRoomName(`a${"0".repeat(31)}`)).toBe(true);
     expect(isRoomName(`a${"0".repeat(32)}`)).toBe(false);
     expect(isRoomName("")).toBe(false);
+  });
+
+  test("names ssh sends by default, and service words, are reserved", () => {
+    // A bare `ssh relay` logs in as the local user: those names never route to a table.
+    for (const name of [
+      "root",
+      "admin",
+      "ubuntu",
+      "pi",
+      "ec2-user",
+      "git",
+      "lobby",
+      "help",
+      "watch",
+    ])
+      expect(isReservedRoom(name)).toBe(true);
+    for (const name of ["den", "first-fight", "rootcellar", "pirates"])
+      expect(isReservedRoom(name)).toBe(false);
+    expect(parseHello("SUPERVILLAIN 1 ROOM root")).toEqual({
+      ok: false,
+      reason: "room name root is reserved: pick another",
+    });
   });
 });
 

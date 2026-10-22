@@ -36,7 +36,7 @@ import {
   relayJoinCommand,
   roomSlug,
 } from "./host/RelayLink.ts";
-import { isRoomName } from "./relay/protocol.ts";
+import { isReservedRoom, isRoomName } from "./relay/protocol.ts";
 
 /** A failure with a message for the person at the terminal: printed plainly, exit status 1. */
 class CheckError extends Schema.TaggedError<CheckError>()("CheckError", {
@@ -171,6 +171,10 @@ const host = Command.make(
     if (relayAddress !== undefined && !isRoomName(room))
       return yield* new HostError({
         message: `a relay's room is 1-32 of a-z, 0-9 and -, starting with a letter: pick one with --room, not ${room}`,
+      });
+    if (relayAddress !== undefined && isReservedRoom(room))
+      return yield* new HostError({
+        message: `the room name ${room} is reserved on a relay, since a bare ssh sends names like it: pick another with --room`,
       });
     // A mistyped folder would open an empty table under a new host key, which players' ssh
     // warns about: only `new` makes a campaign.

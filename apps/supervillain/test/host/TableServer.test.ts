@@ -167,6 +167,7 @@ describe("rateKeyOf", () => {
     rows: 24,
     env: {},
     remoteAddress: "203.0.113.7",
+    client: "OpenSSH_10.0",
     ...more,
   });
   const key = (actor: `key:${string}`) =>

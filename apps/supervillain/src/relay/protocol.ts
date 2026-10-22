@@ -15,6 +15,9 @@ export const DEFAULT_GM_PORT = 7022;
 /** The env variable a relay sets on each channel to name the player it seats. */
 export const RELAYED_ACTOR_ENV = "SV_ACTOR";
 
+/** The env variable a relay sets on each channel to name the software the player connected with. */
+export const RELAYED_CLIENT_ENV = "SV_CLIENT";
+
 /** The ssh username the relay logs in to a GM's host with. Its key, not this, is what's trusted. */
 export const RELAY_USERNAME = "relay";
 
@@ -22,6 +25,25 @@ export const RELAY_USERNAME = "relay";
 const ROOM_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 
 export const isRoomName = (name: string): boolean => ROOM_NAME.test(name);
+
+/**
+ * Names no room may take. A bare `ssh relay` logs in as the local user, and scanners try the usual
+ * accounts, so a GM holding one of these would seat strangers who never meant to join a table.
+ * The service words are kept for the relay's own use.
+ */
+const RESERVED_ROOMS = new Set(
+  [
+    // Accounts ssh clients, cloud images and scanners log in as.
+    "root admin administrator user guest test ubuntu debian fedora centos rocky alma alpine arch",
+    "ec2-user azureuser opc pi git nobody daemon www www-data ftp mail oracle postgres mysql",
+    "support info operator ansible vagrant docker ubnt",
+    // Words the relay may answer itself one day.
+    "lobby help watch join relay supervillain new about status",
+  ].flatMap((line) => line.split(" ")),
+);
+
+/** Whether `name` is one no room may take: see `RESERVED_ROOMS`. */
+export const isReservedRoom = (name: string): boolean => RESERVED_ROOMS.has(name);
 
 const HELLO_PREFIX = `SUPERVILLAIN ${PROTOCOL_VERSION} ROOM `;
 
@@ -54,6 +76,8 @@ export const parseHello = (line: string): Hello => {
   const room = line.slice(HELLO_PREFIX.length);
   if (!isRoomName(room))
     return { ok: false, reason: "bad room name (1-32 of a-z, 0-9 and -, starting with a letter)" };
+  if (isReservedRoom(room))
+    return { ok: false, reason: `room name ${room} is reserved: pick another` };
   return { ok: true, room };
 };
 
@@ -69,6 +93,10 @@ export const parseAnswer = (line: string): Answer => {
 /** What a player hears for a room that exists but has no GM linked. */
 export const closedRoomMessage = (room: string): string =>
   `The table ${room} isn't open right now.`;
+
+/** What a player hears for a username that can't name a room, such as the one a bare `ssh` sends. */
+export const JOIN_HINT =
+  "To join a table, put its room's name before the @ (ssh <room>@…). Your GM has it.";
 
 /** What a seated player hears when the GM's link drops. */
 export const TABLE_CLOSED_MESSAGE = "The table closed.";

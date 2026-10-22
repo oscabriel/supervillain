@@ -25,6 +25,7 @@ If your GM's table goes through a relay, a few things can come back instead of t
 
 - `The table first-fight isn't open right now.` The GM's machine isn't linked. Try again once they say it's up.
 - `There's no table called first-fight here.` Check the room name before the `@` with your GM.
+- `To join a table, put its room's name before the @ (ssh <room>@…). Your GM has it.` The command was missing the room, so ssh sent your own username instead.
 - `The table first-fight is full right now.` The room has all the players the relay carries for one table. Try again when someone leaves.
 - `The table closed.` or `The GM closed the table.` The table went away while you were seated. Run the same command again when it's back; your name and hero are kept for your key.
 - `The relay is shutting down.` The relay is restarting, usually for an upgrade. Run the same command again in a moment.
@@ -34,7 +35,13 @@ If your terminal looks garbled after the table drops (odd characters when you mo
 
 ## Who you are
 
-- **If you have an SSH key** (`~/.ssh/id_ed25519` or similar), it is who you are. The table remembers your name and your hero for that key, so use the same key every time. Make one with `ssh-keygen -t ed25519` if you'd like the table to remember you.
+- **If you have an SSH key** (`~/.ssh/id_ed25519` or similar), it is who you are. The table remembers your name and your hero for that key, so use the same key every time. Make one with `ssh-keygen -t ed25519` if you'd like the table to remember you. If you have several keys, ssh offers them in turn and the table takes the first, which may not be the one you used last time. Pin one for the table in `~/.ssh/config`:
+
+  ```
+  Host gm.example.net
+      IdentityFile ~/.ssh/id_ed25519
+      IdentitiesOnly yes
+  ```
 - **If you don't have one,** you come in as a guest. You don't need a password. A guest is new every time they connect, so your name lasts only until you leave. When you come back, pick your name again and `/play` your hero: a hero whose guest has left is free to take. To come in as a guest even if you have a key, add `-o PubkeyAuthentication=no`.
 - **If your key is RSA** and your ssh is set to sign with `rsa-sha2-512` only (`PubkeyAcceptedAlgorithms rsa-sha2-512` in `~/.ssh/config`), ssh skips the key: you come in as a guest, or see `Permission denied (publickey)`. The table's SSH library never offers `rsa-sha2-512`. ssh's defaults fall back to `rsa-sha2-256` and work, so add `-o PubkeyAcceptedAlgorithms=+rsa-sha2-256` to the command, or make an ed25519 key.
 

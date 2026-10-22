@@ -80,6 +80,30 @@ describe("handshake", () => {
     }),
   );
 
+  effect("the server names itself, not the library, and never compresses", () =>
+    Effect.gen(function* () {
+      const key = yield* clientKey(yield* tempDir, "alice");
+      const server = yield* testServer({ onExec: () => Effect.succeed(0) });
+      const version = yield* Effect.promise(
+        () =>
+          new Promise<string>((resolve) => {
+            const socket = connect(server.port, "127.0.0.1");
+            socket.on("error", () => undefined);
+            socket.once("data", (chunk: Buffer) => {
+              resolve(chunk.toString("latin1").split("\r\n")[0]!);
+              socket.destroy();
+            });
+          }),
+      );
+      expect(version).toBe("SSH-2.0-supervillain");
+      // `ssh -C` asks for zlib and settles for none.
+      const compressed = yield* sshExec(server.port, ["hello"], { key, flags: ["-C", "-v"] });
+      expect(compressed.exitCode).toBe(0);
+      expect(compressed.stderr).toContain("compression: none");
+      expect(compressed.stderr).not.toContain("compression: zlib");
+    }),
+  );
+
   effect("a connection that never authenticates is cut after the login grace", () =>
     Effect.gen(function* () {
       yield* testServer({ timeouts: { loginMs: 200 } }).pipe(

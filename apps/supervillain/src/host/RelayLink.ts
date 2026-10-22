@@ -321,22 +321,23 @@ export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
             };
           }
         }
+        // One key a line, so a relay rotating its key can be trusted under both while it does.
         const pinned = text
           .split("\n")
           .map((line) => line.trim().split(/\s+/)[0] ?? "")
-          .find((token) => token !== "" && !token.startsWith("#"));
-        if (pinned === undefined || !isFingerprint(pinned))
+          .filter((token) => token !== "" && !token.startsWith("#"));
+        if (pinned.length === 0 || !pinned.every(isFingerprint))
           return {
             admit: false,
             final: true,
-            reason: `${knownPath} doesn't hold a relay key fingerprint (SHA256:…)`,
+            reason: `${knownPath} must hold relay key fingerprints (SHA256:…), one a line`,
           };
-        return fingerprint === pinned
+        return pinned.includes(fingerprint)
           ? { admit: true, firstUse: false }
           : {
               admit: false,
               final: true,
-              reason: `its key ${fingerprint} doesn't match ${pinned} in ${knownPath}; if the relay's key really changed, put the new one there`,
+              reason: `its key ${fingerprint} doesn't match ${pinned.join(" or ")} in ${knownPath}; if the relay's key really changed, put the new one there`,
             };
       };
 

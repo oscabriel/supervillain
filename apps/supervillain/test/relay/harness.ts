@@ -49,9 +49,9 @@ const table = (session: RawSession, ended: string[]) =>
     yield* Effect.addFinalizer(() => Effect.sync(() => void ended.push(who)));
     const request = session.request;
     if (request.kind === "shell") {
-      const { term, cols, rows, env } = session.info;
+      const { term, cols, rows, env, client } = session.info;
       session.stream.write(
-        `seat ${who} ${term} ${cols}x${rows} pty=${session.pty} env=${JSON.stringify(env)}|`,
+        `seat ${who} ${term} ${cols}x${rows} pty=${session.pty} env=${JSON.stringify(env)} client=${client.split("_")[0]}|`,
       );
       session.onResize((c, r) => session.stream.write(`resize ${c}x${r}|`));
       session.stream.on("data", (chunk: Buffer) => {
