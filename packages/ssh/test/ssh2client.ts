@@ -16,6 +16,8 @@ export interface Ssh2Options {
   readonly user?: string;
   /** Connect from this local address, e.g. `127.0.0.2`, to look like another machine. */
   readonly localAddress?: string;
+  /** Offer only these key exchanges. */
+  readonly kex?: Array<ssh2.KexAlgorithm>;
 }
 
 /** A connected, authenticated client for the life of the scope. Fails with the client's error. */
@@ -32,6 +34,7 @@ export const ssh2Client = (options: Ssh2Options) =>
             host: "127.0.0.1",
             port: options.port,
             localAddress: options.localAddress,
+            ...(options.kex ? { algorithms: { kex: options.kex } } : {}),
             sock: options.sock as never,
             username: options.user ?? "den",
             hostVerifier: () => true,

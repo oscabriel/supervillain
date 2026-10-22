@@ -21,8 +21,6 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])?
 
 Check that the fingerprint matches the one your GM sent you, then type `yes`. After that ssh remembers the key. If ssh ever says the key has changed, stop and ask your GM. If the table goes through a relay, the key ssh shows is the relay's, not the GM's machine's: check it against the relay's fingerprint, which your GM gets from whoever runs the relay.
 
-Recent versions of ssh also print `WARNING: connection is not using a post-quantum key exchange algorithm`. This is a warning about how the connection was set up, and you can keep playing. To hide it, add `-o WarnWeakCrypto=no` to the command (only the versions that print the warning know that option).
-
 If your GM's table goes through a relay, a few things can come back instead of the table:
 
 - `The table first-fight isn't open right now.` The GM's machine isn't linked. Try again once they say it's up.

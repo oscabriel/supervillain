@@ -1,0 +1,137 @@
+diff --git a/lib/protocol/constants.js b/lib/protocol/constants.js
+index ad7759257d6bdbcafa353dec8946258d64c14eb0..ed6ec504860416e7aea4127119a321fa679a1989 100644
+--- a/lib/protocol/constants.js
++++ b/lib/protocol/constants.js
+@@ -51,6 +51,8 @@ const DEFAULT_KEX = [
+ if (curve25519Supported) {
+   DEFAULT_KEX.unshift('curve25519-sha256');
+   DEFAULT_KEX.unshift('curve25519-sha256@libssh.org');
++  // https://datatracker.ietf.org/doc/draft-ietf-sshm-mlkem-hybrid-kex/
++  DEFAULT_KEX.unshift('mlkem768x25519-sha256');
+ }
+ const SUPPORTED_KEX = DEFAULT_KEX.concat([
+   // https://tools.ietf.org/html/rfc4419#section-4
+diff --git a/lib/protocol/kex.js b/lib/protocol/kex.js
+index 811e631b8ab78d32776e540919d25aae56d628f7..aa4cf1f2b582c9f76aa456281874c7b36f0d08d4 100644
+--- a/lib/protocol/kex.js
++++ b/lib/protocol/kex.js
+@@ -12,6 +12,9 @@ const {
+ } = require('crypto');
+ 
+ const { Ber } = require('asn1');
++// Not one of ssh2's dependencies: @supervillain/ssh declares it, and Bun's
++// isolated linker hoists it where this file resolves it.
++const { ml_kem768 } = require('@noble/post-quantum/ml-kem.js');
+ 
+ const {
+   COMPAT,
+@@ -1314,6 +1317,12 @@ const createKeyExchange = (() => {
+       return key;
+     }
+     computeSecret(otherPublicKey) {
++      const secret = this.computeX25519Secret(otherPublicKey);
++      if (secret instanceof Error)
++        return secret;
++      return convertToMpint(secret);
++    }
++    computeX25519Secret(otherPublicKey) {
+       this.generateKeys();
+ 
+       try {
+@@ -1337,14 +1346,83 @@ const createKeyExchange = (() => {
+           asnWriter.endSequence();
+         asnWriter.endSequence();
+ 
+-        return convertToMpint(diffieHellman({
++        return diffieHellman({
+           privateKey: this._keys.privateKey,
+           publicKey: createPublicKey({
+             key: asnWriter.buffer,
+             type: 'spki',
+             format: 'der',
+           }),
+-        }));
++        });
++      } catch (ex) {
++        return ex;
++      }
++    }
++  }
++
++  // ML-KEM-768 hybridised with X25519, as OpenSSH 9.9+ offers first:
++  // https://datatracker.ietf.org/doc/draft-ietf-sshm-mlkem-hybrid-kex/
++  // The client sends its ML-KEM encapsulation key and its X25519 key, the
++  // server answers with a ciphertext and its X25519 key, and K is
++  // SHA-256(ML-KEM secret || X25519 secret), encoded as a string, not an mpint.
++  const MLKEM768_PUBLIC = 1184;
++  const MLKEM768_CIPHERTEXT = 1088;
++  const X25519_PUBLIC = 32;
++  class MLKEM768X25519Exchange extends Curve25519Exchange {
++    constructor(...args) {
++      super('sha256', ...args);
++
++      this.type = 'mlkem768x25519';
++      this._mlkem = null;
++      this._reply = null;
++    }
++    generateKeys() {
++      super.generateKeys();
++      if (!this._protocol._server && !this._mlkem)
++        this._mlkem = ml_kem768.keygen();
++    }
++    getPublicKey() {
++      const x25519 = super.getPublicKey();
++      if (this._protocol._server)
++        return this._reply;
++      return Buffer.concat([this._mlkem.publicKey, x25519]);
++    }
++    convertPublicKey(key) {
++      return key;
++    }
++    computeSecret(otherPublicKey) {
++      this.generateKeys();
++
++      try {
++        let mlkemSecret;
++        let x25519Public;
++        if (this._protocol._server) {
++          if (otherPublicKey.length !== MLKEM768_PUBLIC + X25519_PUBLIC)
++            throw new Error('Invalid client public key length');
++          const encapsulated =
++            ml_kem768.encapsulate(otherPublicKey.subarray(0, MLKEM768_PUBLIC));
++          mlkemSecret = encapsulated.sharedSecret;
++          x25519Public = otherPublicKey.subarray(MLKEM768_PUBLIC);
++          this._reply = Buffer.concat([
++            encapsulated.cipherText,
++            super.getPublicKey(),
++          ]);
++        } else {
++          if (otherPublicKey.length !== MLKEM768_CIPHERTEXT + X25519_PUBLIC)
++            throw new Error('Invalid server public key length');
++          mlkemSecret = ml_kem768.decapsulate(
++            otherPublicKey.subarray(0, MLKEM768_CIPHERTEXT),
++            this._mlkem.secretKey
++          );
++          x25519Public = otherPublicKey.subarray(MLKEM768_CIPHERTEXT);
++        }
++        const x25519Secret = this.computeX25519Secret(x25519Public);
++        if (x25519Secret instanceof Error)
++          return x25519Secret;
++        return createHash('sha256')
++          .update(mlkemSecret)
++          .update(x25519Secret)
++          .digest();
+       } catch (ex) {
+         return ex;
+       }
+@@ -1592,6 +1670,10 @@ const createKeyExchange = (() => {
+           if (!curve25519Supported)
+             break;
+           return new Curve25519Exchange('sha256', ...args);
++        case 'mlkem768x25519-sha256':
++          if (!curve25519Supported)
++            break;
++          return new MLKEM768X25519Exchange(...args);
+ 
+         case 'ecdh-sha2-nistp256':
+           return new ECDHExchange('prime256v1', 'sha256', ...args);

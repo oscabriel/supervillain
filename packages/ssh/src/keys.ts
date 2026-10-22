@@ -14,8 +14,12 @@ export const isFingerprint = (text: string): boolean => /^SHA256:[A-Za-z0-9+/]{4
  * Elliptic-curve key exchange only, offered by the server and the client alike. ssh2 also offers
  * finite-field groups up to 8192 bits, and one such handshake costs the host's only thread
  * seconds of CPU before anyone has logged in.
+ *
+ * First is the post-quantum hybrid OpenSSH 10 prefers and warns without. Stock ssh2 lacks it:
+ * `patches/ssh2@1.16.0.patch` adds it, with ML-KEM from @noble/post-quantum.
  */
 export const KEX: Array<ssh2.KexAlgorithm> = [
+  "mlkem768x25519-sha256" as ssh2.KexAlgorithm,
   "curve25519-sha256",
   "curve25519-sha256@libssh.org",
   "ecdh-sha2-nistp256",

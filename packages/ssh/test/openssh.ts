@@ -3,6 +3,11 @@ import { Effect } from "effect";
 
 /** The real OpenSSH client and ssh-keygen, kept away from the user's config, agent and known_hosts. */
 
+/** The key exchanges this machine's OpenSSH client knows (`ssh -Q kex`); OpenSSH 9.9 added ML-KEM's. */
+export const opensshKex: ReadonlyArray<string> = Bun.spawnSync(["ssh", "-Q", "kex"])
+  .stdout.toString()
+  .split("\n");
+
 export interface ClientKey {
   readonly path: string;
   /** What `ssh-keygen -lf <key>.pub` prints, e.g. `SHA256:…`. */

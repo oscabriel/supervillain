@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@noble/post-quantum": "0.7.1",
     "@opentui/core": "0.6.6",
     "effect": "4.0.5",
     "ssh2": "1.16.0"

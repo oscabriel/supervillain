@@ -4,7 +4,7 @@ import { TextRenderable } from "@opentui/core";
 import { Effect, Exit, Fiber, Scope } from "effect";
 import type ssh2 from "ssh2";
 import { effect } from "./effect.ts";
-import { clientKey, sshExec, sshShell, waitFor } from "./openssh.ts";
+import { clientKey, opensshKex, sshExec, sshShell, waitFor } from "./openssh.ts";
 import { testServer } from "./server.ts";
 import { ssh2Client, ssh2Exec } from "./ssh2client.ts";
 import { tempDir } from "./tempDir.ts";
@@ -45,6 +45,38 @@ describe("handshake", () => {
       expect(Date.now() - start).toBeLessThan(2000);
       // Modern clients still get in.
       expect((yield* sshExec(server.port, ["hello"], { key })).exitCode).toBe(0);
+    }),
+  );
+
+  effect.skipIf(!opensshKex.includes("mlkem768x25519-sha256"))(
+    "OpenSSH agrees on the post-quantum hybrid key exchange and warns of nothing",
+    () =>
+      Effect.gen(function* () {
+        const key = yield* clientKey(yield* tempDir, "alice");
+        const server = yield* testServer({ onExec: () => Effect.succeed(0) });
+        const only = yield* sshExec(server.port, ["hello"], {
+          key,
+          flags: ["-o", "KexAlgorithms=mlkem768x25519-sha256"],
+        });
+        expect(only.exitCode).toBe(0);
+        // Left to its defaults, OpenSSH picks it first and says nothing about quantum computers.
+        const chosen = yield* sshExec(server.port, ["hello"], { key, flags: ["-v"] });
+        expect(chosen.exitCode).toBe(0);
+        expect(chosen.stderr).toContain("kex: algorithm: mlkem768x25519-sha256");
+        expect(chosen.stderr).not.toContain("post-quantum");
+      }),
+  );
+
+  effect("our own client agrees on the post-quantum hybrid key exchange", () =>
+    Effect.gen(function* () {
+      const key = yield* clientKey(yield* tempDir, "alice");
+      const server = yield* testServer({ onExec: () => Effect.succeed(7) });
+      const client = yield* ssh2Client({
+        port: server.port,
+        key,
+        kex: ["mlkem768x25519-sha256" as ssh2.KexAlgorithm],
+      });
+      expect((yield* ssh2Exec(client, "hello")).code).toBe(7);
     }),
   );
 
