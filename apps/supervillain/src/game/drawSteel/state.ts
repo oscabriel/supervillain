@@ -90,6 +90,8 @@ export interface Board {
   readonly name: string;
   /** One string per row, all the same width. */
   readonly terrain: ReadonlyArray<string>;
+  /** A mekmode map's letters, one per square, for the picture map; the rules never read them. */
+  readonly dressing?: ReadonlyArray<string>;
   /**
    * Where each placed hero or creature stands, by id. A token stays while its creature is at the
    * table, dead ones as dead marks, until /end clears the dead and the creatures.

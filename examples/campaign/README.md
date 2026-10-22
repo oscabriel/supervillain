@@ -89,6 +89,28 @@ One text file per map in `maps/<id>.txt`; the file name is the id, in lower-case
 
 No other character may be a square, so nothing on the map looks like a token; the name line may hold any plain ASCII. A map is at most 60 columns by 40 rows, and the file at most 8 KB. The host reads the file each time the GM types `/map <id>`, so you can fix a map and load it again; tokens already placed are lost when a new map loads. A mistake is reported with the file and, for a stray character, its line and column: `maps/ford.txt line 3, column 7 is "B" (U+0042); draw maps with . floor, # wall, ~ difficult terrain and space for outside.`
 
+## Maps in MEKMODE letters
+
+A map can also be drawn in the letters of MEKMODE's Ding Mode, MEK.txt's pixel font, so a seat that shows pictures (see `/view pictures` in the players' guide) draws each square as its own picture: grass, a conifer, brick, an archway, rapids. Put a line `style: mekmode` under the name line (or first), then write each row in these letters. The rules see only floor, wall and difficult terrain; the text map draws those as it always does.
+
+| Letters | Floor | Wall | Difficult |
+| --- | --- | --- | --- |
+| Ground and plants | `q` `Q` bare ground, `e` hillocks, `y` a field, `u` grass, `w` low scrub | `T` rock outcrop | `W` thick scrub, `U` tall grass and reeds, `E` rough mounds, `r` scree, `R` rubble, `t` boulders |
+| Trees | | `i` broadleaf, `o` conifer, `p` trees, `P` deep wood, `Y` cypress | `I` sapling, `O` young conifer |
+| Built | `a` cobbled road, `A` flagstones, `d` archway | `s` brick, `S` planks, `f` roof, `g` doorway front, `G` `h` `H` houses, `j` hut, `D` colonnade, `J` statue, `k` pillar, `K` obelisk, `l` twin columns, `n` window, `N` shut door, `m` fence, `B` iron grate | `L` fallen column, `M` stairs |
+| Water and floors | `c` `C` dirt and packed floors, `v` tiled floor, `V` mosaic, `b` chequered floor | | `z` shallow water, `Z` water, `x` rapids, `X` deep water, `F` still water |
+
+A space is outside the map. MEK groups the Ding Mode letters by keyboard row (nature on `q` to `p`, structures on `a` to `l`, shapes on `z` to `m`); what each one depicts within its row is this table's reading. A mekmode map has the same limits as any other, and a stray character is named the same way: `maps/ruin.txt line 3, column 2 is "." (U+002E); a mekmode map is drawn in Ding Mode letters`.
+
+`supervillain map` writes one for you, from a seed:
+
+```sh
+supervillain map crossing ~/campaigns/first-fight --seed 7
+supervillain map keep ~/campaigns/first-fight
+```
+
+A `crossing` is a river the road fords, with reeds, woods, boulders and a ruin; a `keep` is a curtain wall with towers, a gate west, a breach east, a roofed hall, a well and a statue. The same kind and seed always make the same map, every map can be crossed from west to east, and the outer three columns are room for each side to start. It writes `maps/<kind>-<seed>.txt` (or `--id`), never over a map that's there, prints it with where each side can start, and says how to load it: `/map keep-7`. Edit the file as you like afterwards.
+
 ## Importing monsters from Steel Compendium
 
 If you have a local copy of Steel Compendium's `data-bestiary-json`, the import command turns its creatures into monster files:

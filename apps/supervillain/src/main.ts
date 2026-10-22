@@ -5,6 +5,7 @@
 //                     [--relay host:port] [--relay-key SHA256:…] [--relay-player-port 2222]
 //                     [--relay-host-key SHA256:…]   (a campaign folder: `new` makes one)
 //   supervillain new <campaign-dir> [--example]
+//   supervillain map <crossing|keep> <campaign-dir> [--seed N] [--id map-id]
 //   supervillain import <bestiary-json-path> --into <campaign-dir> [names...] [--overwrite]
 //   supervillain check <campaign-dir>
 //   supervillain relay [--player-port 2222] [--gm-port 7022] [--bind 0.0.0.0] [--dir ~/.supervillain-relay]
@@ -426,6 +427,75 @@ const importMonsters = Command.make(
   ),
 );
 
+const mapCommand = Command.make(
+  "map",
+  {
+    kind: Argument.String("kind").pipe(
+      Argument.withDescription(
+        "What kind of place: crossing (a river, a road, woods, a ruin) or keep",
+      ),
+    ),
+    campaignDir: Argument.String("campaign-dir").pipe(
+      Argument.withDescription("The campaign folder; the map goes in its maps/"),
+    ),
+    seed: Flag.Int("seed").pipe(
+      Flag.optional,
+      Flag.withDescription("The seed: the same kind and seed always make the same map"),
+    ),
+    id: Flag.String("id").pipe(
+      Flag.optional,
+      Flag.withDescription("The map's id, its file name in maps/ (default: <kind>-<seed>)"),
+    ),
+  },
+  Effect.fn(function* (o) {
+    const [{ generateMap, MAP_KINDS, mapFileText }, { formatSquare }] = yield* Effect.promise(() =>
+      Promise.all([import("./content/mapgen.ts"), import("./game/drawSteel/map.ts")]),
+    );
+    const kind = MAP_KINDS.find((k) => k === o.kind.toLowerCase());
+    if (kind === undefined)
+      return yield* new CampaignError({
+        message: `there's no kind of map called ${o.kind}; there are: ${MAP_KINDS.join(", ")}`,
+      });
+    const seed = Option.getOrElse(o.seed, () => crypto.getRandomValues(new Uint32Array(1))[0]!);
+    const id = Option.getOrElse(o.id, () => `${kind}-${seed}`).toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(id))
+      return yield* new CampaignError({
+        message: `a map id is up to 40 of a-z, 0-9 and -, not ${id}`,
+      });
+    const dir = resolve(o.campaignDir);
+    const file = join(dir, "maps", `${id}.txt`);
+    const map = generateMap(kind, seed >>> 0);
+    yield* Effect.tryPromise({
+      try: async () => {
+        await stat(dir);
+        await mkdir(join(dir, "maps"), { recursive: true });
+        await writeFile(file, mapFileText(map), { flag: "wx" });
+      },
+      catch: (e) =>
+        new CampaignError({
+          message:
+            (e as NodeJS.ErrnoException).code === "EEXIST"
+              ? `there's already a map called ${id} in maps/; pick another --id`
+              : (e as NodeJS.ErrnoException).code === "ENOENT"
+                ? `there's no campaign at ${dir}; make one with: ${SELF} new ${o.campaignDir}`
+                : `can't write ${file}: ${messageOf(e)}`,
+        }),
+    });
+    yield* Console.log(`supervillain: wrote ${map.name} to maps/${id}.txt (${kind}, seed ${seed})`);
+    yield* Console.log(map.lines.map((line) => `  ${line}`).join("\n"));
+    const squares = (list: ReadonlyArray<{ x: number; y: number }>) =>
+      list.slice(0, 4).map(formatSquare).join(" ");
+    yield* Console.log(
+      `the party can start at ${squares(map.deploy.west)}, their foes at ${squares(map.deploy.east)}`,
+    );
+    yield* Console.log(`load it at the table with: /map ${id}`);
+  }),
+).pipe(
+  Command.withDescription(
+    "Generate a battlemap in MEKMODE letters into a campaign's maps/: a river crossing or a keep",
+  ),
+);
+
 const check = Command.make(
   "check",
   {
@@ -466,7 +536,7 @@ const check = Command.make(
 
 Command.make("supervillain").pipe(
   Command.withDescription("A terminal-first virtual tabletop for Draw Steel"),
-  Command.withSubcommands([host, make, importMonsters, check, relayCommand]),
+  Command.withSubcommands([host, make, mapCommand, importMonsters, check, relayCommand]),
   // scripts/build.ts sets the release's version; from source it's the development one.
   Command.run({ version: process.env.SUPERVILLAIN_VERSION ?? "0.0.0" }),
   // Failures we expect (a bad log, a held lock, a busy port) read as one line, not a trace.

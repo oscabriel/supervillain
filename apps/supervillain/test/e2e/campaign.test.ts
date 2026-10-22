@@ -56,6 +56,51 @@ describe("supervillain new", () => {
   );
 });
 
+describe("supervillain map", () => {
+  effect("generates a map into the campaign's maps/, by seed, and says how to load it", () =>
+    Effect.gen(function* () {
+      const dir = join(yield* tempDir, "camp");
+      expect((yield* cli(["new", dir, "--example"])).exitCode).toBe(0);
+      const made = yield* cli(["map", "keep", dir, "--seed", "7"]);
+      expect(made).toMatchObject({ exitCode: 0, stderr: "" });
+      const { generateMap, mapFileText } = yield* Effect.promise(
+        () => import("../../src/content/mapgen.ts"),
+      );
+      const map = generateMap("keep", 7);
+      expect(yield* Effect.promise(() => readFile(join(dir, "maps/keep-7.txt"), "utf8"))).toBe(
+        mapFileText(map),
+      );
+      expect(made.stdout).toContain(`supervillain: wrote ${map.name} to maps/keep-7.txt`);
+      expect(made.stdout).toContain("load it at the table with: /map keep-7");
+      expect(made.stdout).toContain(map.lines[0]!);
+      // --id names it; an id already taken is refused, and the file is left alone.
+      expect((yield* cli(["map", "crossing", dir, "--seed", "3", "--id", "ford-2"])).exitCode).toBe(
+        0,
+      );
+      const again = yield* cli(["map", "keep", dir, "--seed", "8", "--id", "keep-7"]);
+      expect(again.exitCode).toBe(1);
+      expect(again.stderr).toBe(
+        "supervillain: there's already a map called keep-7 in maps/; pick another --id\n",
+      );
+      expect(yield* list(join(dir, "maps"))).toEqual(["ford-2.txt", "ford-road.txt", "keep-7.txt"]);
+    }),
+  );
+
+  effect("refuses a kind it doesn't know and a folder that isn't a campaign", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      const kind = yield* cli(["map", "castle", dir]);
+      expect(kind.exitCode).toBe(1);
+      expect(kind.stderr).toContain("crossing");
+      const none = yield* cli(["map", "keep", join(dir, "nowhere")]);
+      expect(none.exitCode).toBe(1);
+      expect(none.stderr).toBe(
+        `supervillain: there's no campaign at ${join(dir, "nowhere")}; make one with: bun supervillain new ${join(dir, "nowhere")}\n`,
+      );
+    }),
+  );
+});
+
 describe("supervillain import", () => {
   effect("writes the named creatures into the campaign's monsters/ and reports each", () =>
     Effect.gen(function* () {

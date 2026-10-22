@@ -34,6 +34,8 @@ export interface MapView {
   readonly width: number;
   readonly height: number;
   readonly terrain: ReadonlyArray<string>;
+  /** A mekmode map's letters, one per square, for the picture map; absent on a plain map. */
+  readonly dressing?: ReadonlyArray<string>;
   /** Dead tokens first, so the living draw over them. */
   readonly tokens: ReadonlyArray<MapToken>;
   /** In reading order. */
@@ -105,6 +107,7 @@ export function mapView(slice: DrawSteelState, actor: string): MapView | undefin
     width: board.terrain[0]?.length ?? 0,
     height: board.terrain.length,
     terrain: board.terrain,
+    ...(board.dressing === undefined ? {} : { dressing: board.dressing }),
     tokens: [...tokens.filter((t) => t.dead), ...tokens.filter((t) => !t.dead)],
     reach,
     ...(subject !== undefined && { reachLabel: `${subject.name} can reach: ${label}` }),

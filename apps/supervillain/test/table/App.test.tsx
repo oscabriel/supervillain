@@ -840,6 +840,47 @@ describe("the map", () => {
     expect(await settle(t)).not.toContain("map · Courtyard");
   });
 
+  /** Tells the App this seat's terminal shows kitty graphics, as a late capability answer would. */
+  const kittyTerminal = (t: Setup, multiplexer = "none") => {
+    const capabilities = { ...t.renderer.capabilities, kitty_graphics: true, multiplexer };
+    Object.defineProperty(t.renderer, "capabilities", { get: () => capabilities });
+    t.renderer.emit("capabilities", capabilities);
+    return settle(t);
+  };
+
+  test("pictures: a terminal without kitty graphics keeps the text map and says why", async () => {
+    const fake = seated({ map: courtyard });
+    const t = await mount(fake);
+    expect(t.captureCharFrame()).not.toContain("/view pictures");
+    const frame = await enter(t, "/view pictures");
+    expect(frame).toContain("This terminal can't show the map in pictures");
+    expect(frame).toContain("map · Courtyard");
+    expect(fake.submitted).toEqual([]);
+  });
+
+  test("pictures: a kitty terminal offers them, draws squares four columns wide, and goes back", async () => {
+    const fake = seated({ map: courtyard });
+    const t = await mount(fake, 100, 40);
+    expect(await kittyTerminal(t)).toContain("map · Courtyard · /view pictures");
+    let rows = rowsOf(await enter(t, "/view pictures"));
+    expect(rows.some((r) => r.includes("Courtyard · /view text"))).toBe(true);
+    // Column letters every four columns over the picture, a row number beside each square's top.
+    expect(rows.some((r) => r.includes("a   b   c   d   e"))).toBe(true);
+    const numbered = rows.filter((r) => /^│ +\d+ /.test(r)).map((r) => r.match(/\d+/)![0]);
+    expect(numbered.slice(0, 3)).toEqual(["1", "2", "3"]);
+    rows = rowsOf(await enter(t, "/view text"));
+    expect(rows.some((r) => r.includes("map · Courtyard"))).toBe(true);
+    expect(fake.submitted).toEqual([]);
+  });
+
+  test("pictures: not through tmux, where images come out as blocks", async () => {
+    const fake = seated({ map: courtyard });
+    const t = await mount(fake);
+    const frame = await kittyTerminal(t, "tmux");
+    expect(frame).not.toContain("/view pictures");
+    expect(await enter(t, "/view pictures")).toContain("can't show the map in pictures");
+  });
+
   test("/view feed hides it, /view map gives it the room, /view both shares; none is sent", async () => {
     const fake = seated({ map: hall() });
     const t = await mount(fake, 100, 30);

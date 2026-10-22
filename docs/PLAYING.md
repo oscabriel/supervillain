@@ -99,6 +99,8 @@ On the map, `·` is floor, a solid block is wall and `~` is difficult terrain. T
 
 On a map bigger than your screen, the view follows whoever is acting. `/view f5` or `/view bandit-chief` centres it until the turn passes. `/view map` gives the map more room, `/view feed` hides it, and `/view` switches it on and off.
 
+In a terminal that shows kitty graphics (Ghostty, kitty or WezTerm, not inside tmux), the map's title offers `/view pictures`: the map drawn in MEKMODE's pixel pictures, each square bigger, each token a figure in its side's colour with its mark in the corner. Commands still take the same squares and marks, and `/view text` goes back. Each move sends your seat a picture of tens of kilobytes, against a couple for text. Elsewhere the map stays text, since pictures there would come out as coloured blocks whose marks can't be read.
+
 ## Taking things back
 
 `/undo` takes back your latest change within 30 seconds, even if someone else has done something since. Then `/redo` puts it back. The feed says what was undone.

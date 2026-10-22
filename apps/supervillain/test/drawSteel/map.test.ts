@@ -135,6 +135,67 @@ describe("map files", () => {
   });
 });
 
+describe("maps in MEKMODE letters", () => {
+  const RUIN = "name: Ruin\nstyle: mekmode\nqsk\nuzT";
+  /** Folds one more event straight into the log, as an old or odd log would hold it. */
+  const replayWith = (t: Table, type: string, payload: unknown) => {
+    t.envelopes.push({ actor: GM, seq: t.envelopes.length + 1, timestamp: t.now, type, payload });
+    return t.ds;
+  };
+
+  test("`style: mekmode` maps are written in Ding Mode letters; the rules see each letter's terrain", () => {
+    expect(readMapText("ruin", RUIN)).toEqual({
+      name: "Ruin",
+      terrain: [".##", ".~#"],
+      dressing: ["qsk", "uzT"],
+    });
+    // The header lines in either order, short rows outside past their end.
+    expect(readMapText("ruin", "style: mekmode\nname: Ruin\nqsk\nu")).toEqual({
+      name: "Ruin",
+      terrain: [".##", ".  "],
+      dressing: ["qsk", "u  "],
+    });
+  });
+
+  test("a character that isn't a map letter is refused, by row and column", () => {
+    expect(readMapText("bad", "style: mekmode\nq1q")).toEqual({
+      refusal:
+        'maps/bad.txt row 1, column 2 is "1", which isn\'t a map letter; see "Maps in MEKMODE letters" in the campaign README.',
+    });
+    expect(readMapText("dot", "style: mekmode\nq.q")).toMatchObject({
+      refusal: expect.stringContaining('column 2 is "."'),
+    });
+  });
+
+  test("/map carries the letters in the event, and the map view hands them to the table", () => {
+    const t = party();
+    const ruin = readMapText("ruin", RUIN) as MapGrid;
+    t.run(GM, { type: "map", id: "ruin", grid: ruin });
+    expect(t.envelopes.at(-1)).toMatchObject({
+      type: "ds.map-loaded",
+      payload: { terrain: [".##", ".~#"], dressing: ["qsk", "uzT"] },
+    });
+    expect(mapView(t.ds, GM)).toMatchObject({ terrain: [".##", ".~#"], dressing: ["qsk", "uzT"] });
+    // A plain map has no letters.
+    t.run(GM, { type: "map", id: "cave", grid: grid() });
+    expect(mapView(t.ds, GM)?.dressing).toBeUndefined();
+  });
+
+  test("replay refuses letters that don't fit the grid, never a letter today's legend lacks", () => {
+    const base = { id: "ruin", name: "Ruin", terrain: [".##", ".~#"] };
+    expect(() => replayWith(party(), "ds.map-loaded", { ...base, dressing: ["qsk"] })).toThrow(
+      /letters/,
+    );
+    expect(() =>
+      replayWith(party(), "ds.map-loaded", { ...base, dressing: ["qsk", "uz\u0007"] }),
+    ).toThrow(/letters/);
+    // A letter the legend may drop one day still replays: only its shape is checked.
+    expect(() =>
+      replayWith(party(), "ds.map-loaded", { ...base, dressing: ["qs1", "uzT"] }),
+    ).not.toThrow();
+  });
+});
+
 describe("/map", () => {
   test("the GM loads a map the host read; replay carries the grid", () => {
     const t = party();

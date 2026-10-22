@@ -137,6 +137,8 @@ export const Payloads = {
     id: Id,
     name: Schema.String,
     terrain: Schema.Array(Schema.String),
+    /** A mekmode map's letters, one per square; absent on a plain map. */
+    dressing: Schema.optional(Schema.Array(Schema.String)),
   }),
   "ds.map-cleared": Schema.Struct({}),
   "ds.placed": Schema.Struct({ id: Id, at: Square }),

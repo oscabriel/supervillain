@@ -183,6 +183,25 @@ describe("CampaignContent maps", () => {
     }),
   );
 
+  effect("a map in MEKMODE letters loads with its letters; a stray character names its line", () =>
+    Effect.gen(function* () {
+      const dir = yield* campaign({
+        "maps/ruin.txt": "name: Ruin\nstyle: mekmode\nqsk\nuzT\n",
+        "maps/stray.txt": "style: mekmode\nqsk\nu.T\n",
+      });
+      const [ruin, stray] = yield* withContent(dir, (c) =>
+        Effect.all([c.map("ruin"), Effect.flip(c.map("stray"))]),
+      );
+      expect(ruin).toEqual({
+        id: "ruin",
+        grid: { name: "Ruin", terrain: [".##", ".~#"], dressing: ["qsk", "uzT"] },
+      });
+      expect(stray.message).toBe(
+        'maps/stray.txt line 3, column 2 is "." (U+002E); a mekmode map is drawn in Ding Mode letters (see "Maps in MEKMODE letters" in the campaign README).',
+      );
+    }),
+  );
+
   effect("a file too big, not text, or with a character a cell can't draw names where", () =>
     Effect.gen(function* () {
       const dir = yield* campaign({

@@ -4,6 +4,7 @@
  * event carries it and replay never reads a file.
  */
 import type { Refused } from "../module.ts";
+import { terrainOf } from "./mekmode.ts";
 
 /** One square: `x` is the column from 0 (a), `y` the row from 0 (row 1). */
 export interface Square {
@@ -15,6 +16,11 @@ export interface Square {
 export interface MapGrid {
   readonly name: string;
   readonly terrain: ReadonlyArray<string>;
+  /**
+   * A `style: mekmode` map's own letters, one per square (see mekmode.ts). The rules read only
+   * `terrain`, which the legend makes from them; the letters are for the picture map to draw.
+   */
+  readonly dressing?: ReadonlyArray<string>;
 }
 
 export const MAP_WIDTH = 60;
@@ -85,18 +91,50 @@ export function checkGrid(id: string, grid: MapGrid, file = `maps/${id}.txt`): M
   const name = grid.name.trim();
   if (name === "" || name.length > NAME_MAX || !DRAWABLE.test(name))
     return { refusal: `${file} needs a plain name of up to ${NAME_MAX} characters.` };
-  return { name, terrain: rows.map((row) => row.trimEnd().padEnd(width, " ")) };
+  const terrain = rows.map((row) => row.trimEnd().padEnd(width, " "));
+  if (grid.dressing === undefined) return { name, terrain };
+  const dressing = terrain.map((_, y) => (grid.dressing![y] ?? "").trimEnd().padEnd(width, " "));
+  return { name, terrain, dressing };
 }
 
+/** The header line that makes a map file one written in MEKMODE letters. */
+const MEKMODE_STYLE = /^style:\s*mekmode\s*$/i;
+
+/** Whether a map file's text is written in MEKMODE letters: a `style: mekmode` header line. */
+export const isMekmodeText = (lines: ReadonlyArray<string>): boolean =>
+  lines.slice(0, 2).some((line) => MEKMODE_STYLE.test(line));
+
 /**
- * A map file's text as a grid: an optional first line `name: <name>` (else the id is the name),
- * then one line per row of terrain.
+ * A map file's text as a grid: optional header lines `name: <name>` (else the id is the name) and
+ * `style: mekmode`, in either order, then one line per row. A plain map's rows are terrain; a
+ * mekmode map's rows are Ding Mode letters, which the legend turns into terrain, kept as well.
  */
 export function readMapText(id: string, text: string, file?: string): MapGrid | Refused {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const named = /^name:\s*(.*)$/i.exec(lines[0] ?? "");
-  const name = named === null ? id : named[1]!;
-  return checkGrid(id, { name, terrain: named === null ? lines : lines.slice(1) }, file);
+  let lines = text.replace(/\r\n?/g, "\n").split("\n");
+  let name = id;
+  let mekmode = false;
+  for (let header = 0; header < 2; header++) {
+    const named = /^name:\s*(.*)$/i.exec(lines[0] ?? "");
+    if (named !== null) name = named[1]!;
+    else if (MEKMODE_STYLE.test(lines[0] ?? "")) mekmode = true;
+    else break;
+    lines = lines.slice(1);
+  }
+  if (!mekmode) return checkGrid(id, { name, terrain: lines }, file);
+  const terrain: string[] = [];
+  for (const [row, line] of lines.entries()) {
+    let rules = "";
+    for (const [column, letter] of [...line].entries()) {
+      const square = terrainOf(letter);
+      if (square === undefined)
+        return {
+          refusal: `${file ?? `maps/${id}.txt`} row ${row + 1}, column ${column + 1} is ${DRAWABLE.test(letter) ? `"${letter}"` : "a character a map can't draw"}, which isn't a map letter; see "Maps in MEKMODE letters" in the campaign README.`,
+        };
+      rules += square;
+    }
+    terrain.push(rules);
+  }
+  return checkGrid(id, { name, terrain, dressing: lines }, file);
 }
 
 /**
@@ -110,6 +148,12 @@ export function misshapen(grid: MapGrid): string | undefined {
   if (!grid.terrain.every((row) => DRAWABLE.test(row)) || !DRAWABLE.test(grid.name))
     return "it isn't plain ASCII";
   if (grid.name.trim() === "") return "it has no name";
+  if (
+    grid.dressing !== undefined &&
+    (grid.dressing.length !== grid.terrain.length ||
+      grid.dressing.some((row) => row.length !== width || !DRAWABLE.test(row)))
+  )
+    return "its letters don't fit its squares";
   return undefined;
 }
 

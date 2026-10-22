@@ -123,7 +123,12 @@ export function loadMap(
   const grid = checkGrid(command.id, command.grid);
   if ("refusal" in grid) return grid;
   return decided(
-    event("ds.map-loaded", { id: command.id, name: grid.name, terrain: [...grid.terrain] }),
+    event("ds.map-loaded", {
+      id: command.id,
+      name: grid.name,
+      terrain: [...grid.terrain],
+      ...(grid.dressing === undefined ? {} : { dressing: [...grid.dressing] }),
+    }),
   );
 }
 

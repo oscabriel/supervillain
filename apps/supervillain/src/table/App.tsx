@@ -25,6 +25,7 @@ import {
   intentFor,
   keyAction,
   type Layout,
+  type Look,
   type LineState,
   modeFor,
   moveEnd,
@@ -40,6 +41,8 @@ import { InputLine } from "./InputLine.tsx";
 import { hanging } from "./hanging.ts";
 import { type Focus, focusOf, followed, MAP_FRAME, mapLayout, mapRowsWanted } from "./map.ts";
 import { MapPane } from "./MapPane.tsx";
+import { GUTTER, LABEL_ROWS, pictureRowsWanted, pictureWindow, SQUARE } from "./picture.ts";
+import { PictureMap, usePicturesShown } from "./PictureMap.tsx";
 import { color, people } from "./theme.ts";
 import type { CombatView, MapView, TableView } from "./view.ts";
 
@@ -105,6 +108,10 @@ export function App(props: { view: TableView }) {
    * holds until the turn passes or a layout word (`/view both`) puts the map back to following.
    */
   const [pin, setPin] = createSignal<{ readonly square: Focus } | { readonly token: string }>();
+  /** How this seat draws the map (`/view pictures|text`): pictures only where the terminal shows them. */
+  const [look, setLook] = createSignal<Look>("text");
+  const picturesShown = usePicturesShown();
+  const pictures = () => look() === "pictures" && picturesShown();
   /** The GM pressed Ctrl-C with players here, and the next Ctrl-C closes the table. */
   const [leaving, setLeaving] = createSignal(false);
   /** The line a hint just answered: sent again as it is, it goes ahead. */
@@ -142,6 +149,17 @@ export function App(props: { view: TableView }) {
     if (map === undefined || map.reach.length === 0 || split() === "map") return false;
     const rows = mapHeight();
     if (rows === 0) return true;
+    if (pictures()) {
+      const w = pictureWindow(
+        map,
+        Math.floor((size().width - MAP_FRAME.width - GUTTER) / SQUARE.cols),
+        Math.floor((rows - MAP_FRAME.height - LABEL_ROWS) / SQUARE.rows),
+        focus(),
+      );
+      return map.reach.some(
+        (r) => r.x < w.x0 || r.x >= w.x0 + w.cols || r.y < w.y0 || r.y >= w.y0 + w.rows,
+      );
+    }
     return mapLayout(map, size().width - MAP_FRAME.width, rows - MAP_FRAME.height, focus())
       .reachClipped;
   };
@@ -192,6 +210,19 @@ export function App(props: { view: TableView }) {
     if (view.map?.() === undefined) setNotice(NO_MAP);
   }
 
+  /**
+   * `/view pictures` or `/view text`. Pictures need kitty graphics outside a multiplexer; anywhere
+   * else they would come out as blocks whose marks can't be read, so the map stays text and says why.
+   */
+  function chooseLook(next: Look) {
+    if (next === "pictures" && !picturesShown())
+      return void setNotice(
+        "This terminal can't show the map in pictures (it needs kitty graphics, as in Ghostty, kitty or WezTerm, and no tmux), so it stays text.",
+      );
+    setLook(next);
+    if (view.map?.() === undefined) setNotice(NO_MAP);
+  }
+
   /** `/view <square|who>`: centres the map there, showing it if it was hidden. */
   function centre(at: string) {
     const map = view.map?.();
@@ -212,6 +243,7 @@ export function App(props: { view: TableView }) {
     if (intent.kind === "quit") return view.leave();
     if (intent.kind === "state") return void setShowDebug(!showDebug());
     if (intent.kind === "view") return changeLayout(intent.layout);
+    if (intent.kind === "look") return chooseLook(intent.look);
     if (intent.kind === "focus") return centre(intent.at);
     if (intent.kind === "hint") {
       setNotice(intent.text);
@@ -354,7 +386,7 @@ export function App(props: { view: TableView }) {
    * wants beyond that.
    */
   function mapHeights(map: MapView, combat: CombatView | undefined, room: number, cap: number) {
-    const wanted = mapRowsWanted(map);
+    const wanted = pictures() ? pictureRowsWanted(map) : mapRowsWanted(map);
     const band = bandRows(combat, cap);
     if (split() === "map") {
       const folded = Math.min(band.wanted, BAND_FOLDED);
@@ -417,7 +449,21 @@ export function App(props: { view: TableView }) {
       </Show>
 
       <Show when={mapHeight() > 0 ? shownMap() : undefined}>
-        {(map) => <MapPane map={map()} height={mapHeight()} focus={focus()} />}
+        {(map) => (
+          <Show
+            when={pictures()}
+            fallback={
+              <MapPane
+                map={map()}
+                height={mapHeight()}
+                focus={focus()}
+                hint={picturesShown() ? "/view pictures" : undefined}
+              />
+            }
+          >
+            <PictureMap map={map()} height={mapHeight()} focus={focus()} />
+          </Show>
+        )}
       </Show>
 
       <box flexDirection="row" flexGrow={1} minHeight={0}>

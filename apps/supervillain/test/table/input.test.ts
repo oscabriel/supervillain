@@ -285,13 +285,25 @@ describe("intentFor", () => {
     expect(intentFor("/view  B ", "chat")).toEqual({ kind: "focus", at: "B" });
     expect(intentFor("/views", "chat")).toEqual({ kind: "send", line: "/views" });
   });
+
+  test("/view pictures and /view text choose how this seat draws the map", () => {
+    expect(intentFor("/view pictures", "chat")).toEqual({ kind: "look", look: "pictures" });
+    expect(intentFor("/view Text", "chat")).toEqual({ kind: "look", look: "text" });
+  });
 });
 
 describe("tableCompletions", () => {
   test("the table's own commands complete like the host's: whole replacement lines", () => {
     expect(tableCompletions("/vi")).toEqual(["/view "]);
     expect(tableCompletions("/")).toEqual(["/view "]);
-    expect(tableCompletions("/view ")).toEqual(["/view map", "/view feed", "/view both"]);
+    expect(tableCompletions("/view ")).toEqual([
+      "/view map",
+      "/view feed",
+      "/view both",
+      "/view pictures",
+      "/view text",
+    ]);
+    expect(tableCompletions("/view p")).toEqual(["/view pictures"]);
     expect(tableCompletions("/view f")).toEqual(["/view feed"]);
     expect(tableCompletions("/roll ")).toEqual([]);
     expect(tableCompletions("hello")).toEqual([]);

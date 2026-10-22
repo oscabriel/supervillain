@@ -92,8 +92,8 @@ const entries: ReadonlyArray<Entry> = [
   {
     // The App changes its own layout on /view and never sends it; it's here for /help and Tab.
     name: "view",
-    usage: "/view [map|feed|both|<square|who>]",
-    summary: "Show the map, the feed or both; alone, show or hide the map; or centre it somewhere.",
+    usage: "/view [map|feed|both|pictures|text|<square|who>]",
+    summary: "Show the map, the feed or both, in pictures or text; or centre the map somewhere.",
     gmOnly: false,
     seatOnly: true,
     run: () => ({
@@ -101,7 +101,9 @@ const entries: ReadonlyArray<Entry> = [
       message: "/view changes a seat's own screen; this one has none.",
     }),
     complete: (_state, _actor, partial) =>
-      ["map", "feed", "both"].filter((l) => l.startsWith(partial.trim().toLowerCase())),
+      ["map", "feed", "both", "pictures", "text"].filter((l) =>
+        l.startsWith(partial.trim().toLowerCase()),
+      ),
   },
   {
     name: "quit",

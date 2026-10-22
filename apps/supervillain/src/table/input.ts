@@ -223,6 +223,11 @@ export type Layout = "both" | "map" | "feed";
 
 const LAYOUTS: ReadonlyArray<Layout> = ["map", "feed", "both"];
 
+/** How a seat draws the map: in text, or in MEKMODE's pictures where the terminal shows them. */
+export type Look = "text" | "pictures";
+
+const LOOKS: ReadonlyArray<Look> = ["pictures", "text"];
+
 /**
  * What a submitted line does: leave, toggle the debug pane, change the layout, centre the map on a
  * square or token (`/view <square|who>`, as typed), or go to the host.
@@ -232,6 +237,7 @@ type Intent =
   | { readonly kind: "state" }
   /** `toggle` shows or hides the map. */
   | { readonly kind: "view"; readonly layout: Layout | "toggle" }
+  | { readonly kind: "look"; readonly look: Look }
   | { readonly kind: "focus"; readonly at: string }
   /** A line that is likely a slip (a bare `help` or `exit`), answered for this seat alone. */
   | { readonly kind: "hint"; readonly text: string; readonly again: boolean }
@@ -285,6 +291,8 @@ export function intentFor(line: string, mode: Mode, me = "", asked?: string): In
   if (word === "/view") {
     const arg = line.slice(word.length).trim();
     if (arg === "") return { kind: "view", layout: "toggle" };
+    const look = LOOKS.find((l) => l === arg.toLowerCase());
+    if (look !== undefined) return { kind: "look", look };
     const layout = LAYOUTS.find((l) => l === arg.toLowerCase());
     return layout === undefined ? { kind: "focus", at: arg } : { kind: "view", layout };
   }
@@ -300,7 +308,7 @@ export function tableCompletions(line: string): ReadonlyArray<string> {
   if (space < 0) return "/view".startsWith(start) ? ["/view "] : [];
   if (start.slice(0, space) !== "/view") return [];
   const arg = start.slice(space + 1).trimStart();
-  return LAYOUTS.filter((l) => l.startsWith(arg)).map((l) => `/view ${l}`);
+  return [...LAYOUTS, ...LOOKS].filter((l) => l.startsWith(arg)).map((l) => `/view ${l}`);
 }
 
 /** The parts of an OpenTUI KeyEvent the line reads. */

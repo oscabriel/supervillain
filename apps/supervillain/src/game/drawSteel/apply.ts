@@ -804,12 +804,21 @@ function checkPath(
  * stops an old log.
  */
 function mapLoaded(slice: DrawSteelState, envelope: Envelope): Applied {
-  const { id, name, terrain } = decode("ds.map-loaded", envelope);
-  const why = misshapen({ name, terrain });
+  const { id, name, terrain, dressing } = decode("ds.map-loaded", envelope);
+  const why = misshapen({ name, terrain, ...(dressing === undefined ? {} : { dressing }) });
   if (why !== undefined) bad(envelope, `has a bad grid: ${why}`);
   const width = terrain[0]!.length;
   return {
-    slice: { ...slice, map: { id, name, terrain: [...terrain], tokens: {} } },
+    slice: {
+      ...slice,
+      map: {
+        id,
+        name,
+        terrain: [...terrain],
+        ...(dressing === undefined ? {} : { dressing: [...dressing] }),
+        tokens: {},
+      },
+    },
     feed: { kind: "ds", text: `The map is ${name}, ${width} by ${terrain.length}.` },
   };
 }

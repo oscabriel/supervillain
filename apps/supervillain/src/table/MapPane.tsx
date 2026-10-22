@@ -33,7 +33,13 @@ const styleOf = (s: MapSegment) => ({
  * token or the seat's own hero, else shows the most tokens it can, with arrows at the edges toward
  * the tokens out of view, named in the bottom border.
  */
-export function MapPane(props: { map: MapView; height: number; focus?: Focus | undefined }) {
+export function MapPane(props: {
+  map: MapView;
+  height: number;
+  focus?: Focus | undefined;
+  /** Said after the title, e.g. `/view pictures` where this seat could draw the map in pictures. */
+  hint?: string | undefined;
+}) {
   const size = useTerminalDimensions();
   const keep = keepLines<MapSegment>();
   const layout = createMemo(() => {
@@ -49,7 +55,7 @@ export function MapPane(props: { map: MapView; height: number; focus?: Focus | u
     <box
       border
       borderColor={color.border}
-      title={layout().title}
+      title={props.hint ? `${layout().title.trimEnd()} · ${props.hint} ` : layout().title}
       bottomTitle={layout().bottomTitle}
       bottomTitleAlignment="right"
       height={props.height}

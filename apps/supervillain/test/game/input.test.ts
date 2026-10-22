@@ -249,8 +249,8 @@ describe("helpText", () => {
         ...PLAYER_DRAW_STEEL,
         "/help [command]  List the commands, or explain one.",
         "/sheet <who>     Show a hero's or creature's sheet, to you alone.",
-        "/view [map|feed|both|<square|who>]",
-        "                 Show the map, the feed or both; alone, show or hide the map; or centre it somewhere.",
+        "/view [map|feed|both|pictures|text|<square|who>]",
+        "                 Show the map, the feed or both, in pictures or text; or centre the map somewhere.",
         "/quit            Leave the table.",
       ].join("\n"),
     );

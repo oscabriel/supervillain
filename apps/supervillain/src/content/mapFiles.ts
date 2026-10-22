@@ -1,15 +1,24 @@
 import { Effect } from "effect";
-import { MAP_HEIGHT, MAP_WIDTH, type MapGrid, readMapText } from "../game/drawSteel/map.ts";
+import {
+  isMekmodeText,
+  MAP_HEIGHT,
+  MAP_WIDTH,
+  type MapGrid,
+  readMapText,
+} from "../game/drawSteel/map.ts";
+import { terrainOf } from "../game/drawSteel/mekmode.ts";
 import { MapInvalid } from "./errors.ts";
 
-// The map files a GM draws by hand: maps/<id>.txt, an optional `name: …` first line, then one line
-// per row, one character per square. The rules check the grid's shape (game/drawSteel/map.ts);
+// The map files a GM draws by hand: maps/<id>.txt, an optional `name: …` line and, for a map drawn
+// in MEKMODE letters, a `style: mekmode` line, then one line per row, one character per square. The rules check the grid's shape (game/drawSteel/map.ts);
 // this checks what only a file can get wrong, and says where, before the rules see the text.
 
 /** Far more than 60 columns by 40 rows needs; a bigger file is a mistake, not a map. */
 export const MAP_BYTES = 8 * 1024;
 
 const LEGEND = "draw maps with . floor, # wall, ~ difficult terrain and space for outside.";
+const MEKMODE_LEGEND =
+  'a mekmode map is drawn in Ding Mode letters (see "Maps in MEKMODE letters" in the campaign README).';
 /** What a square may be drawn with; the name line may have any printable ASCII. */
 const TERRAIN = /^[.#~ ]$/;
 const PRINTABLE = /^[\x20-\x7e]$/;
@@ -54,14 +63,17 @@ export function decodeMap(
     return invalid(`${file} isn't UTF-8 text.`);
   }
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const named = /^name:/i.test(lines[0] ?? "");
+  const mekmode = isMekmodeText(lines);
+  // The header lines: `name: …`, and `style: mekmode` for a map drawn in Ding Mode letters.
+  let headers = 0;
+  while (headers < 2 && /^(name|style):/i.test(lines[headers] ?? "")) headers++;
+  const square = (c: string) => (mekmode ? terrainOf(c) !== undefined : TERRAIN.test(c));
   for (const [row, line] of lines.entries()) {
     const chars = [...line];
-    const allowed = named && row === 0 ? PRINTABLE : TERRAIN;
-    const column = chars.findIndex((c) => !allowed.test(c));
+    const column = chars.findIndex((c) => !(row < headers ? PRINTABLE.test(c) : square(c)));
     if (column !== -1)
       return invalid(
-        `${file} line ${row + 1}, column ${column + 1} is ${describe(chars[column]!)}; ${LEGEND}`,
+        `${file} line ${row + 1}, column ${column + 1} is ${describe(chars[column]!)}; ${mekmode ? MEKMODE_LEGEND : LEGEND}`,
       );
   }
   const grid = readMapText(id, text, file);

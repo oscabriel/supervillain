@@ -41,6 +41,8 @@ supervillain host ~/campaigns/first-fight
 
 `new --example` copies the sample campaign: four heroes, the bandits and the map for one fight. Without `--example` you get empty `heroes/`, `monsters/` and `maps/` folders. The folder's README explains the file formats. `host` opens a campaign folder and refuses one that isn't there (`there's no campaign at …; make one with: supervillain new …`), and a folder with none of `events.jsonl`, `host_key`, `heroes/`, `monsters/` or `maps/` in it (`… isn't a campaign: …`), so a mistyped path never starts an empty table under a new host key, and your home folder never gets a log.
 
+`supervillain map crossing <campaign> --seed 7` (or `keep`) generates a map into `maps/` and says how to load it; the campaign README has how maps work.
+
 `host` prints what to send your players:
 
 ```
