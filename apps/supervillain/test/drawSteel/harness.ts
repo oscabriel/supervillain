@@ -3,6 +3,7 @@ import { core, labelOf } from "../../src/game/core.ts";
 import type { HeroSheet, StatBlock } from "../../src/game/drawSteel/sheets.ts";
 import { drawSteel } from "../../src/game/drawSteel/index.ts";
 import { compose, GM } from "../../src/game/module.ts";
+import { setWorld } from "../../src/game/setWorld/index.ts";
 import { feedLines, plainText, tableLabel } from "../../src/game/table.ts";
 
 export { GM };
@@ -83,7 +84,9 @@ export class Table {
   /** The feed as the table shows it, one plain string per line. */
   get feed(): ReadonlyArray<string> {
     const state = this.state;
-    return feedLines(state, tableLabel(state)).map(plainText);
+    return feedLines(state, tableLabel({ ...state, sw: setWorld.initial }, "draw-steel")).map(
+      plainText,
+    );
   }
 
   /** The last `n` feed lines. */

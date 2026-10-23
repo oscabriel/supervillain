@@ -122,7 +122,7 @@ describe("supervillain host --headless", () => {
         const refused = yield* cli(["host", empty, "--headless", "--port", "0"]);
         expect(refused.exitCode).toBe(1);
         expect(refused.stderr.trim().split("\n")).toEqual([
-          `supervillain: ${empty} isn't a campaign: it has no events.jsonl, host_key, heroes/, monsters/ or maps/; make one there with: bun supervillain new ${empty} (--example for the sample)`,
+          `supervillain: ${empty} isn't a campaign: it has no campaign.yaml, events.jsonl, host_key, heroes/, monsters/ or maps/; make one there with: bun supervillain new ${empty} (--example for the sample)`,
         ]);
         expect(yield* Effect.promise(() => readdir(empty))).toEqual([]);
 
@@ -131,9 +131,25 @@ describe("supervillain host --headless", () => {
         const also = yield* cli(["host", unrelated, "--headless", "--port", "0"]);
         expect(also.exitCode).toBe(1);
         expect(also.stderr.trim().split("\n")).toEqual([
-          `supervillain: ${unrelated} isn't a campaign: it has no events.jsonl, host_key, heroes/, monsters/ or maps/; make one in a new folder with: bun supervillain new <folder> (--example for the sample)`,
+          `supervillain: ${unrelated} isn't a campaign: it has no campaign.yaml, events.jsonl, host_key, heroes/, monsters/ or maps/; make one in a new folder with: bun supervillain new <folder> (--example for the sample)`,
         ]);
         expect(yield* Effect.promise(() => readdir(unrelated))).toEqual(["notes.txt"]);
+      }),
+  );
+
+  effect(
+    "a campaign.yaml naming a ruleset the table doesn't know is one plain line, and no log is opened",
+    () =>
+      Effect.gen(function* () {
+        const campaign = yield* campaignDir;
+        const file = join(campaign, "campaign.yaml");
+        yield* Effect.promise(() => writeFile(file, "rules: pathfinder\n"));
+        const refused = yield* cli(["host", campaign, "--headless", "--port", "0"]);
+        expect(refused.exitCode).toBe(1);
+        expect(refused.stderr.trim().split("\n")).toEqual([
+          `supervillain: ${file}: says rules: pathfinder, but a campaign plays draw-steel or set-world`,
+        ]);
+        expect(existsSync(join(campaign, "events.jsonl"))).toBe(false);
       }),
   );
 

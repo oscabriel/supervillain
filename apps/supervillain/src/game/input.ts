@@ -1,5 +1,14 @@
 import { GM } from "./module.ts";
-import { type Command, commands, completeSheet, type TableState } from "./table.ts";
+import {
+  type Command,
+  commands,
+  commandsFor,
+  completeSheet,
+  DEFAULT_RULESET,
+  type Ruleset,
+  RULESETS,
+  type TableState,
+} from "./table.ts";
 import { cleanText, quote } from "./text.ts";
 
 /**
@@ -45,8 +54,15 @@ const fromSpec =
       : { kind: "command", command: result };
   };
 
-const entries: ReadonlyArray<Entry> = [
-  ...commands.map(
+/** What /sheet shows at a table of each ruleset. */
+const SHEETS: Readonly<Record<Ruleset, string>> = {
+  "draw-steel": "Show a hero's or creature's sheet, to you alone.",
+  "set-world": "Show a fighter's sheet, to you alone.",
+};
+
+/** The input surface of a table playing `ruleset`: its registry commands, then the seat-local ones. */
+const entriesOf = (ruleset: Ruleset): ReadonlyArray<Entry> => [
+  ...commandsFor(ruleset).map(
     (spec): Entry => ({
       name: spec.name,
       usage: spec.usage,
@@ -68,18 +84,19 @@ const entries: ReadonlyArray<Entry> = [
       const topic = args.trim().replace(/^\//, "").toLowerCase();
       return topic === "" ? { kind: "help" } : { kind: "help", topic };
     },
-    complete: (_state, actor, partial) => namesFor(actor, partial.trim().replace(/^\//, "")),
+    complete: (_state, actor, partial) =>
+      namesFor(actor, partial.trim().replace(/^\//, ""), ruleset),
   },
   {
     name: "sheet",
     usage: "/sheet <who>",
-    summary: "Show a hero's or creature's sheet, to you alone.",
+    summary: SHEETS[ruleset],
     gmOnly: false,
     run: (args) =>
       args.trim() === ""
         ? { kind: "refusal", message: "Usage: /sheet <who>" }
         : { kind: "sheet", who: args.trim() },
-    complete: (state, actor, partial) => completeSheet(state, partial, actor),
+    complete: (state, actor, partial) => completeSheet(state, partial, actor, ruleset),
   },
   {
     name: "state",
@@ -129,27 +146,38 @@ export const BARE_OVER_EXEC: ReadonlySet<string> = new Set([
   "sheet",
 ]);
 
+/** Each ruleset's input surface, built once. */
+const ENTRIES: Readonly<Record<Ruleset, ReadonlyArray<Entry>>> = Object.fromEntries(
+  RULESETS.map((r) => [r, entriesOf(r)]),
+) as Record<Ruleset, ReadonlyArray<Entry>>;
+
 const say = commands.find((c) => c.name === "say");
 const name = commands.find((c) => c.name === "name");
 if (!say || !name) throw new Error("the registry lost /say or /name");
 const sayLine = fromSpec(say.parse);
 const nameLine = fromSpec(name.parse);
 
-const visibleTo = (actor: string, surface: Surface = "seat") =>
-  entries.filter((e) => (!e.gmOnly || actor === GM) && (!e.seatOnly || surface === "seat"));
+const visibleTo = (actor: string, surface: Surface, ruleset: Ruleset) =>
+  ENTRIES[ruleset].filter(
+    (e) => (!e.gmOnly || actor === GM) && (!e.seatOnly || surface === "seat"),
+  );
 
-function namesFor(actor: string, partial: string): ReadonlyArray<string> {
+function namesFor(actor: string, partial: string, ruleset: Ruleset): ReadonlyArray<string> {
   const typed = partial.toLowerCase();
-  return visibleTo(actor)
+  return visibleTo(actor, "seat", ruleset)
     .map((e) => e.name)
     .filter((n) => n.startsWith(typed));
 }
 
-const find = (name: string): Entry | undefined =>
-  entries.find((e) => e.name === name.toLowerCase());
+const find = (name: string, ruleset: Ruleset): Entry | undefined =>
+  ENTRIES[ruleset].find((e) => e.name === name.toLowerCase());
 
-/** "Unknown command /x." plus the commands it most likely meant: those it begins, else near misses. */
-function unknown(name: string): string {
+/**
+ * "Unknown command /x." plus the commands it most likely meant: those it begins, else near misses.
+ * Another ruleset's command is unknown here too: this table doesn't play it.
+ */
+function unknown(name: string, ruleset: Ruleset): string {
+  const entries = ENTRIES[ruleset];
   const typed = name.toLowerCase();
   const begun = entries.filter((e) => e.name.startsWith(typed));
   const near = begun.length > 0 ? begun : entries.filter((e) => isNearMiss(typed, e.name));
@@ -189,18 +217,23 @@ function split(line: string): { name: string; args: string | undefined } {
 }
 
 /**
- * Reads one input line. Plain text is chat (or a name, in name mode), `//text` says text that
- * starts with a slash, and `/x args` runs command x. Nothing visible is `empty`, to drop quietly.
+ * Reads one input line at a table playing `ruleset`. Plain text is chat (or a name, in name mode),
+ * `//text` says text that starts with a slash, and `/x args` runs command x. Nothing visible is
+ * `empty`, to drop quietly.
  */
-export function parseInputLine(line: string, mode: InputMode = "chat"): Parsed {
+export function parseInputLine(
+  line: string,
+  mode: InputMode = "chat",
+  ruleset: Ruleset = DEFAULT_RULESET,
+): Parsed {
   if (cleanText(line) === "") return { kind: "empty" };
   const start = line.trimStart();
   if (start.startsWith("//")) return sayLine(start.slice(1));
   if (!start.startsWith("/")) return mode === "name" ? nameLine(line) : sayLine(line);
   const { name, args } = split(start);
   if (name === "") return { kind: "help" };
-  const entry = find(name);
-  if (!entry) return { kind: "refusal", message: unknown(name) };
+  const entry = find(name, ruleset);
+  if (!entry) return { kind: "refusal", message: unknown(name, ruleset) };
   return entry.run(args ?? "");
 }
 
@@ -212,17 +245,18 @@ export function completeLine(
   state: TableState,
   actor: string,
   line: string,
+  ruleset: Ruleset = DEFAULT_RULESET,
 ): ReadonlyArray<string> {
   const start = line.trimStart();
   if (!start.startsWith("/") || start.startsWith("//")) return [];
   const { name, args } = split(start);
   if (args === undefined) {
-    return namesFor(actor, name).map((n) => {
-      const takesArgs = find(n)?.usage.includes(" ") ?? false;
+    return namesFor(actor, name, ruleset).map((n) => {
+      const takesArgs = find(n, ruleset)?.usage.includes(" ") ?? false;
       return takesArgs ? `/${n} ` : `/${n}`;
     });
   }
-  const entry = find(name);
+  const entry = find(name, ruleset);
   if (!entry?.complete || (entry.gmOnly && actor !== GM)) return [];
   return entry.complete(state, actor, args).map((arg) => `/${entry.name} ${arg}`);
 }
@@ -238,18 +272,31 @@ const helpLine = (e: Entry, width: number, gmMark: string) => {
 };
 
 /** Why `/help <topic>` has nothing to show, when no command has that name. */
-export const unknownHelpTopic = (topic: string | undefined): string | undefined =>
-  topic === undefined || find(topic.replace(/^\//, "")) !== undefined ? undefined : unknown(topic);
+export const unknownHelpTopic = (
+  topic: string | undefined,
+  ruleset: Ruleset = DEFAULT_RULESET,
+): string | undefined =>
+  topic === undefined || find(topic.replace(/^\//, ""), ruleset) !== undefined
+    ? undefined
+    : unknown(topic, ruleset);
 
-/** The /help text for this actor: every command they can use where they are, or one command by name. */
-export function helpText(actor: string, topic?: string, surface: Surface = "seat"): string {
+/**
+ * The /help text for this actor at a table playing `ruleset`: every command they can use where
+ * they are, or one command by name.
+ */
+export function helpText(
+  actor: string,
+  topic?: string,
+  surface: Surface = "seat",
+  ruleset: Ruleset = DEFAULT_RULESET,
+): string {
   if (topic !== undefined) {
-    const entry = find(topic.replace(/^\//, ""));
-    if (!entry) return unknown(topic);
+    const entry = find(topic.replace(/^\//, ""), ruleset);
+    if (!entry) return unknown(topic, ruleset);
     if (entry.seatOnly && surface !== "seat") return `/${entry.name} works only at a seat.`;
     return helpLine(entry, 0, actor === GM ? "(GM)" : "(GM only)");
   }
-  const shown = visibleTo(actor, surface);
+  const shown = visibleTo(actor, surface, ruleset);
   const width = Math.min(HELP_COLUMN, Math.max(...shown.map((e) => e.usage.length)));
   const bare = shown.filter((e) => BARE_OVER_EXEC.has(e.name)).map((e) => e.name);
   const intro =

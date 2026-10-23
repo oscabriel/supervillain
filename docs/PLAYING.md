@@ -91,6 +91,20 @@ Your GM brings heroes and monsters in, starts combat and runs the Director's sid
 | `/push bandit-chief 2 from brann` | Push a creature (also `/pull`, and `/slide … to <square>`) |
 | `/undo`, `/redo` | Take back your latest change, or put it back |
 
+### At a set.world table
+
+Some campaigns play set.world's rules instead of Draw Steel; `/help` shows which commands your table has. The GM rolls fighters at [set.world](https://set.world) and gives them names, and you play one from the party.
+
+| Command | What it does |
+| --- | --- |
+| `/play ada` | Play a party member nobody else plays; `/unplay` lets it go |
+| `/sheet ada` | Show a fighter's sheet: class, health, stamina, weapon, stats and gear |
+| `/move ada c5` | Move on your fighter's turn, up to its speed |
+| `/attack ada grub` | Attack once on your turn, if your weapon reaches |
+| `/done` | End your turn; a turn without an attack is a rest |
+
+There are no rounds: each fighter's turns come as often as its initiative says, so a quick fighter may act twice before a slow one acts once. The feed shows the clock with each turn. An attack costs 20 stamina, hit or miss, and stamina comes back with time, so a tired fighter rests. A sword reaches the next square, a long blade two, a bow or sling 10 squares, and a wand or staff 5 as magic.
+
 ## The map
 
 Squares are written as a column letter and a row number, like `c5`. Columns run `a` to `z` from the left, then `aa`, `ab` and so on. Row 1 is the top row. The letters are along the top of the map and the numbers down its side.

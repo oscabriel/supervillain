@@ -4,7 +4,10 @@ import { Context, Effect, Layer } from "effect";
 import type { MapGrid } from "../game/drawSteel/map.ts";
 import { ID } from "../game/drawSteel/schema.ts";
 import type { HeroSheet, StatBlock } from "../game/drawSteel/sheets.ts";
+import type { Ruleset } from "../game/table.ts";
+import { readCampaignConfig } from "./campaignFile.ts";
 import {
+  type CampaignConfigInvalid,
   ContentReadError,
   MapInvalid,
   MapNotFound,
@@ -190,14 +193,16 @@ const load = <A>(
   });
 
 /**
- * The heroes, monsters and maps in a campaign folder: `heroes/<id>.yaml`, `monsters/<id>.yaml`
- * and `maps/<id>.txt`.
- * Nothing is cached, so a file the GM edits mid-session counts the next time it's loaded.
+ * A campaign folder: the ruleset its `campaign.yaml` names, read once when the table opens, and
+ * the heroes, monsters and maps in it: `heroes/<id>.yaml`, `monsters/<id>.yaml` and `maps/<id>.txt`.
+ * Those are never cached, so a file the GM edits mid-session counts the next time it's loaded.
  */
 export class CampaignContent extends Context.Service<
   CampaignContent,
   {
     readonly dir: string;
+    /** What the campaign plays: draw-steel unless its `campaign.yaml` says otherwise. */
+    readonly ruleset: Ruleset;
     /** Hero ids, sorted. */
     readonly heroes: Effect.Effect<ReadonlyArray<string>, ContentReadError>;
     /** Monster ids, sorted. */
@@ -212,14 +217,23 @@ export class CampaignContent extends Context.Service<
     readonly map: (query: string) => Effect.Effect<LoadedMap, MapLoadError>;
   }
 >()("supervillain/content/CampaignContent") {
-  static readonly layer = (campaignDir: string): Layer.Layer<CampaignContent> =>
-    Layer.succeed(CampaignContent, {
-      dir: campaignDir,
-      heroes: Effect.map(entries(campaignDir, "hero"), (all) => all.map((e) => e.id)),
-      monsters: Effect.map(entries(campaignDir, "monster"), (all) => all.map((e) => e.id)),
-      hero: load(campaignDir, "hero", decodeHero),
-      monster: load(campaignDir, "monster", decodeMonster),
-      maps: Effect.map(mapEntries(campaignDir), ({ usable }) => usable.map((e) => e.id)),
-      map: loadMap(campaignDir),
-    });
+  /** Fails when `campaign.yaml` can't be read or names a ruleset the table doesn't know. */
+  static readonly layer = (
+    campaignDir: string,
+  ): Layer.Layer<CampaignContent, CampaignConfigInvalid | ContentReadError> =>
+    Layer.effect(
+      CampaignContent,
+      Effect.map(readCampaignConfig(campaignDir), (config) =>
+        CampaignContent.of({
+          dir: campaignDir,
+          ruleset: config.rules,
+          heroes: Effect.map(entries(campaignDir, "hero"), (all) => all.map((e) => e.id)),
+          monsters: Effect.map(entries(campaignDir, "monster"), (all) => all.map((e) => e.id)),
+          hero: load(campaignDir, "hero", decodeHero),
+          monster: load(campaignDir, "monster", decodeMonster),
+          maps: Effect.map(mapEntries(campaignDir), ({ usable }) => usable.map((e) => e.id)),
+          map: loadMap(campaignDir),
+        }),
+      ),
+    );
 }

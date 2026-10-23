@@ -10,8 +10,8 @@ import { clientKey, sshExec } from "./openssh.ts";
 /** Every band the table could draw, and the feed as text: what a restart must reproduce. */
 const projection = (table: Hosted, actors: ReadonlyArray<string>) =>
   Effect.map(table.state, (s) => ({
-    bands: actors.map((a) => bandOf(s, a)),
-    feed: feedLines(s, tableLabel(s)).map(plainText),
+    bands: actors.map((a) => bandOf(s, a, "draw-steel")),
+    feed: feedLines(s, tableLabel(s, "draw-steel")).map(plainText),
     state: s,
   }));
 

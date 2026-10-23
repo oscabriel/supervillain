@@ -136,6 +136,10 @@ export const mixesLatin = (text: string): boolean => LATIN.test(text) && OTHER_S
 /** Length in code points, so an emoji counts once rather than as two UTF-16 units. */
 export const lengthOf = (text: string): number => [...text].length;
 
+/** "A", "A or B", "A, B or C". */
+export const orList = (items: ReadonlyArray<string>): string =>
+  items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} or ${items.at(-1)}`;
+
 /** Untrusted text quoted back in a message: cleaned and cut short. */
 export const quote = (raw: string, max = 24): string => {
   const text = cleanText(raw);

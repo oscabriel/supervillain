@@ -1,0 +1,920 @@
+{
+  "seed": 501,
+  "contentVersion": "7.1bmmTgz1B0Y9UKhiu84STg",
+  "class": {
+    "name": "Dragoon",
+    "flavor": "The Dragoon holds ground that even the native beasts will not assail; the pike is the only sermon required, and its congregation does not murmur",
+    "mainhand": "pike"
+  },
+  "stats": {
+    "level": 1,
+    "strength": 10,
+    "dexterity": 17,
+    "intelligence": 13,
+    "wisdom": 15,
+    "agility": 10,
+    "vitality": 16,
+    "perception": 14,
+    "resolve": 11,
+    "luck": 9,
+    "talents": 4,
+    "advantages": 0,
+    "disadvantages": 1
+  },
+  "modifiedStats": {
+    "strength": 10,
+    "dexterity": 17,
+    "intelligence": 13,
+    "wisdom": 15,
+    "agility": 10,
+    "vitality": 16,
+    "perception": 13,
+    "resolve": 11,
+    "luck": 9
+  },
+  "equipmentBonus": false,
+  "equipmentBonuses": {
+    "strength": 0,
+    "dexterity": 0,
+    "intelligence": 0,
+    "wisdom": 0,
+    "agility": 0,
+    "vitality": 0,
+    "perception": 0,
+    "resolve": 0,
+    "luck": 0
+  },
+  "finalStats": {
+    "strength": 10,
+    "dexterity": 17,
+    "intelligence": 13,
+    "wisdom": 15,
+    "agility": 10,
+    "vitality": 16,
+    "perception": 13,
+    "resolve": 11,
+    "luck": 9
+  },
+  "equipment": {
+    "head": {
+      "name": "fine cashmere kabuto",
+      "slot": "head",
+      "slotIndex": 5,
+      "props": [
+        { "name": "fine", "weight": 42699 },
+        { "name": "-", "weight": 489 },
+        { "name": "cashmere", "weight": "23100" },
+        { "name": "kabuto", "weight": "32000" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        151781, 126, 280416, 266617, 3996, 853013, 105665, 273803, 51, 98, 171460, 251708, 309664,
+        14712, 144850, 136192, 218140, 79640, 80
+      ],
+      "indexes": [5, 0, 7, 5, 0, 25, 2, 5, 51, 98, 3, 4, 6, 0, 3, 2, 4, 2, 0],
+      "score": 4.9722,
+      "materialRank": 18,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "cashmere",
+        "materialRank": 18,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["maxHealth", "visionRange"]
+    },
+    "tool": {
+      "name": "fine azure obsidian pike",
+      "slot": "tool",
+      "slotIndex": 8,
+      "props": [
+        { "name": "fine", "weight": 42699 },
+        { "name": "azure", "weight": 1 },
+        { "name": "obsidian", "weight": "39400" },
+        { "name": "pike", "weight": "1" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        133784, 500, 441996, 160436, 15180, 102622, 117311, 201141, 78, 139, 128964, 236397, 255220,
+        97085, 79629, 136069, 245986, 95869, 707
+      ],
+      "indexes": [5, 12, 12, 3, 3, 1, 2, 3, 78, 139, 2, 4, 4, 1, 1, 2, 4, 3, 0],
+      "score": 7.686,
+      "materialRank": 8,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "obsidian",
+        "materialRank": 8,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["physicalDamage", "magicalDamage", "attackSpeed"]
+    },
+    "offhand": {
+      "name": "refined mythril shield",
+      "slot": "offhand",
+      "slotIndex": 9,
+      "props": [
+        { "name": "refined", "weight": 31100 },
+        { "name": "-", "weight": 489 },
+        { "name": "mythril", "weight": "8300" },
+        { "name": "shield", "weight": "1" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        186788, 117, 648792, 538142, 22784, 501876, 385330, 325692, 38, 25, 79880, 142510, 462886,
+        97725, 183119, 165571, 227694, 66303, 969
+      ],
+      "indexes": [6, 0, 17, 15, 4, 10, 8, 7, 38, 25, 1, 2, 10, 1, 5, 2, 4, 1, 0],
+      "score": 5.8023,
+      "materialRank": 16,
+      "tier": 6,
+      "tierGrade": "A",
+      "tierName": "Grade A",
+      "orbValue": 3125,
+      "material": {
+        "name": "mythril",
+        "materialRank": 16,
+        "tier": 6,
+        "tierGrade": "A",
+        "tierName": "Grade A"
+      },
+      "affects": ["physicalDamageReduction", "actionDamage"]
+    },
+    "back": {
+      "name": "earthen silk flag of the priestess",
+      "slot": "back",
+      "slotIndex": 15,
+      "props": [
+        { "name": "-", "weight": 60000 },
+        { "name": "earthen", "weight": 1 },
+        { "name": "silk", "weight": "27000" },
+        { "name": "flag", "weight": "50100" },
+        { "name": "priestess", "weight": "1" }
+      ],
+      "roll": [
+        99779, 604, 261532, 98023, 37117, 5126, 248709, 334632, 38, 26, 210558, 118013, 207543,
+        135857, 73888, 131231, 157915, 243519, 1118
+      ],
+      "indexes": [4, 116, 6, 1, 10, 0, 5, 7, 38, 26, 5, 2, 3, 4, 1, 2, 2, 11, 20],
+      "score": 10.3348,
+      "materialRank": 16,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "silk",
+        "materialRank": 16,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["physicalDamageReduction", "carryCapacity"]
+    },
+    "chest": {
+      "name": "fine orichalcum jerkin",
+      "slot": "chest",
+      "slotIndex": 17,
+      "props": [
+        { "name": "fine", "weight": 42699 },
+        { "name": "-", "weight": 489 },
+        { "name": "orichalcum", "weight": "23100" },
+        { "name": "jerkin", "weight": "27000" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        128639, 0, 756305, 318258, 42565, 910431, 198486, 27423, 66, 123, 405767, 217850, 424380,
+        132952, 46112, 181738, 186242, 134155, 341
+      ],
+      "indexes": [5, 0, 21, 6, 12, 26, 4, 0, 66, 123, 11, 4, 9, 3, 0, 3, 3, 4, 0],
+      "score": 4.5983,
+      "materialRank": 19,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "orichalcum",
+        "materialRank": 19,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["maxHealth", "physicalDamageReduction"]
+    },
+    "hand": [
+      {
+        "name": "fine brass mitts",
+        "slot": "hand",
+        "slotIndex": 11,
+        "props": [
+          { "name": "fine", "weight": 42699 },
+          { "name": "-", "weight": 489 },
+          { "name": "brass", "weight": "45300" },
+          { "name": "mitts", "weight": "47400" },
+          { "name": "-", "weight": "1099" }
+        ],
+        "roll": [
+          158746, 108, 548894, 531238, 27301, 903432, 269680, 356893, 2, 101, 322501, 185711,
+          222824, 162577, 161177, 88852, 164938, 255791, 384
+        ],
+        "indexes": [5, 0, 15, 14, 6, 26, 5, 7, 2, 101, 7, 3, 4, 6, 3, 1, 3, 13, 0],
+        "score": 4.6563,
+        "materialRank": 7,
+        "tier": 3,
+        "tierGrade": "D",
+        "tierName": "Grade D",
+        "orbValue": 25,
+        "material": {
+          "name": "brass",
+          "materialRank": 7,
+          "tier": 3,
+          "tierGrade": "D",
+          "tierName": "Grade D"
+        },
+        "affects": ["physicalDamage", "actionDamage"]
+      },
+      {
+        "name": "fair miraculous stone grips",
+        "slot": "hand",
+        "slotIndex": 11,
+        "props": [
+          { "name": "fair", "weight": 19600 },
+          { "name": "miraculous", "weight": 1 },
+          { "name": "stone", "weight": "48900" },
+          { "name": "grips", "weight": "49800" },
+          { "name": "-", "weight": "1099" }
+        ],
+        "roll": [
+          41304, 574, 453288, 463535, 27265, 419579, 257786, 101489, 11, 76, 92162, 142042, 315362,
+          36925, 60330, 217760, 182865, 207951, 219
+        ],
+        "indexes": [3, 86, 12, 10, 6, 8, 5, 1, 11, 76, 1, 2, 6, 0, 1, 3, 3, 7, 0],
+        "score": 7.6291,
+        "materialRank": 5,
+        "tier": 2,
+        "tierGrade": "E",
+        "tierName": "Grade E",
+        "orbValue": 5,
+        "material": {
+          "name": "stone",
+          "materialRank": 5,
+          "tier": 2,
+          "tierGrade": "E",
+          "tierName": "Grade E"
+        },
+        "affects": ["physicalDamage", "actionDamage"]
+      }
+    ],
+    "finger": [
+      {
+        "name": "brittle bone ring",
+        "slot": "finger",
+        "slotIndex": 14,
+        "props": [
+          { "name": "brittle", "weight": 13300 },
+          { "name": "-", "weight": 489 },
+          { "name": "bone", "weight": "49800" },
+          { "name": "ring", "weight": "60000" },
+          { "name": "-", "weight": "1099" }
+        ],
+        "roll": [
+          16882, 94, 384844, 257980, 36359, 457555, 268906, 267177, 111, 42, 352199, 59148, 111818,
+          100319, 23494, 76337, 36624, 210884, 461
+        ],
+        "indexes": [1, 0, 11, 5, 9, 9, 5, 5, 111, 42, 9, 1, 2, 1, 0, 1, 0, 8, 0],
+        "score": 5.3343,
+        "materialRank": 4,
+        "tier": 2,
+        "tierGrade": "E",
+        "tierName": "Grade E",
+        "orbValue": 5,
+        "material": {
+          "name": "bone",
+          "materialRank": 4,
+          "tier": 2,
+          "tierGrade": "E",
+          "tierName": "Grade E"
+        },
+        "affects": ["criticalHitChance", "ailmentResistance"]
+      },
+      {
+        "name": "poor cotton signet",
+        "slot": "finger",
+        "slotIndex": 14,
+        "props": [
+          { "name": "poor", "weight": 10700 },
+          { "name": "-", "weight": 489 },
+          { "name": "cotton", "weight": "60000" },
+          { "name": "signet", "weight": "31100" },
+          { "name": "-", "weight": "1099" }
+        ],
+        "roll": [
+          9477, 472, 58776, 427358, 36453, 933171, 176710, 190489, 92, 103, 209477, 280098, 21638,
+          87982, 129718, 54807, 87170, 73351, 874
+        ],
+        "indexes": [0, 0, 0, 9, 9, 27, 4, 3, 92, 103, 5, 5, 0, 1, 2, 0, 1, 2, 0],
+        "score": 5.6332,
+        "materialRank": 1,
+        "tier": 1,
+        "tierGrade": "F",
+        "tierName": "Grade F",
+        "orbValue": 1,
+        "material": {
+          "name": "cotton",
+          "materialRank": 1,
+          "tier": 1,
+          "tierGrade": "F",
+          "tierName": "Grade F"
+        },
+        "affects": ["criticalHitChance", "ailmentResistance"]
+      }
+    ],
+    "feet": {
+      "name": "adamantite shoes",
+      "slot": "feet",
+      "slotIndex": 13,
+      "props": [
+        { "name": "-", "weight": 60000 },
+        { "name": "-", "weight": 489 },
+        { "name": "adamantite", "weight": "3000" },
+        { "name": "shoes", "weight": "60000" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        73922, 109, 829981, 327865, 32712, 453255, 282620, 124085, 67, 150, 344648, 242006, 194616,
+        35153, 31094, 130913, 214097, 158154, 84
+      ],
+      "indexes": [4, 0, 28, 6, 8, 9, 6, 2, 67, 150, 9, 4, 3, 0, 0, 2, 4, 5, 0],
+      "score": 4.6753,
+      "materialRank": 29,
+      "tier": 7,
+      "tierGrade": "S",
+      "tierName": "Grade S",
+      "orbValue": 15625,
+      "material": {
+        "name": "adamantite",
+        "materialRank": 29,
+        "tier": 7,
+        "tierGrade": "S",
+        "tierName": "Grade S"
+      },
+      "affects": ["dodgeRate", "jumpHeight"]
+    },
+    "legs": {
+      "name": "fine mythril kilt",
+      "slot": "legs",
+      "slotIndex": 12,
+      "props": [
+        { "name": "fine", "weight": 42699 },
+        { "name": "-", "weight": 489 },
+        { "name": "mythril", "weight": "8300" },
+        { "name": "kilt", "weight": "45300" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        160074, 128, 818711, 203624, 28663, 272696, 233296, 384684, 117, 117, 128616, 93663, 295045,
+        15621, 44422, 174662, 231177, 91871, 173
+      ],
+      "indexes": [5, 0, 26, 4, 7, 5, 5, 8, 117, 117, 2, 1, 5, 0, 0, 3, 4, 3, 0],
+      "score": 4.9591,
+      "materialRank": 24,
+      "tier": 6,
+      "tierGrade": "A",
+      "tierName": "Grade A",
+      "orbValue": 3125,
+      "material": {
+        "name": "mythril",
+        "materialRank": 24,
+        "tier": 6,
+        "tierGrade": "A",
+        "tierName": "Grade A"
+      },
+      "affects": ["walkSpeed", "stamina"]
+    },
+    "neck": {
+      "name": "crude sinuous nephrite amulet",
+      "slot": "neck",
+      "slotIndex": 7,
+      "props": [
+        { "name": "crude", "weight": 16299 },
+        { "name": "sinuous", "weight": 1 },
+        { "name": "nephrite", "weight": "8000" },
+        { "name": "amulet", "weight": "60000" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        24649, 526, 834380, 154043, 8814, 155720, 148859, 36837, 26, 56, 90426, 178972, 390492,
+        4138, 153326, 20312, 236429, 287564, 380
+      ],
+      "indexes": [2, 38, 31, 2, 2, 2, 3, 0, 26, 56, 1, 3, 8, 0, 3, 0, 4, 15, 0],
+      "score": 9.0396,
+      "materialRank": 25,
+      "tier": 6,
+      "tierGrade": "A",
+      "tierName": "Grade A",
+      "orbValue": 3125,
+      "material": {
+        "name": "nephrite",
+        "materialRank": 25,
+        "tier": 6,
+        "tierGrade": "A",
+        "tierName": "Grade A"
+      },
+      "affects": ["ailmentResistance", "magicalDamageReduction"]
+    },
+    "shoulders": {
+      "name": "cupro ailettes",
+      "slot": "shoulders",
+      "slotIndex": 6,
+      "props": [
+        { "name": "-", "weight": 60000 },
+        { "name": "-", "weight": 489 },
+        { "name": "cupro", "weight": "31100" },
+        { "name": "ailettes", "weight": "33000" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        64235, 65, 237271, 201399, 7518, 690097, 401035, 68146, 114, 118, 409303, 203916, 209626,
+        127915, 134881, 14547, 236569, 135242, 839
+      ],
+      "indexes": [4, 0, 5, 4, 1, 16, 8, 1, 114, 118, 11, 4, 4, 3, 2, 0, 4, 4, 0],
+      "score": 4.3068,
+      "materialRank": 14,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "cupro",
+        "materialRank": 14,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["carryCapacity", "maxHealth"]
+    },
+    "waist": {
+      "name": "masterwork cashmere pouch",
+      "slot": "waist",
+      "slotIndex": 16,
+      "props": [
+        { "name": "masterwork", "weight": 3000 },
+        { "name": "-", "weight": 489 },
+        { "name": "cashmere", "weight": "23100" },
+        { "name": "pouch", "weight": "47400" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        214233, 396, 299776, 100620, 39314, 215813, 23882, 105339, 150, 43, 211895, 84407, 18124,
+        81907, 65665, 111471, 236311, 120365, 477
+      ],
+      "indexes": [10, 0, 7, 1, 11, 4, 0, 1, 150, 43, 5, 1, 0, 1, 1, 1, 4, 4, 0],
+      "score": 5.3686,
+      "materialRank": 18,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "cashmere",
+        "materialRank": 18,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["stamina", "carryCapacity"]
+    },
+    "wrist": {
+      "name": "cupro bangle",
+      "slot": "wrist",
+      "slotIndex": 10,
+      "props": [
+        { "name": "-", "weight": 60000 },
+        { "name": "-", "weight": 489 },
+        { "name": "cupro", "weight": "31100" },
+        { "name": "bangle", "weight": "42699" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        92398, 125, 226930, 7368, 26193, 129197, 237625, 30011, 116, 53, 365, 108761, 94199, 110104,
+        179747, 131186, 57958, 115113, 406
+      ],
+      "indexes": [4, 0, 5, 0, 5, 2, 5, 0, 116, 53, 0, 2, 1, 2, 4, 2, 0, 3, 0],
+      "score": 4.8908,
+      "materialRank": 14,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "cupro",
+        "materialRank": 14,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["attackSpeed", "castSpeed"]
+    }
+  },
+  "powerRating": 1073,
+  "powerRatingMax": 1808,
+  "equipmentOrbValue": 25911,
+  "equipmentOrbBreakdown": [
+    {
+      "slot": "tool",
+      "affects": ["physicalDamage", "magicalDamage", "attackSpeed"],
+      "items": [
+        {
+          "name": "fine azure obsidian pike",
+          "orbValue": 125,
+          "materialRank": 8,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 7.686,
+          "tierName": "Grade C",
+          "material": {
+            "name": "obsidian",
+            "materialRank": 8,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "offhand",
+      "affects": ["physicalDamageReduction", "actionDamage"],
+      "items": [
+        {
+          "name": "refined mythril shield",
+          "orbValue": 3125,
+          "materialRank": 16,
+          "tier": 6,
+          "tierGrade": "A",
+          "score": 5.8023,
+          "tierName": "Grade A",
+          "material": {
+            "name": "mythril",
+            "materialRank": 16,
+            "tier": 6,
+            "tierGrade": "A",
+            "tierName": "Grade A"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "head",
+      "affects": ["maxHealth", "visionRange"],
+      "items": [
+        {
+          "name": "fine cashmere kabuto",
+          "orbValue": 125,
+          "materialRank": 18,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 4.9722,
+          "tierName": "Grade C",
+          "material": {
+            "name": "cashmere",
+            "materialRank": 18,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "neck",
+      "affects": ["ailmentResistance", "magicalDamageReduction"],
+      "items": [
+        {
+          "name": "crude sinuous nephrite amulet",
+          "orbValue": 3125,
+          "materialRank": 25,
+          "tier": 6,
+          "tierGrade": "A",
+          "score": 9.0396,
+          "tierName": "Grade A",
+          "material": {
+            "name": "nephrite",
+            "materialRank": 25,
+            "tier": 6,
+            "tierGrade": "A",
+            "tierName": "Grade A"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "back",
+      "affects": ["physicalDamageReduction", "carryCapacity"],
+      "items": [
+        {
+          "name": "earthen silk flag of the priestess",
+          "orbValue": 125,
+          "materialRank": 16,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 10.3348,
+          "tierName": "Grade C",
+          "material": {
+            "name": "silk",
+            "materialRank": 16,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "shoulders",
+      "affects": ["carryCapacity", "maxHealth"],
+      "items": [
+        {
+          "name": "cupro ailettes",
+          "orbValue": 125,
+          "materialRank": 14,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 4.3068,
+          "tierName": "Grade C",
+          "material": {
+            "name": "cupro",
+            "materialRank": 14,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "chest",
+      "affects": ["maxHealth", "physicalDamageReduction"],
+      "items": [
+        {
+          "name": "fine orichalcum jerkin",
+          "orbValue": 125,
+          "materialRank": 19,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 4.5983,
+          "tierName": "Grade C",
+          "material": {
+            "name": "orichalcum",
+            "materialRank": 19,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "waist",
+      "affects": ["stamina", "carryCapacity"],
+      "items": [
+        {
+          "name": "masterwork cashmere pouch",
+          "orbValue": 125,
+          "materialRank": 18,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 5.3686,
+          "tierName": "Grade C",
+          "material": {
+            "name": "cashmere",
+            "materialRank": 18,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "legs",
+      "affects": ["walkSpeed", "stamina"],
+      "items": [
+        {
+          "name": "fine mythril kilt",
+          "orbValue": 3125,
+          "materialRank": 24,
+          "tier": 6,
+          "tierGrade": "A",
+          "score": 4.9591,
+          "tierName": "Grade A",
+          "material": {
+            "name": "mythril",
+            "materialRank": 24,
+            "tier": 6,
+            "tierGrade": "A",
+            "tierName": "Grade A"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "feet",
+      "affects": ["dodgeRate", "jumpHeight"],
+      "items": [
+        {
+          "name": "adamantite shoes",
+          "orbValue": 15625,
+          "materialRank": 29,
+          "tier": 7,
+          "tierGrade": "S",
+          "score": 4.6753,
+          "tierName": "Grade S",
+          "material": {
+            "name": "adamantite",
+            "materialRank": 29,
+            "tier": 7,
+            "tierGrade": "S",
+            "tierName": "Grade S"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "wrist",
+      "affects": ["attackSpeed", "castSpeed"],
+      "items": [
+        {
+          "name": "cupro bangle",
+          "orbValue": 125,
+          "materialRank": 14,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 4.8908,
+          "tierName": "Grade C",
+          "material": {
+            "name": "cupro",
+            "materialRank": 14,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "hand",
+      "affects": ["physicalDamage", "actionDamage"],
+      "items": [
+        {
+          "name": "fine brass mitts",
+          "orbValue": 25,
+          "materialRank": 7,
+          "tier": 3,
+          "tierGrade": "D",
+          "score": 4.6563,
+          "tierName": "Grade D",
+          "material": {
+            "name": "brass",
+            "materialRank": 7,
+            "tier": 3,
+            "tierGrade": "D",
+            "tierName": "Grade D"
+          }
+        },
+        {
+          "name": "fair miraculous stone grips",
+          "orbValue": 5,
+          "materialRank": 5,
+          "tier": 2,
+          "tierGrade": "E",
+          "score": 7.6291,
+          "tierName": "Grade E",
+          "material": {
+            "name": "stone",
+            "materialRank": 5,
+            "tier": 2,
+            "tierGrade": "E",
+            "tierName": "Grade E"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "finger",
+      "affects": ["criticalHitChance", "ailmentResistance"],
+      "items": [
+        {
+          "name": "brittle bone ring",
+          "orbValue": 5,
+          "materialRank": 4,
+          "tier": 2,
+          "tierGrade": "E",
+          "score": 5.3343,
+          "tierName": "Grade E",
+          "material": {
+            "name": "bone",
+            "materialRank": 4,
+            "tier": 2,
+            "tierGrade": "E",
+            "tierName": "Grade E"
+          }
+        },
+        {
+          "name": "poor cotton signet",
+          "orbValue": 1,
+          "materialRank": 1,
+          "tier": 1,
+          "tierGrade": "F",
+          "score": 5.6332,
+          "tierName": "Grade F",
+          "material": {
+            "name": "cotton",
+            "materialRank": 1,
+            "tier": 1,
+            "tierGrade": "F",
+            "tierName": "Grade F"
+          }
+        }
+      ]
+    }
+  ],
+  "traits": {
+    "talents": [
+      {
+        "id": 179,
+        "name": "memory palace",
+        "flavor": "The construction within the mind of a vast edifice in which all that has been learned is stored and may be retrieved without error or decay",
+        "index": 179
+      },
+      {
+        "id": 252,
+        "name": "feinting",
+        "flavor": "The offering of a false opening that the adversary may commit to what is not there; for the feint governs the opponent's next motion before it begins",
+        "index": 252
+      },
+      {
+        "id": 75,
+        "name": "psychic mitigation",
+        "flavor": "The fortification of the mind against intrusion and assault, that no foreign will may enter unbidden nor shatter the inner stillness",
+        "index": 75
+      },
+      {
+        "id": 106,
+        "name": "thievery",
+        "flavor": "The taking of what belongs to others by stealth and cunning; let the thief consider that every purse lifted is a trust with the shadows",
+        "index": 106
+      }
+    ],
+    "advantages": null,
+    "disadvantages": [
+      {
+        "id": 83,
+        "name": "a mind fractured into discordant pieces",
+        "index": 83,
+        "impact": {
+          "name": "a mind fractured into discordant pieces",
+          "kind": "disadvantage",
+          "tier": 1,
+          "primary": "perception",
+          "primaryDelta": -0.08
+        }
+      }
+    ]
+  },
+  "attributes": {
+    "maxHealth": 150,
+    "stamina": 76,
+    "physicalDamage": 17.5,
+    "magicalDamage": 22,
+    "actionDamage": 22,
+    "physicalDamageReduction": 0.104,
+    "magicalDamageReduction": 0.092,
+    "globalResistance": 0.079,
+    "ailmentResistance": 0.1,
+    "dodgeRate": 0.085,
+    "walkSpeed": 1.07,
+    "attackSpeed": 1.145,
+    "castSpeed": 1.114,
+    "chargeSpeedCast": 1.108,
+    "chargeSpeedAction": 1.12,
+    "carrySpeed": 1.04,
+    "carryCapacity": 76,
+    "jumpHeight": 1.03,
+    "visionRange": 1.085,
+    "criticalHitChance": 0.112,
+    "clarity": 0.105,
+    "initiative": 1.054,
+    "reflexes": 0.069
+  }
+}

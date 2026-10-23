@@ -1,5 +1,5 @@
 import { type Envelope, Refusal } from "@supervillain/engine";
-import { DateTime, Effect } from "effect";
+import { DateTime, Effect, Random } from "effect";
 import { CampaignContent, type LoadError, type MapLoadError } from "../content/index.ts";
 import {
   BARE_OVER_EXEC,
@@ -13,6 +13,8 @@ import {
   labelOf,
   mapNeed,
   parseInputLine,
+  SEED_MAX,
+  setNeed,
   sheetOf,
   type Surface,
   tableLabel,
@@ -20,11 +22,13 @@ import {
   unknownHelpTopic,
   withHostFact,
   withMapGrid,
+  withSetFact,
 } from "../game/index.ts";
 import { nameKey } from "../game/text.ts";
 import { shownState } from "./check.ts";
 import { Presence } from "./Presence.ts";
 import type { TableServices } from "./services.ts";
+import { SetWorld } from "./SetWorld.ts";
 import { TableRoom } from "./TableRoom.ts";
 
 /** What one input line came to, for the seat or exec channel that sent it. */
@@ -37,7 +41,8 @@ export type Reply =
   /** Nothing visible was typed. */
   | { readonly kind: "empty" };
 
-const GM_ONLY: ReadonlySet<string> = new Set(commands.filter((c) => c.gmOnly).map((c) => c.name));
+/** The types of the commands only the GM may use. */
+const GM_ONLY: ReadonlySet<string> = new Set(commands.filter((c) => c.gmOnly).map((c) => c.type));
 
 /** A sheet that won't load, refused on one line: a seat gives a one-line refusal back to fix. */
 const refused = (e: LoadError | MapLoadError) =>
@@ -63,9 +68,11 @@ const actorLabelled = (
 /**
  * Adds what the host knows and the rules can't see: who is seated, for a name to be checked
  * against and a hero whose guest has left to be taken; the time now, for a player's /undo window, and whose change a GM's `/undo <who>` means; the sheet a /hero or /add brings in, or the
- * map a /map loads, read from the campaign folder now so the event carries it; and the actor a
- * GM's /play names. A file that can't be read is refused, naming the file and what's wrong.
- * Nothing is read for a GM-only command someone else sent: the rules refuse it as it is.
+ * map a /map loads, read from the campaign folder now so the event carries it; the character a
+ * set.world /recruit or /foe rolls at set.world, by its seed or one picked here; and the actor a
+ * GM's /play names. A file that can't be read, or a roll that doesn't come, is refused, saying
+ * why. Nothing is read or fetched for a GM-only command someone else sent: the rules refuse it as
+ * it is.
  */
 const withHostFacts = (
   actor: string,
@@ -94,6 +101,23 @@ const withHostFacts = (
     }
     if (actor !== GM && GM_ONLY.has(command.type)) return command;
     const content = yield* CampaignContent;
+    const set = setNeed(command);
+    if (set !== undefined) {
+      if (set.kind === "map") {
+        const { id, grid } = yield* content.map(set.id).pipe(Effect.mapError(refused));
+        return withSetFact(command, { kind: "map", id, grid });
+      }
+      const seed = set.seed ?? (yield* Random.nextIntBetween(0, SEED_MAX));
+      const character = yield* (yield* SetWorld).roll(seed).pipe(
+        Effect.mapError(
+          (e) =>
+            new Refusal({
+              message: `No roll from set.world for seed ${seed}: ${e.message}${/[.?!]$/.test(e.message) ? "" : "."}`,
+            }),
+        ),
+      );
+      return withSetFact(command, { kind: "character", character });
+    }
     const mapId = mapNeed(command);
     if (mapId !== undefined) {
       const { id, grid } = yield* content.map(mapId).pipe(Effect.mapError(refused));
@@ -134,19 +158,20 @@ export const runLine = (
 ): Effect.Effect<Reply, never, TableServices> =>
   Effect.gen(function* () {
     const room = yield* TableRoom;
-    const parsed = parseInputLine(line);
+    const { ruleset } = yield* CampaignContent;
+    const parsed = parseInputLine(line, "chat", ruleset);
     switch (parsed.kind) {
       case "empty":
         return { kind: "empty" };
       case "refusal":
         return { kind: "refusal", text: parsed.message };
       case "help": {
-        const unknown = unknownHelpTopic(parsed.topic);
+        const unknown = unknownHelpTopic(parsed.topic, ruleset);
         if (unknown !== undefined) return { kind: "refusal", text: unknown };
-        return { kind: "message", text: helpText(actor, parsed.topic, surface) };
+        return { kind: "message", text: helpText(actor, parsed.topic, surface, ruleset) };
       }
       case "sheet": {
-        const text = sheetOf(yield* room.state.get, parsed.who);
+        const text = sheetOf(yield* room.state.get, parsed.who, ruleset);
         return typeof text === "string"
           ? { kind: "message", text }
           : { kind: "refusal", text: text.refusal };
@@ -168,7 +193,7 @@ export const runLine = (
       Effect.flatMap((written) =>
         Effect.map(room.state.get, (state): Reply => {
           const seqs = new Set(written.map((e) => e.seq));
-          const lines = feedLines(state, tableLabel(state)).filter((l) => seqs.has(l.seq));
+          const lines = feedLines(state, tableLabel(state, ruleset)).filter((l) => seqs.has(l.seq));
           return { kind: "done", lines };
         }),
       ),

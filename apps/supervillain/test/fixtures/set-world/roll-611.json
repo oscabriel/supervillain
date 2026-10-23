@@ -1,0 +1,920 @@
+{
+  "seed": 611,
+  "contentVersion": "7.1bmmTgz1B0Y9UKhiu84STg",
+  "class": {
+    "name": "Skirmisher",
+    "flavor": "The Skirmisher arrives before the host and departs before accounting is taken; the sling is wielded without ceremony or scruple",
+    "mainhand": "sling"
+  },
+  "stats": {
+    "level": 1,
+    "strength": 11,
+    "dexterity": 11,
+    "intelligence": 11,
+    "wisdom": 16,
+    "agility": 18,
+    "vitality": 21,
+    "perception": 19,
+    "resolve": 22,
+    "luck": 11,
+    "talents": 2,
+    "advantages": 0,
+    "disadvantages": 2
+  },
+  "modifiedStats": {
+    "strength": 11,
+    "dexterity": 10,
+    "intelligence": 11,
+    "wisdom": 16,
+    "agility": 18,
+    "vitality": 21,
+    "perception": 19,
+    "resolve": 22,
+    "luck": 10
+  },
+  "equipmentBonus": false,
+  "equipmentBonuses": {
+    "strength": 0,
+    "dexterity": 0,
+    "intelligence": 0,
+    "wisdom": 0,
+    "agility": 0,
+    "vitality": 0,
+    "perception": 0,
+    "resolve": 0,
+    "luck": 0
+  },
+  "finalStats": {
+    "strength": 11,
+    "dexterity": 10,
+    "intelligence": 11,
+    "wisdom": 16,
+    "agility": 18,
+    "vitality": 21,
+    "perception": 19,
+    "resolve": 22,
+    "luck": 10
+  },
+  "equipment": {
+    "head": {
+      "name": "fair strong stone morion of the wheel",
+      "slot": "head",
+      "slotIndex": 5,
+      "props": [
+        { "name": "fair", "weight": 19600 },
+        { "name": "strong", "weight": 1 },
+        { "name": "stone", "weight": "48900" },
+        { "name": "morion", "weight": "36000" },
+        { "name": "wheel", "weight": "1" }
+      ],
+      "roll": [
+        48472, 557, 436040, 22154, 4326, 986409, 93408, 347618, 147, 13, 79892, 20247, 190407,
+        60153, 180407, 33851, 201628, 350183, 1124
+      ],
+      "indexes": [3, 69, 12, 0, 0, 28, 2, 7, 147, 13, 1, 0, 3, 1, 4, 0, 3, 26, 26],
+      "score": 10.6638,
+      "materialRank": 5,
+      "tier": 2,
+      "tierGrade": "E",
+      "tierName": "Grade E",
+      "orbValue": 5,
+      "material": {
+        "name": "stone",
+        "materialRank": 5,
+        "tier": 2,
+        "tierGrade": "E",
+        "tierName": "Grade E"
+      },
+      "affects": ["maxHealth", "visionRange"]
+    },
+    "tool": {
+      "name": "venomous copper sling",
+      "slot": "tool",
+      "slotIndex": 8,
+      "props": [
+        { "name": "-", "weight": 60000 },
+        { "name": "venomous", "weight": 1 },
+        { "name": "copper", "weight": "48900" },
+        { "name": "sling", "weight": 1 },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        60996, 519, 236354, 219356, 10912, 922004, 187333, 280485, 8, 41, 41630, 100563, 302592,
+        14911, 33905, 50816, 16098, 291264, 1078
+      ],
+      "indexes": [4, 31, 5, 4, 3, 26, 4, 5, 8, 41, 0, 2, 6, 0, 0, 0, 0, 15, 0],
+      "score": 7.4444,
+      "materialRank": 4,
+      "tier": 2,
+      "tierGrade": "E",
+      "tierName": "Grade E",
+      "orbValue": 5,
+      "material": {
+        "name": "copper",
+        "materialRank": 4,
+        "tier": 2,
+        "tierGrade": "E",
+        "tierName": "Grade E"
+      },
+      "affects": ["physicalDamage", "magicalDamage", "attackSpeed"]
+    },
+    "offhand": {
+      "name": "stone crossbow",
+      "slot": "offhand",
+      "slotIndex": 9,
+      "props": [
+        { "name": "-", "weight": 60000 },
+        { "name": "-", "weight": 489 },
+        { "name": "stone", "weight": "49800" },
+        { "name": "crossbow", "weight": "1" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        97175, 359, 753705, 138198, 22571, 602467, 58841, 240314, 121, 36, 156460, 123159, 243345,
+        77195, 85570, 206067, 48646, 9844, 1049
+      ],
+      "indexes": [4, 0, 21, 2, 4, 13, 1, 4, 121, 36, 3, 2, 4, 1, 1, 3, 0, 0, 0],
+      "score": 4.7387,
+      "materialRank": 3,
+      "tier": 2,
+      "tierGrade": "E",
+      "tierName": "Grade E",
+      "orbValue": 5,
+      "material": {
+        "name": "stone",
+        "materialRank": 3,
+        "tier": 2,
+        "tierGrade": "E",
+        "tierName": "Grade E"
+      },
+      "affects": ["physicalDamageReduction", "actionDamage"]
+    },
+    "back": {
+      "name": "titanium cloak of the desolation",
+      "slot": "back",
+      "slotIndex": 15,
+      "props": [
+        { "name": "-", "weight": 60000 },
+        { "name": "-", "weight": 489 },
+        { "name": "titanium", "weight": "19600" },
+        { "name": "cloak", "weight": "60000" },
+        { "name": "desolation", "weight": "1" }
+      ],
+      "roll": [
+        60016, 354, 776707, 513140, 37254, 18127, 196436, 173008, 23, 53, 408661, 75281, 371512,
+        109415, 193927, 8465, 135245, 26235, 1289
+      ],
+      "indexes": [4, 0, 22, 12, 10, 0, 4, 3, 23, 53, 11, 1, 7, 2, 6, 0, 2, 0, 191],
+      "score": 7.7063,
+      "materialRank": 20,
+      "tier": 5,
+      "tierGrade": "B",
+      "tierName": "Grade B",
+      "orbValue": 625,
+      "material": {
+        "name": "titanium",
+        "materialRank": 20,
+        "tier": 5,
+        "tierGrade": "B",
+        "tierName": "Grade B"
+      },
+      "affects": ["physicalDamageReduction", "carryCapacity"]
+    },
+    "chest": {
+      "name": "superior silver padded armor",
+      "slot": "chest",
+      "slotIndex": 17,
+      "props": [
+        { "name": "superior", "weight": 8300 },
+        { "name": "-", "weight": 489 },
+        { "name": "silver", "weight": "27000" },
+        { "name": "padded armor", "weight": "16299" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        198091, 367, 628628, 127778, 42657, 295251, 323505, 354417, 3, 6, 62933, 114715, 126186,
+        125314, 138737, 156935, 229353, 275094, 897
+      ],
+      "indexes": [7, 0, 17, 2, 12, 5, 6, 7, 3, 6, 1, 2, 2, 2, 2, 2, 4, 14, 0],
+      "score": 5.4611,
+      "materialRank": 17,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "silver",
+        "materialRank": 17,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["maxHealth", "physicalDamageReduction"]
+    },
+    "hand": [
+      {
+        "name": "fair stone mitts",
+        "slot": "hand",
+        "slotIndex": 11,
+        "props": [
+          { "name": "fair", "weight": 19600 },
+          { "name": "-", "weight": 489 },
+          { "name": "stone", "weight": "48900" },
+          { "name": "mitts", "weight": "47400" },
+          { "name": "-", "weight": "1099" }
+        ],
+        "roll": [
+          57580, 113, 456146, 536218, 26768, 630194, 9110, 173190, 85, 100, 73603, 180845, 409697,
+          78940, 153121, 197937, 243492, 335373, 682
+        ],
+        "indexes": [3, 0, 12, 14, 6, 14, 0, 3, 85, 100, 1, 3, 8, 1, 3, 3, 4, 19, 0],
+        "score": 4.9612,
+        "materialRank": 5,
+        "tier": 2,
+        "tierGrade": "E",
+        "tierName": "Grade E",
+        "orbValue": 5,
+        "material": {
+          "name": "stone",
+          "materialRank": 5,
+          "tier": 2,
+          "tierGrade": "E",
+          "tierName": "Grade E"
+        },
+        "affects": ["physicalDamage", "actionDamage"]
+      },
+      {
+        "name": "exceptional bronze manifer of the providence",
+        "slot": "hand",
+        "slotIndex": 11,
+        "props": [
+          { "name": "exceptional", "weight": 6200 },
+          { "name": "-", "weight": 489 },
+          { "name": "bronze", "weight": "42699" },
+          { "name": "manifer", "weight": "45300" },
+          { "name": "providence", "weight": "1" }
+        ],
+        "roll": [
+          202319, 228, 609526, 218714, 26632, 888731, 171843, 344524, 70, 122, 236240, 38440, 29917,
+          132442, 71904, 172843, 135483, 47008, 1170
+        ],
+        "indexes": [8, 0, 16, 4, 6, 26, 3, 7, 70, 122, 6, 0, 0, 3, 1, 3, 2, 1, 72],
+        "score": 8.5807,
+        "materialRank": 8,
+        "tier": 3,
+        "tierGrade": "D",
+        "tierName": "Grade D",
+        "orbValue": 25,
+        "material": {
+          "name": "bronze",
+          "materialRank": 8,
+          "tier": 3,
+          "tierGrade": "D",
+          "tierName": "Grade D"
+        },
+        "affects": ["physicalDamage", "actionDamage"]
+      }
+    ],
+    "finger": [
+      {
+        "name": "refined leather ring",
+        "slot": "finger",
+        "slotIndex": 14,
+        "props": [
+          { "name": "refined", "weight": 31100 },
+          { "name": "-", "weight": 489 },
+          { "name": "leather", "weight": "35600" },
+          { "name": "ring", "weight": "60000" },
+          { "name": "-", "weight": "1099" }
+        ],
+        "roll": [
+          171868, 173, 157036, 419110, 36589, 398578, 200340, 66863, 125, 27, 252213, 31418, 254606,
+          106946, 22826, 68346, 23810, 191288, 787
+        ],
+        "indexes": [6, 0, 3, 9, 9, 7, 4, 1, 125, 27, 6, 0, 4, 2, 0, 1, 0, 6, 0],
+        "score": 5.1112,
+        "materialRank": 11,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C",
+        "orbValue": 125,
+        "material": {
+          "name": "leather",
+          "materialRank": 11,
+          "tier": 4,
+          "tierGrade": "C",
+          "tierName": "Grade C"
+        },
+        "affects": ["criticalHitChance", "ailmentResistance"]
+      },
+      {
+        "name": "poor copper ring",
+        "slot": "finger",
+        "slotIndex": 14,
+        "props": [
+          { "name": "poor", "weight": 10700 },
+          { "name": "-", "weight": 489 },
+          { "name": "copper", "weight": "47400" },
+          { "name": "ring", "weight": "60000" },
+          { "name": "-", "weight": "1099" }
+        ],
+        "roll": [
+          4823, 447, 506654, 517193, 36521, 2378, 74587, 212405, 65, 140, 8532, 85360, 182167,
+          49272, 51064, 82471, 9473, 271921, 526
+        ],
+        "indexes": [0, 0, 14, 13, 9, 0, 1, 4, 65, 140, 0, 1, 3, 0, 0, 1, 0, 14, 0],
+        "score": 5.4502,
+        "materialRank": 6,
+        "tier": 2,
+        "tierGrade": "E",
+        "tierName": "Grade E",
+        "orbValue": 5,
+        "material": {
+          "name": "copper",
+          "materialRank": 6,
+          "tier": 2,
+          "tierGrade": "E",
+          "tierName": "Grade E"
+        },
+        "affects": ["criticalHitChance", "ailmentResistance"]
+      }
+    ],
+    "feet": {
+      "name": "crude tempestuous cotton sandals",
+      "slot": "feet",
+      "slotIndex": 13,
+      "props": [
+        { "name": "crude", "weight": 16299 },
+        { "name": "tempestuous", "weight": 1 },
+        { "name": "cotton", "weight": "60000" },
+        { "name": "sandals", "weight": "42699" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        35158, 612, 39259, 431146, 36081, 303675, 100661, 44299, 112, 34, 283059, 242180, 229650,
+        60232, 109430, 134044, 36359, 252087, 793
+      ],
+      "indexes": [2, 124, 0, 10, 8, 5, 2, 0, 112, 34, 7, 4, 4, 1, 1, 2, 0, 13, 0],
+      "score": 6.7773,
+      "materialRank": 1,
+      "tier": 1,
+      "tierGrade": "F",
+      "tierName": "Grade F",
+      "orbValue": 1,
+      "material": {
+        "name": "cotton",
+        "materialRank": 1,
+        "tier": 1,
+        "tierGrade": "F",
+        "tierName": "Grade F"
+      },
+      "affects": ["dodgeRate", "jumpHeight"]
+    },
+    "legs": {
+      "name": "superior decaying iron trousers",
+      "slot": "legs",
+      "slotIndex": 12,
+      "props": [
+        { "name": "superior", "weight": 8300 },
+        { "name": "decaying", "weight": 1 },
+        { "name": "iron", "weight": "39400" },
+        { "name": "trousers", "weight": "50100" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        200904, 625, 659529, 291790, 27935, 236149, 225330, 156814, 24, 112, 312201, 61935, 81149,
+        77804, 168758, 44650, 224782, 257680, 252
+      ],
+      "indexes": [7, 137, 18, 5, 7, 4, 5, 2, 24, 112, 7, 1, 1, 1, 4, 0, 4, 13, 0],
+      "score": 7.6396,
+      "materialRank": 10,
+      "tier": 3,
+      "tierGrade": "D",
+      "tierName": "Grade D",
+      "orbValue": 25,
+      "material": {
+        "name": "iron",
+        "materialRank": 10,
+        "tier": 3,
+        "tierGrade": "D",
+        "tierName": "Grade D"
+      },
+      "affects": ["walkSpeed", "stamina"]
+    },
+    "neck": {
+      "name": "refined leather scarf",
+      "slot": "neck",
+      "slotIndex": 7,
+      "props": [
+        { "name": "refined", "weight": 31100 },
+        { "name": "-", "weight": 489 },
+        { "name": "leather", "weight": "35600" },
+        { "name": "scarf", "weight": "49800" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        182313, 271, 162256, 477905, 8871, 56283, 267973, 337411, 62, 101, 270199, 72138, 388877,
+        71422, 93255, 52816, 99056, 146091, 415
+      ],
+      "indexes": [6, 0, 3, 11, 2, 0, 5, 7, 62, 101, 6, 1, 8, 1, 1, 0, 1, 5, 0],
+      "score": 5.5023,
+      "materialRank": 11,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "leather",
+        "materialRank": 11,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["ailmentResistance", "magicalDamageReduction"]
+    },
+    "shoulders": {
+      "name": "refined steel epaulettes",
+      "slot": "shoulders",
+      "slotIndex": 6,
+      "props": [
+        { "name": "refined", "weight": 31100 },
+        { "name": "-", "weight": 489 },
+        { "name": "steel", "weight": "31100" },
+        { "name": "epaulettes", "weight": "42699" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        191583, 380, 728378, 204167, 8748, 83239, 59464, 206644, 20, 29, 145395, 7659, 166617,
+        24738, 109503, 207453, 67477, 113559, 823
+      ],
+      "indexes": [6, 0, 20, 4, 1, 1, 1, 3, 20, 29, 3, 0, 3, 0, 1, 3, 1, 3, 0],
+      "score": 4.4803,
+      "materialRank": 15,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "steel",
+        "materialRank": 15,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["carryCapacity", "maxHealth"]
+    },
+    "waist": {
+      "name": "refined cursing leather coil of the ecstatic",
+      "slot": "waist",
+      "slotIndex": 16,
+      "props": [
+        { "name": "refined", "weight": 31100 },
+        { "name": "cursing", "weight": 1 },
+        { "name": "leather", "weight": "35600" },
+        { "name": "coil", "weight": "49800" },
+        { "name": "ecstatic", "weight": "1" }
+      ],
+      "roll": [
+        178887, 518, 178912, 352266, 41258, 728705, 267985, 33486, 71, 35, 251556, 59161, 281666,
+        39083, 164987, 36507, 115541, 229186, 1234
+      ],
+      "indexes": [6, 30, 3, 7, 11, 20, 5, 0, 71, 35, 6, 1, 5, 0, 4, 0, 2, 9, 136],
+      "score": 9.874,
+      "materialRank": 11,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "leather",
+        "materialRank": 11,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["stamina", "carryCapacity"]
+    },
+    "wrist": {
+      "name": "refined cupro armplate",
+      "slot": "wrist",
+      "slotIndex": 10,
+      "props": [
+        { "name": "refined", "weight": 31100 },
+        { "name": "-", "weight": 489 },
+        { "name": "cupro", "weight": "31100" },
+        { "name": "armplate", "weight": "47400" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        173855, 67, 237717, 468160, 25992, 457340, 304999, 342460, 86, 140, 241508, 77667, 312877,
+        134616, 53523, 189572, 11616, 301166, 180
+      ],
+      "indexes": [6, 0, 5, 11, 5, 9, 6, 7, 86, 140, 6, 1, 6, 3, 0, 3, 0, 16, 0],
+      "score": 5.1309,
+      "materialRank": 14,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "cupro",
+        "materialRank": 14,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["attackSpeed", "castSpeed"]
+    }
+  },
+  "powerRating": 1165,
+  "powerRatingMax": 1808,
+  "equipmentOrbValue": 1451,
+  "equipmentOrbBreakdown": [
+    {
+      "slot": "tool",
+      "affects": ["physicalDamage", "magicalDamage", "attackSpeed"],
+      "items": [
+        {
+          "name": "venomous copper sling",
+          "orbValue": 5,
+          "materialRank": 4,
+          "tier": 2,
+          "tierGrade": "E",
+          "score": 7.4444,
+          "tierName": "Grade E",
+          "material": {
+            "name": "copper",
+            "materialRank": 4,
+            "tier": 2,
+            "tierGrade": "E",
+            "tierName": "Grade E"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "offhand",
+      "affects": ["physicalDamageReduction", "actionDamage"],
+      "items": [
+        {
+          "name": "stone crossbow",
+          "orbValue": 5,
+          "materialRank": 3,
+          "tier": 2,
+          "tierGrade": "E",
+          "score": 4.7387,
+          "tierName": "Grade E",
+          "material": {
+            "name": "stone",
+            "materialRank": 3,
+            "tier": 2,
+            "tierGrade": "E",
+            "tierName": "Grade E"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "head",
+      "affects": ["maxHealth", "visionRange"],
+      "items": [
+        {
+          "name": "fair strong stone morion of the wheel",
+          "orbValue": 5,
+          "materialRank": 5,
+          "tier": 2,
+          "tierGrade": "E",
+          "score": 10.6638,
+          "tierName": "Grade E",
+          "material": {
+            "name": "stone",
+            "materialRank": 5,
+            "tier": 2,
+            "tierGrade": "E",
+            "tierName": "Grade E"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "neck",
+      "affects": ["ailmentResistance", "magicalDamageReduction"],
+      "items": [
+        {
+          "name": "refined leather scarf",
+          "orbValue": 125,
+          "materialRank": 11,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 5.5023,
+          "tierName": "Grade C",
+          "material": {
+            "name": "leather",
+            "materialRank": 11,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "back",
+      "affects": ["physicalDamageReduction", "carryCapacity"],
+      "items": [
+        {
+          "name": "titanium cloak of the desolation",
+          "orbValue": 625,
+          "materialRank": 20,
+          "tier": 5,
+          "tierGrade": "B",
+          "score": 7.7063,
+          "tierName": "Grade B",
+          "material": {
+            "name": "titanium",
+            "materialRank": 20,
+            "tier": 5,
+            "tierGrade": "B",
+            "tierName": "Grade B"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "shoulders",
+      "affects": ["carryCapacity", "maxHealth"],
+      "items": [
+        {
+          "name": "refined steel epaulettes",
+          "orbValue": 125,
+          "materialRank": 15,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 4.4803,
+          "tierName": "Grade C",
+          "material": {
+            "name": "steel",
+            "materialRank": 15,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "chest",
+      "affects": ["maxHealth", "physicalDamageReduction"],
+      "items": [
+        {
+          "name": "superior silver padded armor",
+          "orbValue": 125,
+          "materialRank": 17,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 5.4611,
+          "tierName": "Grade C",
+          "material": {
+            "name": "silver",
+            "materialRank": 17,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "waist",
+      "affects": ["stamina", "carryCapacity"],
+      "items": [
+        {
+          "name": "refined cursing leather coil of the ecstatic",
+          "orbValue": 125,
+          "materialRank": 11,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 9.874,
+          "tierName": "Grade C",
+          "material": {
+            "name": "leather",
+            "materialRank": 11,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "legs",
+      "affects": ["walkSpeed", "stamina"],
+      "items": [
+        {
+          "name": "superior decaying iron trousers",
+          "orbValue": 25,
+          "materialRank": 10,
+          "tier": 3,
+          "tierGrade": "D",
+          "score": 7.6396,
+          "tierName": "Grade D",
+          "material": {
+            "name": "iron",
+            "materialRank": 10,
+            "tier": 3,
+            "tierGrade": "D",
+            "tierName": "Grade D"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "feet",
+      "affects": ["dodgeRate", "jumpHeight"],
+      "items": [
+        {
+          "name": "crude tempestuous cotton sandals",
+          "orbValue": 1,
+          "materialRank": 1,
+          "tier": 1,
+          "tierGrade": "F",
+          "score": 6.7773,
+          "tierName": "Grade F",
+          "material": {
+            "name": "cotton",
+            "materialRank": 1,
+            "tier": 1,
+            "tierGrade": "F",
+            "tierName": "Grade F"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "wrist",
+      "affects": ["attackSpeed", "castSpeed"],
+      "items": [
+        {
+          "name": "refined cupro armplate",
+          "orbValue": 125,
+          "materialRank": 14,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 5.1309,
+          "tierName": "Grade C",
+          "material": {
+            "name": "cupro",
+            "materialRank": 14,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "hand",
+      "affects": ["physicalDamage", "actionDamage"],
+      "items": [
+        {
+          "name": "fair stone mitts",
+          "orbValue": 5,
+          "materialRank": 5,
+          "tier": 2,
+          "tierGrade": "E",
+          "score": 4.9612,
+          "tierName": "Grade E",
+          "material": {
+            "name": "stone",
+            "materialRank": 5,
+            "tier": 2,
+            "tierGrade": "E",
+            "tierName": "Grade E"
+          }
+        },
+        {
+          "name": "exceptional bronze manifer of the providence",
+          "orbValue": 25,
+          "materialRank": 8,
+          "tier": 3,
+          "tierGrade": "D",
+          "score": 8.5807,
+          "tierName": "Grade D",
+          "material": {
+            "name": "bronze",
+            "materialRank": 8,
+            "tier": 3,
+            "tierGrade": "D",
+            "tierName": "Grade D"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "finger",
+      "affects": ["criticalHitChance", "ailmentResistance"],
+      "items": [
+        {
+          "name": "refined leather ring",
+          "orbValue": 125,
+          "materialRank": 11,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 5.1112,
+          "tierName": "Grade C",
+          "material": {
+            "name": "leather",
+            "materialRank": 11,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        },
+        {
+          "name": "poor copper ring",
+          "orbValue": 5,
+          "materialRank": 6,
+          "tier": 2,
+          "tierGrade": "E",
+          "score": 5.4502,
+          "tierName": "Grade E",
+          "material": {
+            "name": "copper",
+            "materialRank": 6,
+            "tier": 2,
+            "tierGrade": "E",
+            "tierName": "Grade E"
+          }
+        }
+      ]
+    }
+  ],
+  "traits": {
+    "talents": [
+      {
+        "id": 282,
+        "name": "architecture",
+        "flavor": "The understanding of how weight is borne and space enclosed, that the builder may raise what endures and the besieging mind may know where every wall is weakest",
+        "index": 282
+      },
+      {
+        "id": 164,
+        "name": "last stand",
+        "flavor": "The art of growing more dangerous as death approaches, that the final moments may exact a price the victor had not budgeted",
+        "index": 164
+      }
+    ],
+    "advantages": null,
+    "disadvantages": [
+      {
+        "id": 4,
+        "name": "eyes that cannot distinguish the colors of the world",
+        "index": 4,
+        "impact": {
+          "name": "eyes that cannot distinguish the colors of the world",
+          "kind": "disadvantage",
+          "tier": 1,
+          "primary": "dexterity",
+          "primaryDelta": -0.08
+        }
+      },
+      {
+        "id": 133,
+        "name": "a mark of shame that all can see and none can forgive",
+        "index": 133,
+        "impact": {
+          "name": "a mark of shame that all can see and none can forgive",
+          "kind": "disadvantage",
+          "tier": 1,
+          "primary": "luck",
+          "primaryDelta": -0.08
+        }
+      }
+    ]
+  },
+  "attributes": {
+    "maxHealth": 193,
+    "stamina": 98,
+    "physicalDamage": 15.5,
+    "magicalDamage": 15.5,
+    "actionDamage": 14.2,
+    "physicalDamageReduction": 0.168,
+    "magicalDamageReduction": 0.088,
+    "globalResistance": 0.113,
+    "ailmentResistance": 0.142,
+    "dodgeRate": 0.13,
+    "walkSpeed": 1.215,
+    "attackSpeed": 1.08,
+    "castSpeed": 1.048,
+    "chargeSpeedCast": 1.114,
+    "chargeSpeedAction": 1.084,
+    "carrySpeed": 1.13,
+    "carryCapacity": 91,
+    "jumpHeight": 1.115,
+    "visionRange": 1.095,
+    "criticalHitChance": 0.048,
+    "clarity": 0.046,
+    "initiative": 1.138,
+    "reflexes": 0.13
+  }
+}

@@ -449,7 +449,7 @@ describe("undo at the Draw Steel table", () => {
     t.run(GM, { type: "dmg", who: "vex", amount: 14 });
     t.run(GM, undo);
     const state = t.state;
-    expect(feedLines(state, tableLabel(state)).map(plainText).slice(-2)).toEqual([
+    expect(feedLines(state, tableLabel(state, "draw-steel")).map(plainText).slice(-2)).toEqual([
       "Vex takes 14 damage → 7/21 · winded",
       "↶ Oscar undid: Vex takes 14 damage → 7/21 · winded",
     ]);

@@ -1,5 +1,5 @@
 import { GM, type Refused } from "../module.ts";
-import { quote } from "../text.ts";
+import { orList, quote } from "../text.ts";
 import type { Square } from "./map.ts";
 import { marksOf } from "./marks.ts";
 import type { HeroSheet, StatBlock } from "./sheets.ts";
@@ -153,10 +153,6 @@ export const capitalized = (s: string): string => `${s.charAt(0).toUpperCase()}$
 /** "1 surge", "2 surges". */
 export const plural = (n: number, one: string, many = `${one}s`): string =>
   `${n} ${Math.abs(n) === 1 ? one : many}`;
-
-/** "A", "A or B", "A, B or C". */
-export const orList = (items: ReadonlyArray<string>): string =>
-  items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} or ${items.at(-1)}`;
 
 /** "A and B", "A, B and C". */
 export const andList = (items: ReadonlyArray<string>): string =>

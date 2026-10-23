@@ -15,8 +15,8 @@ const QUICK = { playerRate: { burst: 100, perSecond: 100 } };
 const projection = (table: Hosted, actors: ReadonlyArray<string>) =>
   Effect.map(table.state, (s) => ({
     maps: actors.map((a) => mapView(s.ds, a)),
-    bands: actors.map((a) => bandOf(s, a)),
-    feed: feedLines(s, tableLabel(s)).map(plainText),
+    bands: actors.map((a) => bandOf(s, a, "draw-steel")),
+    feed: feedLines(s, tableLabel(s, "draw-steel")).map(plainText),
     state: s,
   }));
 

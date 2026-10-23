@@ -34,6 +34,7 @@ function rolled(envelope: Envelope): boolean {
  */
 export const drawSteel: Module<"ds", DrawSteelState, DsCommand> = {
   key: "ds",
+  ruleset: "draw-steel",
   initial,
   events: EVENTS,
   // Every game event /undo may take back, map and tokens included; who plays whom is never

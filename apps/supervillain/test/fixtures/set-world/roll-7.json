@@ -1,0 +1,935 @@
+{
+  "seed": 7,
+  "contentVersion": "7.1bmmTgz1B0Y9UKhiu84STg",
+  "class": {
+    "name": "Wizard",
+    "flavor": "The Wizard loves the study of spells as the sea loves ships; thoroughly, jealously, and without mercy",
+    "mainhand": "tome"
+  },
+  "stats": {
+    "level": 1,
+    "strength": 24,
+    "dexterity": 8,
+    "intelligence": 17,
+    "wisdom": 24,
+    "agility": 21,
+    "vitality": 19,
+    "perception": 22,
+    "resolve": 8,
+    "luck": 8,
+    "talents": 2,
+    "advantages": 2,
+    "disadvantages": 1
+  },
+  "modifiedStats": {
+    "strength": 22,
+    "dexterity": 8,
+    "intelligence": 17,
+    "wisdom": 24,
+    "agility": 21,
+    "vitality": 20,
+    "perception": 22,
+    "resolve": 8,
+    "luck": 8
+  },
+  "equipmentBonus": false,
+  "equipmentBonuses": {
+    "strength": 0,
+    "dexterity": 0,
+    "intelligence": 0,
+    "wisdom": 0,
+    "agility": 0,
+    "vitality": 0,
+    "perception": 0,
+    "resolve": 0,
+    "luck": 0
+  },
+  "finalStats": {
+    "strength": 22,
+    "dexterity": 8,
+    "intelligence": 17,
+    "wisdom": 24,
+    "agility": 21,
+    "vitality": 20,
+    "perception": 22,
+    "resolve": 8,
+    "luck": 8
+  },
+  "equipment": {
+    "head": {
+      "name": "crude wooden goggles",
+      "slot": "head",
+      "slotIndex": 5,
+      "props": [
+        { "name": "crude", "weight": 16299 },
+        { "name": "-", "weight": 489 },
+        { "name": "wooden", "weight": "50100" },
+        { "name": "goggles", "weight": "25800" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        37769, 232, 357519, 11502, 4079, 759029, 153712, 170216, 72, 143, 297557, 195269, 161256,
+        60825, 27105, 29711, 233919, 113654, 246
+      ],
+      "indexes": [2, 0, 10, 0, 0, 22, 3, 3, 72, 143, 7, 4, 3, 1, 0, 0, 4, 3, 0],
+      "score": 5.1478,
+      "materialRank": 3,
+      "tier": 1,
+      "tierGrade": "F",
+      "tierName": "Grade F",
+      "orbValue": 1,
+      "material": {
+        "name": "wooden",
+        "materialRank": 3,
+        "tier": 1,
+        "tierGrade": "F",
+        "tierName": "Grade F"
+      },
+      "affects": ["maxHealth", "visionRange"]
+    },
+    "tool": {
+      "name": "brittle iron tome of the loyal",
+      "slot": "tool",
+      "slotIndex": 8,
+      "props": [
+        { "name": "brittle", "weight": 13300 },
+        { "name": "-", "weight": 489 },
+        { "name": "iron", "weight": "42699" },
+        { "name": "tome", "weight": "1" },
+        { "name": "loyal", "weight": "1" }
+      ],
+      "roll": [
+        20461, 69, 830847, 395338, 11934, 511878, 29493, 205817, 66, 118, 68656, 210265, 83132,
+        40775, 39964, 196239, 7891, 11787, 1215
+      ],
+      "indexes": [1, 0, 29, 8, 3, 10, 0, 3, 66, 118, 1, 4, 1, 0, 0, 3, 0, 0, 117],
+      "score": 8.5093,
+      "materialRank": 7,
+      "tier": 3,
+      "tierGrade": "D",
+      "tierName": "Grade D",
+      "orbValue": 25,
+      "material": {
+        "name": "iron",
+        "materialRank": 7,
+        "tier": 3,
+        "tierGrade": "D",
+        "tierName": "Grade D"
+      },
+      "affects": ["physicalDamage", "magicalDamage", "attackSpeed"]
+    },
+    "offhand": {
+      "name": "poor iron rope dart",
+      "slot": "offhand",
+      "slotIndex": 9,
+      "props": [
+        { "name": "poor", "weight": 10700 },
+        { "name": "-", "weight": 489 },
+        { "name": "iron", "weight": "42699" },
+        { "name": "rope dart", "weight": "1" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        2527, 40, 821186, 398528, 24142, 400776, 194232, 95706, 85, 110, 109081, 44242, 372645,
+        88490, 38500, 82017, 75129, 188494, 383
+      ],
+      "indexes": [0, 0, 26, 8, 4, 7, 4, 1, 85, 110, 2, 0, 7, 1, 0, 1, 1, 6, 0],
+      "score": 5.5543,
+      "materialRank": 7,
+      "tier": 3,
+      "tierGrade": "D",
+      "tierName": "Grade D",
+      "orbValue": 25,
+      "material": {
+        "name": "iron",
+        "materialRank": 7,
+        "tier": 3,
+        "tierGrade": "D",
+        "tierName": "Grade D"
+      },
+      "affects": ["physicalDamageReduction", "actionDamage"]
+    },
+    "back": {
+      "name": "crude bronze flag of the prince",
+      "slot": "back",
+      "slotIndex": 15,
+      "props": [
+        { "name": "crude", "weight": 16299 },
+        { "name": "-", "weight": 489 },
+        { "name": "bronze", "weight": "42699" },
+        { "name": "flag", "weight": "50100" },
+        { "name": "prince", "weight": "1" }
+      ],
+      "roll": [
+        27419, 485, 610668, 243848, 36657, 161830, 257580, 163489, 21, 132, 120233, 177739, 125300,
+        45400, 102129, 124818, 2416, 329992, 1189
+      ],
+      "indexes": [2, 0, 16, 4, 10, 3, 5, 2, 21, 132, 2, 3, 2, 0, 1, 2, 0, 18, 91],
+      "score": 8.0124,
+      "materialRank": 8,
+      "tier": 3,
+      "tierGrade": "D",
+      "tierName": "Grade D",
+      "orbValue": 25,
+      "material": {
+        "name": "bronze",
+        "materialRank": 8,
+        "tier": 3,
+        "tierGrade": "D",
+        "tierName": "Grade D"
+      },
+      "affects": ["physicalDamageReduction", "carryCapacity"]
+    },
+    "chest": {
+      "name": "fine cotton shell",
+      "slot": "chest",
+      "slotIndex": 17,
+      "props": [
+        { "name": "fine", "weight": 42699 },
+        { "name": "-", "weight": 489 },
+        { "name": "cotton", "weight": "60000" },
+        { "name": "shell", "weight": "4400" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        136492, 219, 36676, 390105, 42659, 541461, 344351, 261376, 142, 17, 224212, 184168, 434571,
+        163956, 163653, 132454, 246943, 341044, 709
+      ],
+      "indexes": [5, 0, 0, 8, 12, 11, 7, 4, 142, 17, 5, 3, 9, 6, 4, 2, 4, 20, 0],
+      "score": 4.9716,
+      "materialRank": 1,
+      "tier": 1,
+      "tierGrade": "F",
+      "tierName": "Grade F",
+      "orbValue": 1,
+      "material": {
+        "name": "cotton",
+        "materialRank": 1,
+        "tier": 1,
+        "tierGrade": "F",
+        "tierName": "Grade F"
+      },
+      "affects": ["maxHealth", "physicalDamageReduction"]
+    },
+    "hand": [
+      {
+        "name": "brittle iridium grips",
+        "slot": "hand",
+        "slotIndex": 11,
+        "props": [
+          { "name": "brittle", "weight": 13300 },
+          { "name": "-", "weight": 489 },
+          { "name": "iridium", "weight": "6200" },
+          { "name": "grips", "weight": "49800" },
+          { "name": "-", "weight": "1099" }
+        ],
+        "roll": [
+          21070, 218, 785462, 506319, 27031, 721254, 359331, 6198, 30, 31, 174732, 130817, 74465,
+          77894, 72186, 2007, 1598, 223647, 550
+        ],
+        "indexes": [1, 0, 23, 12, 6, 20, 7, 0, 30, 31, 3, 2, 1, 1, 1, 0, 0, 9, 0],
+        "score": 6.0051,
+        "materialRank": 26,
+        "tier": 6,
+        "tierGrade": "A",
+        "tierName": "Grade A",
+        "orbValue": 3125,
+        "material": {
+          "name": "iridium",
+          "materialRank": 26,
+          "tier": 6,
+          "tierGrade": "A",
+          "tierName": "Grade A"
+        },
+        "affects": ["physicalDamage", "actionDamage"]
+      },
+      {
+        "name": "snowy cotton mitts",
+        "slot": "hand",
+        "slotIndex": 11,
+        "props": [
+          { "name": "-", "weight": 60000 },
+          { "name": "snowy", "weight": 1 },
+          { "name": "cotton", "weight": "60000" },
+          { "name": "mitts", "weight": "47400" },
+          { "name": "-", "weight": "1099" }
+        ],
+        "roll": [
+          73560, 496, 51801, 328163, 26769, 237096, 191089, 264473, 140, 45, 5935, 163156, 234390,
+          7486, 9798, 89660, 46902, 238764, 948
+        ],
+        "indexes": [4, 8, 0, 6, 6, 4, 4, 5, 140, 45, 0, 3, 4, 0, 0, 1, 0, 10, 0],
+        "score": 7.0758,
+        "materialRank": 1,
+        "tier": 1,
+        "tierGrade": "F",
+        "tierName": "Grade F",
+        "orbValue": 1,
+        "material": {
+          "name": "cotton",
+          "materialRank": 1,
+          "tier": 1,
+          "tierGrade": "F",
+          "tierName": "Grade F"
+        },
+        "affects": ["physicalDamage", "actionDamage"]
+      }
+    ],
+    "finger": [
+      {
+        "name": "brittle obsidian loop",
+        "slot": "finger",
+        "slotIndex": 14,
+        "props": [
+          { "name": "brittle", "weight": 13300 },
+          { "name": "-", "weight": 489 },
+          { "name": "obsidian", "weight": "35600" },
+          { "name": "loop", "weight": "19600" },
+          { "name": "-", "weight": "1099" }
+        ],
+        "roll": [
+          15774, 237, 463181, 240690, 36482, 600670, 123116, 287035, 55, 116, 383252, 183628,
+          351151, 167176, 168869, 60321, 94305, 119596, 341
+        ],
+        "indexes": [1, 0, 13, 4, 9, 13, 2, 5, 55, 116, 11, 3, 7, 6, 4, 1, 1, 4, 0],
+        "score": 5.966,
+        "materialRank": 13,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C",
+        "orbValue": 125,
+        "material": {
+          "name": "obsidian",
+          "materialRank": 13,
+          "tier": 4,
+          "tierGrade": "C",
+          "tierName": "Grade C"
+        },
+        "affects": ["criticalHitChance", "ailmentResistance"]
+      },
+      {
+        "name": "fine chitin loop",
+        "slot": "finger",
+        "slotIndex": 14,
+        "props": [
+          { "name": "fine", "weight": 42699 },
+          { "name": "-", "weight": 489 },
+          { "name": "chitin", "weight": "35600" },
+          { "name": "loop", "weight": "19600" },
+          { "name": "-", "weight": "1099" }
+        ],
+        "roll": [
+          154600, 320, 199312, 545172, 36483, 987118, 81459, 123968, 59, 38, 82312, 138155, 285835,
+          98338, 182013, 127470, 161177, 258670, 877
+        ],
+        "indexes": [5, 0, 4, 15, 9, 28, 1, 2, 59, 38, 1, 2, 5, 1, 4, 2, 3, 13, 0],
+        "score": 5.4594,
+        "materialRank": 12,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C",
+        "orbValue": 125,
+        "material": {
+          "name": "chitin",
+          "materialRank": 12,
+          "tier": 4,
+          "tierGrade": "C",
+          "tierName": "Grade C"
+        },
+        "affects": ["criticalHitChance", "ailmentResistance"]
+      }
+    ],
+    "feet": {
+      "name": "refined stone sandals of the sorrowful",
+      "slot": "feet",
+      "slotIndex": 13,
+      "props": [
+        { "name": "refined", "weight": 31100 },
+        { "name": "-", "weight": 489 },
+        { "name": "stone", "weight": "48900" },
+        { "name": "sandals", "weight": "42699" },
+        { "name": "sorrowful", "weight": "1" }
+      ],
+      "roll": [
+        176716, 3, 433810, 187030, 33533, 543065, 314705, 389698, 86, 125, 181930, 182235, 360191,
+        94174, 61008, 52790, 2386, 8485, 1219
+      ],
+      "indexes": [6, 0, 12, 3, 8, 11, 6, 8, 86, 125, 3, 3, 7, 1, 1, 0, 0, 0, 121],
+      "score": 6.9372,
+      "materialRank": 5,
+      "tier": 2,
+      "tierGrade": "E",
+      "tierName": "Grade E",
+      "orbValue": 5,
+      "material": {
+        "name": "stone",
+        "materialRank": 5,
+        "tier": 2,
+        "tierGrade": "E",
+        "tierName": "Grade E"
+      },
+      "affects": ["dodgeRate", "jumpHeight"]
+    },
+    "legs": {
+      "name": "refined cotton legguards",
+      "slot": "legs",
+      "slotIndex": 12,
+      "props": [
+        { "name": "refined", "weight": 31100 },
+        { "name": "-", "weight": 489 },
+        { "name": "cotton", "weight": "60000" },
+        { "name": "legguards", "weight": "35600" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        179922, 411, 12105, 352843, 27543, 708461, 414457, 110893, 152, 98, 340559, 177141, 404857,
+        23738, 194166, 112995, 145237, 56710, 512
+      ],
+      "indexes": [6, 0, 0, 7, 7, 19, 8, 1, 152, 98, 9, 3, 8, 0, 6, 1, 2, 1, 0],
+      "score": 4.3423,
+      "materialRank": 1,
+      "tier": 1,
+      "tierGrade": "F",
+      "tierName": "Grade F",
+      "orbValue": 1,
+      "material": {
+        "name": "cotton",
+        "materialRank": 1,
+        "tier": 1,
+        "tierGrade": "F",
+        "tierName": "Grade F"
+      },
+      "affects": ["walkSpeed", "stamina"]
+    },
+    "neck": {
+      "name": "brittle copper beads",
+      "slot": "neck",
+      "slotIndex": 7,
+      "props": [
+        { "name": "brittle", "weight": 13300 },
+        { "name": "-", "weight": 489 },
+        { "name": "copper", "weight": "47400" },
+        { "name": "beads", "weight": "40000" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        17647, 78, 506789, 290732, 8903, 574642, 207830, 365224, 100, 91, 411117, 85034, 373330,
+        26071, 5145, 103415, 184219, 217914, 571
+      ],
+      "indexes": [1, 0, 14, 5, 2, 12, 4, 8, 100, 91, 11, 1, 7, 0, 0, 1, 3, 8, 0],
+      "score": 5.842,
+      "materialRank": 6,
+      "tier": 2,
+      "tierGrade": "E",
+      "tierName": "Grade E",
+      "orbValue": 5,
+      "material": {
+        "name": "copper",
+        "materialRank": 6,
+        "tier": 2,
+        "tierGrade": "E",
+        "tierName": "Grade E"
+      },
+      "affects": ["ailmentResistance", "magicalDamageReduction"]
+    },
+    "shoulders": {
+      "name": "perfected steel pauldrons",
+      "slot": "shoulders",
+      "slotIndex": 6,
+      "props": [
+        { "name": "perfected", "weight": 4400 },
+        { "name": "-", "weight": 489 },
+        { "name": "steel", "weight": "31100" },
+        { "name": "pauldrons", "weight": "45300" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        211136, 161, 737859, 108773, 6651, 152834, 121209, 218557, 118, 11, 386264, 157087, 303165,
+        116090, 188657, 139174, 236012, 291737, 51
+      ],
+      "indexes": [9, 0, 20, 1, 1, 2, 2, 4, 118, 11, 11, 3, 6, 2, 5, 2, 4, 15, 0],
+      "score": 5.3039,
+      "materialRank": 15,
+      "tier": 4,
+      "tierGrade": "C",
+      "tierName": "Grade C",
+      "orbValue": 125,
+      "material": {
+        "name": "steel",
+        "materialRank": 15,
+        "tier": 4,
+        "tierGrade": "C",
+        "tierName": "Grade C"
+      },
+      "affects": ["carryCapacity", "maxHealth"]
+    },
+    "waist": {
+      "name": "bone sash",
+      "slot": "waist",
+      "slotIndex": 16,
+      "props": [
+        { "name": "-", "weight": 60000 },
+        { "name": "-", "weight": 489 },
+        { "name": "bone", "weight": "49800" },
+        { "name": "sash", "weight": "50100" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        65028, 28, 368675, 440168, 40060, 535213, 299482, 393238, 149, 50, 366145, 231704, 389330,
+        159868, 135701, 157323, 82203, 106807, 1028
+      ],
+      "indexes": [4, 0, 11, 10, 11, 11, 6, 8, 149, 50, 11, 4, 8, 6, 2, 2, 1, 3, 0],
+      "score": 3.7099,
+      "materialRank": 4,
+      "tier": 2,
+      "tierGrade": "E",
+      "tierName": "Grade E",
+      "orbValue": 5,
+      "material": {
+        "name": "bone",
+        "materialRank": 4,
+        "tier": 2,
+        "tierGrade": "E",
+        "tierName": "Grade E"
+      },
+      "affects": ["stamina", "carryCapacity"]
+    },
+    "wrist": {
+      "name": "refined iron vambrace",
+      "slot": "wrist",
+      "slotIndex": 10,
+      "props": [
+        { "name": "refined", "weight": 31100 },
+        { "name": "-", "weight": 489 },
+        { "name": "iron", "weight": "39400" },
+        { "name": "vambrace", "weight": "35600" },
+        { "name": "-", "weight": "1099" }
+      ],
+      "roll": [
+        172743, 345, 671067, 234982, 26050, 289221, 219655, 309739, 12, 38, 349836, 234726, 377806,
+        73371, 69704, 205140, 64391, 127396, 616
+      ],
+      "indexes": [6, 0, 18, 4, 5, 5, 4, 7, 12, 38, 9, 4, 7, 1, 1, 3, 1, 4, 0],
+      "score": 5.1525,
+      "materialRank": 10,
+      "tier": 3,
+      "tierGrade": "D",
+      "tierName": "Grade D",
+      "orbValue": 25,
+      "material": {
+        "name": "iron",
+        "materialRank": 10,
+        "tier": 3,
+        "tierGrade": "D",
+        "tierName": "Grade D"
+      },
+      "affects": ["attackSpeed", "castSpeed"]
+    }
+  },
+  "powerRating": 1316,
+  "powerRatingMax": 1808,
+  "equipmentOrbValue": 3619,
+  "equipmentOrbBreakdown": [
+    {
+      "slot": "tool",
+      "affects": ["physicalDamage", "magicalDamage", "attackSpeed"],
+      "items": [
+        {
+          "name": "brittle iron tome of the loyal",
+          "orbValue": 25,
+          "materialRank": 7,
+          "tier": 3,
+          "tierGrade": "D",
+          "score": 8.5093,
+          "tierName": "Grade D",
+          "material": {
+            "name": "iron",
+            "materialRank": 7,
+            "tier": 3,
+            "tierGrade": "D",
+            "tierName": "Grade D"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "offhand",
+      "affects": ["physicalDamageReduction", "actionDamage"],
+      "items": [
+        {
+          "name": "poor iron rope dart",
+          "orbValue": 25,
+          "materialRank": 7,
+          "tier": 3,
+          "tierGrade": "D",
+          "score": 5.5543,
+          "tierName": "Grade D",
+          "material": {
+            "name": "iron",
+            "materialRank": 7,
+            "tier": 3,
+            "tierGrade": "D",
+            "tierName": "Grade D"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "head",
+      "affects": ["maxHealth", "visionRange"],
+      "items": [
+        {
+          "name": "crude wooden goggles",
+          "orbValue": 1,
+          "materialRank": 3,
+          "tier": 1,
+          "tierGrade": "F",
+          "score": 5.1478,
+          "tierName": "Grade F",
+          "material": {
+            "name": "wooden",
+            "materialRank": 3,
+            "tier": 1,
+            "tierGrade": "F",
+            "tierName": "Grade F"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "neck",
+      "affects": ["ailmentResistance", "magicalDamageReduction"],
+      "items": [
+        {
+          "name": "brittle copper beads",
+          "orbValue": 5,
+          "materialRank": 6,
+          "tier": 2,
+          "tierGrade": "E",
+          "score": 5.842,
+          "tierName": "Grade E",
+          "material": {
+            "name": "copper",
+            "materialRank": 6,
+            "tier": 2,
+            "tierGrade": "E",
+            "tierName": "Grade E"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "back",
+      "affects": ["physicalDamageReduction", "carryCapacity"],
+      "items": [
+        {
+          "name": "crude bronze flag of the prince",
+          "orbValue": 25,
+          "materialRank": 8,
+          "tier": 3,
+          "tierGrade": "D",
+          "score": 8.0124,
+          "tierName": "Grade D",
+          "material": {
+            "name": "bronze",
+            "materialRank": 8,
+            "tier": 3,
+            "tierGrade": "D",
+            "tierName": "Grade D"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "shoulders",
+      "affects": ["carryCapacity", "maxHealth"],
+      "items": [
+        {
+          "name": "perfected steel pauldrons",
+          "orbValue": 125,
+          "materialRank": 15,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 5.3039,
+          "tierName": "Grade C",
+          "material": {
+            "name": "steel",
+            "materialRank": 15,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "chest",
+      "affects": ["maxHealth", "physicalDamageReduction"],
+      "items": [
+        {
+          "name": "fine cotton shell",
+          "orbValue": 1,
+          "materialRank": 1,
+          "tier": 1,
+          "tierGrade": "F",
+          "score": 4.9716,
+          "tierName": "Grade F",
+          "material": {
+            "name": "cotton",
+            "materialRank": 1,
+            "tier": 1,
+            "tierGrade": "F",
+            "tierName": "Grade F"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "waist",
+      "affects": ["stamina", "carryCapacity"],
+      "items": [
+        {
+          "name": "bone sash",
+          "orbValue": 5,
+          "materialRank": 4,
+          "tier": 2,
+          "tierGrade": "E",
+          "score": 3.7099,
+          "tierName": "Grade E",
+          "material": {
+            "name": "bone",
+            "materialRank": 4,
+            "tier": 2,
+            "tierGrade": "E",
+            "tierName": "Grade E"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "legs",
+      "affects": ["walkSpeed", "stamina"],
+      "items": [
+        {
+          "name": "refined cotton legguards",
+          "orbValue": 1,
+          "materialRank": 1,
+          "tier": 1,
+          "tierGrade": "F",
+          "score": 4.3423,
+          "tierName": "Grade F",
+          "material": {
+            "name": "cotton",
+            "materialRank": 1,
+            "tier": 1,
+            "tierGrade": "F",
+            "tierName": "Grade F"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "feet",
+      "affects": ["dodgeRate", "jumpHeight"],
+      "items": [
+        {
+          "name": "refined stone sandals of the sorrowful",
+          "orbValue": 5,
+          "materialRank": 5,
+          "tier": 2,
+          "tierGrade": "E",
+          "score": 6.9372,
+          "tierName": "Grade E",
+          "material": {
+            "name": "stone",
+            "materialRank": 5,
+            "tier": 2,
+            "tierGrade": "E",
+            "tierName": "Grade E"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "wrist",
+      "affects": ["attackSpeed", "castSpeed"],
+      "items": [
+        {
+          "name": "refined iron vambrace",
+          "orbValue": 25,
+          "materialRank": 10,
+          "tier": 3,
+          "tierGrade": "D",
+          "score": 5.1525,
+          "tierName": "Grade D",
+          "material": {
+            "name": "iron",
+            "materialRank": 10,
+            "tier": 3,
+            "tierGrade": "D",
+            "tierName": "Grade D"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "hand",
+      "affects": ["physicalDamage", "actionDamage"],
+      "items": [
+        {
+          "name": "brittle iridium grips",
+          "orbValue": 3125,
+          "materialRank": 26,
+          "tier": 6,
+          "tierGrade": "A",
+          "score": 6.0051,
+          "tierName": "Grade A",
+          "material": {
+            "name": "iridium",
+            "materialRank": 26,
+            "tier": 6,
+            "tierGrade": "A",
+            "tierName": "Grade A"
+          }
+        },
+        {
+          "name": "snowy cotton mitts",
+          "orbValue": 1,
+          "materialRank": 1,
+          "tier": 1,
+          "tierGrade": "F",
+          "score": 7.0758,
+          "tierName": "Grade F",
+          "material": {
+            "name": "cotton",
+            "materialRank": 1,
+            "tier": 1,
+            "tierGrade": "F",
+            "tierName": "Grade F"
+          }
+        }
+      ]
+    },
+    {
+      "slot": "finger",
+      "affects": ["criticalHitChance", "ailmentResistance"],
+      "items": [
+        {
+          "name": "brittle obsidian loop",
+          "orbValue": 125,
+          "materialRank": 13,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 5.966,
+          "tierName": "Grade C",
+          "material": {
+            "name": "obsidian",
+            "materialRank": 13,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        },
+        {
+          "name": "fine chitin loop",
+          "orbValue": 125,
+          "materialRank": 12,
+          "tier": 4,
+          "tierGrade": "C",
+          "score": 5.4594,
+          "tierName": "Grade C",
+          "material": {
+            "name": "chitin",
+            "materialRank": 12,
+            "tier": 4,
+            "tierGrade": "C",
+            "tierName": "Grade C"
+          }
+        }
+      ]
+    }
+  ],
+  "traits": {
+    "talents": [
+      {
+        "id": 228,
+        "name": "lullaby",
+        "flavor": "A melody that commands sleep in those who hear it, regardless of their will to remain wakeful; for the lullaby speaks to the body's oldest need",
+        "index": 228
+      },
+      {
+        "id": 201,
+        "name": "court intrigue",
+        "flavor": "The navigation of political currents where every smile conceals a blade and every compliment carries a second meaning",
+        "index": 201
+      }
+    ],
+    "advantages": [
+      {
+        "id": 43,
+        "name": "a strategic savant on the field of war",
+        "index": 42,
+        "impact": {
+          "name": "a strategic savant on the field of war",
+          "kind": "advantage",
+          "tier": 1,
+          "primary": "vitality",
+          "primaryDelta": 0.05
+        }
+      },
+      {
+        "id": 53,
+        "name": "friends in every city and allies on every road",
+        "index": 52,
+        "impact": {
+          "name": "friends in every city and allies on every road",
+          "kind": "advantage",
+          "tier": 1,
+          "primary": "dexterity",
+          "primaryDelta": 0.05
+        }
+      }
+    ],
+    "disadvantages": [
+      {
+        "id": 45,
+        "name": "a body wracked by constant, inexplicable agonies",
+        "index": 45,
+        "impact": {
+          "name": "a body wracked by constant, inexplicable agonies",
+          "kind": "disadvantage",
+          "tier": 2,
+          "primary": "dexterity",
+          "primaryDelta": -0.15,
+          "secondary": "strength",
+          "secondaryDelta": -0.08
+        }
+      }
+    ]
+  },
+  "attributes": {
+    "maxHealth": 218,
+    "stamina": 116,
+    "physicalDamage": 31,
+    "magicalDamage": 23.5,
+    "actionDamage": 18.4,
+    "physicalDamageReduction": 0.2,
+    "magicalDamageReduction": 0.156,
+    "globalResistance": 0.123,
+    "ailmentResistance": 0.156,
+    "dodgeRate": 0.15,
+    "walkSpeed": 1.255,
+    "attackSpeed": 1.065,
+    "castSpeed": 1.108,
+    "chargeSpeedCast": 1.18,
+    "chargeSpeedAction": 1.078,
+    "carrySpeed": 1.27,
+    "carryCapacity": 144,
+    "jumpHeight": 1.2,
+    "visionRange": 1.2,
+    "criticalHitChance": 0.056,
+    "clarity": 0.108,
+    "initiative": 1.21,
+    "reflexes": 0.156
+  }
+}

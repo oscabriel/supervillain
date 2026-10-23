@@ -16,6 +16,7 @@ import { Presence } from "./Presence.ts";
 import { mountTable, openSeat } from "./Seat.ts";
 import { RelayLink, type RelayLinkOptions, type RelayLinkService } from "./RelayLink.ts";
 import type { TableServices } from "./services.ts";
+import { SetWorld } from "./SetWorld.ts";
 import { TableRoom } from "./TableRoom.ts";
 
 export interface TableServerOptions {
@@ -124,6 +125,7 @@ export class TableServer extends Context.Service<
         const services = Context.make(TableRoom, yield* TableRoom).pipe(
           Context.add(Presence, yield* Presence),
           Context.add(CampaignContent, yield* CampaignContent),
+          Context.add(SetWorld, yield* SetWorld),
         );
         const allowed = rateLimiter(options.execRate ?? EXEC_RATE);
         const server = yield* serve({

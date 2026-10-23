@@ -59,6 +59,8 @@ export interface CombatView {
   readonly malice: number;
   readonly heroTokens: number;
   readonly victories?: number;
+  /** The band's title, when the ruleset words its own (set.world's clock), not rounds and Malice. */
+  readonly title?: string;
   readonly combatants: ReadonlyArray<Combatant>;
 }
 

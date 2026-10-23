@@ -62,6 +62,7 @@ describe("supervillain check", () => {
             malice: 0,
             tokens: 0,
           },
+          sw: { fighters: [] },
         });
       }),
     15_000,

@@ -31,6 +31,12 @@ export interface CommandSpec<C, S> {
   readonly usage: string;
   readonly summary: string;
   readonly gmOnly: boolean;
+  /**
+   * What is typed for it, when that isn't its type. Two rulesets may each have a command typed
+   * the same way (`/map` loads Draw Steel's map or set.world's), since a table offers one ruleset's;
+   * their types stay apart, so the rules know whose it is.
+   */
+  readonly name?: string;
   /** Turns the text after the command name into a command, or refuses early with a usage hint. */
   readonly parse: (args: string) => C | Refused;
   /**
@@ -143,6 +149,11 @@ export interface Shared {
  */
 export interface Module<K extends string, S, C extends { readonly type: string }> {
   readonly key: K;
+  /**
+   * The ruleset whose tables offer this module's commands; a module without one (core) is at
+   * every table. Its events fold whatever the table plays, so any log replays the same.
+   */
+  readonly ruleset?: string;
   readonly initial: S;
   readonly events: ReadonlyArray<`${K}.${string}`>;
   /**
@@ -193,8 +204,13 @@ export type CommandOf<M extends AnyModule> =
   | RedoCommand;
 
 /** A command spec in the composed registry, named and reading the whole table state. */
-export interface TableCommandSpec<S, C> extends Omit<CommandSpec<C, S>, "complete"> {
+export interface TableCommandSpec<S, C> extends Omit<CommandSpec<C, S>, "complete" | "name"> {
+  /** What is typed for it: `/map`. */
   readonly name: string;
+  /** Its command's type, which names it to the rules: `map`, or `set-map` for set.world's. */
+  readonly type: string;
+  /** The ruleset whose tables offer it, or undefined for every table (see `Module.ruleset`). */
+  readonly ruleset?: string;
   readonly complete?: (state: S, partial: string, actor: string) => ReadonlyArray<string>;
 }
 
@@ -251,19 +267,34 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
       if (formats.has(kind)) throw new Error(`Two modules describe the feed kind "${kind}".`);
       formats.set(kind, format);
     }
-    for (const [name, body] of Object.entries<CommandSpec<C, unknown>>(module.commands)) {
-      if (name === UNDO_SPEC.name) throw new Error("/undo belongs to compose.");
-      if (name === REDO_SPEC.name) throw new Error("/redo belongs to compose.");
-      if (byCommand.has(name)) throw new Error(`Two modules claim the command "${name}".`);
-      const { complete, ...rest } = body;
+    for (const [type, body] of Object.entries<CommandSpec<C, unknown>>(module.commands)) {
+      const { complete, name: typed, ...rest } = body;
+      const name = typed ?? type;
+      for (const word of [type, name]) {
+        if (word === UNDO_SPEC.name) throw new Error("/undo belongs to compose.");
+        if (word === REDO_SPEC.name) throw new Error("/redo belongs to compose.");
+      }
+      if (byCommand.has(type)) throw new Error(`Two modules claim the command "${type}".`);
+      // One name for two commands only where no table offers both: each in its own ruleset.
+      const twin = commands.find(
+        (c) =>
+          c.name === name &&
+          (c.ruleset === undefined || module.ruleset === undefined || c.ruleset === module.ruleset),
+      );
+      if (twin !== undefined) throw new Error(`Two commands are typed /${name} at one table.`);
+      const named = {
+        name,
+        type,
+        ...rest,
+        ...(module.ruleset !== undefined && { ruleset: module.ruleset }),
+      };
       const spec: TableCommandSpec<S, C> = complete
         ? {
-            name,
-            ...rest,
+            ...named,
             complete: (state, partial, actor) => complete(sliceOf(state, module), partial, actor),
           }
-        : { name, ...rest };
-      byCommand.set(name, { module, spec });
+        : named;
+      byCommand.set(type, { module, spec });
       commands.push(spec);
     }
   }
@@ -642,6 +673,7 @@ const joinLines = (lines: ReadonlyArray<string>): string =>
 
 const UNDO_SPEC = {
   name: "undo",
+  type: "undo",
   usage: "/undo [who]",
   summary: "Take back your latest change within 30 s, unless it rolled; the GM, anyone's.",
   gmOnly: false,
@@ -654,6 +686,7 @@ const UNDO_SPEC = {
 
 const REDO_SPEC = {
   name: "redo",
+  type: "redo",
   usage: "/redo",
   summary: "Put back what the latest /undo took, with the same dice.",
   gmOnly: false,

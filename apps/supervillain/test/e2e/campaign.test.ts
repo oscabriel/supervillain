@@ -22,7 +22,16 @@ describe("supervillain new", () => {
         expect(made.stdout).toStartWith(
           `supervillain: made ${dir} with heroes/, monsters/ and maps/\n`,
         );
-        expect(yield* list(dir)).toEqual(["README.md", "heroes", "maps", "monsters"]);
+        expect(yield* list(dir)).toEqual([
+          "README.md",
+          "campaign.yaml",
+          "heroes",
+          "maps",
+          "monsters",
+        ]);
+        expect(yield* Effect.promise(() => readFile(join(dir, "campaign.yaml"), "utf8"))).toContain(
+          "\nrules: draw-steel\n",
+        );
         expect(yield* list(join(dir, "heroes"))).toEqual([]);
         expect(yield* list(join(dir, "maps"))).toEqual([]);
         expect((yield* Effect.promise(() => stat(dir))).mode & 0o777).toBe(0o700);
@@ -30,6 +39,37 @@ describe("supervillain new", () => {
         expect(readme).toContain("heroes/<id>.yaml");
         expect(readme).toContain("maps/<id>.txt");
       }),
+  );
+
+  effect(
+    "makes a set.world campaign with --rules set-world: campaign.yaml says so, maps/ waits",
+    () =>
+      Effect.gen(function* () {
+        const dir = join(yield* tempDir, "arena");
+        const made = yield* cli(["new", dir, "--rules", "set-world"]);
+        expect(made).toMatchObject({ exitCode: 0, stderr: "" });
+        expect(made.stdout).toStartWith(
+          `supervillain: made ${dir} playing set-world, with maps/\n`,
+        );
+        expect(yield* list(dir)).toEqual(["README.md", "campaign.yaml", "maps"]);
+        expect(yield* Effect.promise(() => readFile(join(dir, "campaign.yaml"), "utf8"))).toBe(
+          "# What this campaign plays: draw-steel or set-world.\nrules: set-world\n",
+        );
+      }),
+  );
+
+  effect("refuses --example with set-world, and a ruleset it doesn't know, writing nothing", () =>
+    Effect.gen(function* () {
+      const root = yield* tempDir;
+      const sample = yield* cli(["new", join(root, "a"), "--example", "--rules", "set-world"]);
+      expect(sample.exitCode).toBe(1);
+      expect(sample.stderr).toBe(
+        "supervillain: the sample campaign plays draw-steel, so --example can't make a set-world campaign; leave out --example for an empty one\n",
+      );
+      const unknown = yield* cli(["new", join(root, "b"), "--rules", "pathfinder"]);
+      expect(unknown.exitCode).not.toBe(0);
+      expect(yield* list(root)).toEqual([]);
+    }),
   );
 
   effect("copies the sample campaign with --example", () =>

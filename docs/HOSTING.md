@@ -39,14 +39,37 @@ supervillain new ~/campaigns/first-fight --example
 supervillain host ~/campaigns/first-fight
 ```
 
-`new --example` copies the sample campaign: four heroes, the bandits and the map for one fight. Without `--example` you get empty `heroes/`, `monsters/` and `maps/` folders. The folder's README explains the file formats. `host` opens a campaign folder and refuses one that isn't there (`there's no campaign at …; make one with: supervillain new …`), and a folder with none of `events.jsonl`, `host_key`, `heroes/`, `monsters/` or `maps/` in it (`… isn't a campaign: …`), so a mistyped path never starts an empty table under a new host key, and your home folder never gets a log.
+`new --example` copies the sample campaign: four heroes, the bandits and the map for one fight. Without `--example` you get a `campaign.yaml` and empty `heroes/`, `monsters/` and `maps/` folders (only `maps/` with `--rules set-world`). The folder's README explains the file formats. `host` opens a campaign folder and refuses one that isn't there (`there's no campaign at …; make one with: supervillain new …`), and a folder with none of `campaign.yaml`, `events.jsonl`, `host_key`, `heroes/`, `monsters/` or `maps/` in it (`… isn't a campaign: …`), so a mistyped path never starts an empty table under a new host key, and your home folder never gets a log.
 
 `supervillain map crossing <campaign> --seed 7` (or `keep`) generates a map into `maps/` and says how to load it; the campaign README has how maps work.
+
+### What the campaign plays
+
+A campaign plays one ruleset, named in `campaign.yaml` at its root: `rules: draw-steel` or `rules: set-world`. `new` writes it (`draw-steel` unless you pass `--rules set-world`), and a campaign without one plays Draw Steel. The host reads it when it starts and refuses a ruleset it doesn't know, or any other setting, naming the file: `…/campaign.yaml: says rules: pathfinder, but a campaign plays draw-steel or set-world`. The ruleset decides which commands the table offers (`/help` and Tab show only those) and what the band, the map and `/sheet` show. Chat, names, dice and `/undo` are the same at either table. `--example` makes only a Draw Steel campaign, since that's what the sample is.
+
+**set.world** ([set.world](https://set.world)) rolls characters from a seed over its free API: a class with its flavor, a weapon, nine stats, the attributes the fight reads and named gear. A set.world campaign has no sheets to write, only `maps/`:
+
+```sh
+supervillain new ~/campaigns/arena --rules set-world
+supervillain host ~/campaigns/arena
+```
+
+At the table you name each fighter and roll it, and the host fetches the roll from set.world (it needs the network then, and gives up after 10 seconds). The roll goes into the log, so the table never asks set.world again for it, even when it reopens. The same seed always rolls the same character; leave the seed out and the host picks one, which the feed shows.
+
+| Command | What it does |
+| --- | --- |
+| `/recruit Ada 101`, `/foe Grub 501` | Roll a party member or a foe at set.world, by seed or at random |
+| `/map ford-road`, `/place ada b5` | Load a map from `maps/` and put fighters on it; the map is optional |
+| `/start`, `/end` | Start the fight, or end it early |
+| `/move grub n6`, `/attack grub ada`, `/done` | Act for any fighter on its turn; `/done` ends the turn, a rest if it didn't attack |
+| `/unplay ada` | Free a party member a player holds |
+
+The fight follows Set's turn-based rules (stamp `set-world-0-15-0-dungeon-initiative-2`): each fighter acts every `1000 / initiative` milliseconds of a logical clock, so there are no rounds, and an exact tie goes to the party first; everyone recovers 10 stamina a second of that clock; an attack costs 20 stamina, hit or miss; a hit is a dodge draw against `dodgeRate × (1 − clarity)`, a critical draw against `criticalHitChance` that doubles it, and `max(1, floor(raw × (1 − reduction) × (1 − globalResistance)))`. Set's own fights have no positions, so the grid's rules are the table's: speed is `round(5 × walkSpeed)` squares a turn; a weapon reaches by how it delivers (melee 1 square, 2 past 40 inches of reach; projectiles 10; waves 5 and auras 3, which hit as magic, with `magicalDamage` against `magicalDamageReduction`), checked only when both fighters are on the map. When the last of one side falls the fight is over; stamina then refills and health stays as it is. Expect long fights: hits of 7 to 19 against 150 to 230 health.
 
 `host` prints what to send your players:
 
 ```
-supervillain: hosting "first-fight" from /home/you/campaigns/first-fight
+supervillain: hosting "first-fight" from /home/you/campaigns/first-fight, playing draw-steel
 players join with: ssh -p 2222 first-fight@127.0.0.1
 host key SHA256:gkYn722z8+JIXdkwJa/9amF10Y2+zkGdElyWlj0LZHk
 ```
@@ -66,7 +89,7 @@ If the port is taken, by another table say, `host` says so and stops: `port 2222
 | `--relay-player-port 2222` | The relay's player port, for the join command you're shown |
 | `--relay-host-key SHA256:…` | The relay's host key, shown with that join command so you can pass it on to players |
 
-The campaign folder is yours alone (mode 700). The host writes these files into it:
+The campaign folder is yours alone (mode 700). Beside `campaign.yaml` and what you put in it, the host writes these files into it:
 
 - `events.jsonl`: the log, one event per line. It holds every word said at the table.
 - `host_key`: the table's SSH identity. Keep it, or players' ssh will warn that the key changed.

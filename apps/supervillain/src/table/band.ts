@@ -291,6 +291,7 @@ function keep(combatants: ReadonlyArray<Combatant>, room: number): ReadonlyArray
 }
 
 function titleOf(view: CombatView): string {
+  if (view.title !== undefined) return view.title;
   const victories = view.victories === undefined ? "" : ` · victories ${view.victories}`;
   if (!view.active) return ` party · hero tokens ${view.heroTokens}${victories} `;
   const next = view.next === undefined ? "" : ` · ${view.next} next`;

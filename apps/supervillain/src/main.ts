@@ -4,7 +4,7 @@
 //   supervillain host [campaign-dir] [--port 2222] [--bind 127.0.0.1] [--room name] [--headless]
 //                     [--relay host:port] [--relay-key SHA256:…] [--relay-player-port 2222]
 //                     [--relay-host-key SHA256:…]   (a campaign folder: `new` makes one)
-//   supervillain new <campaign-dir> [--example]
+//   supervillain new <campaign-dir> [--rules draw-steel|set-world] [--example]
 //   supervillain map <crossing|keep> <campaign-dir> [--seed N] [--id map-id]
 //   supervillain import <bestiary-json-path> --into <campaign-dir> [names...] [--overwrite]
 //   supervillain check <campaign-dir>
@@ -28,6 +28,8 @@ import {
 } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { isFingerprint } from "@supervillain/ssh";
+import { CAMPAIGN_FILE, campaignYaml, readCampaignConfig } from "./content/campaignFile.ts";
+import { DEFAULT_RULESET, RULESETS } from "./game/table.ts";
 import { checkLog } from "./host/check.ts";
 import { relayCommand } from "./relay/cli.ts";
 import {
@@ -213,6 +215,7 @@ const host = Command.make(
     const { tableServices } = yield* Effect.promise(() => import("./host/services.ts"));
     const { TableServer } = yield* Effect.promise(() => import("./host/TableServer.ts"));
     const { localSeat } = yield* Effect.promise(() => import("./host/LocalSeat.ts"));
+    const { CampaignContent } = yield* Effect.promise(() => import("./content/index.ts"));
 
     const layer = TableServer.layer({
       campaignDir: dir,
@@ -238,13 +241,14 @@ const host = Command.make(
 
     yield* Effect.gen(function* () {
       const server = yield* TableServer;
+      const { ruleset } = yield* CampaignContent;
       const relay = server.relay;
       const direct = joinCommand(room, o.bind, server.port);
       const joining = relay?.joinCommand ?? direct;
       // Through a relay, players' ssh meets the relay's host key, never this table's.
       const relayHostKeyText =
         relayHostKey ?? "ask whoever runs the relay (it prints it as its host key)";
-      yield* Console.log(`supervillain: hosting "${room}" from ${dir}`);
+      yield* Console.log(`supervillain: hosting "${room}" from ${dir}, playing ${ruleset}`);
       yield* Console.log(`players join with: ${joining}${relay ? " (through the relay)" : ""}`);
       if (relay !== undefined && relayAddress !== undefined) {
         yield* Console.log(`  players' ssh sees the relay's host key: ${relayHostKeyText}`);
@@ -307,7 +311,14 @@ const host = Command.make(
 );
 
 /** What `new` or a host leaves in a campaign folder: any one of them makes a folder a campaign. */
-const CAMPAIGN_MARKS = ["events.jsonl", "host_key", "heroes/", "monsters/", "maps/"] as const;
+const CAMPAIGN_MARKS = [
+  CAMPAIGN_FILE,
+  "events.jsonl",
+  "host_key",
+  "heroes/",
+  "monsters/",
+  "maps/",
+] as const;
 
 /** Whether `dir` holds any of CAMPAIGN_MARKS; if not, whether it is empty or holds other things. */
 const looksLikeCampaign = async (dir: string): Promise<true | "empty" | "unrelated"> => {
@@ -337,15 +348,26 @@ const make = Command.make(
     campaignDir: Argument.String("campaign-dir").pipe(
       Argument.withDescription("The folder to make; it must be missing or empty"),
     ),
+    rules: Flag.Literals("rules", RULESETS).pipe(
+      Flag.optional,
+      Flag.withDescription(
+        "What the campaign plays: draw-steel (the default) or set-world, written to its campaign.yaml",
+      ),
+    ),
     example: Flag.Boolean("example").pipe(
       Flag.withDefault(false),
       Flag.withDescription(
-        "Copy the sample campaign: four heroes, the bandits and the map for one fight",
+        "Copy the sample campaign: four heroes, the bandits and the map for one Draw Steel fight",
       ),
     ),
   },
   Effect.fn(function* (o) {
     const dir = resolve(o.campaignDir);
+    const rules = Option.getOrElse(o.rules, () => DEFAULT_RULESET);
+    if (o.example && rules !== "draw-steel")
+      return yield* new CampaignError({
+        message: `the sample campaign plays draw-steel, so --example can't make a ${rules} campaign; leave out --example for an empty one`,
+      });
     yield* Effect.tryPromise({
       try: async () => {
         if (!(await isFree(dir))) throw new Error("it already has files in it");
@@ -360,25 +382,30 @@ const make = Command.make(
           });
           return;
         }
-        await mkdir(join(dir, "heroes"));
-        await mkdir(join(dir, "monsters"));
+        await writeFile(join(dir, CAMPAIGN_FILE), campaignYaml(rules));
+        if (rules === "draw-steel") {
+          await mkdir(join(dir, "heroes"));
+          await mkdir(join(dir, "monsters"));
+        }
         await mkdir(join(dir, "maps"));
         await writeFile(
           join(dir, "README.md"),
-          `# ${basename(dir)}\n\nA supervillain campaign: hero sheets go in heroes/<id>.yaml, monster stat blocks in monsters/<id>.yaml, text maps in maps/<id>.txt, and the host keeps the log in events.jsonl.\n`,
+          rules === "draw-steel"
+            ? `# ${basename(dir)}\n\nA supervillain campaign playing Draw Steel (campaign.yaml says so): hero sheets go in heroes/<id>.yaml, monster stat blocks in monsters/<id>.yaml, text maps in maps/<id>.txt, and the host keeps the log in events.jsonl.\n`
+            : `# ${basename(dir)}\n\nA supervillain campaign playing set.world's rules (campaign.yaml says so): fighters are rolled at set.world at the table, text maps go in maps/<id>.txt, and the host keeps the log in events.jsonl.\n`,
         );
       },
       catch: (e) =>
         new CampaignError({ message: `can't make a campaign in ${dir}: ${messageOf(e)}` }),
     });
     yield* Console.log(
-      `supervillain: made ${dir}${o.example ? " from the sample campaign" : " with heroes/, monsters/ and maps/"}`,
+      `supervillain: made ${dir}${o.example ? " from the sample campaign" : rules === "draw-steel" ? " with heroes/, monsters/ and maps/" : ` playing ${rules}, with maps/`}`,
     );
     yield* Console.log(`host it with: ${SELF} host ${o.campaignDir}`);
   }),
 ).pipe(
   Command.withDescription(
-    "Make a campaign folder: heroes/ and monsters/ for sheets, maps/ for maps, or the sample campaign with --example",
+    "Make a campaign folder: its campaign.yaml, heroes/ and monsters/ for sheets, maps/ for maps, or the sample campaign with --example",
   ),
 );
 
@@ -523,7 +550,11 @@ const check = Command.make(
     });
     if (text === undefined)
       return yield* Console.log(`${path}: no log yet; the table hasn't been opened`);
-    const report = checkLog(path, text);
+    // The feed names players by the hero or fighter they play in the campaign's ruleset.
+    const { rules } = yield* readCampaignConfig(dir).pipe(
+      Effect.mapError((e) => new CheckError({ message: e.message })),
+    );
+    const report = checkLog(path, text, rules);
     for (const warning of report.warnings) yield* Console.error(warning);
     yield* Console.log(report.out.join("\n"));
     if (report.error !== undefined) return yield* new CheckError({ message: report.error });
@@ -535,12 +566,13 @@ const check = Command.make(
 );
 
 Command.make("supervillain").pipe(
-  Command.withDescription("A terminal-first virtual tabletop for Draw Steel"),
+  Command.withDescription("A terminal-first virtual tabletop for Draw Steel, or set.world's rules"),
   Command.withSubcommands([host, make, mapCommand, importMonsters, check, relayCommand]),
   // scripts/build.ts sets the release's version; from source it's the development one.
   Command.run({ version: process.env.SUPERVILLAIN_VERSION ?? "0.0.0" }),
   // Failures we expect (a bad log, a held lock, a busy port) read as one line, not a trace.
   Effect.catchTags({
+    CampaignConfigInvalid: fail,
     CampaignError: fail,
     CheckError: fail,
     ContentReadError: fail,

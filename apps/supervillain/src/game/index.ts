@@ -31,9 +31,23 @@ export {
   withMapGrid,
 } from "./drawSteel/index.ts";
 export {
+  type SetCharacter,
+  SetCharacterSchema,
+  type SetFact,
+  type SetNeed,
+  SEED_MAX,
+  setNeed,
+  withSetFact,
+} from "./setWorld/index.ts";
+export {
   bandOf,
   type Command,
   commands,
+  commandsFor,
+  DEFAULT_RULESET,
+  mapOf,
+  type Ruleset,
+  RULESETS,
   type FeedLine,
   feedFormat,
   feedLines,

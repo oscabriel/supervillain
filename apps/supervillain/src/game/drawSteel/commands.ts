@@ -1,5 +1,5 @@
 import type { CommandSpec, CommandSpecs, Refused } from "../module.ts";
-import { cleanText, lengthOf, quote } from "../text.ts";
+import { cleanText, lengthOf, orList, quote } from "../text.ts";
 import { type MapGrid, parseSquare, type Square } from "./map.ts";
 import { type HeroSheet, isTrait, type StatBlock } from "./sheets.ts";
 import {
@@ -11,7 +11,6 @@ import {
   everyone,
   heroOf,
   matching,
-  orList,
   pick,
   resolve,
   type Side,

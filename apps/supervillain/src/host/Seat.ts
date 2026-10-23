@@ -9,10 +9,11 @@ import {
   type FeedLine,
   feedLines,
   GM,
-  mapView,
+  mapOf,
   nameOf,
   tableLabel,
 } from "../game/index.ts";
+import { CampaignContent } from "../content/index.ts";
 import { App } from "../table/App.tsx";
 import type { Present, TableView } from "../table/view.ts";
 import { debugText, type Reply, runLine } from "./line.ts";
@@ -86,7 +87,7 @@ const replyText = (reply: Reply): string | undefined =>
 /**
  * Opens one seat: enters presence for the life of the scope and builds the TableView the App
  * reads. Labels are resolved here, from the current names and heroes, every time the feed is
- * projected, and so are this seat's Draw Steel band and map.
+ * projected, and so are this seat's band and map, of the campaign's ruleset.
  */
 export const openSeat = (
   options: SeatOptions,
@@ -95,6 +96,7 @@ export const openSeat = (
     const { actor } = options;
     const room = yield* TableRoom;
     const presence = yield* Presence;
+    const { ruleset } = yield* CampaignContent;
     yield* presence.enter(actor);
     const state = yield* follow(room.state);
     const recent = yield* follow(room.recent);
@@ -107,20 +109,23 @@ export const openSeat = (
 
     const derived = createRoot((dispose) => ({
       dispose,
-      feed: createMemo(() => rows(feedLines(state(), tableLabel(state())))),
+      feed: createMemo(() => rows(feedLines(state(), tableLabel(state(), ruleset)))),
       present: createMemo((): ReadonlyArray<Present> => {
-        const label = tableLabel(state());
+        const label = tableLabel(state(), ruleset);
         return here().map((a) => ({ actor: a, label: label(a), gm: a === GM }));
       }),
       myName: createMemo(() => nameOf(state(), actor)),
       ...(() => {
-        // The band and the map read the Draw Steel slice and the names, which a chat line leaves
+        // The band and the map read the game's slices and the names, which a chat line leaves
         // as they were: then neither is built, nor drawn, again.
         const ds = createMemo(() => state().ds);
+        const sw = createMemo(() => state().sw);
         const names = createMemo(() => state().core.names);
         return {
-          combat: createMemo(() => bandOf({ ds: ds(), core: { names: names() } }, actor)),
-          map: createMemo(() => mapView(ds(), actor)),
+          combat: createMemo(() =>
+            bandOf({ ds: ds(), sw: sw(), core: { names: names() } }, actor, ruleset),
+          ),
+          map: createMemo(() => mapOf({ ds: ds(), sw: sw() }, actor, ruleset)),
         };
       })(),
     }));
@@ -146,7 +151,7 @@ export const openSeat = (
             }),
           ),
         ),
-      complete: (line) => completeLine(state(), actor, line),
+      complete: (line) => completeLine(state(), actor, line, ruleset),
       // The App opens the state pane only on the GM's seat; this is the backstop.
       debug: () =>
         actor === GM ? debugText(state(), recent()) : "Only the GM can see the table's state.",

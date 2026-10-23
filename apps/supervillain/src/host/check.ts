@@ -3,6 +3,7 @@ import {
   feedLines,
   labelOf,
   plainText,
+  type Ruleset,
   rules,
   type TableState,
   tableLabel,
@@ -33,7 +34,7 @@ export interface CheckReport {
  * Reads a campaign log the way any reader does: the shared parser, then a lenient fold that
  * skips unknown events loudly. Pure, so it never takes the host's lock or writes anything.
  */
-export function checkLog(path: string, text: string): CheckReport {
+export function checkLog(path: string, text: string, ruleset: Ruleset): CheckReport {
   const parsed = parseLog(text);
   const folded = fold(rules, parsed.envelopes, { strict: false });
   const { state } = folded;
@@ -57,7 +58,7 @@ export function checkLog(path: string, text: string): CheckReport {
     `actors: ${state.actors.map((a) => `${label(a)} (${a})`).join(", ") || "none"}`,
     "",
     "feed:",
-    ...feedLines(state, tableLabel(state)).map(
+    ...feedLines(state, tableLabel(state, ruleset)).map(
       (l) => `${String(l.seq).padStart(6)}  ${plainText(l)}`,
     ),
     "",

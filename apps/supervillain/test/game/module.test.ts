@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { fold } from "@supervillain/engine";
 import { core } from "../../src/game/core.ts";
 import { compose, type Module } from "../../src/game/module.ts";
-import { commands, feedLines, rules } from "../../src/game/index.ts";
+import { commands, commandsFor, feedLines, rules } from "../../src/game/index.ts";
 import { ALICE, env, fixedDice, GM } from "./table.ts";
 
 type CounterCommand = { readonly type: "bump"; readonly by: number } | { readonly type: "reset" };
@@ -47,8 +47,8 @@ describe("compose", () => {
     expect(bump?.complete?.(table.rules.initial, "+", ALICE)).toEqual([`+0 for ${ALICE}`]);
   });
 
-  test("the table's registry is core's commands then Draw Steel's, each with its GM-only flag", () => {
-    expect(commands.map((c) => [c.name, c.gmOnly])).toEqual([
+  test("a Draw Steel table's registry is core's commands then Draw Steel's, each with its GM-only flag", () => {
+    expect(commandsFor("draw-steel").map((c) => [c.name, c.gmOnly])).toEqual([
       ["say", false],
       ["me", false],
       ["narrate", true],
@@ -88,6 +88,58 @@ describe("compose", () => {
       ["undo", false],
       ["redo", false],
     ]);
+  });
+
+  test("a set.world table's registry is core's commands then set.world's, sharing Draw Steel's words", () => {
+    expect(commandsFor("set-world").map((c) => [c.name, c.type, c.gmOnly])).toEqual([
+      ["say", "say", false],
+      ["me", "me", false],
+      ["narrate", "narrate", true],
+      ["name", "name", false],
+      ["roll", "roll", false],
+      ["map", "set-map", true],
+      ["recruit", "set-recruit", true],
+      ["foe", "set-foe", true],
+      ["play", "set-play", false],
+      ["unplay", "set-unplay", false],
+      ["place", "set-place", false],
+      ["start", "set-start", true],
+      ["move", "set-move", false],
+      ["attack", "set-attack", false],
+      ["done", "set-done", false],
+      ["end", "set-end", true],
+      ["undo", "undo", false],
+      ["redo", "redo", false],
+    ]);
+    // The whole registry holds both, every type once, so the rules know whose a command is.
+    const types = commands.map((c) => c.type);
+    expect(new Set(types).size).toBe(types.length);
+    expect(commands.filter((c) => c.name === "map").map((c) => [c.type, c.ruleset])).toEqual([
+      ["map", "draw-steel"],
+      ["set-map", "set-world"],
+    ]);
+  });
+
+  test("two rulesets' modules may type a command the same way; one table's may not", () => {
+    const typed = (key: string, ruleset?: string): typeof counter =>
+      ({
+        ...counter,
+        key,
+        events: [],
+        ...(ruleset !== undefined && { ruleset }),
+        commands: { [`${key}-bump`]: { ...counter.commands.bump, name: "bump" } },
+      }) as unknown as typeof counter;
+    const table = compose([core, typed("a", "one"), typed("b", "two")]);
+    expect(table.commands.filter((c) => c.name === "bump").map((c) => c.type)).toEqual([
+      "a-bump",
+      "b-bump",
+    ]);
+    expect(() => compose([typed("a", "one"), typed("b", "one")])).toThrow(
+      "Two commands are typed /bump at one table.",
+    );
+    expect(() => compose([typed("a"), typed("b", "two")])).toThrow(
+      "Two commands are typed /bump at one table.",
+    );
   });
 
   test("each module keeps its own slice; events dispatch by type; GM-only holds across modules", () => {

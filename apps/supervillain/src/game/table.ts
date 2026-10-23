@@ -4,17 +4,38 @@ import {
   combatView,
   completeWho,
   drawSteel,
+  type MapView,
+  mapView,
   sheetText,
   withHeroes,
 } from "./drawSteel/index.ts";
 import { compose, type CommandOf, GM, type Refused, type StateOf } from "./module.ts";
+import {
+  completeFighters,
+  setBand,
+  setMap,
+  setSheet,
+  setWorld,
+  withFighters,
+} from "./setWorld/index.ts";
 
-/** The table's modules, in registry order. */
-const modules = [core, drawSteel] as const;
+/**
+ * The table's modules, in registry order. Every one is always composed, so one fold replays any
+ * log whatever the campaign plays; the campaign's ruleset only chooses which commands its table
+ * offers and what its seats see.
+ */
+const modules = [core, drawSteel, setWorld] as const;
 type Modules = (typeof modules)[number];
 
 export type TableState = StateOf<Modules>;
 export type Command = CommandOf<Modules>;
+
+/** The rulesets a campaign may play (its `campaign.yaml` says which), by the name it's written as. */
+export const RULESETS = ["draw-steel", "set-world"] as const;
+export type Ruleset = (typeof RULESETS)[number];
+
+/** What a campaign with no `campaign.yaml` plays: every campaign made before there was a choice. */
+export const DEFAULT_RULESET: Ruleset = "draw-steel";
 
 /** Refusals name actors the way the feed does, by display name. */
 const composed = compose(modules, { label: (state, actor) => labelOf(state)(actor) });
@@ -22,38 +43,66 @@ const composed = compose(modules, { label: (state, actor) => labelOf(state)(acto
 /** The engine rules for the room. */
 export const rules = composed.rules;
 
-/** The one command registry: every module's commands, each with its GM-only flag. */
+/** The one command registry: every module's commands, each with its GM-only flag and ruleset. */
 export const commands = composed.commands;
+
+/** The commands a table playing `ruleset` offers: core's, and that ruleset's own. */
+export const commandsFor = (ruleset: Ruleset): typeof commands =>
+  commands.filter((c) => c.ruleset === undefined || c.ruleset === ruleset);
 
 /** How a feed kind reads as text, from the module that writes it. */
 export const feedFormat = composed.feedFormat;
 
 /**
  * Labels actors as the table shows them, now: a display name (else the default label), and the
- * hero a player plays beside it, "Alice (Brann)". Read it when projecting, never store it.
+ * hero or fighter a player plays in the campaign's ruleset beside it, "Alice (Brann)". The other
+ * ruleset's slice is never read, so a campaign that changed rulesets shows no stale hero. Read it
+ * when projecting, never store it.
  */
-export const tableLabel = (state: TableState): ((actor: string) => string) =>
-  withHeroes(state.ds, labelOf(state));
+export const tableLabel = (
+  state: Pick<TableState, "ds" | "sw" | "core">,
+  ruleset: Ruleset,
+): ((actor: string) => string) =>
+  ruleset === "set-world"
+    ? withFighters(state.sw, labelOf(state))
+    : withHeroes(state.ds, labelOf(state));
 
 /**
- * The Draw Steel band for one seat: combat or the party, undefined while there's neither. A hero
- * played by someone else carries their name ("Brann (Alice)"); the seat's own hero is `mine`.
+ * The band for one seat: Draw Steel's combat or party, or set.world's fight or party, undefined
+ * while there's neither. Someone else's hero or fighter carries their name ("Brann (Alice)"); the
+ * seat's own is `mine`.
  */
 export const bandOf = (
-  state: Pick<TableState, "ds" | "core">,
+  state: Pick<TableState, "ds" | "sw" | "core">,
   actor: string,
-): CombatView | undefined => combatView(state.ds, actor, labelOf(state));
+  ruleset: Ruleset,
+): CombatView | undefined =>
+  ruleset === "set-world"
+    ? setBand(state.sw, actor, labelOf(state))
+    : combatView(state.ds, actor, labelOf(state));
 
-/** The /sheet text for a hero or creature, as commands name them, or why there's none. */
-export const sheetOf = (state: TableState, who: string): string | Refused =>
-  sheetText(state.ds, who);
+/** The text map for one seat, from the ruleset's own slice; undefined while none is loaded. */
+export const mapOf = (
+  state: Pick<TableState, "ds" | "sw">,
+  actor: string,
+  ruleset: Ruleset,
+): MapView | undefined =>
+  ruleset === "set-world" ? setMap(state.sw, actor) : mapView(state.ds, actor);
 
-/** What Tab offers after /sheet: the heroes and creatures, the actor's own hero first. */
+/** The /sheet text for a hero, creature or fighter, as commands name them, or why there's none. */
+export const sheetOf = (state: TableState, who: string, ruleset: Ruleset): string | Refused =>
+  ruleset === "set-world" ? setSheet(state.sw, who) : sheetText(state.ds, who);
+
+/** What Tab offers after /sheet: the heroes and creatures, or the fighters, the actor's own first. */
 export const completeSheet = (
   state: TableState,
   partial: string,
   actor: string,
-): ReadonlyArray<string> => completeWho(state.ds, partial, actor);
+  ruleset: Ruleset,
+): ReadonlyArray<string> =>
+  ruleset === "set-world"
+    ? completeFighters(state.sw, partial, actor)
+    : completeWho(state.ds, partial, actor);
 
 /** One feed line as it is shown: the table's `FeedLine`, built here so the rules never import the table. */
 export interface FeedLine {
@@ -79,13 +128,14 @@ export interface FeedLine {
  *
  * Draw Steel's `ds`, `ds-roll` and `ds-turn` lines name their subject and have no speaker; a
  * `ds-act` line follows its label ("Alice (Brann) spends 1 hero token → 2"), and a `ds-claim` line
- * the player's name alone, whoever wrote it ("Alice takes Brann.").
+ * the player's name alone, whoever wrote it ("Alice takes Brann."). set.world's `sw`, `sw-turn`,
+ * `sw-act` and `sw-claim` read the same way.
  *
  * An `undo` line, from a retraction, follows its marked label and quotes the lines it took back:
  * "↶ Oscar undid: Vex takes 14 damage → 7/21 · winded". Those lines stay in the feed.
  */
 export function feedLines(
-  state: TableState,
+  state: Pick<TableState, "feed" | "core">,
   label: (actor: string) => string,
 ): ReadonlyArray<FeedLine> {
   const plain = labelOf(state);

@@ -15,6 +15,10 @@ From a checkout of the source, run `bun supervillain …` from its root instead.
 
 Players join with the `ssh` command the host prints. The table's Draw Steel commands (see `/help`) bring a hero or monster in by its id, the file name without `.yaml`. A unique start of the id is enough: `bra` for `brann`.
 
+## What it plays
+
+`campaign.yaml` at the root says what a campaign plays: `rules: draw-steel` here. The other choice is `rules: set-world`, set.world's characters and fight (see the hosts' guide), which `supervillain new <folder> --rules set-world` makes; this sample is Draw Steel only. A campaign without the file plays Draw Steel.
+
 ## What's in it
 
 | Hero | Class | Resource |

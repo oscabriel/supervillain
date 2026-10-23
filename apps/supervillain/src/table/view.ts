@@ -76,7 +76,10 @@ export interface TableView {
    * redialing` (for the GM). Undefined while all is well.
    */
   readonly alert?: Accessor<string | undefined>;
-  /** The Draw Steel band; undefined while there is no party or combat. Every seat has it; a fake may not. */
+  /**
+   * The band, Draw Steel's or set.world's as the campaign plays; undefined while there is no party
+   * or fight. Every seat has it; a fake may not.
+   */
   readonly combat?: Accessor<CombatView | undefined>;
   /** The text map; undefined while no map is loaded. Every seat has it; a fake may not. */
   readonly map?: Accessor<MapView | undefined>;

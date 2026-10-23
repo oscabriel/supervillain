@@ -45,3 +45,13 @@ export class MapInvalid extends Schema.TaggedError<MapInvalid>()("MapInvalid", {
   file: Schema.String,
   message: Schema.String,
 }) {}
+
+/** A `campaign.yaml` the host can't go by: not YAML, a setting it doesn't know, or an unknown ruleset. */
+export class CampaignConfigInvalid extends Schema.TaggedError<CampaignConfigInvalid>()(
+  "CampaignConfigInvalid",
+  {
+    /** The file's path. */
+    file: Schema.String,
+    message: Schema.String,
+  },
+) {}
