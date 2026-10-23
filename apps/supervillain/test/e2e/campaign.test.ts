@@ -126,18 +126,28 @@ describe("supervillain map", () => {
     }),
   );
 
-  effect("refuses a kind it doesn't know and a folder that isn't a campaign", () =>
-    Effect.gen(function* () {
-      const dir = yield* tempDir;
-      const kind = yield* cli(["map", "castle", dir]);
-      expect(kind.exitCode).toBe(1);
-      expect(kind.stderr).toContain("crossing");
-      const none = yield* cli(["map", "keep", join(dir, "nowhere")]);
-      expect(none.exitCode).toBe(1);
-      expect(none.stderr).toBe(
-        `supervillain: there's no campaign at ${join(dir, "nowhere")}; make one with: bun supervillain new ${join(dir, "nowhere")}\n`,
-      );
-    }),
+  effect(
+    "refuses a kind it doesn't know, a seed out of range and a folder that isn't a campaign",
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* tempDir;
+        const kind = yield* cli(["map", "castle", dir]);
+        expect(kind.exitCode).toBe(1);
+        expect(kind.stderr).toContain("crossing");
+        // A seed is one /map new takes too, so the seed said is the seed in the map's id.
+        for (const seed of ["-1", "4294967296"]) {
+          const bad = yield* cli(["map", "keep", dir, `--seed=${seed}`]);
+          expect(bad.exitCode).toBe(1);
+          expect(bad.stderr).toBe(
+            "supervillain: a map's seed is a whole number from 0 to 4294967295\n",
+          );
+        }
+        const none = yield* cli(["map", "keep", join(dir, "nowhere")]);
+        expect(none.exitCode).toBe(1);
+        expect(none.stderr).toBe(
+          `supervillain: there's no campaign at ${join(dir, "nowhere")}; make one with: bun supervillain new ${join(dir, "nowhere")}\n`,
+        );
+      }),
   );
 });
 

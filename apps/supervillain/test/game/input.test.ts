@@ -169,6 +169,7 @@ describe("completeLine", () => {
       "/state",
       "/view ",
       "/mouse ",
+      "/prep",
       "/quit",
     ]);
   });

@@ -9,8 +9,10 @@ import {
   fittedTitle,
   marked,
   panelMark,
+  panelKeys,
   panelOf,
   PANELS,
+  panelsOf,
   type Panel,
   type Panels,
   togglePanel,
@@ -24,9 +26,19 @@ import { fordRoad, hall } from "./maps.ts";
 
 describe("the panels, as data", () => {
   test("numbered in screen order, each title led by its key as a superscript", () => {
-    expect(PANELS).toEqual(["band", "map", "feed", "reply"]);
-    expect([1, 2, 3, 4, 5].map(panelOf)).toEqual(["band", "map", "feed", "reply", undefined]);
-    expect(PANELS.map(panelMark)).toEqual(["¹", "²", "³", "⁴"]);
+    expect(PANELS).toEqual(["band", "map", "feed", "reply", "prep"]);
+    expect([1, 2, 3, 4, 5, 6].map(panelOf)).toEqual([
+      "band",
+      "map",
+      "feed",
+      "reply",
+      "prep",
+      undefined,
+    ]);
+    expect(PANELS.map(panelMark)).toEqual(["¹", "²", "³", "⁴", "⁵"]);
+    // The prep panel is the GM's: a player's seat has four, and its keys say so.
+    expect(panelsOf(false)).toEqual(["band", "map", "feed", "reply"]);
+    expect([panelKeys(false), panelKeys(true)]).toEqual(["Alt+1-4", "Alt+1-5"]);
     expect(marked(" feed ", panelMark("feed"))).toBe(" ³ feed ");
     expect(marked(" round 2 · Malice 5 ", "¹")).toBe(" ¹ round 2 · Malice 5 ");
     expect(marked(" feed ", undefined)).toBe(" feed ");
@@ -63,7 +75,14 @@ describe("the panels, as data", () => {
   });
 
   test("/view words are presets that set every panel; plain /view shows or hides the map", () => {
-    const some: Panels = { band: false, map: false, feed: false, reply: false, mapFirst: false };
+    const some: Panels = {
+      band: false,
+      map: false,
+      feed: false,
+      reply: false,
+      prep: false,
+      mapFirst: false,
+    };
     expect(viewPreset(some, "both")).toEqual(ALL_SHOWN);
     expect(viewPreset(some, "map")).toEqual({ ...ALL_SHOWN, mapFirst: true });
     expect(viewPreset(some, "feed")).toEqual({ ...ALL_SHOWN, map: false });
@@ -74,6 +93,11 @@ describe("the panels, as data", () => {
     expect(viewPreset(viewPreset(first, "toggle"), "toggle")).toEqual(ALL_SHOWN);
     // Plain /view leaves the other panels as they are.
     expect(viewPreset(some, "toggle")).toEqual({ ...some, map: true });
+    // No layout word opens or closes the GM's prep panel.
+    const prepping = { ...some, prep: true };
+    for (const word of ["both", "map", "feed", "toggle"] as const)
+      expect(viewPreset(prepping, word).prep).toBe(true);
+    expect(viewPreset(some, "both").prep).toBe(false);
   });
 
   test("with every panel hidden, one line names the keys that bring something back", () => {

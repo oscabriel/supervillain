@@ -3,10 +3,9 @@
 // care about first (walls, difficult ground, a way through, room for each side to deploy), then
 // dresses it: ground by noise over MEK's density ramp, woods dense in the middle and thin at the
 // edge, walls in courses with arches at their gaps and pillars at their corners.
+// The kinds are the rules' to name, since `/map new <kind>` is parsed there.
+import type { MapKind } from "../game/drawSteel/map.ts";
 import { LEGEND } from "../game/drawSteel/mekmode.ts";
-
-export type MapKind = "crossing" | "keep";
-export const MAP_KINDS: ReadonlyArray<MapKind> = ["crossing", "keep"];
 
 export interface GeneratedMap {
   readonly name: string;

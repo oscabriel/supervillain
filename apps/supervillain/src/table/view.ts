@@ -1,5 +1,5 @@
 import type { Accessor } from "solid-js";
-import type { CombatView, FeedLine, TokenAction } from "../game/index.ts";
+import type { CombatView, FeedLine, PrepView, TokenAction } from "../game/index.ts";
 
 /** Someone with a seat open right now. */
 export interface Present {
@@ -9,7 +9,31 @@ export interface Present {
 }
 
 // The band's view and the feed's lines are built by the rules (game/), which never import the table.
-export type { ActionPick, Combatant, CombatView, FeedLine, TokenAction } from "../game/index.ts";
+export type {
+  ActionPick,
+  Combatant,
+  CombatView,
+  FeedLine,
+  PrepItem,
+  PrepKind,
+  PrepSection,
+  PrepView,
+  TokenAction,
+} from "../game/index.ts";
+
+/**
+ * The GM's prep panel (Alt+5, `/prep`): the campaign's heroes, monsters and maps and what the table
+ * holds, each item with the command line a click sends. The GM's seat alone has it.
+ */
+export interface PrepSource {
+  /** What the panel lists, kept up with the table; undefined until the files have been read. */
+  readonly view: Accessor<PrepView | undefined>;
+  /**
+   * Reads the campaign's heroes, monsters and maps again, since files change between sessions: the
+   * App calls it each time the panel opens. Resolves to why they couldn't be read, or undefined.
+   */
+  readonly reload: () => Promise<string | undefined>;
+}
 
 /** One token on the map. */
 export interface MapToken {
@@ -89,4 +113,6 @@ export interface TableView {
    * the band. Every seat has it; a fake may not.
    */
   readonly actions?: (id: string) => ReadonlyArray<TokenAction> | undefined;
+  /** The prep panel's lists, on the GM's seat only; a player's seat has none. */
+  readonly prep?: PrepSource;
 }

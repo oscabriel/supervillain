@@ -1,9 +1,10 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Context, Effect, Layer } from "effect";
-import type { MapGrid } from "../game/drawSteel/map.ts";
+import { type MapGrid, MAP_WORDS } from "../game/drawSteel/map.ts";
 import { ID } from "../game/drawSteel/schema.ts";
 import type { HeroSheet, StatBlock } from "../game/drawSteel/sheets.ts";
+import type { PrepCatalog, PrepEntry } from "../game/prep.ts";
 import type { Ruleset } from "../game/table.ts";
 import { readCampaignConfig } from "./campaignFile.ts";
 import {
@@ -16,7 +17,7 @@ import {
   type SheetKind,
   SheetNotFound,
 } from "./errors.ts";
-import { decodeMap, tooBig } from "./mapFiles.ts";
+import { decodeMap, MAP_BYTES, tooBig } from "./mapFiles.ts";
 import { decodeHero, decodeMonster, idOf } from "./sheetFiles.ts";
 
 /** Why a load by id can fail. */
@@ -193,6 +194,62 @@ const load = <A>(
   });
 
 /**
+ * Each file in a folder by its id and the name inside it, for the GM's prep panel: the name is the
+ * id's when the file doesn't read or decode, since loading it says why. With `maxBytes`, a bigger
+ * file is listed by its id without being read, as loading a map refuses it unread.
+ */
+const named = (
+  dir: string,
+  all: ReadonlyArray<Entry>,
+  nameIn: (entry: Entry, bytes: Uint8Array) => Effect.Effect<string, unknown>,
+  maxBytes?: number,
+): Effect.Effect<ReadonlyArray<PrepEntry>> =>
+  Effect.forEach(
+    all,
+    (e) =>
+      Effect.tryPromise(async () => {
+        const path = join(dir, e.file);
+        if (maxBytes !== undefined && (await stat(path)).size > maxBytes)
+          throw new Error(`${e.file} is too big`);
+        return readFile(path);
+      }).pipe(
+        Effect.flatMap((bytes) => nameIn(e, bytes)),
+        Effect.match({
+          onFailure: () => ({ id: e.id, name: e.id }),
+          onSuccess: (name) => ({ id: e.id, name }),
+        }),
+      ),
+    { concurrency: 8 },
+  );
+
+const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+
+/**
+ * What the GM's prep panel lists: every hero, monster and map, read now, with their names; not a
+ * map whose id `/map` reads as a word (`off`, `new`), since its line would do that instead.
+ */
+const catalogOf = (dir: string): Effect.Effect<PrepCatalog, ContentReadError> =>
+  Effect.gen(function* () {
+    const heroes = yield* entries(dir, "hero");
+    const monsters = yield* entries(dir, "monster");
+    const { usable: maps } = yield* mapEntries(dir);
+    return {
+      heroes: yield* named(dir, heroes, (e, b) =>
+        Effect.map(decodeHero(e.file, text(b)), (h) => h.name),
+      ),
+      monsters: yield* named(dir, monsters, (e, b) =>
+        Effect.map(decodeMonster(e.file, text(b)), (m) => m.name),
+      ),
+      maps: yield* named(
+        dir,
+        maps.filter((e) => !MAP_WORDS.includes(e.id)),
+        (e, b) => Effect.map(decodeMap(e.file, e.id, b), (g) => g.name),
+        MAP_BYTES,
+      ),
+    };
+  });
+
+/**
  * A campaign folder: the ruleset its `campaign.yaml` names, read once when the table opens, and
  * the heroes, monsters and maps in it: `heroes/<id>.yaml`, `monsters/<id>.yaml` and `maps/<id>.txt`.
  * Those are never cached, so a file the GM edits mid-session counts the next time it's loaded.
@@ -215,6 +272,8 @@ export class CampaignContent extends Context.Service<
     readonly maps: Effect.Effect<ReadonlyArray<string>, ContentReadError>;
     /** The map whose id is `query`, or else the only one whose id starts with it. */
     readonly map: (query: string) => Effect.Effect<LoadedMap, MapLoadError>;
+    /** Every hero, monster and map with the name inside it, for the GM's prep panel. */
+    readonly catalog: Effect.Effect<PrepCatalog, ContentReadError>;
   }
 >()("supervillain/content/CampaignContent") {
   /** Fails when `campaign.yaml` can't be read or names a ruleset the table doesn't know. */
@@ -233,6 +292,7 @@ export class CampaignContent extends Context.Service<
           monster: load(campaignDir, "monster", decodeMonster),
           maps: Effect.map(mapEntries(campaignDir), ({ usable }) => usable.map((e) => e.id)),
           map: loadMap(campaignDir),
+          catalog: catalogOf(campaignDir),
         }),
       ),
     );

@@ -2,7 +2,15 @@ import type { CliRenderer } from "@opentui/core";
 import { render } from "@opentui/solid";
 import type { View } from "@supervillain/engine";
 import { Effect, FiberSet, type Scope, Stream } from "effect";
-import { type Accessor, createComponent, createMemo, createRoot, createSignal } from "solid-js";
+import {
+  type Accessor,
+  createComponent,
+  createEffect,
+  createMemo,
+  createRoot,
+  createSignal,
+  on,
+} from "solid-js";
 import {
   actionsOf,
   bandOf,
@@ -12,11 +20,13 @@ import {
   GM,
   mapOf,
   nameOf,
+  type PrepCatalog,
+  prepOf,
   tableLabel,
 } from "../game/index.ts";
 import { CampaignContent } from "../content/index.ts";
 import { App } from "../table/App.tsx";
-import type { Present, TableView } from "../table/view.ts";
+import type { PrepSource, Present, TableView } from "../table/view.ts";
 import { debugText, type Reply, runLine } from "./line.ts";
 import { Presence } from "./Presence.ts";
 import type { TableServices } from "./services.ts";
@@ -88,7 +98,8 @@ const replyText = (reply: Reply): string | undefined =>
 /**
  * Opens one seat: enters presence for the life of the scope and builds the TableView the App
  * reads. Labels are resolved here, from the current names and heroes, every time the feed is
- * projected, and so are this seat's band and map, of the campaign's ruleset.
+ * projected, and so are this seat's band and map, of the campaign's ruleset, and on the GM's seat
+ * the prep panel, from the campaign's files as they were when it last opened.
  */
 export const openSeat = (
   options: SeatOptions,
@@ -97,7 +108,8 @@ export const openSeat = (
     const { actor } = options;
     const room = yield* TableRoom;
     const presence = yield* Presence;
-    const { ruleset } = yield* CampaignContent;
+    const content = yield* CampaignContent;
+    const { ruleset } = content;
     yield* presence.enter(actor);
     const state = yield* follow(room.state);
     const recent = yield* follow(room.recent);
@@ -107,6 +119,17 @@ export const openSeat = (
     // In-flight submits end with the seat.
     const run = yield* FiberSet.makeRuntimePromise<TableServices>();
     const rows = keepRows();
+    // The prep panel's files, as the GM's seat last read them (when the panel opened).
+    const [catalog, setCatalog] = createSignal<PrepCatalog>();
+    const reload = () =>
+      run(
+        content.catalog.pipe(
+          Effect.match({
+            onFailure: (e) => e.message,
+            onSuccess: (files) => void setCatalog(files),
+          }),
+        ),
+      );
 
     const derived = createRoot((dispose) => ({
       dispose,
@@ -122,16 +145,35 @@ export const openSeat = (
         const ds = createMemo(() => state().ds);
         const sw = createMemo(() => state().sw);
         const names = createMemo(() => state().core.names);
+        // A map loaded that the files read last didn't have (a `/map new` just wrote it): read
+        // them again, so the GM's prep panel lists it, loaded.
+        if (actor === GM)
+          createEffect(
+            on(
+              () => (ruleset === "set-world" ? sw().map?.id : ds().map?.id),
+              (id) => {
+                const files = catalog();
+                if (id !== undefined && files !== undefined && !files.maps.some((m) => m.id === id))
+                  void reload();
+              },
+              { defer: true },
+            ),
+          );
         return {
           combat: createMemo(() =>
             bandOf({ ds: ds(), sw: sw(), core: { names: names() } }, actor, ruleset),
           ),
           map: createMemo(() => mapOf({ ds: ds(), sw: sw() }, actor, ruleset)),
+          prep: createMemo(() => {
+            const files = catalog();
+            return files === undefined ? undefined : prepOf({ ds: ds(), sw: sw() }, files, ruleset);
+          }),
         };
       })(),
     }));
     yield* Effect.addFinalizer(() => Effect.sync(derived.dispose));
 
+    const prep: PrepSource = { view: derived.prep, reload };
     const footer = options.helpFooter === undefined ? "" : `\n\n${options.helpFooter}`;
     return {
       me: actor,
@@ -158,6 +200,8 @@ export const openSeat = (
       debug: () =>
         actor === GM ? debugText(state(), recent()) : "Only the GM can see the table's state.",
       leave: options.leave,
+      // The GM prepares the game; a player's seat has no prep panel.
+      ...(actor === GM ? { prep } : {}),
       ...(options.joinHint === undefined ? {} : { joinHint: options.joinHint }),
       ...(joinNote === undefined ? {} : { joinNote }),
       ...(alert === undefined ? {} : { alert }),

@@ -1,5 +1,13 @@
 import type { TokenAction } from "../actions.ts";
 import { GM, type Refused } from "../module.ts";
+import {
+  mapsSection,
+  placeSection,
+  type PrepCatalog,
+  type PrepItem,
+  type PrepView,
+} from "../prep.ts";
+import { ADD_MAX } from "./commands.ts";
 import { type Ability, type Characteristics, type DamageModifier, isTrait } from "./sheets.ts";
 import {
   capitalized,
@@ -286,12 +294,12 @@ export function sheetText(slice: DrawSteelState, typed: string): string | Refuse
 }
 
 /**
- * What `actor` may do with the hero or creature `id`, for the table's mouse, or undefined when
- * they may not act for it (a player for anyone but their own hero). Move while it stands on the
- * map; each of its abilities but traits, as `/pr` (a hero's free strike is one of them); a
- * creature's free strike for the GM, as `/fs`; and End turn while it is its turn, since `/done`
- * ends whoever's turn it is. Nothing is checked beyond that: the rules refuse what can't be done
- * now, as they do a typed line.
+ * What `actor` may do with the hero or creature `id`, for the table's mouse, or undefined when they
+ * may not act for it (a player for anyone but their own hero). Move while it stands on the map, and
+ * Place while a map is loaded that it isn't on yet; each of its abilities but traits, as `/pr` (a
+ * hero's free strike is one of them); a creature's free strike for the GM, as `/fs`; and End turn
+ * while it is its turn, since `/done` ends whoever's turn it is. Nothing is checked beyond that:
+ * the rules refuse what can't be done now, as they do a typed line.
  */
 export function tokenActions(
   slice: DrawSteelState,
@@ -305,9 +313,11 @@ export function tokenActions(
       ? who.hero.sheet.abilities
       : (slice.blocks[who.creature.block]?.abilities ?? []);
   return [
-    ...(slice.map?.tokens[who.id] === undefined
+    ...(slice.map === undefined
       ? []
-      : [{ label: "Move", pick: "square" as const, line: `/move ${who.id}` }]),
+      : slice.map.tokens[who.id] === undefined
+        ? [{ label: "Place", pick: "square" as const, line: `/place ${who.id}` }]
+        : [{ label: "Move", pick: "square" as const, line: `/move ${who.id}` }]),
     ...abilities
       .filter((a) => !isTrait(a))
       .map((a) => ({ label: a.name, pick: "targets" as const, line: `/pr ${who.id} ${a.name}` })),
@@ -318,4 +328,53 @@ export function tokenActions(
       ? [{ label: "End turn", pick: "none" as const, line: "/done" }]
       : []),
   ];
+}
+
+/** The prep panel at a Draw Steel table: heroes, monsters, maps, placing and combat. */
+export function drawSteelPrep(slice: DrawSteelState, catalog: PrepCatalog): PrepView {
+  const inPlay = new Set(slice.heroes.map((h) => h.id));
+  const added = (block: string) => slice.creatures.filter((c) => c.block === block).length;
+  const board = slice.map;
+  const unplaced = [
+    ...slice.heroes.map((h) => ({ id: h.id, name: h.sheet.name })),
+    ...slice.creatures.filter((c) => c.stamina > 0),
+  ].filter((w) => board?.tokens[w.id] === undefined);
+  return {
+    sections: [
+      {
+        title: "Heroes",
+        items: catalog.heroes.map(
+          (h): PrepItem => ({
+            kind: "send",
+            label: h.name,
+            line: `/hero ${h.id}`,
+            ...(inPlay.has(h.id) && { note: "in play" }),
+          }),
+        ),
+        ...(catalog.heroes.length === 0 && { note: "no sheets in heroes/" }),
+      },
+      {
+        title: "Monsters",
+        items: catalog.monsters.map((m): PrepItem => {
+          const n = added(m.id);
+          return {
+            kind: "count",
+            label: m.name,
+            line: `/add ${m.id}`,
+            max: ADD_MAX,
+            ...(n > 0 && { note: `${n} in play` }),
+          };
+        }),
+        ...(catalog.monsters.length === 0 && { note: "no stat blocks in monsters/" }),
+      },
+      mapsSection(catalog, board?.id),
+      placeSection(board !== undefined, unplaced),
+      slice.combat.active
+        ? { title: "Start", items: [], note: `combat is on, round ${slice.combat.round}` }
+        : {
+            title: "Start",
+            items: [{ kind: "send", label: "Start combat", line: "/start" }],
+          },
+    ],
+  };
 }

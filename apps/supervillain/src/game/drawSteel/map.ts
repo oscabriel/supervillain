@@ -4,6 +4,7 @@
  * event carries it and replay never reads a file.
  */
 import type { Refused } from "../module.ts";
+import { quote } from "../text.ts";
 import { terrainOf } from "./mekmode.ts";
 
 /** One square: `x` is the column from 0 (a), `y` the row from 0 (row 1). */
@@ -26,6 +27,74 @@ export interface MapGrid {
 export const MAP_WIDTH = 60;
 export const MAP_HEIGHT = 40;
 const NAME_MAX = 40;
+
+/** The kinds of map the host generates from a seed (content/mapgen.ts): `/map new <kind>`. */
+export const MAP_KINDS = ["crossing", "keep"] as const;
+export type MapKind = (typeof MAP_KINDS)[number];
+
+/** A generated map's seed: any whole number a 32-bit generator takes. */
+export const MAP_SEED_MAX = 0xffff_ffff;
+
+/** A `/map new`: the kind to generate, and the seed as typed (the host picks one if it's not). */
+export interface MapGeneration {
+  readonly kind: MapKind;
+  readonly seed?: number;
+}
+
+/** Refused for a `/map new` the host hasn't generated: only the host writes map files. */
+export const NOT_GENERATED = "No map was generated for that; the host generates a /map new.";
+
+/** The words `/map` reads as themselves, so no map can have one as its id. */
+export const MAP_WORDS: ReadonlyArray<string> = ["off", "new"];
+
+/** How `/map` is typed, at a table of either ruleset. */
+export const MAP_USAGE = "/map <map id>|off|new crossing|keep [seed]";
+
+/**
+ * What follows `/map`: a map's id to load, `off` to put the map away, or `new <kind> [seed]` to
+ * generate one into the campaign's maps/ and load it. `new` alone is no map's id here: it asks how
+ * to generate one.
+ */
+export function parseMapArgs(
+  args: string,
+):
+  | { readonly id?: string; readonly generate?: undefined }
+  | { readonly generate: MapGeneration }
+  | Refused {
+  const words = args
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w !== "");
+  const usage = { refusal: `Usage: ${MAP_USAGE}` };
+  const [first, ...rest] = words;
+  if (first === undefined) return usage;
+  const word = first.toLowerCase();
+  if (word === "new") {
+    const [kindTyped, seedTyped, extra] = rest;
+    const kind = MAP_KINDS.find((k) => k === kindTyped?.toLowerCase());
+    if (kindTyped === undefined || extra !== undefined) return usage;
+    if (kind === undefined)
+      return {
+        refusal: `There's no kind of map called '${quote(kindTyped)}'; there are: ${MAP_KINDS.join(", ")}.`,
+      };
+    if (seedTyped === undefined) return { generate: { kind } };
+    const seed = /^\d{1,10}$/.test(seedTyped) ? Number(seedTyped) : undefined;
+    if (seed === undefined || seed > MAP_SEED_MAX)
+      return { refusal: `A map's seed is a whole number from 0 to ${MAP_SEED_MAX}.` };
+    return { generate: { kind, seed } };
+  }
+  if (rest.length > 0) return usage;
+  return word === "off" ? {} : { id: word };
+}
+
+/** What Tab offers after `/map`: off and new, then the kinds after new. */
+export function completeMapArgs(partial: string): string[] {
+  const typed = partial.trimStart().toLowerCase();
+  const kind = /^new\s+(\S*)$/.exec(typed);
+  if (kind !== null) return MAP_KINDS.filter((k) => k.startsWith(kind[1]!)).map((k) => `new ${k}`);
+  if (/\s/.test(typed)) return [];
+  return ["off", "new"].filter((w) => w.startsWith(typed)).map((w) => (w === "new" ? "new " : w));
+}
 
 /** "." floor, "#" wall, "~" difficult terrain, " " outside the map. */
 export type Terrain = "floor" | "wall" | "difficult" | "outside";

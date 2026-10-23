@@ -13,6 +13,7 @@ import {
   distance,
   formatSquare,
   inBounds,
+  NOT_GENERATED,
   parseSquare,
   type Square,
   sameSquare,
@@ -114,6 +115,7 @@ export function loadMap(
   slice: DrawSteelState,
   command: Extract<DsCommand, { type: "map" }>,
 ): Decision {
+  if (command.generate !== undefined) return refuse(NOT_GENERATED);
   if (command.id === undefined)
     return slice.map === undefined
       ? refuse("No map is loaded.")

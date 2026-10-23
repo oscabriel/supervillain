@@ -11,6 +11,8 @@ import {
   helpText,
   hostNeeds,
   labelOf,
+  MAP_SEED_MAX,
+  mapGeneration,
   mapNeed,
   parseInputLine,
   SEED_MAX,
@@ -22,8 +24,10 @@ import {
   unknownHelpTopic,
   withHostFact,
   withMapGrid,
+  withMapId,
   withSetFact,
 } from "../game/index.ts";
+import { writeGeneratedMap } from "../content/newMap.ts";
 import { nameKey } from "../game/text.ts";
 import { shownState } from "./check.ts";
 import { Presence } from "./Presence.ts";
@@ -66,13 +70,14 @@ const actorLabelled = (
 };
 
 /**
- * Adds what the host knows and the rules can't see: who is seated, for a name to be checked
- * against and a hero whose guest has left to be taken; the time now, for a player's /undo window, and whose change a GM's `/undo <who>` means; the sheet a /hero or /add brings in, or the
- * map a /map loads, read from the campaign folder now so the event carries it; the character a
- * set.world /recruit or /foe rolls at set.world, by its seed or one picked here; and the actor a
- * GM's /play names. A file that can't be read, or a roll that doesn't come, is refused, saying
- * why. Nothing is read or fetched for a GM-only command someone else sent: the rules refuse it as
- * it is.
+ * Adds what the host knows and the rules can't see: who is seated, for a name to be checked against
+ * and a hero whose guest has left to be taken; the time now, for a player's /undo window, and whose
+ * change a GM's `/undo <who>` means; the sheet a /hero or /add brings in, or the map a /map loads,
+ * read from the campaign folder now so the event carries it (a /map new writes it there first, from
+ * its seed); the character a set.world /recruit or /foe rolls at set.world, by its seed or one
+ * picked here; and the actor a GM's /play names. A file that can't be read, or a roll that doesn't
+ * come, is refused, saying why. Nothing is read or fetched for a GM-only command someone else sent:
+ * the rules refuse it as it is.
  */
 const withHostFacts = (
   actor: string,
@@ -101,6 +106,24 @@ const withHostFacts = (
     }
     if (actor !== GM && GM_ONLY.has(command.type)) return command;
     const content = yield* CampaignContent;
+    // `/map new`: the map is generated into maps/ now, by the seed typed or one picked here, and
+    // then loaded as `/map <id>` is, so the event carries its grid and replay reads no file.
+    const generate = mapGeneration(command);
+    if (generate !== undefined) {
+      const seed = generate.seed ?? (yield* Random.nextIntBetween(0, MAP_SEED_MAX));
+      const written = yield* writeGeneratedMap(content.dir, generate.kind, seed).pipe(
+        Effect.mapError(
+          (e) =>
+            new Refusal({
+              message:
+                e.reason === "exists"
+                  ? `There's already a map called ${e.id} in maps/: /map ${e.id} loads it.`
+                  : `Can't make that ${generate.kind}: ${e.message}.`,
+            }),
+        ),
+      );
+      return yield* withHostFacts(actor, withMapId(command, written.id));
+    }
     const set = setNeed(command);
     if (set !== undefined) {
       if (set.kind === "map") {

@@ -1,4 +1,12 @@
-import { type MapGrid, parseSquare, type Square } from "../drawSteel/map.ts";
+import {
+  completeMapArgs,
+  MAP_USAGE,
+  type MapGeneration,
+  type MapGrid,
+  parseMapArgs,
+  parseSquare,
+  type Square,
+} from "../drawSteel/map.ts";
 import type { CommandSpec, CommandSpecs, Refused } from "../module.ts";
 import { quote } from "../text.ts";
 import { SEED_MAX } from "./events.ts";
@@ -16,6 +24,8 @@ export type SetCommand =
       readonly id?: string;
       /** The grid, which the host reads from `maps/<id>.txt` and puts here; decide refuses without it. */
       readonly grid?: MapGrid;
+      /** `/map new`, as Draw Steel's: the host generates it and puts its id here in its place. */
+      readonly generate?: MapGeneration;
     }
   | RollCommand<"set-recruit">
   | RollCommand<"set-foe">
@@ -55,9 +65,6 @@ const notASquare = (typed: string): Refused => ({
   refusal: `'${quote(typed)}' isn't a square like c5.`,
 });
 
-const startingWith = (options: ReadonlyArray<string>, typed: string) =>
-  options.filter((o) => o.toLowerCase().startsWith(typed.toLowerCase()));
-
 /** Completes the first argument as a fighter, and the second with `then` once one is typed. */
 const fighterThen =
   (then?: (slice: SetState, typed: string, actor: string) => string[]) =>
@@ -71,17 +78,17 @@ const fighterThen =
 
 const map: Spec<"set-map"> = {
   name: "map",
-  usage: "/map <map id>|off",
-  summary: "Load the fight's map from the campaign's maps folder, or put it away.",
+  usage: MAP_USAGE,
+  summary:
+    "Load the fight's map from the campaign's maps folder, generate one there, or put it away.",
   gmOnly: true,
   parse: (args) => {
-    const [id, extra] = words(args);
-    if (id === undefined || extra !== undefined) return usage(map);
-    return id.toLowerCase() === "off"
-      ? { type: "set-map" }
-      : { type: "set-map", id: id.toLowerCase() };
+    const parsed = parseMapArgs(args);
+    if ("refusal" in parsed) return parsed;
+    if (parsed.generate !== undefined) return { type: "set-map", generate: parsed.generate };
+    return parsed.id === undefined ? { type: "set-map" } : { type: "set-map", id: parsed.id };
   },
-  complete: (_slice, partial) => startingWith(["off"], partial.trim()),
+  complete: (_slice, partial) => completeMapArgs(partial),
 };
 
 const roll = <T extends "set-recruit" | "set-foe">(
@@ -240,7 +247,9 @@ export function setNeed<C extends { readonly type: string }>(command: C): SetNee
   const c = command as unknown as SetCommand;
   switch (c.type) {
     case "set-map":
-      return c.id !== undefined && c.grid === undefined ? { kind: "map", id: c.id } : undefined;
+      return c.id !== undefined && c.grid === undefined && c.generate === undefined
+        ? { kind: "map", id: c.id }
+        : undefined;
     case "set-recruit":
     case "set-foe":
       return c.character === undefined

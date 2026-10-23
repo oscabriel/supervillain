@@ -467,7 +467,9 @@ const mapCommand = Command.make(
     ),
     seed: Flag.Int("seed").pipe(
       Flag.optional,
-      Flag.withDescription("The seed: the same kind and seed always make the same map"),
+      Flag.withDescription(
+        "The seed, 0 to 4294967295: the same kind and seed always make the same map",
+      ),
     ),
     id: Flag.String("id").pipe(
       Flag.optional,
@@ -475,8 +477,8 @@ const mapCommand = Command.make(
     ),
   },
   Effect.fn(function* (o) {
-    const [{ generateMap, MAP_KINDS, mapFileText }, { formatSquare }] = yield* Effect.promise(() =>
-      Promise.all([import("./content/mapgen.ts"), import("./game/drawSteel/map.ts")]),
+    const [{ writeGeneratedMap }, { formatSquare, MAP_KINDS }] = yield* Effect.promise(() =>
+      Promise.all([import("./content/newMap.ts"), import("./game/drawSteel/map.ts")]),
     );
     const kind = MAP_KINDS.find((k) => k === o.kind.toLowerCase());
     if (kind === undefined)
@@ -484,31 +486,28 @@ const mapCommand = Command.make(
         message: `there's no kind of map called ${o.kind}; there are: ${MAP_KINDS.join(", ")}`,
       });
     const seed = Option.getOrElse(o.seed, () => crypto.getRandomValues(new Uint32Array(1))[0]!);
-    const id = Option.getOrElse(o.id, () => `${kind}-${seed}`).toLowerCase();
-    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(id))
-      return yield* new CampaignError({
-        message: `a map id is up to 40 of a-z, 0-9 and -, not ${id}`,
-      });
-    const dir = resolve(o.campaignDir);
-    const file = join(dir, "maps", `${id}.txt`);
-    const map = generateMap(kind, seed >>> 0);
-    yield* Effect.tryPromise({
-      try: async () => {
-        await stat(dir);
-        await mkdir(join(dir, "maps"), { recursive: true });
-        await writeFile(file, mapFileText(map), { flag: "wx" });
-      },
-      catch: (e) =>
-        new CampaignError({
-          message:
-            (e as NodeJS.ErrnoException).code === "EEXIST"
-              ? `there's already a map called ${id} in maps/; pick another --id`
-              : (e as NodeJS.ErrnoException).code === "ENOENT"
-                ? `there's no campaign at ${dir}; make one with: ${SELF} new ${o.campaignDir}`
-                : `can't write ${file}: ${messageOf(e)}`,
-        }),
-    });
-    yield* Console.log(`supervillain: wrote ${map.name} to maps/${id}.txt (${kind}, seed ${seed})`);
+    const written = yield* writeGeneratedMap(
+      resolve(o.campaignDir),
+      kind,
+      seed,
+      Option.getOrUndefined(o.id),
+    ).pipe(
+      Effect.mapError(
+        (e) =>
+          new CampaignError({
+            message:
+              e.reason === "exists"
+                ? `${e.message}; pick another --id`
+                : e.reason === "no-campaign"
+                  ? `${e.message}; make one with: ${SELF} new ${o.campaignDir}`
+                  : e.message,
+          }),
+      ),
+    );
+    const { id, map } = written;
+    yield* Console.log(
+      `supervillain: wrote ${map.name} to ${written.file} (${kind}, seed ${written.seed})`,
+    );
     yield* Console.log(map.lines.map((line) => `  ${line}`).join("\n"));
     const squares = (list: ReadonlyArray<{ x: number; y: number }>) =>
       list.slice(0, 4).map(formatSquare).join(" ");

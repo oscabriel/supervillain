@@ -7,6 +7,8 @@ import {
   readMapText,
 } from "../../src/game/drawSteel/index.ts";
 import type { StatBlock } from "../../src/game/drawSteel/sheets.ts";
+import { completeMapArgs } from "../../src/game/drawSteel/map.ts";
+import { commands } from "../../src/game/index.ts";
 import type { MapView } from "../../src/table/view.ts";
 import {
   ALICE,
@@ -212,7 +214,40 @@ describe("/map", () => {
     expect(t.ds.map).toBeUndefined();
     expect(t.lastFeed()).toEqual(["The map is put away."]);
     expect(type(t, GM, "/map off")).toBe("No map is loaded.");
-    expect(type(t, GM, "/map")).toBe("Usage: /map <map id>|off");
+    expect(type(t, GM, "/map")).toBe("Usage: /map <map id>|off|new crossing|keep [seed]");
+  });
+
+  test("/map new names a kind and maybe a seed; the rules refuse it until the host generates it", () => {
+    const t = party();
+    const parse = (args: string) => commands.find((c) => c.type === "map")!.parse(args);
+    expect(parse("new crossing")).toEqual({ type: "map", generate: { kind: "crossing" } });
+    expect(parse("NEW Keep 42")).toEqual({ type: "map", generate: { kind: "keep", seed: 42 } });
+    expect(parse("new")).toEqual({ refusal: "Usage: /map <map id>|off|new crossing|keep [seed]" });
+    expect(parse("new cave")).toEqual({
+      refusal: "There's no kind of map called 'cave'; there are: crossing, keep.",
+    });
+    expect(parse("new keep 4294967296")).toEqual({
+      refusal: "A map's seed is a whole number from 0 to 4294967295.",
+    });
+    expect(parse("new keep 1 2")).toEqual({
+      refusal: "Usage: /map <map id>|off|new crossing|keep [seed]",
+    });
+    // Only the host writes map files: a /map new it hasn't generated loads nothing, and leaves
+    // a loaded map as it is.
+    t.run(GM, { type: "map", id: "cave", grid: grid() });
+    expect(type(t, GM, "/map new keep 7")).toBe(
+      "No map was generated for that; the host generates a /map new.",
+    );
+    expect(t.ds.map?.id).toBe("cave");
+    expect(type(t, ALICE, "/map new keep")).toBe("Only the GM can use /map.");
+  });
+
+  test("Tab after /map offers off and new, then the kinds", () => {
+    expect(completeMapArgs("")).toEqual(["off", "new "]);
+    expect(completeMapArgs("n")).toEqual(["new "]);
+    expect(completeMapArgs("new ")).toEqual(["new crossing", "new keep"]);
+    expect(completeMapArgs("NEW k")).toEqual(["new keep"]);
+    expect(completeMapArgs("ford ")).toEqual([]);
   });
 
   test("a grid that breaks the limits is refused even if the host sent it", () => {

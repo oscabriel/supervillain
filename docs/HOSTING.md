@@ -41,7 +41,7 @@ supervillain host ~/campaigns/first-fight
 
 `new --example` copies the sample campaign: four heroes, the bandits and the map for one fight. Without `--example` you get a `campaign.yaml` and empty `heroes/`, `monsters/` and `maps/` folders (only `maps/` with `--rules set-world`). The folder's README explains the file formats. `host` opens a campaign folder and refuses one that isn't there (`there's no campaign at …; make one with: supervillain new …`), and a folder with none of `campaign.yaml`, `events.jsonl`, `host_key`, `heroes/`, `monsters/` or `maps/` in it (`… isn't a campaign: …`), so a mistyped path never starts an empty table under a new host key, and your home folder never gets a log.
 
-`supervillain map crossing <campaign> --seed 7` (or `keep`) generates a map into `maps/` and says how to load it; the campaign README has how maps work.
+`supervillain map crossing <campaign> --seed 7` (or `keep`) generates a map into `maps/` and says how to load it, and at the table `/map new crossing 7` does the same and loads it (see [Preparing a game](#preparing-a-game)); the campaign README has how maps work.
 
 ### What the campaign plays
 
@@ -100,6 +100,23 @@ The campaign folder is yours alone (mode 700). Beside `campaign.yaml` and what y
 The host refuses a `host_key` other users can read (`chmod 600` it). Players are capped so one stranger can't take the table down: 8 connections and 16 sessions from one address, 64 of each in all, 20 seconds to log in, and a few lines a second per player.
 
 `supervillain check ~/campaigns/first-fight` reads a log without opening the table: a summary, skipped events, the feed and the final state.
+
+## Preparing a game
+
+At your seat, Alt+5 or `/prep` opens the prep panel, under the feed. It is the GM's alone: a player's Alt+5 or `/prep` is told so. Each time it opens it reads `heroes/`, `monsters/` and `maps/` again, so a sheet you saved a minute ago is there, and a file that won't load is listed by its id (loading it says why). Every item shows, dim, the command a click sends: the very line you could type, so the log can't tell a click from typing, and Up brings back what a click sent. Nothing in the panel changes the table by itself, and you can go on typing commands as before.
+
+| Section | What a click does |
+| --- | --- |
+| Heroes (Draw Steel) | Brings a hero into the party: `/hero brann`. One already in it is marked `in play`, and clicking it reloads its sheet |
+| Monsters (Draw Steel) | Opens a count under the section: − and + set it, Add sends `/add bandit-chief` (one) or `/add bandit-chief x3`, Cancel or Esc closes it |
+| Fighters (set.world) | Recruit or Foe puts `/recruit ` or `/foe ` on the input line: type the name and, if you like, a seed, then Enter |
+| Maps | Loads one: `/map ford-road`, marked `loaded` once it is. Put away sends `/map off`. New crossing and New keep generate one (`/map new keep`), and New, by seed puts `/map new ` on the input line for a kind and a seed |
+| Place | Lists whoever isn't on the loaded map yet. Click one, then a square on the map: `/place bandit-chief p5` |
+| Start | `/start`; while the fight is on it says so instead |
+
+The panel takes rows under the feed: what its sections need, up to half of what the band and the map would have (a third once a map shows), and the wheel scrolls the rest. It always leaves the band its living rows and the map enough to click a square, so in a big fight at 80x24 it may be down to one line, and it steps aside while a Place waits for its square. Otherwise at 80x24 that's three to six lines. Alt+5 or a click on its title hides it again; hidden, the hint row offers `⁵ prep` to click.
+
+`/map new crossing|keep [seed]` makes a map at the table the way `supervillain map` does, through the same code: it writes `maps/<kind>-<seed>.txt`, picking a seed when you leave it out, then loads it as `/map <id>` would. The event carries the grid, as every `/map` does, so replay never generates or reads the file. The seed is in the map's id, and a kind and seed always make the same map; one whose file is already in `maps/` (in any letter case) is refused with the `/map` that loads it. A map you generate shows in the panel's Maps at once, marked `loaded`.
 
 ## 1. Same network, or Tailscale
 

@@ -113,7 +113,7 @@ supervillain map crossing ~/campaigns/first-fight --seed 7
 supervillain map keep ~/campaigns/first-fight
 ```
 
-A `crossing` is a river the road fords, with reeds, woods, boulders and a ruin; a `keep` is a curtain wall with towers, a gate west, a breach east, a roofed hall, a well and a statue. The same kind and seed always make the same map, every map can be crossed from west to east, and the outer three columns are room for each side to start. It writes `maps/<kind>-<seed>.txt` (or `--id`), never over a map that's there, prints it with where each side can start, and says how to load it: `/map keep-7`. Edit the file as you like afterwards.
+A `crossing` is a river the road fords, with reeds, woods, boulders and a ruin; a `keep` is a curtain wall with towers, a gate west, a breach east, a roofed hall, a well and a statue. The same kind and seed always make the same map, every map can be crossed from west to east, and the outer three columns are room for each side to start. It writes `maps/<kind>-<seed>.txt` (or `--id`), never over a map that's there, prints it with where each side can start, and says how to load it: `/map keep-7`. At the table, `/map new keep 7` (or the prep panel's New keep) writes the same file and loads it at once; leave the seed out and the host picks one. Edit the file as you like afterwards.
 
 ## Importing monsters from Steel Compendium
 

@@ -413,7 +413,9 @@ describe("keyAction: Alt and a digit shows or hides a panel", () => {
     expect(keyAction(parsed("1"))).toEqual({ kind: "insert", text: "1" });
     expect(keyAction(parsed("4"))).toEqual({ kind: "insert", text: "4" });
     expect(keyAction(parsed("\x1b[49u", true))).toEqual({ kind: "insert", text: "1" });
-    for (const bytes of ["\x1b5", "\x1b9", "\x1b0"])
+    // Alt+5 is the prep panel's (the App says so to a player's seat, which has none).
+    expect(keyAction(parsed("\x1b5"))).toEqual({ kind: "panel", panel: "prep" });
+    for (const bytes of ["\x1b6", "\x1b9", "\x1b0"])
       expect(keyAction(parsed(bytes))).toEqual({ kind: "none" });
     // Ctrl-Alt-1 is the terminal's or the desktop's, not the table's.
     expect(keyAction(parsed("\x1b[49;7u", true))).toEqual({ kind: "none" });

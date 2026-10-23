@@ -63,7 +63,7 @@ The input line at the bottom always has the keyboard. Nothing you type does anyt
 | Ctrl-W, Ctrl-U | Delete a word, or everything before the cursor |
 | Ctrl-C, Ctrl-D on an empty line, or `/quit` | Leave the table |
 
-Between the header and the input line are panels, top to bottom: the band (who's here, your party or the fight), the map, the feed, and a reply just for you, such as a sheet or `/help`. Each panel's title starts with its key as a small number, `¹` for the band to `⁴` for a reply, and Alt with that digit shows or hides it, like btop. Hidden panels give their rows to the others. If you hide them all, one line under the header says which keys bring them back (click one to show its panel), and `/view both` brings back every one. The choice is your seat's alone and lasts until you leave. A reply you hide waits on one line until Alt+4 shows it or Esc drops it, and the next reply you ask for opens again. The map and a reply take turns: showing one puts the other away.
+Between the header and the input line are panels, top to bottom: the band (who's here, your party or the fight), the map, the feed, and a reply just for you, such as a sheet or `/help`. Each panel's title starts with its key as a small number, `¹` for the band to `⁴` for a reply, and Alt with that digit shows or hides it, like btop. Hidden panels give their rows to the others. If you hide them all, one line under the header says which keys bring them back (click one to show its panel), and `/view both` brings back every one. The choice is your seat's alone and lasts until you leave. A reply you hide waits on one line until Alt+4 shows it or Esc drops it, and the next reply you ask for opens again. The map and a reply take turns: showing one puts the other away. The GM's seat has a fifth panel, `⁵` prep, which Alt+5 or `/prep` opens: the GM's way to set up a game with the mouse (see [HOSTING.md](HOSTING.md#preparing-a-game)). On a player's seat Alt+5 says it's the GM's.
 
 On a Mac, Option with a digit types a symbol (`¡`) unless the terminal sends Option as Alt: Terminal's "Use Option as Meta key", iTerm2's "Esc+" for Option, Ghostty's `macos-option-as-alt`. Some terminals take Alt and a digit to switch tabs (GNOME Terminal among them); there, change that shortcut in the terminal or use `/view`.
 
@@ -71,9 +71,10 @@ Plain text is chat. Anything that starts with `/` is a command. `/help` lists th
 
 ## The mouse
 
-Click your hero's token on the map, or its row in the band, and a menu opens just above the hint row with what it can do: Move, each of its abilities, and End turn while it's its turn. At a set.world table the menu is Move, Attack, and Done on its turn. The GM can click any token; a creature's menu has its free strike too.
+Click your hero's token on the map, or its row in the band, and a menu opens just above the hint row with what it can do: Move (or Place, while a map is loaded that it isn't on yet), each of its abilities, and End turn while it's its turn. At a set.world table the menu is Move, Attack, and Done on its turn. The GM can click any token; a creature's menu has its free strike too.
 
 - **Move**, then click a square: the table sends `/move brann f5`.
+- **Place**, for a token not on the loaded map yet, then click a square: `/place brann b5`.
 - **An ability**, then click each target on the map or in the band (click one again to take it back), then **Roll**: `/pr brann Driving Blow on bandit-bruiser-1`. Roll with no target clicked uses the ability with none.
 - **Free strike** or **Attack**, then click the target: `/fs bandit-chief brann`, `/attack ada grub`.
 - **End turn** or **Done** sends `/done`.

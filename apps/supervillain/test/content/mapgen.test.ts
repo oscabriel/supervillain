@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readMapText } from "../../src/game/drawSteel/map.ts";
+import { MAP_KINDS, readMapText } from "../../src/game/drawSteel/map.ts";
 import { LEGEND } from "../../src/game/drawSteel/mekmode.ts";
-import { generateMap, MAP_KINDS, mapFileText } from "../../src/content/mapgen.ts";
+import { generateMap, mapFileText } from "../../src/content/mapgen.ts";
 
 const SEEDS = Array.from({ length: 40 }, (_, i) => i * 7919 + 1);
 

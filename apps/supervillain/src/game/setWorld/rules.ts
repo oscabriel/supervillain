@@ -27,6 +27,7 @@ import {
   distance,
   formatSquare,
   misshapen,
+  NOT_GENERATED,
   type Square,
   standable,
   terrainAt,
@@ -171,6 +172,7 @@ function cantStand(slice: SetState, square: Square, f: Fighter): string | undefi
 }
 
 function loadMap(slice: SetState, command: Extract<SetCommand, { type: "set-map" }>): Decision {
+  if (command.generate !== undefined) return refuse(NOT_GENERATED);
   if (command.id === undefined)
     return slice.map === undefined
       ? refuse("No map is loaded.")

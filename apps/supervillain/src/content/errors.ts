@@ -55,3 +55,26 @@ export class CampaignConfigInvalid extends Schema.TaggedError<CampaignConfigInva
     message: Schema.String,
   },
 ) {}
+
+/** Why a generated map couldn't be written into maps/ (`writeGeneratedMap`). */
+export const MapWriteReason = Schema.Literals([
+  "bad-id",
+  "bad-seed",
+  "exists",
+  "no-campaign",
+  "generate",
+  "write",
+]);
+export type MapWriteReason = typeof MapWriteReason.Type;
+
+/**
+ * A generated map that didn't reach maps/: an id that can't be a map's, a seed out of range, a map
+ * of that id already there, no campaign folder, a seed that made no map, or a write that failed.
+ * The CLI and the table each say it their own way, by `reason`.
+ */
+export class MapWriteFailed extends Schema.TaggedError<MapWriteFailed>()("MapWriteFailed", {
+  reason: MapWriteReason,
+  /** The map's id, its file name in maps/. */
+  id: Schema.String,
+  message: Schema.String,
+}) {}

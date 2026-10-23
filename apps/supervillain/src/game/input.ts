@@ -139,6 +139,19 @@ const entriesOf = (ruleset: Ruleset): ReadonlyArray<Entry> => [
       ["on", "off"].filter((w) => w.startsWith(partial.trim().toLowerCase())),
   },
   {
+    // The App opens the GM's prep panel itself and never sends it; it's here for /help and Tab.
+    name: "prep",
+    usage: "/prep",
+    summary:
+      "Open the prep panel: click to bring in heroes, add foes, load or generate a map, place tokens and start, each item showing the command it sends; Alt+5 shows or hides it.",
+    gmOnly: true,
+    seatOnly: true,
+    run: () => ({
+      kind: "refusal",
+      message: "/prep opens a panel on the GM's seat; this one has none.",
+    }),
+  },
+  {
     name: "quit",
     usage: "/quit",
     summary: "Leave the table.",

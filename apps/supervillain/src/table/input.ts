@@ -223,6 +223,15 @@ export function remember(s: LineState, line: string): LineState {
 }
 
 /**
+ * Puts a line a click began on the input, cursor at its end, for the rest to be typed (`/recruit `
+ * from the prep panel). Whatever was being typed goes into history first, so Up brings it back.
+ */
+export function fillLine(s: LineState, line: string): LineState {
+  const kept = s.text.trim() === "" ? s : remember(s, s.text.trim());
+  return replaced(kept, line);
+}
+
+/**
  * Puts a sent line back on the input, unless something has been typed since: after a hint that
  * asks for Enter again. History keeps it too.
  */
@@ -261,6 +270,8 @@ type Intent =
   | { readonly kind: "focus"; readonly at: string }
   /** `/mouse [on|off]`; alone, it switches. */
   | { readonly kind: "mouse"; readonly on: boolean | "toggle" }
+  /** `/prep`, on the GM's seat: opens the prep panel. */
+  | { readonly kind: "prep" }
   /** A line that is likely a slip (a bare `help` or `exit`), answered for this seat alone. */
   | { readonly kind: "hint"; readonly text: string; readonly again: boolean }
   | { readonly kind: "send"; readonly line: string };
@@ -298,11 +309,14 @@ function slipHint(line: string, mode: Mode): Intent | undefined {
   };
 }
 
+/** What a player's seat says to `/prep`: the panel is the GM's. */
+export const PREP_IS_GMS = "Only the GM prepares the game; /prep opens the GM's prep panel.";
+
 /**
- * The table runs /quit, /view and /mouse itself, and /state on the GM's seat (anyone else's goes
- * to the host, which refuses it). In name mode, a plain line is sent as `/name <line>`. A bare
- * `help`, `exit` or `quit` is answered with a hint, unless it is `asked`: the line that was just
- * hinted, sent again.
+ * The table runs /quit, /view and /mouse itself, and /state and /prep on the GM's seat (anyone
+ * else's /state goes to the host, which refuses it, and /prep is answered here). In name mode, a
+ * plain line is sent as `/name <line>`. A bare `help`, `exit` or `quit` is answered with a hint,
+ * unless it is `asked`: the line that was just hinted, sent again.
  */
 export function intentFor(line: string, mode: Mode, me = "", asked?: string): Intent {
   const word = line.split(" ", 1)[0]!.toLowerCase();
@@ -310,6 +324,8 @@ export function intentFor(line: string, mode: Mode, me = "", asked?: string): In
   if (slip !== undefined) return slip;
   if (word === "/quit") return { kind: "quit" };
   if (word === "/state" && me === GM) return { kind: "state" };
+  if (word === "/prep")
+    return me === GM ? { kind: "prep" } : { kind: "hint", text: PREP_IS_GMS, again: false };
   if (word === "/view") {
     const arg = line.slice(word.length).trim();
     if (arg === "") return { kind: "view", layout: "toggle" };

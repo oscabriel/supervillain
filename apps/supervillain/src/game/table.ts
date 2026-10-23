@@ -5,13 +5,16 @@ import {
   combatView,
   completeWho,
   drawSteel,
+  drawSteelPrep,
   type MapView,
   mapView,
   sheetText,
   tokenActions,
   withHeroes,
 } from "./drawSteel/index.ts";
+import type { MapGeneration } from "./drawSteel/map.ts";
 import { compose, type CommandOf, GM, type Refused, type StateOf } from "./module.ts";
+import type { PrepCatalog, PrepView } from "./prep.ts";
 import {
   completeFighters,
   setActions,
@@ -19,6 +22,7 @@ import {
   setMap,
   setSheet,
   setWorld,
+  setWorldPrep,
   withFighters,
 } from "./setWorld/index.ts";
 
@@ -105,6 +109,14 @@ export const actionsOf = (
 ): ReadonlyArray<TokenAction> | undefined =>
   ruleset === "set-world" ? setActions(state.sw, actor, id) : tokenActions(state.ds, actor, id);
 
+/** The GM's prep panel at a table playing `ruleset`, from the campaign's files and the state. */
+export const prepOf = (
+  state: Pick<TableState, "ds" | "sw">,
+  catalog: PrepCatalog,
+  ruleset: Ruleset,
+): PrepView =>
+  ruleset === "set-world" ? setWorldPrep(state.sw, catalog) : drawSteelPrep(state.ds, catalog);
+
 /** The /sheet text for a hero, creature or fighter, as commands name them, or why there's none. */
 export const sheetOf = (state: TableState, who: string, ruleset: Ruleset): string | Refused =>
   ruleset === "set-world" ? setSheet(state.sw, who) : sheetText(state.ds, who);
@@ -119,6 +131,24 @@ export const completeSheet = (
   ruleset === "set-world"
     ? completeFighters(state.sw, partial, actor)
     : completeWho(state.ds, partial, actor);
+
+/**
+ * The map a `/map new` asks the host to generate, at a table of either ruleset, while it hasn't
+ * been: the host writes it into maps/ and gives the command its id (`withMapId`), then loads it as
+ * it loads a typed id, so the event carries the grid and replay never generates or reads a file.
+ */
+export function mapGeneration(command: Command): MapGeneration | undefined {
+  return (command.type === "map" || command.type === "set-map") && command.grid === undefined
+    ? command.generate
+    : undefined;
+}
+
+/** A `/map new` once the host has written its map: a `/map <id>` from then on. */
+export function withMapId(command: Command, id: string): Command {
+  if (command.type !== "map" && command.type !== "set-map") return command;
+  const { generate: _, ...rest } = command;
+  return { ...rest, id };
+}
 
 /** One feed line as it is shown: the table's `FeedLine`, built here so the rules never import the table. */
 export interface FeedLine {

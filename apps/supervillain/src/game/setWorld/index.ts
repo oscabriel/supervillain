@@ -28,5 +28,5 @@ export { type SetFact, type SetNeed, setNeed, withSetFact } from "./commands.ts"
 export { SEED_MAX, SetCharacterSchema } from "./events.ts";
 export { landedDamage } from "./rules.ts";
 export { completeFighters, type SetCharacter, type SetState, speedOf } from "./state.ts";
-export { setActions, setBand, setMap, setSheet, withFighters } from "./view.ts";
+export { setActions, setBand, setMap, setSheet, setWorldPrep, withFighters } from "./view.ts";
 export { reachOf } from "./weapons.ts";

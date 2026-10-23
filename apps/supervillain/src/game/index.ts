@@ -23,7 +23,11 @@ export {
   type HostFact,
   type HostNeed,
   hostNeeds,
+  MAP_KINDS,
+  MAP_SEED_MAX,
+  type MapGeneration,
   type MapGrid,
+  type MapKind,
   mapNeed,
   mapView,
   readMapText,
@@ -41,13 +45,24 @@ export {
 } from "./setWorld/index.ts";
 export { type ActionPick, actionLine, type TokenAction } from "./actions.ts";
 export {
+  type PrepCatalog,
+  type PrepEntry,
+  type PrepItem,
+  type PrepKind,
+  type PrepSection,
+  type PrepView,
+} from "./prep.ts";
+export {
   actionsOf,
   bandOf,
   type Command,
   commands,
   commandsFor,
   DEFAULT_RULESET,
+  mapGeneration,
   mapOf,
+  prepOf,
+  withMapId,
   type Ruleset,
   RULESETS,
   type FeedLine,

@@ -1,6 +1,14 @@
 import type { CommandSpec, CommandSpecs, Refused } from "../module.ts";
 import { cleanText, lengthOf, orList, quote } from "../text.ts";
-import { type MapGrid, parseSquare, type Square } from "./map.ts";
+import {
+  completeMapArgs,
+  MAP_USAGE,
+  type MapGeneration,
+  type MapGrid,
+  parseMapArgs,
+  parseSquare,
+  type Square,
+} from "./map.ts";
 import { type HeroSheet, isTrait, type StatBlock } from "./sheets.ts";
 import {
   type ConditionName,
@@ -112,6 +120,11 @@ export type DsCommand =
       readonly id?: string;
       /** The grid, which the host reads from `maps/<id>.txt` and puts here; decide refuses without it. */
       readonly grid?: MapGrid;
+      /**
+       * `/map new`: the host generates the map into maps/ and puts its id here in place of this,
+       * then loads it as a typed id; decide refuses while it's still here.
+       */
+      readonly generate?: MapGeneration;
     }
   | { readonly type: "place"; readonly who: string; readonly at: Square }
   | {
@@ -129,7 +142,7 @@ export type DsCommand =
 /** The most a single /dmg, /heal or /temp may move. */
 const AMOUNT_MAX = 999;
 /** The most creatures one /add may bring. */
-const ADD_MAX = 40;
+export const ADD_MAX = 40;
 /** The most minions in one squad. */
 export const SQUAD_SIZE = 8;
 const BONUS_MAX = 30;
@@ -564,15 +577,16 @@ const notASquare = (typed: string): Refused => ({
 });
 
 const map: Spec<"map"> = {
-  usage: "/map <map id>|off",
-  summary: "Load a map from the campaign's maps folder, or put it away.",
+  usage: MAP_USAGE,
+  summary: "Load a map from the campaign's maps folder, generate one there, or put it away.",
   gmOnly: true,
   parse: (args) => {
-    const [id, extra] = words(args);
-    if (id === undefined || extra !== undefined) return usage(map);
-    return id.toLowerCase() === "off" ? { type: "map" } : { type: "map", id: id.toLowerCase() };
+    const parsed = parseMapArgs(args);
+    if ("refusal" in parsed) return parsed;
+    if (parsed.generate !== undefined) return { type: "map", generate: parsed.generate };
+    return parsed.id === undefined ? { type: "map" } : { type: "map", id: parsed.id };
   },
-  complete: (_slice, partial) => startingWith(["off"], partial.trim()),
+  complete: (_slice, partial) => completeMapArgs(partial),
 };
 
 const place: Spec<"place"> = {
@@ -707,7 +721,9 @@ export const commands: CommandSpecs<DsCommand, DrawSteelState> = {
 /** The map file a /map needs the host to read, `maps/<id>.txt`, if it hasn't been read yet. */
 export function mapNeed<C extends { readonly type: string }>(command: C): string | undefined {
   const c = command as unknown as DsCommand;
-  return c.type === "map" && c.id !== undefined && c.grid === undefined ? c.id : undefined;
+  return c.type === "map" && c.id !== undefined && c.grid === undefined && c.generate === undefined
+    ? c.id
+    : undefined;
 }
 
 /**

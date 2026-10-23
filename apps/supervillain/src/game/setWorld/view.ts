@@ -7,6 +7,7 @@ import type { MapToken, MapView } from "../drawSteel/mapView.ts";
 import { reachable } from "../drawSteel/movement.ts";
 import type { Combatant, CombatView } from "../drawSteel/view.ts";
 import type { Refused } from "../module.ts";
+import { mapsSection, placeSection, type PrepCatalog, type PrepView } from "../prep.ts";
 import {
   controls,
   type Fighter,
@@ -185,8 +186,9 @@ export const withFighters =
 /**
  * What `actor` may do with the fighter `id`, for the table's mouse, or undefined when they may not
  * act for it (a player for anyone but the fighter they play): Move while it stands on the map,
- * Attack, and Done while it is its turn, since `/done` ends whoever's turn it is. The rules
- * refuse what can't be done now, as they do a typed line.
+ * Place while a map is loaded that it isn't on yet, Attack, and Done while it is its turn, since
+ * `/done` ends whoever's turn it is. The rules refuse what can't be done now, as they do a typed
+ * line.
  */
 export function setActions(
   slice: SetState,
@@ -196,12 +198,40 @@ export function setActions(
   const f = findFighter(slice, id);
   if (f === undefined || !controls(actor, f)) return undefined;
   return [
-    ...(slice.map === undefined || f.at === undefined
+    ...(slice.map === undefined
       ? []
-      : [{ label: "Move", pick: "square" as const, line: `/move ${f.id}` }]),
+      : f.at === undefined
+        ? [{ label: "Place", pick: "square" as const, line: `/place ${f.id}` }]
+        : [{ label: "Move", pick: "square" as const, line: `/move ${f.id}` }]),
     { label: "Attack", pick: "target", line: `/attack ${f.id}` },
     ...(slice.fight?.turn?.id === f.id
       ? [{ label: "Done", pick: "none" as const, line: "/done" }]
       : []),
   ];
+}
+
+/** The prep panel at a set.world table: fighters, maps, placing and the fight. */
+export function setWorldPrep(slice: SetState, catalog: PrepCatalog): PrepView {
+  const party = slice.fighters.filter((f) => f.side === "party").length;
+  const foes = slice.fighters.length - party;
+  return {
+    sections: [
+      {
+        title: "Fighters",
+        items: [
+          { kind: "fill", label: "Recruit", line: "/recruit " },
+          { kind: "fill", label: "Foe", line: "/foe " },
+        ],
+        note: `${party} in the party, ${foes} ${foes === 1 ? "foe" : "foes"}`,
+      },
+      mapsSection(catalog, slice.map?.id),
+      placeSection(
+        slice.map !== undefined,
+        slice.fighters.filter((f) => f.at === undefined && !isDown(f)),
+      ),
+      slice.fight === undefined
+        ? { title: "Start", items: [{ kind: "send", label: "Start the fight", line: "/start" }] }
+        : { title: "Start", items: [], note: "the fight is on" },
+    ],
+  };
 }

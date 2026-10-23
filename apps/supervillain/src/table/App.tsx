@@ -23,6 +23,7 @@ import {
   deleteForward,
   deleteWordBack,
   emptyLine,
+  fillLine,
   historyDown,
   historyUp,
   insert,
@@ -38,6 +39,7 @@ import {
   moveLeft,
   moveRight,
   NAME_PROMPT,
+  PREP_IS_GMS,
   remember,
   restoreDraft,
   submitLine,
@@ -72,8 +74,8 @@ import {
   allHiddenParts,
   hiddenPanels,
   type Panel,
-  PANEL_KEYS,
-  PANELS,
+  panelKeys,
+  panelsOf,
   type Panels,
   marked,
   panelMark,
@@ -81,20 +83,22 @@ import {
   togglePanel,
   viewPreset,
 } from "./panels.ts";
+import { Prep } from "./Prep.tsx";
+import { type PrepAction, prepClick, type PrepCount, prepRows } from "./prep.ts";
 import { GUTTER, LABEL_ROWS, pictureRowsWanted, pictureWindow, SQUARE } from "./picture.ts";
 import { PictureMap, usePicturesShown } from "./PictureMap.tsx";
 import { color, people } from "./theme.ts";
 import type { CombatView, MapView, TableView } from "./view.ts";
 
-/** What the panel keys do, said in the hint row where it has room (from about 103 columns). */
-const PANEL_HINT = `${PANEL_KEYS} show or hide panels`;
+/** What the panel keys do (`Alt+1-4`, the GM's `Alt+1-5`), in the hint row where it has room. */
+const panelHint = (keys: string) => `${keys} show or hide panels`;
 /**
  * The keys, longest first: the first that fits is shown, beside the hidden panels the mouse offers
  * at the row's end, and none if none does. At 80 columns the second fits alone and the shorter
  * ones beside the hidden panels, so the hint row never cuts a hint at the smallest supported size.
  */
-const HINTS = [
-  `Tab completes · ↑↓ history · PgUp/PgDn scroll · ${PANEL_HINT} · /help · Ctrl-C leaves`,
+const keyHints = (keys: string) => [
+  `Tab completes · ↑↓ history · PgUp/PgDn scroll · ${panelHint(keys)} · /help · Ctrl-C leaves`,
   "Tab completes · ↑↓ history · PgUp/PgDn scroll · /help · Ctrl-C leaves",
   "Tab completes · ↑↓ history · /help · Ctrl-C leaves",
   "Tab completes · /help · Ctrl-C leaves",
@@ -105,8 +109,8 @@ const HINTS = [
  * Beside the map's reach label, the keys that matter most, longest first: the first that fits
  * beside the label is shown, and none if none does, so the label is never cut.
  */
-const MAP_HINTS = [
-  `Tab completes · /view · ${PANEL_HINT} · /help · Ctrl-C leaves`,
+const mapHints = (keys: string) => [
+  `Tab completes · /view · ${panelHint(keys)} · /help · Ctrl-C leaves`,
   "Tab completes · /view · /help · Ctrl-C leaves",
   "/view · /help",
   "",
@@ -134,6 +138,18 @@ const CONFIRM_LEAVE = "Players are still here. Ctrl-C again closes the table for
 const PAGE = 0.8;
 /** The header, hint and input rows, which never give way. */
 const FIXED_ROWS = 3;
+/**
+ * The prep panel asks for its rows up to half of what the band, the map and it share (a third
+ * while a map shows, which a Place needs a square of), and at least this, scrolling for the rest.
+ */
+const PREP_MIN = 5;
+/** While the prep panel is open and nothing else leads the hint row, longest first. */
+const PREP_HINTS = [
+  `click an item to send it · the wheel scrolls it · Alt+${panelNumber("prep")} hides it · Tab completes · /help`,
+  `click an item to send it · Alt+${panelNumber("prep")} hides it · /help`,
+  `Alt+${panelNumber("prep")} hides it`,
+  "",
+];
 /** The feed keeps at least its border and three lines, however full the band and the pane are. */
 const FEED_MIN = 5;
 /** The band never shrinks below one row inside its border. */
@@ -173,8 +189,8 @@ export function App(props: { view: TableView }) {
   const [notice, setNotice] = createSignal<string | undefined>();
   const [showDebug, setShowDebug] = createSignal(false);
   /**
-   * Which panels this seat shows (Alt+1-4, and `/view` as presets), and whether the map comes
-   * first. Never logged, and gone when the seat leaves.
+   * Which panels this seat shows (Alt+1-4, the GM's Alt+5, and `/view` as presets), and whether the
+   * map comes first. Never logged, and gone when the seat leaves.
    */
   const [panels, setPanels] = createSignal<Panels>(ALL_SHOWN);
   /**
@@ -193,6 +209,8 @@ export function App(props: { view: TableView }) {
   const [mouse, setMouse] = createSignal(true);
   /** The token whose menu is open, and the choice under way: this seat's alone, never logged. */
   const [selection, setSelection] = createSignal<Selection>();
+  /** The monster whose count the prep panel has open, and how many: the GM's seat's alone. */
+  const [prepCount, setPrepCount] = createSignal<PrepCount>();
   const renderer = useRenderer();
   /** The GM pressed Ctrl-C with players here, and the next Ctrl-C closes the table. */
   const [leaving, setLeaving] = createSignal(false);
@@ -203,6 +221,9 @@ export function App(props: { view: TableView }) {
   let feed: ScrollBoxRenderable | undefined;
   let pane: ScrollBoxRenderable | undefined;
   let debug: ScrollBoxRenderable | undefined;
+  let prepBox: ScrollBoxRenderable | undefined;
+  /** The panels this seat has: the prep panel only where the host gives it one, the GM's. */
+  const keys = panelKeys(view.prep !== undefined);
 
   const mode = () => modeFor(view.me, view.myName());
   /** A reply of several lines (a sheet, /help), which the reply pane shows. */
@@ -223,12 +244,12 @@ export function App(props: { view: TableView }) {
     if (paneOpen()) return fits(PANE_HINTS);
     if (mode() === "name") return NAME_HINT;
     const lead = reachLabel();
-    if (lead === undefined) return fits(HINTS);
+    if (lead === undefined) return fits(prepOpen() ? PREP_HINTS : keyHints(keys));
     // " · " takes three columns between the label and the keys.
     const room = width - Bun.stringWidth(lead) - 3;
     const hints = reachClipped()
       ? CLIPPED_HINTS[followed(shownMap()?.tokens ?? [])?.mine ? "mine" : "theirs"]
-      : MAP_HINTS;
+      : mapHints(keys);
     return hints.find((h) => Bun.stringWidth(h) <= room) ?? "";
   };
   /**
@@ -307,11 +328,13 @@ export function App(props: { view: TableView }) {
   }
 
   /**
-   * Shows or hides one panel for this seat, by what it sees now (Alt+1-4). The reply pane without
+   * Shows or hides one panel for this seat, by what it sees now (Alt+1-5). The reply pane without
    * a reply says so. Without a map loaded, the map's choice is kept for when one is and the seat
-   * is told, unless a reply is open: that stays as it is, since the notice would replace it.
+   * is told, unless a reply is open: that stays as it is, since the notice would replace it. A
+   * player's Alt+5 is told the prep panel is the GM's.
    */
   function toggle(panel: Panel) {
+    if (panel === "prep") return view.prep === undefined ? setNotice(PREP_IS_GMS) : showPrep();
     if (panel === "reply" && !multiline()) return void setNotice(NO_REPLY);
     if (panel === "map" && view.map?.() === undefined) {
       if (multiline()) return;
@@ -319,6 +342,22 @@ export function App(props: { view: TableView }) {
       return void setNotice(NO_MAP);
     }
     setPanels(togglePanel(panels(), panel, multiline()));
+  }
+
+  /**
+   * Alt+5 shows or hides the GM's prep panel, and `/prep` (`open`) shows it. Each time it opens it
+   * reads the campaign's files again, since they change between sessions; a folder it can't read
+   * is said in the notice.
+   */
+  function showPrep(open = false) {
+    const prep = view.prep;
+    if (prep === undefined) return;
+    const shown = !panels().prep || open;
+    setPanels({ ...panels(), prep: shown });
+    if (!shown) return void setPrepCount(undefined);
+    void prep.reload().then((problem) => {
+      if (problem !== undefined) setNotice(problem);
+    });
   }
 
   /**
@@ -363,6 +402,7 @@ export function App(props: { view: TableView }) {
       return setLine(restoreDraft(line(), text));
     }
     if (intent.kind === "mouse") return switchMouse(intent.on);
+    if (intent.kind === "prep") return showPrep(true);
     // A refused line isn't given back: the next one typed would run into it. Up brings it back.
     return deliver(intent.line);
   }
@@ -392,6 +432,7 @@ export function App(props: { view: TableView }) {
   function escape() {
     if (line().completion) return edit(cancelCompletion);
     if (selection() !== undefined) return void setSelection(undefined);
+    if (prepCount() !== undefined) return void setPrepCount(undefined);
     if (notice() !== undefined) return void setNotice(undefined);
     if (showDebug()) setShowDebug(false);
   }
@@ -481,10 +522,61 @@ export function App(props: { view: TableView }) {
     }
   }
 
-  /** How the menu names a token: its name on the map or in the band, else its id. */
+  /** The prep panel, while it is on screen: the GM's, opened, and not below the smallest seat. */
+  const prepOpen = () => view.prep !== undefined && panels().prep && !small();
+  const prepView = () => (prepOpen() ? view.prep?.view() : undefined);
+  /** The token a Place from the prep panel waits on a square for. */
+  const placing = () => {
+    const s = selection();
+    return s?.chosen?.label === "Place" ? s.id : undefined;
+  };
+  const prepLines = createMemo(() => {
+    const v = prepView();
+    // The border, the padding and the scroll bar take four columns.
+    return v === undefined ? [] : prepRows(v, size().width - 4, prepCount(), placing());
+  });
+
+  /**
+   * A click in the prep panel, as `prepClick` reads it: a line sent as typed lines are, a line put
+   * on the input for the GM to finish, a count changed, or a Place waiting for a square on the
+   * map, through the same selection a token's Place in its menu makes.
+   */
+  function pickPrep(action: PrepAction) {
+    if (!mouse()) return;
+    const outcome = prepClick(view.prep?.view(), action, prepCount());
+    switch (outcome.kind) {
+      case "send":
+        setPrepCount(undefined);
+        return sendClicked(outcome.line);
+      case "fill":
+        setPrepCount(undefined);
+        return edit((s) => fillLine(s, outcome.line));
+      case "count":
+        return void setPrepCount(outcome.count);
+      case "place": {
+        const place = view.actions?.(outcome.id)?.find((a) => a.line === outcome.line);
+        if (place === undefined) return;
+        setPrepCount(undefined);
+        setSelection({ id: outcome.id, chosen: place, picked: [] });
+        // The square is clicked on the map, so it comes back if this seat had put it away.
+        if (multiline()) setNotice(undefined);
+        if (!panels().map) setPanels({ ...panels(), map: true });
+        return;
+      }
+      case "none":
+        return;
+    }
+  }
+
+  /** How the menu names a token: its name on the map, in the band or in Place, else its id. */
   const nameOf = (id: string) =>
     view.map?.()?.tokens.find((t) => t.id === id)?.name ??
     view.combat?.()?.combatants.find((c) => c.id === id)?.name ??
+    // Off the map and out of the band, as one the prep panel's Place offers.
+    view.prep
+      ?.view()
+      ?.sections.flatMap((s) => s.items)
+      .find((i) => i.kind === "place" && i.id === id)?.label ??
     id;
   /** How the menu names a target: its mark, as typed, else its id. */
   const markOf = (id: string) =>
@@ -512,11 +604,50 @@ export function App(props: { view: TableView }) {
     return m === undefined ? [] : menuRows(m, size().width - 2);
   });
 
+  /**
+   * The prep panel's rows: all it wants up to half of what the fixed rows, the feed's five, a
+   * notice and the menu leave (a third beside a map; at least PREP_MIN), always leaving the band
+   * its least, and beside a map the band's living rows and the map's MAP_FLOOR, so a square stays
+   * there to click. With too little for that it keeps one line, and scrolls, unless a Place waits
+   * for a square: then it steps aside until the square is clicked.
+   */
+  const prepHeight = createMemo(() => {
+    if (!prepOpen()) return 0;
+    const shown = panels();
+    const base =
+      size().height -
+      FIXED_ROWS -
+      (shown.feed ? FEED_MIN : 0) -
+      (noticeLine() ? 1 : 0) -
+      menuLines().length;
+    const wanted = Math.max(1, prepLines().length) + 2;
+    const map = shownMap();
+    const most = Math.max(PREP_MIN, Math.floor(base / (map === undefined ? 2 : 3)));
+    const band = !shown.band
+      ? 0
+      : map === undefined
+        ? BAND_MIN
+        : shown.mapFirst
+          ? Math.min(bandRows(view.combat?.(), base).wanted, BAND_FOLDED)
+          : bandRows(view.combat?.(), base).keep;
+    const others = band + (map === undefined ? 0 : MAP_FLOOR);
+    if (map !== undefined && base - others < 3 && placing() !== undefined) return 0;
+    return Math.max(3, Math.min(wanted, most, base - others));
+  });
+
   let paneBox: BoxRenderable | undefined;
   let debugBox: BoxRenderable | undefined;
 
   function scroll(direction: 1 | -1) {
-    const target = paneOpen() ? pane : showDebug() ? debug : panels().feed ? feed : undefined;
+    const target = paneOpen()
+      ? pane
+      : showDebug()
+        ? debug
+        : panels().feed
+          ? feed
+          : prepOpen()
+            ? prepBox
+            : undefined;
     target?.scrollBy(direction * PAGE, "viewport");
   }
 
@@ -592,8 +723,15 @@ export function App(props: { view: TableView }) {
     const shown = panels();
     const combat = view.combat?.();
     const { room, cap } = roomFor(shown, noticeLine());
+    // Half the screen beside the feed, but never more than the room (the prep panel takes some).
     const paneWanted = paneOpen()
-      ? Math.max(3, Math.min(paneRows(notice() ?? "") + 2, shown.feed ? Math.floor(h / 2) : room))
+      ? Math.max(
+          3,
+          Math.min(
+            paneRows(notice() ?? "") + 2,
+            shown.feed ? Math.min(Math.floor(h / 2), room - (shown.band ? BAND_MIN : 0)) : room,
+          ),
+        )
       : 0;
     if (small())
       return {
@@ -627,7 +765,12 @@ export function App(props: { view: TableView }) {
   function roomFor(shown: Panels, notice: boolean) {
     const h = size().height;
     const room =
-      h - FIXED_ROWS - (shown.feed ? FEED_MIN : 0) - (notice ? 1 : 0) - menuLines().length;
+      h -
+      FIXED_ROWS -
+      (shown.feed ? FEED_MIN : 0) -
+      (notice ? 1 : 0) -
+      menuLines().length -
+      prepHeight();
     const cap = shown.feed ? Math.floor(view.combat?.()?.active ? (h * 2) / 3 : h / 2) : room;
     return { room, cap };
   }
@@ -691,10 +834,11 @@ export function App(props: { view: TableView }) {
     mapHeight() === 0 &&
     !panels().feed &&
     !paneOpen() &&
+    !prepOpen() &&
     !showDebug();
   /** The panels a key would bring back now: the map only once one is loaded, a reply only if open. */
   const available = () =>
-    PANELS.filter(
+    panelsOf(view.prep !== undefined).filter(
       (p) => (p !== "map" || view.map?.() !== undefined) && (p !== "reply" || multiline()),
     );
 
@@ -781,7 +925,7 @@ export function App(props: { view: TableView }) {
         </Show>
         <Show when={nothingShown()}>
           <box flexGrow={1} paddingLeft={1} paddingRight={1} flexDirection="row">
-            <For each={allHiddenParts(available(), size().width - 2)}>
+            <For each={allHiddenParts(available(), size().width - 2, keys)}>
               {(part) => (
                 <text
                   fg={color.notice}
@@ -873,6 +1017,18 @@ export function App(props: { view: TableView }) {
             </box>
           </Show>
         )}
+      </Show>
+
+      <Show when={prepHeight() > 0}>
+        <Prep
+          rows={prepLines()}
+          height={prepHeight()}
+          width={size().width}
+          mark={panelMark("prep")}
+          onPick={pickPrep}
+          onTitle={() => toggle("prep")}
+          ref={(el) => (prepBox = el)}
+        />
       </Show>
 
       <Show when={!rowFills()}>

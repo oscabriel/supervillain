@@ -3,6 +3,7 @@ import type {
   CombatView,
   FeedLine,
   MapView,
+  PrepView,
   Present,
   TableView,
   TokenAction,
@@ -27,6 +28,12 @@ export interface FakeViewOptions {
   readonly map?: MapView | null;
   /** What the seat may do with a token, for the mouse; when given, the view has `actions`. */
   readonly actions?: (id: string) => ReadonlyArray<TokenAction> | undefined;
+  /**
+   * The GM's prep panel; when given, the view has `prep` (null: nothing read yet). Its reload
+   * resolves to `prepProblem`.
+   */
+  readonly prep?: PrepView | null;
+  readonly prepProblem?: string;
 }
 
 /** A TableView backed by plain signals, recording what the App asks of it. */
@@ -37,6 +44,8 @@ export function fakeView(options: FakeViewOptions = {}) {
   const [combat, setCombat] = createSignal<CombatView | undefined>(options.combat ?? undefined);
   const [map, setMap] = createSignal<MapView | undefined>(options.map ?? undefined);
   const [alert, setAlert] = createSignal<string | undefined>(options.alert ?? undefined);
+  const [prep, setPrep] = createSignal<PrepView | undefined>(options.prep ?? undefined);
+  let reloads = 0;
   const submitted: string[] = [];
   const completed: string[] = [];
   let left = 0;
@@ -63,6 +72,17 @@ export function fakeView(options: FakeViewOptions = {}) {
     ...(options.map === undefined ? {} : { map }),
     ...(options.alert === undefined ? {} : { alert }),
     ...(options.actions === undefined ? {} : { actions: options.actions }),
+    ...(options.prep === undefined
+      ? {}
+      : {
+          prep: {
+            view: prep,
+            reload: () => {
+              reloads++;
+              return Promise.resolve(options.prepProblem);
+            },
+          },
+        }),
   };
   return {
     view,
@@ -75,6 +95,8 @@ export function fakeView(options: FakeViewOptions = {}) {
     setCombat,
     setMap,
     setAlert,
+    setPrep,
+    reloads: () => reloads,
   };
 }
 
