@@ -3,7 +3,8 @@
 // as the SSH client. No trust comes from the lines: the relay pins each room's GM host key
 // (rooms.json, first link claims), and the GM pins the relay's client key (--relay-key or
 // <campaign>/relay_known, first link stores).
-import type { Socket } from "node:net";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import type { Duplex } from "node:stream";
 
 const PROTOCOL_VERSION = 1;
 
@@ -98,18 +99,91 @@ export const closedRoomMessage = (room: string): string =>
 export const JOIN_HINT =
   "To join a table, put its room's name before the @ (ssh <room>@…). Your GM has it.";
 
+// ---- The lobby's question on a GM link: does this table know this player's key?
+//
+// A player who comes to the relay with a key and no room is shown the open tables that know their
+// key. The relay asks each linked host on its link: it opens a session for the KNOWS_SUBSYSTEM and
+// writes one line, a fresh nonce and the HMAC-SHA256, keyed by the nonce, of the player's actor
+// (`key:SHA256:…`). The host checks that against the keys it knows and answers `yes <seated>` or
+// `no`. So a host can only test the question against keys it already has (its log's, or public
+// keys gathered elsewhere), and the same key looks different on every ask.
+//
+// Versions: the subsystem's name carries this one. A host built before it refuses the subsystem,
+// which the relay takes as no (and stops asking on that link), and a relay built before it never
+// asks. A later question takes a new name, which a host that doesn't serve it refuses the same way.
+
+/** The subsystem a relay asks a GM's host for, on the link, with the lobby's question. */
+export const KNOWS_SUBSYSTEM = "knows-1@supervillain.sh";
+
+/** The longest answer a host gives: `yes ` and a count, or `no`. */
+export const MAX_KNOWS_ANSWER_BYTES = 16;
+
+/** How many random bytes a query's nonce is. */
+export const KNOWS_NONCE_BYTES = 16;
+const B64URL = (n: number) => new RegExp(`^[A-Za-z0-9_-]{${n}}$`);
+const NONCE = B64URL(22);
+const MAC = B64URL(43);
+
+const macOf = (nonce: Buffer, actor: string) =>
+  createHmac("sha256", nonce).update(actor).digest("base64url");
+
+export interface KnowsQuery {
+  readonly nonce: string;
+  readonly mac: string;
+}
+
+/** The relay's line for `actor`, with a fresh random nonce: `<nonce> <mac>\n`, 67 bytes. */
+export const knowsQueryLine = (actor: string, nonce: Uint8Array): string => {
+  if (nonce.length !== KNOWS_NONCE_BYTES) throw new Error(`a nonce is ${KNOWS_NONCE_BYTES} bytes`);
+  const bytes = Buffer.from(nonce);
+  return `${bytes.toString("base64url")} ${macOf(bytes, actor)}\n`;
+};
+
+/** Parses the relay's line, without its `\n`. Strict: one space, the exact lengths. */
+export const parseKnowsQuery = (line: string): KnowsQuery | undefined => {
+  const [nonce, mac, ...rest] = line.split(" ");
+  if (rest.length > 0 || nonce === undefined || mac === undefined) return undefined;
+  return NONCE.test(nonce) && MAC.test(mac) ? { nonce, mac } : undefined;
+};
+
+/** The key actor among `actors` the query asks about, if it is one of them. Guests never match. */
+export const knownActor = (query: KnowsQuery, actors: Iterable<string>): string | undefined => {
+  const nonce = Buffer.from(query.nonce, "base64url");
+  const asked = Buffer.from(query.mac, "base64url");
+  for (const actor of actors) {
+    if (!actor.startsWith("key:")) continue;
+    if (timingSafeEqual(Buffer.from(macOf(nonce, actor), "base64url"), asked)) return actor;
+  }
+  return undefined;
+};
+
+/** What a host says: whether it knows the key, and if so how many are seated now. */
+export type KnowsAnswer =
+  | { readonly known: false }
+  | { readonly known: true; readonly seated: number };
+
+/** The host's answer: `yes <seated>\n` or `no\n`. */
+export const knowsAnswerLine = (answer: KnowsAnswer): string =>
+  answer.known ? `yes ${Math.max(0, Math.min(9999, Math.floor(answer.seated)))}\n` : "no\n";
+
+/** Reads what a host said. Anything but a well-formed yes is a no. */
+export const parseKnowsAnswer = (text: string): KnowsAnswer => {
+  const match = /^yes (\d{1,4})\n?$/.exec(text);
+  return match ? { known: true, seated: Number(match[1]) } : { known: false };
+};
+
 /** What a seated player hears when the GM's link drops. */
 export const TABLE_CLOSED_MESSAGE = "The table closed.";
 
 export class LineError extends Error {}
 
 /**
- * Reads one `\n`-terminated line from a socket and leaves the socket paused, with any bytes after
- * the line pushed back, so the SSH that follows reads from the very next byte. ssh2 resumes the
- * socket itself once its reader is attached; resuming it here would lose bytes.
- * Fails on a line longer than `MAX_LINE_BYTES`, a timeout, or the socket ending first.
+ * Reads one `\n`-terminated line from a socket (or an SSH channel) and leaves it paused, with any
+ * bytes after the line pushed back, so the SSH that follows reads from the very next byte. ssh2
+ * resumes the socket itself once its reader is attached; resuming it here would lose bytes.
+ * Fails on a line longer than `MAX_LINE_BYTES`, a timeout, or the stream ending first.
  */
-export const readLine = (socket: Socket, timeoutMs: number = LINE_TIMEOUT_MS): Promise<string> =>
+export const readLine = (socket: Duplex, timeoutMs: number = LINE_TIMEOUT_MS): Promise<string> =>
   new Promise<string>((resolve, reject) => {
     let buffered: Buffer = Buffer.alloc(0);
     const done = () => {

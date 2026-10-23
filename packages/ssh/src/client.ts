@@ -44,7 +44,10 @@ export interface ClientSession {
 export interface ClientLink {
   /** The server's host key, as `verifyHostKey` accepted it. */
   readonly hostKeyFingerprint: string;
-  /** Opens a session: env requests in the order given, then the pty if any, then shell or exec. */
+  /**
+   * Opens a session: env requests in the order given, then the pty if any, then shell or exec. A
+   * subsystem takes neither env nor pty. Refused, it rejects with an Error.
+   */
   readonly open: (
     request: RawRequest,
     env: Readonly<Record<string, string>>,
@@ -120,7 +123,8 @@ export const connectClient = (
             const done = (err: Error | undefined, channel: ClientChannel) =>
               err ? reject(err) : resolve(session(channel));
             try {
-              if (request.kind === "shell")
+              if (request.kind === "subsystem") client.subsys(request.name, done);
+              else if (request.kind === "shell")
                 client.shell(
                   pty ? { ...pty, width: 0, height: 0 } : false,
                   { env: { ...env } },

@@ -88,6 +88,7 @@ If the port is taken, by another table say, `host` says so and stops: `port 2222
 | `--relay-key SHA256:…` | The relay key to trust, instead of the one in `relay_known` |
 | `--relay-player-port 2222` | The relay's player port, for the join command you're shown |
 | `--relay-host-key SHA256:…` | The relay's host key, shown with that join command so you can pass it on to players |
+| `--no-lobby` | Keeps the table off the relay's lobby; see [The lobby](#the-lobby) |
 
 The campaign folder is yours alone (mode 700). Beside `campaign.yaml` and what you put in it, the host writes these files into it:
 
@@ -250,7 +251,7 @@ sudo ufw enable
 
 Open the same ports in your provider's firewall too, if it has one.
 
-To let players type `ssh <room>@table.example.com` without `-p`, the player port must be 22. That means first moving the VPS's own sshd to another port (and allowing that port), then running the relay with `--player-port 22`, and in the unit `AmbientCapabilities=CAP_NET_BIND_SERVICE` with `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`. GMs then pass `--relay-player-port 22` to their hosts, so the join command they're shown has no `-p`. Leave it on 2222 until you're sure of the rest. On port 22, someone who types a bare `ssh table.example.com` arrives with their own username, and scanners try `root` and the like all day: the relay keeps names like those (`root`, `admin`, `ubuntu`, `pi`, `git`, `lobby`, `help` and others) from ever being a room, and answers them with how to join instead.
+To let players type `ssh <room>@table.example.com` without `-p`, the player port must be 22. That means first moving the VPS's own sshd to another port (and allowing that port), then running the relay with `--player-port 22`, and in the unit `AmbientCapabilities=CAP_NET_BIND_SERVICE` with `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`. GMs then pass `--relay-player-port 22` to their hosts, so the join command they're shown has no `-p`. Leave it on 2222 until you're sure of the rest. On port 22, someone who types a bare `ssh table.example.com` arrives with their own username, and scanners try `root` and the like all day: the relay keeps names like those (`root`, `admin`, `ubuntu`, `pi`, `git`, `lobby`, `help` and others) from ever being a room, and answers them with how to join instead, or with [the lobby](#the-lobby) for a key an open table knows.
 
 ### Pin the relay's key
 
@@ -270,6 +271,20 @@ While the link isn't up, the header at the top of your seat says so beside the r
 The host still listens on `--port` and `--bind` as before, so local players can connect directly while remote ones come through the relay. Room names on a relay are 1 to 32 characters of `a-z`, `0-9` and `-`, starting with a letter, and not one of the names the relay keeps (`root`, `admin`, `ubuntu`, `pi`, `git`, `lobby`, `help` and the like; the host says so). Pass `--room` if your folder's name doesn't fit.
 
 Players run `ssh -p 2222 first-fight@table.example.com`. The first time, ssh shows them the relay's host key, not your table's, so give them the relay's fingerprint (`host key SHA256:… (what players' ssh sees)` in its journal). Pass it to your host with `--relay-host-key` and it's printed with the join command, in your `/help` and in `host.log`; without it, the host says to ask whoever runs the relay. Your table's own host key is for players who connect directly, and all three say so. If your machine is off, they're told `The table first-fight isn't open right now.` A room nobody has linked is `There's no table called first-fight here.` If your host stops or its link drops while they're seated, they're told `The GM closed the table.` or `The table closed.`, and can connect again once your host is back.
+
+### The lobby
+
+A player who connects to the relay with a key but no room (`ssh -p 2222 lobby@table.example.com`, or a bare `ssh` whose username names no table) is shown the open tables that know their key, and picks one. They then sit down exactly as if they had typed its room. For that, the relay asks every host linked now, over its link, whether it knows the player's key. Your host says yes if the key has an event in your log (it has sat at your table and done something there) or has a seat open now, and adds how many are seated. A host that doesn't answer within 2 seconds counts as no. Guests are never shown a list, and neither is a key no open table knows: they get the usual join hint.
+
+What it reveals:
+
+- To a player: the room name and how many are seated, for tables that are open now and already know their key. A table that doesn't know them is never named.
+- To every linked host: that someone looked, and when. The relay never sends the key: it sends a fresh random nonce and a MAC of the key under it, which a host can only check against keys it already has. Your host checks the keys in its log, so it learns which of its own players looked (`lobby: the relay listed this table for key:SHA256:…` in `host.log`) and nothing about anyone else. A host changed to check a list of public keys gathered elsewhere (GitHub publishes everyone's) could tell whether one of those looked.
+- To the relay: which tables know which keys. It already sees every player's key and room as it seats them.
+
+So a player you'd rather not see again learns your table is open, and its room name if you changed it. To keep your table off the list, start the host with `--no-lobby`: it then answers every question no, and players must type the room's name. The host says which it is when it starts (`its lobby lists this table …` or `its lobby never lists this table`). A host from before the lobby refuses the question, which the relay takes as no.
+
+Without a relay, the username doesn't matter: a host serves one table, so `ssh -p 2222 table.example.com` with any name sits down at it.
 
 ### Room claims
 

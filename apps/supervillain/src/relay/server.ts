@@ -1,6 +1,8 @@
 // `supervillain relay`: players SSH in on one port, GMs' hosts dial in on another, and the relay
-// carries each player's session as a channel on their room's GM link. It renders nothing and keeps
-// nothing but rooms.json and its two keys. See protocol.ts for the link and ASSESSMENT §6 for why.
+// carries each player's session as a channel on their room's GM link. It renders nothing (its
+// lobby is a few lines of plain text) and keeps nothing but rooms.json and its two keys. See
+// protocol.ts for the link and ASSESSMENT §6 for why.
+import { randomBytes } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import {
@@ -28,9 +30,14 @@ import {
   isReservedRoom,
   isRoomName,
   JOIN_HINT,
+  KNOWS_NONCE_BYTES,
+  KNOWS_SUBSYSTEM,
+  knowsQueryLine,
   LINE_TIMEOUT_MS,
+  MAX_KNOWS_ANSWER_BYTES,
   OK_LINE,
   parseHello,
+  parseKnowsAnswer,
   RELAY_USERNAME,
   RELAYED_ACTOR_ENV,
   RELAYED_CLIENT_ENV,
@@ -107,6 +114,12 @@ export interface RelayOptions {
    */
   readonly sessionsPerRoom?: number;
   readonly gm?: GmLimits;
+  readonly lobby?: {
+    /** How long the lobby waits for linked hosts to say whether they know a player's key. Default 2 s. */
+    readonly deadlineMs?: number;
+    /** How long a player may sit at the lobby's prompt without typing. Default 60 s. */
+    readonly idleMs?: number;
+  };
 }
 
 export interface RelayInfo {
@@ -144,6 +157,13 @@ const GM_DEFAULTS = {
   keepaliveMs: 15_000,
   keepaliveCount: 3,
 };
+/** How long the lobby waits for hosts' answers, all of them together. */
+const LOBBY_DEADLINE_MS = 2000;
+/** Hosts the lobby asks at once for one player. */
+const LOBBY_CONCURRENCY = 16;
+/** Lobby questions one link carries at once; past it, that table counts as not knowing the key. */
+const QUESTIONS_PER_LINK = 4;
+const LOBBY_IDLE_MS = 60_000;
 /** How long a GM's host has to open a player's channel before the player is turned away. */
 const SEAT_TIMEOUT = "10 seconds";
 const SHUTDOWN_NOTICE = "The relay is shutting down.";
@@ -197,7 +217,123 @@ interface GmLink {
   alive: boolean;
   /** Players' sessions on it now. */
   sessions: number;
+  /** Whether its host may answer the lobby's question: until it refuses one, as older hosts do. */
+  knows: boolean;
+  /** Lobby questions on it now. */
+  asking: number;
 }
+
+/** An open table that knows a player's key, as the lobby lists it. */
+export interface LobbyTable {
+  readonly room: string;
+  readonly seated: number;
+}
+
+const tableLabel = (table: LobbyTable) => `${table.room} (${table.seated} seated)`;
+
+/**
+ * The lobby for a session without a terminal: the tables, and how to join one, since there's
+ * no prompt to answer. `before` is a line to say first.
+ */
+export const lobbyText = (before: string | undefined, tables: ReadonlyArray<LobbyTable>): string =>
+  [
+    ...(before === undefined ? [] : [before]),
+    `Your table${tables.length === 1 ? "" : "s"} open now: ${tables.map(tableLabel).join(", ")}.`,
+    `Join one with its name before the @, as you came here: ssh ${tables[0]!.room}@…`,
+  ].join("\n");
+
+/** The lobby's list, numbered for the prompt. */
+const lobbyMenu = (before: string | undefined, tables: ReadonlyArray<LobbyTable>): string =>
+  [
+    ...(before === undefined ? [] : [before]),
+    `Your table${tables.length === 1 ? "" : "s"} open now:`,
+    ...tables.map((table, i) => `  ${i + 1}  ${tableLabel(table)}`),
+  ].join("\n");
+
+const lobbyPrompt = (rooms: ReadonlyArray<string>) =>
+  rooms.length === 1
+    ? `Press Enter to join ${rooms[0]}, or Ctrl-C to leave: `
+    : `Pick a table (1-${rooms.length}), or Ctrl-C to leave: `;
+
+type Picked = { readonly room: string } | "left" | "idle";
+
+/**
+ * Reads the player's pick at the lobby's prompt, from their raw terminal, echoing as it goes:
+ * digits, backspace, Enter (alone, the only table); Ctrl-C, Ctrl-D or EOF leave; escape
+ * sequences (arrows, say) are dropped. The stream is left paused, with whatever followed Enter
+ * put back, for the table to read.
+ */
+const pickTable = (session: RawSession, rooms: ReadonlyArray<string>, idleMs: number) =>
+  Effect.callback<Picked>((resume) => {
+    const { stream } = session;
+    let typed = "";
+    /** Inside an escape sequence: just after ESC, or in its body until a final byte. */
+    let escape: "no" | "esc" | "body" = "no";
+    /** Whether the last byte was a CR: an LF just after it is the same Enter. */
+    let afterCr = false;
+    let idle = setTimeout(() => finish("idle"), idleMs);
+    const stop = () => {
+      clearTimeout(idle);
+      stream.removeListener("data", onData);
+      stream.removeListener("end", onEnd);
+    };
+    const finish = (picked: Picked, rest?: Buffer) => {
+      stop();
+      stream.pause();
+      if (rest !== undefined && rest.length > 0) stream.unshift(rest);
+      resume(Effect.succeed(picked));
+    };
+    const onData = (chunk: Buffer) => {
+      clearTimeout(idle);
+      idle = setTimeout(() => finish("idle"), idleMs);
+      for (let i = 0; i < chunk.length; i++) {
+        const byte = chunk[i]!;
+        const lfOfCrLf = byte === 0x0a && afterCr;
+        afterCr = byte === 0x0d;
+        // Ctrl-C and Ctrl-D leave, even in the middle of an escape sequence.
+        if (byte === 0x03 || byte === 0x04) return finish("left");
+        if (escape === "esc") {
+          // ESC [ and ESC O start a sequence; after a lone Esc, the next key counts as itself.
+          if (byte === 0x5b || byte === 0x4f) {
+            escape = "body";
+            continue;
+          }
+          escape = "no";
+        } else if (escape === "body") {
+          if (byte >= 0x40 && byte <= 0x7e) escape = "no";
+          continue;
+        }
+        if (lfOfCrLf) continue;
+        if (byte === 0x1b) escape = "esc";
+        else if (byte === 0x7f || byte === 0x08) {
+          if (typed === "") continue;
+          typed = typed.slice(0, -1);
+          stream.write("\b \b");
+        } else if (byte === 0x0d || byte === 0x0a) {
+          const n = typed === "" && rooms.length === 1 ? 1 : Number(typed);
+          if (typed !== "" || rooms.length === 1) {
+            if (Number.isInteger(n) && n >= 1 && n <= rooms.length) {
+              stream.write("\r\n");
+              // A terminal that sends CR LF for Enter: the LF was part of it.
+              const next = byte === 0x0d && chunk[i + 1] === 0x0a ? i + 2 : i + 1;
+              return finish({ room: rooms[n - 1]! }, chunk.subarray(next));
+            }
+            stream.write(`\r\nThere's no ${typed} on the list.`);
+          }
+          typed = "";
+          stream.write(`\r\n${lobbyPrompt(rooms)}`);
+        } else if (byte >= 0x30 && byte <= 0x39 && typed.length < 3) {
+          typed += String.fromCharCode(byte);
+          stream.write(String.fromCharCode(byte));
+        }
+      }
+    };
+    const onEnd = () => finish("left");
+    stream.write(lobbyPrompt(rooms));
+    stream.on("data", onData);
+    stream.once("end", onEnd);
+    return Effect.sync(stop);
+  });
 
 const listen = (server: Server, port: number, host: string) =>
   Effect.callback<number, RelayError>((resume) => {
@@ -220,6 +356,8 @@ const make = (
     const roomsFile = join(options.dir, "rooms.json");
     const gmLimits = { ...GM_DEFAULTS, ...options.gm };
     const sessionsPerRoom = options.sessionsPerRoom ?? SESSIONS_PER_ROOM;
+    const lobbyDeadlineMs = options.lobby?.deadlineMs ?? LOBBY_DEADLINE_MS;
+    const lobbyIdleMs = options.lobby?.idleMs ?? LOBBY_IDLE_MS;
     // Whoever can write to the folder can swap rooms.json, and take every room.
     yield* checkRelayDir(options.dir);
     // A damaged registry stops the relay here, before it could hand a claimed room to anyone.
@@ -338,7 +476,7 @@ const make = (
           );
         if (claimed) yield* Effect.logInfo(`room ${room}: claimed by GM host key ${proven}`);
 
-        const link: GmLink = { room, client, alive: true, sessions: 0 };
+        const link: GmLink = { room, client, alive: true, sessions: 0, knows: true, asking: 0 };
         const old = links.get(room);
         links.set(room, link);
         pending.delete(socket);
@@ -503,17 +641,17 @@ const make = (
         }),
     );
 
-    // ---- The players' side: our SSH server, taking each session as bytes to forward.
-
-    const sessionAllowed = rateLimiter(options.sessionRate ?? SESSION_RATE);
-
-    /** Opens the player's channel on the link; one that comes too late is closed. */
-    const seat = (link: GmLink, session: RawSession, env: Record<string, string>) =>
+    /** Opens the player's channel on the link, at its terminal's size now; one that comes too late is closed. */
+    const seat = (
+      link: GmLink,
+      session: RawSession,
+      env: Record<string, string>,
+      size: { readonly cols: number; readonly rows: number },
+    ) =>
       Effect.acquireRelease(
         Effect.callback<ClientSession, Error>((resume) => {
           let cancelled = false;
-          const { info } = session;
-          const pty = session.pty ? { term: info.term, cols: info.cols, rows: info.rows } : false;
+          const pty = session.pty ? { term: session.info.term, ...size } : false;
           link.client.open(session.request, env, pty).then(
             (opened) => (cancelled ? opened.close() : resume(Effect.succeed(opened))),
             (e: unknown) => resume(Effect.fail(e instanceof Error ? e : new Error(String(e)))),
@@ -525,36 +663,171 @@ const make = (
         (opened) => Effect.sync(() => opened.close()),
       );
 
+    // ---- The lobby: a player with a key and no room is shown the open tables that know the key.
+
+    /**
+     * Asks one linked host whether it knows `actor`, on its link: yes with how many are seated, or
+     * undefined for no. A host that refuses the question is an older build: it isn't asked again
+     * on that link. A link already carrying its most questions isn't asked, and counts as no.
+     * A question counts against its link until it's over and its channel's open has settled, so
+     * opens a frozen host never answers, given up on at the deadline, still fill the link.
+     */
+    const ask = (link: GmLink, actor: string) =>
+      Effect.gen(function* () {
+        if (!link.alive || !link.knows || link.asking >= QUESTIONS_PER_LINK) return undefined;
+        link.asking++;
+        let held = 2;
+        const done = () => {
+          if (--held === 0) link.asking--;
+        };
+        yield* Effect.addFinalizer(() => Effect.sync(done));
+        const opened = yield* Effect.acquireRelease(
+          Effect.callback<ClientSession | "refused" | undefined>((resume) => {
+            let cancelled = false;
+            link.client.open({ kind: "subsystem", name: KNOWS_SUBSYSTEM }, {}, false).then(
+              (channel) => {
+                done();
+                if (cancelled) channel.close();
+                else resume(Effect.succeed(channel));
+              },
+              (e: unknown) => {
+                done();
+                resume(
+                  Effect.succeed(
+                    messageOf(e).startsWith("Unable to start subsystem") ? "refused" : undefined,
+                  ),
+                );
+              },
+            );
+            return Effect.sync(() => {
+              cancelled = true;
+            });
+          }),
+          (channel) => Effect.sync(() => typeof channel === "object" && channel.close()),
+          // The deadline must cut a host that never answers the open, not wait it out.
+          { interruptible: true },
+        );
+        if (opened === "refused") {
+          if (link.knows)
+            yield* Effect.logInfo(`room ${link.room}: its host doesn't answer the lobby (older)`);
+          link.knows = false;
+          return undefined;
+        }
+        if (opened === undefined) return undefined;
+        opened.stderr.resume();
+        opened.stream.end(knowsQueryLine(actor, randomBytes(KNOWS_NONCE_BYTES)));
+        const said = yield* Effect.callback<string>((resume) => {
+          let text = "";
+          opened.stream.on("data", (chunk: Buffer) => {
+            text += chunk.toString("latin1");
+            if (text.length > MAX_KNOWS_ANSWER_BYTES) opened.close();
+          });
+          void opened.ended.then(() => resume(Effect.succeed(text)));
+        });
+        const answer = parseKnowsAnswer(said);
+        return answer.known ? { room: link.room, seated: answer.seated } : undefined;
+      }).pipe(Effect.scoped);
+
+    /**
+     * The open tables that know `actor`, by room name: every linked host is asked, a few at a
+     * time, each with its own nonce, and whoever hasn't answered by the deadline counts as no.
+     */
+    const tablesFor = (actor: string) =>
+      Effect.gen(function* () {
+        const asked = [...links.values()].filter((l) => l.alive);
+        const found: Array<LobbyTable> = [];
+        if (asked.length === 0) return found;
+        yield* Effect.forEach(
+          asked,
+          (link) =>
+            ask(link, actor).pipe(
+              Effect.map((table) => void (table && found.push(table))),
+              Effect.catchCause(() => Effect.void),
+            ),
+          { concurrency: LOBBY_CONCURRENCY, discard: true },
+        ).pipe(Effect.timeoutOption(lobbyDeadlineMs));
+        return found.sort((a, b) => (a.room < b.room ? -1 : 1));
+      });
+
+    // ---- The players' side: our SSH server, taking each session as bytes to forward.
+
+    const sessionAllowed = rateLimiter(options.sessionRate ?? SESSION_RATE);
+
     const bridge = (session: RawSession) =>
       Effect.gen(function* () {
         const { info } = session;
         // Room names are lowercase; `ssh Den@relay` means den.
-        const room = info.user.toLowerCase();
+        const asked = info.user.toLowerCase();
         const terminal = session.request.kind === "shell" && session.pty;
         /** A line for the player: on their terminal in a shell, else on stderr. */
         const say = (text: string) => {
-          if (terminal) session.stream.write(`${text}\r\n`);
+          if (terminal) session.stream.write(`${text.replace(/\n/g, "\r\n")}\r\n`);
           else session.stderr.write(`${text}\n`);
         };
+        // The terminal's size now, from the lobby on, and where its changes go once seated.
+        let size = { cols: info.cols, rows: info.rows };
+        let resize: ((cols: number, rows: number) => void) | undefined;
+        session.onResize((cols, rows) => {
+          size = { cols, rows };
+          resize?.(cols, rows);
+        });
         if (!sessionAllowed(addressBucket(info.remoteAddress), yield* Clock.currentTimeMillis)) {
           say("Too many sessions from your address; wait a moment.");
           return session.exit(1);
         }
-        const link = links.get(room);
-        if (!link?.alive) {
-          const known =
-            isRoomName(room) &&
-            !isReservedRoom(room) &&
+        const actor = info.identity.actor;
+        let room = asked;
+        if (!links.get(room)?.alive) {
+          const named = isRoomName(room) && !isReservedRoom(room);
+          const claimed =
+            named &&
             (yield* readRooms(roomsFile).pipe(
               Effect.map((rooms) => rooms[room] !== undefined),
               Effect.catchTag("RoomsError", (e) =>
                 Effect.as(Effect.logError(`can't read the room registry: ${e.message}`), true),
               ),
             ));
-          say(known ? closedRoomMessage(room) : unknownRoomMessage(room));
+          if (claimed) {
+            say(closedRoomMessage(room));
+            return session.exit(1);
+          }
+          // No such room: a player with a key may have tables that know it. A guest is nobody yet.
+          const tables =
+            info.identity.kind === "key" && isRelayableActor(actor) ? yield* tablesFor(actor) : [];
+          yield* Effect.logDebug(
+            `lobby: ${actor} from ${info.remoteAddress}: ${tables.length} open tables know the key`,
+          );
+          const unknown = unknownRoomMessage(room);
+          if (tables.length === 0) {
+            say(unknown);
+            return session.exit(1);
+          }
+          if (!terminal) {
+            say(lobbyText(named ? unknown : undefined, tables));
+            return session.exit(1);
+          }
+          say(lobbyMenu(named ? unknown : undefined, tables));
+          const picked = yield* pickTable(
+            session,
+            tables.map((t) => t.room),
+            lobbyIdleMs,
+          );
+          if (picked === "left") {
+            session.stream.write("\r\n");
+            return session.exit(0);
+          }
+          if (picked === "idle") {
+            say("\nNo table picked; come back any time.");
+            return session.exit(1);
+          }
+          room = picked.room;
+          say(`Joining ${room}…`);
+        }
+        const link = links.get(room);
+        if (!link?.alive) {
+          say(closedRoomMessage(room));
           return session.exit(1);
         }
-        const actor = info.identity.actor;
         if (!isRelayableActor(actor)) {
           say("The relay can't seat you.");
           return session.exit(1);
@@ -580,7 +853,8 @@ const make = (
         for (const [key, value] of Object.entries(info.env))
           if (key !== RELAYED_ACTOR_ENV && key !== RELAYED_CLIENT_ENV) env[key] = value;
 
-        const channel = yield* seat(link, session, env).pipe(
+        const openedAt = size;
+        const channel = yield* seat(link, session, env, openedAt).pipe(
           Effect.map((opened): ClientSession | undefined => opened),
           Effect.catch((e) =>
             Effect.as(
@@ -595,7 +869,9 @@ const make = (
         }
         yield* Effect.logDebug(`room ${room}: seated ${actor} from ${info.remoteAddress}`);
 
-        session.onResize((cols, rows) => channel.resize(cols, rows));
+        resize = (cols, rows) => channel.resize(cols, rows);
+        // A resize while the channel was opening went nowhere: send where the terminal is now.
+        if (size !== openedAt) channel.resize(size.cols, size.rows);
         // Player to GM: bytes, then EOF. GM to player: bytes; its EOF rides with its exit and
         // close, since ssh2 can't send an exit status after EOF.
         session.stream.pipe(channel.stream);

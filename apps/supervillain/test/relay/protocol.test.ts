@@ -5,10 +5,18 @@ import {
   helloLine,
   isReservedRoom,
   isRoomName,
+  KNOWS_NONCE_BYTES,
+  KNOWS_SUBSYSTEM,
+  knowsAnswerLine,
+  knowsQueryLine,
+  knownActor,
   LineError,
+  MAX_KNOWS_ANSWER_BYTES,
   MAX_LINE_BYTES,
   parseAnswer,
   parseHello,
+  parseKnowsAnswer,
+  parseKnowsQuery,
   readLine,
 } from "../../src/relay/protocol.ts";
 
@@ -173,5 +181,75 @@ describe("readLine", () => {
     gone.near.end("partial");
     await expect(reading).rejects.toBeInstanceOf(LineError);
     gone.close();
+  });
+});
+
+describe("the lobby's question", () => {
+  const VEX = `key:SHA256:${"v".repeat(43)}`;
+  const KAI = `key:SHA256:${"k".repeat(43)}`;
+  const nonce = (fill: number) => new Uint8Array(KNOWS_NONCE_BYTES).fill(fill);
+
+  test("is a versioned subsystem: a host that doesn't serve this one refuses it", () => {
+    expect(KNOWS_SUBSYSTEM).toBe("knows-1@supervillain.sh");
+  });
+
+  test("carries a nonce and a MAC of the key, never the key itself", () => {
+    const line = knowsQueryLine(VEX, nonce(1));
+    expect(line).toMatch(/^[A-Za-z0-9_-]{22} [A-Za-z0-9_-]{43}\n$/);
+    expect(line.length).toBeLessThan(MAX_LINE_BYTES);
+    expect(line).not.toContain("SHA256");
+    expect(line).not.toContain("v".repeat(8));
+    // The same key asked twice looks different; so does another key under the same nonce.
+    expect(knowsQueryLine(VEX, nonce(2))).not.toBe(line);
+    expect(knowsQueryLine(KAI, nonce(1)).split(" ")[1]).not.toBe(line.split(" ")[1]);
+    expect(() => knowsQueryLine(VEX, new Uint8Array(8))).toThrow();
+  });
+
+  test("a host finds the key it's asked about among those it knows, and only keys", () => {
+    const query = parseKnowsQuery(knowsQueryLine(VEX, nonce(3)).trimEnd())!;
+    expect(query).toBeDefined();
+    expect(knownActor(query, ["gm", KAI, VEX])).toBe(VEX);
+    expect(knownActor(query, ["gm", KAI])).toBeUndefined();
+    expect(knownActor(query, [])).toBeUndefined();
+    const guest = parseKnowsQuery(knowsQueryLine("guest:abc", nonce(4)).trimEnd())!;
+    expect(knownActor(guest, ["guest:abc"])).toBeUndefined();
+  });
+
+  test("a malformed question is no question", () => {
+    const good = knowsQueryLine(VEX, nonce(5)).trimEnd();
+    const [n, mac] = good.split(" ") as [string, string];
+    for (const bad of [
+      "",
+      n,
+      `${n}  ${mac}`,
+      `${n} ${mac} x`,
+      `${n} ${mac}\r`,
+      `${n}= ${mac}`,
+      `${n} ${mac.slice(1)}`,
+      `${n.slice(1)} ${mac}`,
+    ])
+      expect(parseKnowsQuery(bad)).toBeUndefined();
+  });
+
+  test("the answer is yes with a count, or no; anything else reads as no", () => {
+    expect(knowsAnswerLine({ known: true, seated: 3 })).toBe("yes 3\n");
+    expect(knowsAnswerLine({ known: false })).toBe("no\n");
+    expect(knowsAnswerLine({ known: true, seated: 123_456 })).toBe("yes 9999\n");
+    expect(knowsAnswerLine({ known: true, seated: 9999 }).length).toBeLessThanOrEqual(
+      MAX_KNOWS_ANSWER_BYTES,
+    );
+    expect(parseKnowsAnswer("yes 3\n")).toEqual({ known: true, seated: 3 });
+    expect(parseKnowsAnswer("yes 0")).toEqual({ known: true, seated: 0 });
+    for (const other of [
+      "no\n",
+      "",
+      "yes",
+      "yes \n",
+      "YES 3\n",
+      "yes 3\nyes 4\n",
+      "yes 12345\n",
+      "maybe",
+    ])
+      expect(parseKnowsAnswer(other)).toEqual({ known: false });
   });
 });

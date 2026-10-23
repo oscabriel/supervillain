@@ -40,6 +40,8 @@ export class TableRoom extends Context.Service<
     readonly state: View<TableState>;
     /** The last few envelopes in the log, oldest first, for the debug pane. */
     readonly recent: View<ReadonlyArray<Envelope>>;
+    /** Everyone with an envelope in the log: who has sat at this table and done something. */
+    readonly actors: Effect.Effect<ReadonlySet<string>>;
   }
 >()("supervillain/host/TableRoom") {
   static readonly layer = (
@@ -73,6 +75,7 @@ export class TableRoom extends Context.Service<
             ),
           state: room.state,
           recent: { get: SubscriptionRef.get(recent), changes: SubscriptionRef.changes(recent) },
+          actors: room.actors,
         });
       }),
     ).pipe(Layer.provide(CampaignLog.layer(campaignDir)));

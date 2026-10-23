@@ -114,6 +114,73 @@ describe("connectClient", () => {
     }),
   );
 
+  effect("a relay asks for a subsystem the server names; any other name is refused", () =>
+    Effect.gen(function* () {
+      const key = yield* clientKey(yield* tempDir, "relay");
+      const server = yield* testServer({
+        trustedRelayKeys: [key.fingerprint],
+        relaySubsystems: {
+          "ask@test": (session) =>
+            Effect.gen(function* () {
+              const input = yield* Effect.promise(() => drain(session.stream));
+              const { request, info } = session;
+              session.stream.write(
+                `${request.kind === "subsystem" ? request.name : "?"} ${info.relayedActor ?? "-"} in=${input}`,
+              );
+              session.exit(0);
+            }),
+        },
+      });
+      const client = yield* connectClient({
+        socket: yield* dial(server.port),
+        username: "relay",
+        privateKey: yield* Effect.promise(() => readFile(key.path)),
+        verifyHostKey: async () => true,
+      });
+      // No player named: a subsystem is the relay's own question.
+      const channel = yield* Effect.promise(() =>
+        client.open({ kind: "subsystem", name: "ask@test" }, {}, false),
+      );
+      channel.stream.end("q");
+      const [out, ending] = yield* Effect.promise(() =>
+        Promise.all([drain(channel.stream), channel.ended]),
+      );
+      expect(out).toBe("ask@test - in=q");
+      expect(ending).toBe(0);
+      const refused = yield* Effect.promise(() =>
+        client.open({ kind: "subsystem", name: "other@test" }, {}, false).then(
+          () => "opened",
+          (e: Error) => e.message,
+        ),
+      );
+      expect(refused).toContain("Unable to start subsystem");
+      expect(client.closed()).toBe(false);
+    }),
+  );
+
+  effect("a player's connection can't ask for a relay's subsystem", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      const key = yield* clientKey(dir, "player");
+      const server = yield* testServer({
+        relaySubsystems: { "ask@test": (session) => Effect.sync(() => session.exit(0)) },
+      });
+      const client = yield* connectClient({
+        socket: yield* dial(server.port),
+        username: "den",
+        privateKey: yield* Effect.promise(() => readFile(key.path)),
+        verifyHostKey: async () => true,
+      });
+      const refused = yield* Effect.promise(() =>
+        client.open({ kind: "subsystem", name: "ask@test" }, {}, false).then(
+          () => "opened",
+          (e: Error) => e.message,
+        ),
+      );
+      expect(refused).toContain("Unable to start subsystem");
+    }),
+  );
+
   effect("a host key the caller refuses, or a key the server refuses, fails the connect", () =>
     Effect.gen(function* () {
       const dir = yield* tempDir;

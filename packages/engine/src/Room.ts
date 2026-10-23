@@ -22,6 +22,8 @@ export interface Room<S, C> {
   readonly state: View<S>;
   /** The last envelopes the room replayed when it opened, as many as `recent` asked for. */
   readonly recent: ReadonlyArray<Envelope>;
+  /** Every actor with an envelope in the log: replayed when the room opened, or written since. */
+  readonly actors: Effect.Effect<ReadonlySet<string>>;
 }
 
 export interface RoomOptions {
@@ -49,6 +51,7 @@ export const makeRoom = <S, C>(
     }
     const state = yield* SubscriptionRef.make(replayed.state);
     let seq = opened.length;
+    const actors = new Set(opened.map((e) => e.actor));
     // Every submission is stamped later than the one before, by a millisecond if the clock hasn't
     // moved (or went back), so a submission is told apart by its actor and timestamp alone.
     let last = opened.reduce((latest, e) => {
@@ -95,6 +98,7 @@ export const makeRoom = <S, C>(
         );
         seq += envelopes.length;
         last = stamp;
+        for (const e of envelopes) actors.add(e.actor);
         yield* SubscriptionRef.set(state, next);
         return envelopes;
         // Once it holds the permit, a submit runs to the end: a caller leaving mid-write
@@ -106,5 +110,6 @@ export const makeRoom = <S, C>(
       submit,
       state: { get: SubscriptionRef.get(state), changes: SubscriptionRef.changes(state) },
       recent: keep > 0 ? opened.slice(-keep) : [],
+      actors: Effect.sync((): ReadonlySet<string> => new Set(actors)),
     };
   });

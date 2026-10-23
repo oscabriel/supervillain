@@ -11,7 +11,9 @@ import {
 import { Clock, Context, Effect, Layer } from "effect";
 import { CampaignContent } from "../content/index.ts";
 import { plainText } from "../game/index.ts";
+import { KNOWS_SUBSYSTEM } from "../relay/protocol.ts";
 import { execLine, runLine } from "./line.ts";
+import { knowsSession } from "./lobby.ts";
 import { Presence } from "./Presence.ts";
 import { mountTable, openSeat } from "./Seat.ts";
 import { RelayLink, type RelayLinkOptions, type RelayLinkService } from "./RelayLink.ts";
@@ -32,6 +34,12 @@ export interface TableServerOptions {
   readonly execRate?: Rate;
   /** Also take players through a relay: the host dials it and keeps the link up. */
   readonly relay?: Pick<RelayLinkOptions, "host" | "port" | "playerPort" | "relayKey" | "timeouts">;
+  /**
+   * Whether the relay's lobby may list this table for a player whose key the table knows (it has
+   * an envelope in the log, or a seat open now). Default true; false (`--no-lobby`) answers every
+   * question no.
+   */
+  readonly lobby?: boolean;
 }
 
 /** Plenty for a person or a script at a table; a flood from one address is turned away. */
@@ -164,6 +172,10 @@ export class TableServer extends Context.Service<
               return yield* Effect.never;
             }).pipe(Effect.provideContext(services)),
           onExec: (session) => execCommand(session, allowed).pipe(Effect.provideContext(services)),
+          relaySubsystems: {
+            [KNOWS_SUBSYSTEM]: (session) =>
+              knowsSession(options.lobby ?? true)(session).pipe(Effect.provideContext(services)),
+          },
         });
         // Linked after the server, so the server's own finalizers say goodbye on the link first.
         const relay =

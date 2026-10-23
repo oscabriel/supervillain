@@ -390,6 +390,18 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
             shellSession(channel, sessionInfo, onShell, onResize),
           );
         });
+        session.on("subsystem", (accept, reject, { name }) => {
+          const handler = relay ? options.relaySubsystems?.[name] : undefined;
+          if (started || handler === undefined) return reject?.();
+          start();
+          const channel = accept();
+          const sessionInfo = info();
+          const request: RawRequest = { kind: "subsystem", name };
+          runSession(
+            `${sessionInfo.identity.actor} ${name}`,
+            rawSession(client, channel, sessionInfo, request, hasPty, handler, onResize),
+          );
+        });
         session.on("exec", (accept, reject, { command }) => {
           const { onRaw, onExec } = options;
           if (!mayStart() || (!onRaw && !onExec)) return reject?.();

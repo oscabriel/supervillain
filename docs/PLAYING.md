@@ -21,11 +21,25 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])?
 
 Check that the fingerprint matches the one your GM sent you, then type `yes`. After that ssh remembers the key. If ssh ever says the key has changed, stop and ask your GM. If the table goes through a relay, the key ssh shows is the relay's, not the GM's machine's: check it against the relay's fingerprint, which your GM gets from whoever runs the relay.
 
+### Back at a table you've sat at
+
+If your GM's table goes through a relay and you've sat there before with your key, you don't need the room's name. `ssh` to the relay with `lobby` for the room (`ssh -p 2222 lobby@relay.example.net`) and it lists the tables open right now that know your key:
+
+```
+Your tables open now:
+  1  first-fight (3 seated)
+  2  the-keep (1 seated)
+Pick a table (1-2), or Ctrl-C to leave: 2
+Joining the-keep…
+```
+
+Type a number and press Enter; with one table, Enter alone joins it. Ctrl-C or Ctrl-D leaves, and after a minute without a pick the relay says goodbye. You sit down exactly as if you had typed the room's name. A bare `ssh -p 2222 relay.example.net` works too, but ssh sends your own username as the room, so the list comes after `There's no table called <you> here.` A table knows your key once you've done something there with it (set your name, rolled, chatted). Guests are never shown a list, and neither is a key no open table knows: they get the hint below. A GM can keep their table off the list with `--no-lobby`. Asked with a command (`ssh -p 2222 lobby@relay.example.net help`), the relay prints the list and the command to join one, and runs nothing.
+
 If your GM's table goes through a relay, a few things can come back instead of the table:
 
 - `The table first-fight isn't open right now.` The GM's machine isn't linked. Try again once they say it's up.
-- `There's no table called first-fight here.` Check the room name before the `@` with your GM.
-- `To join a table, put its room's name before the @ (ssh <room>@…). Your GM has it.` The command was missing the room, so ssh sent your own username instead.
+- `There's no table called first-fight here.` Check the room name before the `@` with your GM. If tables you've sat at are open, they're listed after it.
+- `To join a table, put its room's name before the @ (ssh <room>@…). Your GM has it.` The command was missing the room, so ssh sent your own username instead, and no open table knows your key (or you came as a guest).
 - `The table first-fight is full right now.` The room has all the players the relay carries for one table. Try again when someone leaves.
 - `The table closed.` or `The GM closed the table.` The table went away while you were seated. Run the same command again when it's back; your name and hero are kept for your key.
 - `The relay is shutting down.` The relay is restarting, usually for an upgrade. Run the same command again in a moment.

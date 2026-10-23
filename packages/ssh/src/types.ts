@@ -61,7 +61,9 @@ export interface ExecSession {
 /** What a raw session's client asked for. */
 export type RawRequest =
   | { readonly kind: "shell" }
-  | { readonly kind: "exec"; readonly command: string };
+  | { readonly kind: "exec"; readonly command: string }
+  /** Only on a trusted relay's connection, and only one the server names in `relaySubsystems`. */
+  | { readonly kind: "subsystem"; readonly name: string };
 
 /** How a raw session ends for its client: an exit status, or a signal's name (`TERM`, not `SIGTERM`). */
 export type RawExit =
@@ -161,6 +163,14 @@ export interface ServeOptions {
    * applies as before. The session ends when it returns, when it calls `exit`, or when the client goes.
    */
   readonly onRaw?: (session: RawSession) => Effect.Effect<void, never, Scope.Scope>;
+  /**
+   * Subsystems a trusted relay may ask for, by name: each runs as a raw session. Asked for on any
+   * other connection, or by a name not here, a subsystem is refused, as a server without this
+   * refuses them all. The channel need not name a player (`SV_ACTOR`).
+   */
+  readonly relaySubsystems?: Readonly<
+    Record<string, (session: RawSession) => Effect.Effect<void, never, Scope.Scope>>
+  >;
 }
 
 export interface AttachOptions {

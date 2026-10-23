@@ -2,7 +2,8 @@ import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import { type AttachOptions, type RawSession, serve } from "@supervillain/ssh";
 import { Effect, Logger } from "effect";
-import { helloLine, readLine } from "../../src/relay/protocol.ts";
+import { answerKnows } from "../../src/host/lobby.ts";
+import { helloLine, KNOWS_SUBSYSTEM, knowsAnswerLine, readLine } from "../../src/relay/protocol.ts";
 import { Relay, type RelayOptions } from "../../src/relay/server.ts";
 import { tempDir } from "../host/tempDir.ts";
 
@@ -24,23 +25,53 @@ export const startRelay = (options: Partial<RelayOptions> = {}) =>
     return { ...relay, dir, logs };
   });
 
+export interface GmTableOptions {
+  /**
+   * How it answers the relay's lobby: knowing these actors, with this many seated, as a table's
+   * host does; `silent`, opening the question and never answering. Without it, it's an older host,
+   * which refuses the question.
+   */
+  readonly knows?: { readonly actors: ReadonlyArray<string>; readonly seated?: number } | "silent";
+}
+
 /**
  * A stand-in for the GM's table on the real packages/ssh server, in raw mode: a shell prints who it
  * seated and its terminal, echoes what's typed, reports resizes, and ends with status 5 on `q`. An
  * exec prints who ran what and ends with 3 for `fail`; `cat` echoes stdin, upper-cased, to its EOF;
- * `wait` never ends on its own.
+ * `wait` never ends on its own. `asked` counts the lobby's questions.
  */
-export const gmTable = (hostKeyPath?: string) =>
+export const gmTable = (options: GmTableOptions = {}) =>
   Effect.gen(function* () {
-    const keyPath = hostKeyPath ?? join(yield* tempDir, "host_key");
+    const keyPath = join(yield* tempDir, "host_key");
     const ended: string[] = [];
+    const asked = { count: 0 };
+    const knows = options.knows;
     const server = yield* serve({
       hostKeyPath: keyPath,
       port: 0,
       host: "127.0.0.1",
       onRaw: (session) => table(session, ended),
+      ...(knows === undefined
+        ? {}
+        : {
+            relaySubsystems: {
+              [KNOWS_SUBSYSTEM]: (session: RawSession) =>
+                Effect.gen(function* () {
+                  asked.count++;
+                  if (knows === "silent") return yield* Effect.never;
+                  const line = yield* Effect.callback<string>((resume) => {
+                    let text = "";
+                    session.stream.on("data", (chunk: Buffer) => (text += chunk.toString()));
+                    session.stream.once("end", () => resume(Effect.succeed(text.split("\n")[0]!)));
+                  });
+                  const { answer } = answerKnows(line, knows.actors, knows.seated ?? 1, true);
+                  session.stream.write(knowsAnswerLine(answer));
+                  session.exit(0);
+                }),
+            },
+          }),
     });
-    return { server, hostKeyPath: keyPath, ended };
+    return { server, hostKeyPath: keyPath, ended, asked };
   });
 
 const table = (session: RawSession, ended: string[]) =>
@@ -60,6 +91,7 @@ const table = (session: RawSession, ended: string[]) =>
       });
       return yield* Effect.never;
     }
+    if (request.kind !== "exec") return session.exit(1);
     if (request.command === "cat") {
       const input = yield* Effect.callback<string>((resume) => {
         let text = "";

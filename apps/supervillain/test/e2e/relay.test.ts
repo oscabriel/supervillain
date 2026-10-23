@@ -281,6 +281,62 @@ describe("supervillain host --relay, through supervillain relay", () => {
   );
 
   effect(
+    "a player who has sat at a table finds it in the lobby, unless its GM says --no-lobby",
+    () =>
+      Effect.gen(function* () {
+        const campaign = yield* campaignDir;
+        const keys = yield* tempDir;
+        const vex = yield* clientKey(keys, "vex");
+        const kai = yield* clientKey(keys, "kai");
+        const ports = { player: yield* freePort, gm: yield* freePort };
+        yield* startRelay(yield* tempDir, ports);
+        const host = yield* startHost(campaign, ports.gm);
+        yield* waitFor("the link", () => links(host) === 1, 10_000);
+        expect(host.output()).toContain(
+          "its lobby lists this table to players whose key has sat here (--no-lobby: never)",
+        );
+
+        // Vex has sat at den once, by name; Kai never has.
+        expect(
+          (yield* sshExec(ports.player, ["roll", "1d6"], { key: vex, user: "den" })).exitCode,
+        ).toBe(0);
+        const stranger = yield* sshExec(ports.player, ["help"], { key: kai, user: "lobby" });
+        expect(stranger.stderr).toBe(
+          "To join a table, put its room's name before the @ (ssh <room>@…). Your GM has it.\n",
+        );
+
+        // A bare ssh, as far as the relay can tell: Vex is shown den and sits down at it.
+        const terminal = yield* sshShell(
+          ports.player,
+          { cols: 100, rows: 30 },
+          { key: vex, user: "lobby" },
+        );
+        yield* waitFor("the lobby", () => terminal.output().includes("Press Enter to join den"));
+        expect(terminal.output()).toContain("Your table open now:\r\n  1  den (0 seated)\r\n");
+        terminal.write("\r");
+        yield* waitFor(
+          "the name prompt",
+          () => Bun.stripANSI(terminal.output()).includes("type the name you want"),
+          10_000,
+        );
+        yield* waitFor("the host to say so", () =>
+          host.output().includes(`lobby: the relay listed this table for key:${vex.fingerprint}`),
+        );
+        terminal.write("\x03");
+        yield* Effect.promise(() => terminal.exited);
+
+        // The GM opts out: the same player is only told how to join.
+        expect(yield* Effect.promise(() => host.stop())).toBe(0);
+        const quiet = yield* startHost(campaign, ports.gm, ["--no-lobby"]);
+        yield* waitFor("the relink", () => links(quiet) === 1, 15_000);
+        expect(quiet.output()).toContain("its lobby never lists this table (--no-lobby)");
+        const hidden = yield* sshExec(ports.player, ["help"], { key: vex, user: "lobby" });
+        expect(hidden).toMatchObject({ exitCode: 1, stderr: stranger.stderr });
+      }),
+    60_000,
+  );
+
+  effect(
     "a relay stopped with SIGTERM puts players' terminals back before it says so",
     () =>
       Effect.gen(function* () {

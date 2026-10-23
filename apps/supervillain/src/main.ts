@@ -3,7 +3,7 @@
 // root, or this file from anywhere.
 //   supervillain host [campaign-dir] [--port 2222] [--bind 127.0.0.1] [--room name] [--headless]
 //                     [--relay host:port] [--relay-key SHA256:…] [--relay-player-port 2222]
-//                     [--relay-host-key SHA256:…]   (a campaign folder: `new` makes one)
+//                     [--relay-host-key SHA256:…] [--no-lobby]   (a campaign folder: `new` makes one)
 //   supervillain new <campaign-dir> [--rules draw-steel|set-world] [--example]
 //   supervillain map <crossing|keep> <campaign-dir> [--seed N] [--id map-id]
 //   supervillain import <bestiary-json-path> --into <campaign-dir> [names...] [--overwrite]
@@ -144,6 +144,12 @@ const host = Command.make(
         "The relay's host key (SHA256:…, what players' ssh sees there; the relay prints it), shown with the join command for players to check",
       ),
     ),
+    lobby: Flag.Boolean("lobby").pipe(
+      Flag.withDefault(true),
+      Flag.withDescription(
+        "List this table in the relay's lobby for players whose key has sat here before; --no-lobby never lists it",
+      ),
+    ),
     headless: Flag.Boolean("headless").pipe(
       Flag.withDefault(false),
       Flag.withDescription("No GM seat in this terminal; logs go to stdout"),
@@ -222,6 +228,7 @@ const host = Command.make(
       room,
       port: o.port,
       bind: o.bind,
+      lobby: o.lobby,
       ...(relayAddress === undefined
         ? {}
         : {
@@ -255,6 +262,11 @@ const host = Command.make(
         yield* Console.log(`players here can also join directly: ${direct}`);
         yield* Console.log(
           `relay ${relayAddress.host}:${relayAddress.port}, trusting ${relayKey ?? `the key in ${join(dir, "relay_known")} (pinned on first link)`}`,
+        );
+        yield* Console.log(
+          o.lobby
+            ? "  its lobby lists this table to players whose key has sat here (--no-lobby: never)"
+            : "  its lobby never lists this table (--no-lobby)",
         );
       }
       yield* Console.log(

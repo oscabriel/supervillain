@@ -123,6 +123,27 @@ describe("makeRoom", () => {
     }),
   );
 
+  effect("knows every actor in the log: those it replayed and those who wrote since", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      yield* withRoom(dir, (room) =>
+        Effect.gen(function* () {
+          expect([...(yield* room.actors)]).toEqual([]);
+          yield* room.submit("key:a", { type: "add", n: 1 });
+          yield* Effect.flip(room.submit("key:refused", { type: "refuse" }));
+          expect([...(yield* room.actors)]).toEqual(["key:a"]);
+        }),
+      );
+      const actors = yield* withRoom(dir, (room) =>
+        Effect.gen(function* () {
+          yield* room.submit("gm", { type: "add", n: 2 });
+          return [...(yield* room.actors)];
+        }),
+      );
+      expect(actors).toEqual(["key:a", "gm"]);
+    }),
+  );
+
   effect("replays the log on reopen without deciding or rolling", () =>
     Effect.gen(function* () {
       const dir = yield* tempDir;
