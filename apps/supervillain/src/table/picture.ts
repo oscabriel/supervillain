@@ -6,16 +6,17 @@ import type { MapToken, MapView } from "./view.ts";
 
 /**
  * The picture map: the map painted in MEKMODE's pictures, for a seat whose terminal shows kitty
- * graphics. A square is 4 columns by 2 rows, about square, and big enough for a figure. Terrain is
- * each square's map letter (a mekmode map), or a stand-in for `.`, `#` and `~` (a plain map); a
- * token is a figure in its side's colour with its mark in the corner. Pure: PictureMap.tsx turns
- * the pixels into an image.
+ * graphics. A square is 4 columns by 2 rows, about square, and big enough for a figure, painted at
+ * those cells' size in pixels where the seat's terminal says it, so nothing scales MEKMODE's pixels
+ * blurry. Terrain is each square's map letter (a mekmode map), or a stand-in for `.`, `#` and `~`
+ * (a plain map); a token is a figure in its side's colour with its mark in the corner. Pure:
+ * PictureMap.tsx turns the pixels into an image.
  */
 
-/** Pixels per square in the painted image; the terminal scales it to the square's cells. */
-export const TILE = 36;
 /** A square's cells. */
 export const SQUARE = { cols: 4, rows: 2 } as const;
+/** Pixels per square side when the seat's cell size is unknown; the terminal scales it to fit. */
+export const TILE = 36;
 /** The row-number gutter and the column-letter row around the picture. */
 export const GUTTER = 3;
 export const LABEL_ROWS = 1;
@@ -23,6 +24,66 @@ export const LABEL_ROWS = 1;
 /** The rows a pane needs to show `map` whole in pictures, border to border. */
 export const pictureRowsWanted = (map: MapView): number =>
   map.height * SQUARE.rows + LABEL_ROWS + MAP_FRAME.height;
+
+/** A square's size in the painted image, and the whole-number scale its 8x12 glyphs are drawn at. */
+export interface Tile {
+  readonly width: number;
+  readonly height: number;
+  readonly scale: number;
+}
+
+/** A terminal cell's size in pixels. */
+export interface CellPixels {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Cells bigger than this are a client's mistake or a lie, since a client can say any size. */
+const CELL_MAX: CellPixels = { width: 48, height: 96 };
+/** At most this many pixels in one picture: 64 MB of RGBA, under OpenTUI's 64 MiB to compress. */
+const PICTURE_PIXELS_MAX = 16_000_000;
+/**
+ * packages/ssh caps an SSH seat's size in cells here, while the window in pixels its terminal
+ * reports is the whole of it, so at the cap the cells it divides out would come out too big.
+ */
+const GRID_MAX = { cols: 300, rows: 100 } as const;
+
+/** `TILE` square, the glyphs at 3x: what a seat gets until its terminal says its cell size. */
+export const FALLBACK_TILE: Tile = { width: TILE, height: TILE, scale: 3 };
+
+/**
+ * The tile for a seat whose cells are `cell` pixels: exactly a square's cells, so the terminal
+ * shows the image pixel for pixel and the glyphs stay sharp, with the biggest whole-number glyph
+ * scale that fits. `FALLBACK_TILE` when the size is unknown, implausible or too small for a glyph,
+ * or when `squares` of it would pass `PICTURE_PIXELS_MAX`.
+ */
+export function tileFor(cell: CellPixels | undefined, squares = 1): Tile {
+  if (cell === undefined) return FALLBACK_TILE;
+  const { width, height } = cell;
+  if (!Number.isInteger(width) || !Number.isInteger(height)) return FALLBACK_TILE;
+  if (width < 1 || height < 1 || width > CELL_MAX.width || height > CELL_MAX.height)
+    return FALLBACK_TILE;
+  const tile = { width: width * SQUARE.cols, height: height * SQUARE.rows };
+  const scale = Math.floor(Math.min(tile.width / 8, tile.height / 12));
+  if (scale < 1 || tile.width * tile.height * squares > PICTURE_PIXELS_MAX) return FALLBACK_TILE;
+  return { ...tile, scale };
+}
+
+/**
+ * A seat's cell size from its terminal's window in pixels and its size in cells, if known: not
+ * for a seat at `GRID_MAX`, whose terminal may be bigger than its cells say.
+ */
+export function cellPixels(
+  window: { readonly width: number; readonly height: number } | null | undefined,
+  cols: number,
+  rows: number,
+): CellPixels | undefined {
+  if (!window || cols < 1 || rows < 1) return undefined;
+  if (cols >= GRID_MAX.cols || rows >= GRID_MAX.rows) return undefined;
+  const width = Math.floor(window.width / cols);
+  const height = Math.floor(window.height / rows);
+  return width >= 1 && height >= 1 ? { width, height } : undefined;
+}
 
 type Rgb = readonly [number, number, number];
 
@@ -165,53 +226,70 @@ export const outOfView = (map: MapView, w: PictureWindow): ReadonlyArray<MapToke
     (t) => !t.dead && (t.x < w.x0 || t.x >= w.x0 + w.cols || t.y < w.y0 || t.y >= w.y0 + w.rows),
   );
 
-/** One token's square: its figure at 3x in its side's colour, its mark on black in the corner. */
-function paintToken(c: Canvas, ox: number, oy: number, t: MapToken, ground: Rgb) {
+/** A token's square: its figure in its side's colour, its mark on black in the corner. */
+function paintToken(c: Canvas, ox: number, oy: number, tile: Tile, t: MapToken, ground: Rgb) {
+  const { width, height, scale } = tile;
+  // Marks, the frame and the cross grow with the figure: 1, 2 and 2 pixels at 3x.
+  const small = Math.max(1, Math.round(scale / 3));
+  const line = Math.max(1, Math.round((2 * scale) / 3));
   const colour = sideColour(t);
-  c.rect(ox, oy, TILE, TILE, mix(ground, colour, 0.18));
-  c.glyph(DINGS_ATLAS[figureOf(t)], ox + 2, oy, 3, colour);
-  const markW = t.mark.length * 8;
-  const mx = ox + TILE - markW - 1;
-  const my = oy + TILE - 13;
-  c.rect(mx - 1, my - 1, markW + 2, 14, BLACK);
-  [...t.mark].forEach((ch, i) => c.glyph(TEXT_ATLAS[ch], mx + i * 8, my, 1, WHITE));
-  if (t.acting) c.frame(ox, oy, TILE, TILE, 2, WHITE);
-  if (t.dead)
-    for (let i = 4; i < TILE - 4; i++) {
-      c.set(ox + i, oy + i, RED);
-      c.set(ox + i + 1, oy + i, RED);
-    }
+  c.rect(ox, oy, width, height, mix(ground, colour, 0.18));
+  c.glyph(
+    DINGS_ATLAS[figureOf(t)],
+    ox + Math.floor((width - 8 * scale) / 6),
+    oy + Math.floor((height - 12 * scale) / 2),
+    scale,
+    colour,
+  );
+  const markW = t.mark.length * 8 * small;
+  const mx = ox + width - markW - small;
+  const my = oy + height - 13 * small;
+  c.rect(mx - small, my - small, markW + 2 * small, 14 * small, BLACK);
+  [...t.mark].forEach((ch, i) => c.glyph(TEXT_ATLAS[ch], mx + i * 8 * small, my, small, WHITE));
+  if (t.acting) c.frame(ox, oy, width, height, line, WHITE);
+  if (t.dead) {
+    const inset = Math.round((4 * scale) / 3);
+    for (let j = inset; j < height - inset; j++)
+      c.rect(ox + Math.floor((j * width) / height), oy + j, line, 1, RED);
+  }
 }
 
-/** The window of `map` as pixels, `TILE` per square: terrain, the reach tint, then tokens. */
-export function paintPicture(map: MapView, w: PictureWindow): Canvas {
-  const c = new Canvas(w.cols * TILE, w.rows * TILE);
+/**
+ * The window of `map` as pixels, a `tile` per square: terrain, the reach tint, then tokens. The
+ * tile is the seat's own (`tileFor`), `FALLBACK_TILE` when its cells are unknown.
+ */
+export function paintPicture(map: MapView, w: PictureWindow, tile: Tile = FALLBACK_TILE): Canvas {
+  const { width, height, scale } = tile;
+  const c = new Canvas(w.cols * width, w.rows * height);
   const reach = new Set(map.reach.map((r) => `${r.x},${r.y}`));
   const tokens = new Map<string, MapToken>();
   // The living are drawn over the dead.
   for (const t of map.tokens.toSorted((a, b) => Number(b.dead) - Number(a.dead)))
     tokens.set(`${t.x},${t.y}`, t);
+  // Terrain glyphs sit in the middle of their square.
+  const gx = Math.floor((width - 8 * scale) / 2);
+  const gy = Math.floor((height - 12 * scale) / 2);
   for (let sy = 0; sy < w.rows; sy++)
     for (let sx = 0; sx < w.cols; sx++) {
       const x = w.x0 + sx;
       const y = w.y0 + sy;
-      const ox = sx * TILE;
-      const oy = sy * TILE;
+      const ox = sx * width;
+      const oy = sy * height;
       const letter = letterAt(map, x, y);
       const entry = letter === undefined ? undefined : LEGEND[letter];
       if (letter === undefined || entry === undefined) {
-        c.rect(ox, oy, TILE, TILE, VOID);
+        c.rect(ox, oy, width, height, VOID);
         continue;
       }
       const tone = TONES[entry.tone];
       const ground = reach.has(`${x},${y}`) ? REACH : tone.bg;
       const token = tokens.get(`${x},${y}`);
       if (token !== undefined) {
-        paintToken(c, ox, oy, token, ground);
+        paintToken(c, ox, oy, tile, token, ground);
         continue;
       }
-      c.rect(ox, oy, TILE, TILE, ground);
-      c.glyph(DINGS_ATLAS[letter], ox + 6, oy, 3, tone.fg);
+      c.rect(ox, oy, width, height, ground);
+      c.glyph(DINGS_ATLAS[letter], ox + gx, oy + gy, scale, tone.fg);
     }
   return c;
 }

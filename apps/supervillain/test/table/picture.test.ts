@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  cellPixels,
+  FALLBACK_TILE,
   figureOf,
   letterAt,
   outOfView,
@@ -9,6 +11,7 @@ import {
   REACH,
   SIDES,
   TILE,
+  tileFor,
   TONES,
   VOID,
 } from "../../src/table/picture.ts";
@@ -96,5 +99,52 @@ describe("the painted squares", () => {
     expect(figureOf(token({ id: "vex", mark: "V", x: 0, y: 0, side: "heroes" }))).toMatch(
       /[0-9&@]/,
     );
+  });
+});
+
+describe("a square's size in pixels", () => {
+  test("is the seat's cells, from its window in pixels and its size in cells", () => {
+    expect(cellPixels({ width: 2560, height: 1600 }, 128, 40)).toEqual({ width: 20, height: 40 });
+    // A window with padding past the cells still gives whole cells.
+    expect(cellPixels({ width: 1294, height: 811 }, 128, 40)).toEqual({ width: 10, height: 20 });
+    expect(cellPixels(null, 128, 40)).toBeUndefined();
+  });
+
+  test("is unknown for a seat at the SSH size cap, whose window may hold more cells", () => {
+    // A 4K screen of 10x20 cells is 384x108, but an SSH seat's renderer stops at 300x100.
+    expect(cellPixels({ width: 3840, height: 2160 }, 300, 100)).toBeUndefined();
+    expect(cellPixels({ width: 3440, height: 1000 }, 300, 50)).toBeUndefined();
+    expect(cellPixels({ width: 2990, height: 1980 }, 299, 99)).toEqual({ width: 10, height: 20 });
+  });
+
+  test("is exactly a square's cells, glyphs at the biggest whole scale that fits", () => {
+    expect(tileFor({ width: 20, height: 40 })).toEqual({ width: 80, height: 80, scale: 6 });
+    expect(tileFor({ width: 10, height: 20 })).toEqual({ width: 40, height: 40, scale: 3 });
+    expect(tileFor({ width: 9, height: 19 })).toEqual({ width: 36, height: 38, scale: 3 });
+  });
+
+  test("falls back to TILE when the cells are unknown, implausible or too big a picture", () => {
+    expect(tileFor(undefined)).toEqual({ width: TILE, height: TILE, scale: 3 });
+    expect(tileFor({ width: 1, height: 2 })).toBe(FALLBACK_TILE);
+    expect(tileFor({ width: 4000, height: 9000 })).toBe(FALLBACK_TILE);
+    expect(tileFor({ width: 20, height: 40 }, 60 * 40)).toEqual(tileFor({ width: 20, height: 40 }));
+    expect(tileFor({ width: 48, height: 96 }, 60 * 40)).toBe(FALLBACK_TILE);
+  });
+
+  test("a picture painted for 20x40 cells is 80 pixels a square, its glyphs at 6x", () => {
+    const tile = tileFor({ width: 20, height: 40 });
+    const picture = paintPicture(ford, pictureWindow(ford, 99, 99), tile);
+    expect([picture.width, picture.height]).toEqual([6 * 80, 4 * 80]);
+    expect(picture.get(2 * 80, 1 * 80)).toEqual(TONES.stone.bg);
+    expect(picture.get(1 * 80, 1 * 80)).toEqual([255, 255, 255]);
+    // Every lit pixel of a terrain glyph is one of 6x6 blocks: the wall at c2 is drawn at 6x.
+    const glyph = (x: number, y: number) => picture.get(2 * 80 + 16 + x, 1 * 80 + 4 + y).join();
+    const lit = new Set<string>();
+    for (let y = 0; y < 72; y++) for (let x = 0; x < 48; x++) lit.add(glyph(x, y));
+    expect(lit.has(TONES.stone.fg.join())).toBe(true);
+    for (let y = 0; y < 72; y += 6)
+      for (let x = 0; x < 48; x += 6)
+        for (let j = 0; j < 6; j++)
+          for (let i = 0; i < 6; i++) expect(glyph(x + i, y + j)).toBe(glyph(x, y));
   });
 });
