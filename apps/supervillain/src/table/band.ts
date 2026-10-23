@@ -21,6 +21,8 @@ export interface Segment {
   readonly tone: Tone;
   /** The seat's own hero's name, drawn highlighted. */
   readonly mine?: boolean;
+  /** Whose row it is part of (the combatant's id), for a click: see `whoAt`. */
+  readonly who?: string;
 }
 
 export type Line = ReadonlyArray<Segment>;
@@ -208,7 +210,12 @@ function cellOf(
       ? [{ text: `${c.surges} surge${c.surges === 1 ? "" : "s"}`, tone: "text" as const }]
       : []),
   ];
-  return { head, details, indent: (combat ? 2 : 0) + (marks ? MARK : 0) + nameWidth + 1 };
+  const own = (line: ReadonlyArray<Segment>) => line.map((seg) => ({ ...seg, who: c.id }));
+  return {
+    head: own(head),
+    details: own(details),
+    indent: (combat ? 2 : 0) + (marks ? MARK : 0) + nameWidth + 1,
+  };
 }
 
 /** The cell on one line: head, then the details after ` · `. */
@@ -434,4 +441,27 @@ export function bandLayout(
     keepLines,
     livingLines,
   };
+}
+
+/**
+ * Whose row a click at `col` on `line` lands on (counted inside the band's frame): the combatant
+ * whose segment is under it, else the nearest one before it on the line (a separator, the gap
+ * after a paired cell), else the nearest after it (a wrapped row's indent). Undefined on a line
+ * with nobody's row, such as the `dead:` line.
+ */
+export function whoAt(line: Line | undefined, col: number): string | undefined {
+  if (line === undefined || col < 0) return undefined;
+  let at = 0;
+  let before: string | undefined;
+  for (const s of line) {
+    const end = at + textWidth(s.text);
+    if (col < end) {
+      if (s.who !== undefined) return s.who;
+      if (before !== undefined) return before;
+      return line.slice(line.indexOf(s)).find((n) => n.who !== undefined)?.who;
+    }
+    if (s.who !== undefined) before = s.who;
+    at = end;
+  }
+  return undefined;
 }

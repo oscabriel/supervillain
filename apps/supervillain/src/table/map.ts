@@ -39,6 +39,21 @@ export interface MapLayout {
   readonly lines: ReadonlyArray<MapLine>;
   /** Some of the highlighted reach is out of view: the table points at `/view map`. */
   readonly reachClipped: boolean;
+  /** Where the squares are among the lines, for a click: see `squareAt`. */
+  readonly squares: SquareGrid;
+}
+
+/**
+ * The squares' place in a laid-out map: the first square's column and line inside the pane's
+ * frame, and which squares the view shows from where.
+ */
+export interface SquareGrid {
+  readonly left: number;
+  readonly top: number;
+  readonly x0: number;
+  readonly y0: number;
+  readonly cols: number;
+  readonly rows: number;
 }
 
 /** Border, padding and the border again: what the pane's box takes from the screen. */
@@ -345,6 +360,14 @@ export function mapLayout(map: MapView, width: number, height: number, focus?: F
       : "",
   ].filter((part) => part !== "");
   return {
+    squares: {
+      left: left + numbers + across.before * CELL,
+      top: top + labelRows + down.before,
+      x0: across.origin,
+      y0: down.origin,
+      cols: across.span,
+      rows: down.span,
+    },
     title: cropped.length === 0 ? title : `${title.trimEnd()} · ${cropped.join(", ")} `,
     reachClipped: map.reach.some((r) => !inView(view, r)),
     bottomTitle: offscreenTitle(
@@ -353,4 +376,24 @@ export function mapLayout(map: MapView, width: number, height: number, focus?: F
     ),
     lines,
   };
+}
+
+/**
+ * The square a click at `col` and `row` lands on, counted inside the pane's frame (where the
+ * layout's lines start), or undefined off the squares: on the row numbers, the column letters, an
+ * edge's arrows or the blank around a map that fits. A square is two columns, and either is it.
+ */
+export function squareAt(grid: SquareGrid, col: number, row: number): Focus | undefined {
+  if (col < grid.left || row < grid.top) return undefined;
+  const sx = Math.floor((col - grid.left) / CELL);
+  const sy = row - grid.top;
+  if (sx >= grid.cols || sy >= grid.rows) return undefined;
+  return { x: grid.x0 + sx, y: grid.y0 + sy };
+}
+
+/** The token drawn on a square, as the map draws it: the living over the dead, then by rank. */
+export function tokenAt(map: MapView, square: Focus): MapToken | undefined {
+  let found: MapToken | undefined;
+  for (const t of map.tokens) if (t.x === square.x && t.y === square.y) found = better(found, t);
+  return found;
 }

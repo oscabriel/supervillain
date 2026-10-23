@@ -75,4 +75,25 @@ describe("shell", () => {
       }),
     20_000,
   );
+
+  effect("a shell reports clicks, drags and the wheel, never every motion of the mouse", () =>
+    Effect.gen(function* () {
+      const key = yield* clientKey(yield* tempDir, "alice");
+      const server = yield* testServer({
+        onShell: (session) =>
+          Effect.gen(function* () {
+            session.renderer.root.add(new TextRenderable(session.renderer, { content: "READY" }));
+            yield* Effect.never;
+          }),
+      });
+      const terminal = yield* sshShell(server.port, { cols: 80, rows: 24 }, { key });
+      yield* waitFor("the session", () => terminal.output().includes("READY"));
+      const output = terminal.output();
+      // Normal and button-event tracking in SGR form: presses, releases, drags and the wheel.
+      for (const mode of ["\x1b[?1000h", "\x1b[?1002h", "\x1b[?1006h"])
+        expect(output).toContain(mode);
+      // Any-event tracking, every motion over the wire, stays off.
+      expect(output).not.toContain("\x1b[?1003h");
+    }),
+  );
 });

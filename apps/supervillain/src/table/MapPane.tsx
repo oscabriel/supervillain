@@ -1,8 +1,17 @@
+import type { BoxRenderable } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/solid";
 import { createMemo, For } from "solid-js";
 import { keepLines } from "./keep.ts";
 import { fittedTitle } from "./panels.ts";
-import { type Focus, MAP_FRAME, mapLayout, type MapSegment, type MapTone } from "./map.ts";
+import {
+  type Focus,
+  MAP_FRAME,
+  mapLayout,
+  type MapSegment,
+  type MapTone,
+  squareAt,
+} from "./map.ts";
+import { boxClick } from "./mouse.ts";
 import { color } from "./theme.ts";
 import type { MapView } from "./view.ts";
 
@@ -45,9 +54,14 @@ export function MapPane(props: {
   hint?: string | undefined;
   /** The panel's key, leading the title (`²`). */
   mark?: string | undefined;
+  /** A click on a square. */
+  onSquare?: ((square: Focus) => void) | undefined;
+  /** A click on the title. */
+  onTitle?: (() => void) | undefined;
 }) {
   const size = useTerminalDimensions();
   const keep = keepLines<MapSegment>();
+  let box: BoxRenderable | undefined;
   const layout = createMemo(() => {
     const laid = mapLayout(
       props.map,
@@ -57,19 +71,33 @@ export function MapPane(props: {
     );
     return { ...laid, lines: keep(laid.lines) };
   });
+  const title = () =>
+    fittedTitle(
+      [
+        ...(props.hint ? [`${layout().title.trimEnd()} · ${props.hint} `] : []),
+        layout().title,
+        ` map · ${props.map.name} `,
+      ],
+      props.mark,
+      size().width,
+    );
+  /** A left click: on the title, or on a square, counted inside the frame as the lines are. */
+  const click = boxClick(
+    () => box,
+    title,
+    props.onTitle,
+    (col, row) => {
+      const at = squareAt(layout().squares, col - MAP_FRAME.width / 2, row - MAP_FRAME.height / 2);
+      if (at !== undefined) props.onSquare?.(at);
+    },
+  );
   return (
     <box
+      ref={(el: BoxRenderable) => (box = el)}
+      onMouseDown={click}
       border
       borderColor={color.border}
-      title={fittedTitle(
-        [
-          ...(props.hint ? [`${layout().title.trimEnd()} · ${props.hint} `] : []),
-          layout().title,
-          ` map · ${props.map.name} `,
-        ],
-        props.mark,
-        size().width,
-      )}
+      title={title()}
       bottomTitle={layout().bottomTitle}
       bottomTitleAlignment="right"
       height={props.height}
@@ -79,7 +107,7 @@ export function MapPane(props: {
     >
       <For each={layout().lines}>
         {(line) => (
-          <text wrapMode="none">
+          <text wrapMode="none" selectable={false}>
             <For each={line}>{(s) => <span style={styleOf(s)}>{s.text}</span>}</For>
           </text>
         )}

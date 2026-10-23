@@ -1,5 +1,12 @@
 import { createSignal } from "solid-js";
-import type { CombatView, FeedLine, MapView, Present, TableView } from "../../src/table/view.ts";
+import type {
+  CombatView,
+  FeedLine,
+  MapView,
+  Present,
+  TableView,
+  TokenAction,
+} from "../../src/table/view.ts";
 
 export interface FakeViewOptions {
   readonly me?: string;
@@ -18,6 +25,8 @@ export interface FakeViewOptions {
   readonly combat?: CombatView | null;
   /** The text map; when given, the view has a `map` accessor (null: no map loaded yet). */
   readonly map?: MapView | null;
+  /** What the seat may do with a token, for the mouse; when given, the view has `actions`. */
+  readonly actions?: (id: string) => ReadonlyArray<TokenAction> | undefined;
 }
 
 /** A TableView backed by plain signals, recording what the App asks of it. */
@@ -53,6 +62,7 @@ export function fakeView(options: FakeViewOptions = {}) {
     ...(options.combat === undefined ? {} : { combat }),
     ...(options.map === undefined ? {} : { map }),
     ...(options.alert === undefined ? {} : { alert }),
+    ...(options.actions === undefined ? {} : { actions: options.actions }),
   };
   return {
     view,

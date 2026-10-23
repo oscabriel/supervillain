@@ -1,8 +1,9 @@
-import { type CliRenderer, CliRenderEvents, NativeImage } from "@opentui/core";
+import { type BoxRenderable, type CliRenderer, CliRenderEvents, NativeImage } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { createMemo, createSignal, Index, onCleanup } from "solid-js";
 import { columnLabel } from "../game/drawSteel/map.ts";
 import { type Focus, MAP_FRAME } from "./map.ts";
+import { boxClick } from "./mouse.ts";
 import { fittedTitle } from "./panels.ts";
 import {
   type CellPixels,
@@ -11,6 +12,7 @@ import {
   LABEL_ROWS,
   outOfView,
   paintPicture,
+  pictureSquareAt,
   pictureWindow,
   SQUARE,
   tileFor,
@@ -81,9 +83,14 @@ export function PictureMap(props: {
   focus?: Focus | undefined;
   /** The panel's key, leading the title (`²`). */
   mark?: string | undefined;
+  /** A click on a square. */
+  onSquare?: ((square: Focus) => void) | undefined;
+  /** A click on the title. */
+  onTitle?: (() => void) | undefined;
 }) {
   const size = useTerminalDimensions();
   const renderer = useRenderer();
+  let box: BoxRenderable | undefined;
   renderer.kittyImageTransport = "zlib";
 
   const win = createMemo(() =>
@@ -115,15 +122,30 @@ export function PictureMap(props: {
     return out.length === 0 ? "" : ` out of view: ${out.map((t) => t.mark).join(" ")} `;
   });
 
+  const title = () =>
+    fittedTitle(
+      [` ${props.map.name} · /view text `, ` ${props.map.name} `],
+      props.mark,
+      size().width,
+    );
+  /** A left click: on the title, or on a square, counted inside the frame. */
+  const click = boxClick(
+    () => box,
+    title,
+    props.onTitle,
+    (col, row) => {
+      const at = pictureSquareAt(win(), col - MAP_FRAME.width / 2, row - MAP_FRAME.height / 2);
+      if (at !== undefined) props.onSquare?.(at);
+    },
+  );
+
   return (
     <box
+      ref={(el: BoxRenderable) => (box = el)}
+      onMouseDown={click}
       border
       borderColor={color.border}
-      title={fittedTitle(
-        [` ${props.map.name} · /view text `, ` ${props.map.name} `],
-        props.mark,
-        size().width,
-      )}
+      title={title()}
       bottomTitle={hidden()}
       bottomTitleAlignment="right"
       height={props.height}

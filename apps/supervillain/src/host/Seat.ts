@@ -4,6 +4,7 @@ import type { View } from "@supervillain/engine";
 import { Effect, FiberSet, type Scope, Stream } from "effect";
 import { type Accessor, createComponent, createMemo, createRoot, createSignal } from "solid-js";
 import {
+  actionsOf,
   bandOf,
   completeLine,
   type FeedLine,
@@ -152,6 +153,7 @@ export const openSeat = (
           ),
         ),
       complete: (line) => completeLine(state(), actor, line, ruleset),
+      actions: (id) => actionsOf(state(), actor, ruleset, id),
       // The App opens the state pane only on the GM's seat; this is the backstop.
       debug: () =>
         actor === GM ? debugText(state(), recent()) : "Only the GM can see the table's state.",

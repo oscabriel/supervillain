@@ -5,12 +5,13 @@ import { App } from "../../src/table/App.tsx";
 import { MapPane } from "../../src/table/MapPane.tsx";
 import {
   ALL_SHOWN,
-  allHiddenLine,
+  allHiddenParts,
   fittedTitle,
   marked,
   panelMark,
   panelOf,
   PANELS,
+  type Panel,
   type Panels,
   togglePanel,
   viewPreset,
@@ -76,6 +77,10 @@ describe("the panels, as data", () => {
   });
 
   test("with every panel hidden, one line names the keys that bring something back", () => {
+    const allHiddenLine = (available: ReadonlyArray<Panel>, width: number) =>
+      allHiddenParts(available, width)
+        .map((p) => p.text)
+        .join("");
     expect(allHiddenLine(["band", "map", "feed"], 118)).toBe(
       "every panel is hidden · Alt+1 band · Alt+2 map · Alt+3 feed · /view both shows them all",
     );

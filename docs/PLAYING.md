@@ -58,16 +58,33 @@ The input line at the bottom always has the keyboard. Nothing you type does anyt
 | Up, Down | Go back through lines you've sent |
 | PgUp, PgDn | Scroll the feed, or a sheet you opened |
 | Alt+1, Alt+2, Alt+3, Alt+4 | Show or hide the band, the map, the feed, or a reply you opened |
-| Esc | Cancel a completion or close a message |
+| Esc | Cancel a completion, close the mouse's menu, or close a message |
 | Ctrl-A, Ctrl-E | Jump to the start or end of the line |
 | Ctrl-W, Ctrl-U | Delete a word, or everything before the cursor |
 | Ctrl-C, Ctrl-D on an empty line, or `/quit` | Leave the table |
 
-Between the header and the input line are panels, top to bottom: the band (who's here, your party or the fight), the map, the feed, and a reply just for you, such as a sheet or `/help`. Each panel's title starts with its key as a small number, `¹` for the band to `⁴` for a reply, and Alt with that digit shows or hides it, like btop. Hidden panels give their rows to the others. If you hide them all, one line under the header says which keys bring them back, and `/view both` brings back every one. The choice is your seat's alone and lasts until you leave. A reply you hide waits on one line until Alt+4 shows it or Esc drops it, and the next reply you ask for opens again. The map and a reply take turns: showing one puts the other away.
+Between the header and the input line are panels, top to bottom: the band (who's here, your party or the fight), the map, the feed, and a reply just for you, such as a sheet or `/help`. Each panel's title starts with its key as a small number, `¹` for the band to `⁴` for a reply, and Alt with that digit shows or hides it, like btop. Hidden panels give their rows to the others. If you hide them all, one line under the header says which keys bring them back (click one to show its panel), and `/view both` brings back every one. The choice is your seat's alone and lasts until you leave. A reply you hide waits on one line until Alt+4 shows it or Esc drops it, and the next reply you ask for opens again. The map and a reply take turns: showing one puts the other away.
 
 On a Mac, Option with a digit types a symbol (`¡`) unless the terminal sends Option as Alt: Terminal's "Use Option as Meta key", iTerm2's "Esc+" for Option, Ghostty's `macos-option-as-alt`. Some terminals take Alt and a digit to switch tabs (GNOME Terminal among them); there, change that shortcut in the terminal or use `/view`.
 
 Plain text is chat. Anything that starts with `/` is a command. `/help` lists them all, and `/help move` explains one. A bare `help`, `exit` or `quit` is answered first (did you mean `/help`?); press Enter again to say it to the table. When the table refuses a line, it says why and empties the input, so your next line starts clean; press Up to get the refused one back and fix it.
+
+## The mouse
+
+Click your hero's token on the map, or its row in the band, and a menu opens just above the hint row with what it can do: Move, each of its abilities, and End turn while it's its turn. At a set.world table the menu is Move, Attack, and Done on its turn. The GM can click any token; a creature's menu has its free strike too.
+
+- **Move**, then click a square: the table sends `/move brann f5`.
+- **An ability**, then click each target on the map or in the band (click one again to take it back), then **Roll**: `/pr brann Driving Blow on bandit-bruiser-1`. Roll with no target clicked uses the ability with none.
+- **Free strike** or **Attack**, then click the target: `/fs bandit-chief brann`, `/attack ada grub`.
+- **End turn** or **Done** sends `/done`.
+
+A click sends exactly the line you could have typed, and Up shows it afterward, so the menu is a way to learn the commands too. What the table refuses typed it refuses clicked, with the same reason; the menu offers what your token has, not only what it can do this moment. Esc or Cancel closes the menu, and clicking anywhere else on the map closes it as well.
+
+With no menu open, clicking any other token types its mark where the cursor is, and clicking a square types its name: type `/dist ` and click two things to get `/dist B c5`.
+
+Click a panel's title to hide that panel, as Alt with its digit does. The panels you've hidden are listed at the end of the hint row (`· show ¹ band`); click one to show it again. The wheel scrolls the feed or a reply under the pointer, a few lines at a time, and PgUp and PgDn still move a page.
+
+While the mouse is on, your terminal hands clicks to the table, so a plain drag doesn't select text. Hold Shift while you drag to select and copy as usual: Ghostty, kitty and WezTerm do this out of the box, and so do most terminals. `/mouse off` gives your terminal its mouse back, for your seat alone, `/mouse on` returns it to the table, and a bare `/mouse` switches it. The table asks your terminal for clicks, drags and the wheel only, never every movement of the pointer, so the mouse adds next to nothing to what goes over the network.
 
 ## What you'll type
 

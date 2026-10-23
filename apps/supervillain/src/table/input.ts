@@ -99,6 +99,16 @@ export function insert(s: LineState, raw: string): LineState {
   return edited(s, cs.join(""), s.cursor + add.length);
 }
 
+/**
+ * Types a word a click gave (a token's mark, a square's name) at the cursor, as its own word: a
+ * space before it unless one is there already, and one after it, ready for the next.
+ */
+export function insertWord(s: LineState, word: string): LineState {
+  const before = chars(s.text)[s.cursor - 1];
+  const lead = before === undefined || before === " " ? "" : " ";
+  return insert(s, `${lead}${word} `);
+}
+
 export function backspace(s: LineState): LineState {
   if (s.cursor === 0) return s;
   const cs = chars(s.text);
@@ -204,6 +214,15 @@ export function submitLine(s: LineState): {
 }
 
 /**
+ * Keeps a line the mouse sent in history, as if typed, so Up shows what a click did and how to
+ * type it. The line being typed stays as it is.
+ */
+export function remember(s: LineState, line: string): LineState {
+  if (s.history.at(-1) === line) return s;
+  return { ...s, history: [...s.history, line].slice(-HISTORY_LIMIT) };
+}
+
+/**
  * Puts a sent line back on the input, unless something has been typed since: after a hint that
  * asks for Enter again. History keeps it too.
  */
@@ -240,6 +259,8 @@ type Intent =
   | { readonly kind: "view"; readonly layout: Layout | "toggle" }
   | { readonly kind: "look"; readonly look: Look }
   | { readonly kind: "focus"; readonly at: string }
+  /** `/mouse [on|off]`; alone, it switches. */
+  | { readonly kind: "mouse"; readonly on: boolean | "toggle" }
   /** A line that is likely a slip (a bare `help` or `exit`), answered for this seat alone. */
   | { readonly kind: "hint"; readonly text: string; readonly again: boolean }
   | { readonly kind: "send"; readonly line: string };
@@ -278,10 +299,10 @@ function slipHint(line: string, mode: Mode): Intent | undefined {
 }
 
 /**
- * The table runs /quit and /view itself, and /state on the GM's seat (anyone else's goes to the
- * host, which refuses it). In name mode, a plain line is sent as `/name <line>`. A bare `help`,
- * `exit` or `quit` is answered with a hint, unless it is `asked`: the line that was just hinted,
- * sent again.
+ * The table runs /quit, /view and /mouse itself, and /state on the GM's seat (anyone else's goes
+ * to the host, which refuses it). In name mode, a plain line is sent as `/name <line>`. A bare
+ * `help`, `exit` or `quit` is answered with a hint, unless it is `asked`: the line that was just
+ * hinted, sent again.
  */
 export function intentFor(line: string, mode: Mode, me = "", asked?: string): Intent {
   const word = line.split(" ", 1)[0]!.toLowerCase();
@@ -296,6 +317,12 @@ export function intentFor(line: string, mode: Mode, me = "", asked?: string): In
     if (look !== undefined) return { kind: "look", look };
     const layout = LAYOUTS.find((l) => l === arg.toLowerCase());
     return layout === undefined ? { kind: "focus", at: arg } : { kind: "view", layout };
+  }
+  if (word === "/mouse") {
+    const arg = line.slice(word.length).trim().toLowerCase();
+    if (arg === "") return { kind: "mouse", on: "toggle" };
+    if (arg === "on" || arg === "off") return { kind: "mouse", on: arg === "on" };
+    return { kind: "hint", text: "Usage: /mouse [on|off]", again: false };
   }
   if (mode === "name" && !line.startsWith("/")) return { kind: "send", line: `/name ${line}` };
   return { kind: "send", line };

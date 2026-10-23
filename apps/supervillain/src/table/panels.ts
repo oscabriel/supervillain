@@ -97,17 +97,42 @@ export function viewPreset(p: Panels, layout: Layout | "toggle"): Panels {
   }
 }
 
+/** A piece of a line that may show a panel when clicked. */
+export interface PanelPiece {
+  readonly text: string;
+  readonly panel?: Panel;
+}
+
 /**
  * The one line said when every panel is hidden: the keys for those that would show something
  * (`available`), longest first that fits `width` columns, so the way back is always on screen.
+ * In pieces: each panel's own key (`Alt+2 map`) is one, which a click shows.
  */
-export function allHiddenLine(available: ReadonlyArray<Panel>, width: number): string {
-  const keys = available.map((p) => `Alt+${panelNumber(p)} ${p}`).join(" · ");
-  const lines = [
-    `every panel is hidden · ${keys} · /view both shows them all`,
-    `every panel is hidden · ${keys}`,
-    `every panel is hidden · ${PANEL_KEYS} or /view both`,
-    `panels hidden · ${PANEL_KEYS}`,
+export function allHiddenParts(
+  available: ReadonlyArray<Panel>,
+  width: number,
+): ReadonlyArray<PanelPiece> {
+  const keys = available.flatMap((p, i): PanelPiece[] => [
+    ...(i > 0 ? [{ text: " · " }] : []),
+    { text: `Alt+${panelNumber(p)} ${p}`, panel: p },
+  ]);
+  const lines: ReadonlyArray<ReadonlyArray<PanelPiece>> = [
+    [{ text: "every panel is hidden · " }, ...keys, { text: " · /view both shows them all" }],
+    [{ text: "every panel is hidden · " }, ...keys],
+    [{ text: `every panel is hidden · ${PANEL_KEYS} or /view both` }],
+    [{ text: `panels hidden · ${PANEL_KEYS}` }],
   ];
-  return lines.find((l) => Bun.stringWidth(l) <= width) ?? lines.at(-1)!;
+  const widthOf = (line: ReadonlyArray<PanelPiece>) =>
+    Bun.stringWidth(line.map((p) => p.text).join(""));
+  return lines.find((l) => widthOf(l) <= width) ?? lines.at(-1)!;
 }
+
+/**
+ * The panels a seat has hidden that would show something now (`available`), in screen order: what
+ * the hint row offers to show again, with the mouse. A map put away by an open reply isn't hidden.
+ */
+export const hiddenPanels = (p: Panels, available: ReadonlyArray<Panel>): ReadonlyArray<Panel> =>
+  PANELS.filter((panel) => available.includes(panel) && !p[panel]);
+
+/** How the hint row offers a hidden panel: its mark and name, `² map`. */
+export const shownAgainText = (panel: Panel): string => `${panelMark(panel)} ${panel}`;

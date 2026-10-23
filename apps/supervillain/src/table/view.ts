@@ -1,5 +1,5 @@
 import type { Accessor } from "solid-js";
-import type { CombatView, FeedLine } from "../game/index.ts";
+import type { CombatView, FeedLine, TokenAction } from "../game/index.ts";
 
 /** Someone with a seat open right now. */
 export interface Present {
@@ -9,7 +9,7 @@ export interface Present {
 }
 
 // The band's view and the feed's lines are built by the rules (game/), which never import the table.
-export type { Combatant, CombatView, FeedLine } from "../game/index.ts";
+export type { ActionPick, Combatant, CombatView, FeedLine, TokenAction } from "../game/index.ts";
 
 /** One token on the map. */
 export interface MapToken {
@@ -83,4 +83,10 @@ export interface TableView {
   readonly combat?: Accessor<CombatView | undefined>;
   /** The text map; undefined while no map is loaded. Every seat has it; a fake may not. */
   readonly map?: Accessor<MapView | undefined>;
+  /**
+   * What this seat may do with a token or band row (by its id), for the mouse's menu: each choice
+   * with the command line it sends. Undefined for one this seat may not act for. Reactive, like
+   * the band. Every seat has it; a fake may not.
+   */
+  readonly actions?: (id: string) => ReadonlyArray<TokenAction> | undefined;
 }

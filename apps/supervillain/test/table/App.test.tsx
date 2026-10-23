@@ -28,9 +28,17 @@ afterEach(() => {
   setup = undefined;
 });
 
-/** Mounts the App on a headless renderer. Ctrl-C belongs to the App, not the renderer. */
+/**
+ * Mounts the App on a headless renderer, made as the seats make theirs: Ctrl-C belongs to the App,
+ * not the renderer, and a click focuses nothing.
+ */
 async function mount(fake: ReturnType<typeof fakeView>, width = 100, height = 30) {
-  setup = await testRender(() => <App view={fake.view} />, { width, height, exitOnCtrlC: false });
+  setup = await testRender(() => <App view={fake.view} />, {
+    width,
+    height,
+    exitOnCtrlC: false,
+    autoFocus: false,
+  });
   await setup.renderOnce();
   return setup;
 }

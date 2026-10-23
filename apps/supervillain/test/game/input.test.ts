@@ -122,6 +122,7 @@ describe("completeLine", () => {
       "/help ",
       "/sheet ",
       "/view ",
+      "/mouse ",
       "/quit",
     ]);
     expect(completeLine(state, GM, "/")).toEqual([
@@ -167,6 +168,7 @@ describe("completeLine", () => {
       "/sheet ",
       "/state",
       "/view ",
+      "/mouse ",
       "/quit",
     ]);
   });
@@ -186,6 +188,7 @@ describe("completeLine", () => {
     expect(completeLine(state, ALICE, "/help ro")).toEqual(["/help roll"]);
     expect(completeLine(state, ALICE, "/help na")).toEqual(["/help name"]);
     expect(completeLine(state, ALICE, "/view f")).toEqual(["/view feed"]);
+    expect(completeLine(state, ALICE, "/mouse o")).toEqual(["/mouse on", "/mouse off"]);
     expect(completeLine(state, GM, "/help na")).toEqual(["/help narrate", "/help name"]);
   });
 
@@ -251,6 +254,7 @@ describe("helpText", () => {
         "/sheet <who>     Show a hero's or creature's sheet, to you alone.",
         "/view [map|feed|both|pictures|text|<square|who>]",
         "                 Show the map, the feed or both, in pictures or text, or centre the map; Alt+1-4 show or hide each panel.",
+        "/mouse [on|off]  Click tokens, menus and panel titles, or turn that off to select text the terminal's way.",
         "/quit            Leave the table.",
       ].join("\n"),
     );
@@ -289,6 +293,7 @@ describe("helpText", () => {
     expect(helpText(ALICE, "roll")).toBe("/roll <dice>  Roll dice: 2d10+3, d20, 3d6-1.");
     expect(helpText(ALICE, "quit")).toBe("/quit  Leave the table.");
     expect(helpText(ALICE, "view", "exec")).toBe("/view works only at a seat.");
+    expect(helpText(ALICE, "mouse", "exec")).toBe("/mouse works only at a seat.");
     expect(helpText(ALICE, "narrate")).toBe(
       "/narrate <text>  Describe the scene, with no speaker. (GM only)",
     );

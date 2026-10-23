@@ -25,7 +25,16 @@ export const localSeat = (options: LocalSeatOptions): Effect.Effect<void, never,
   Effect.gen(function* () {
     const renderer = yield* Effect.acquireRelease(
       // The App owns Ctrl-C, and the runtime owns signals, so leaving runs the host's finalizers.
-      Effect.promise(() => createCliRenderer({ exitOnCtrlC: false, exitSignals: [] })),
+      // Clicks, drags and the wheel, never every motion of the mouse, and a click never moves the
+      // keyboard from the input line (see packages/ssh).
+      Effect.promise(() =>
+        createCliRenderer({
+          exitOnCtrlC: false,
+          exitSignals: [],
+          enableMouseMovement: false,
+          autoFocus: false,
+        }),
+      ),
       (r) =>
         Effect.promise(() => {
           r.destroy();

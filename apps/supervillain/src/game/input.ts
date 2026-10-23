@@ -124,6 +124,21 @@ const entriesOf = (ruleset: Ruleset): ReadonlyArray<Entry> => [
       ),
   },
   {
+    // The App turns its own mouse on and off and never sends it; it's here for /help and Tab.
+    name: "mouse",
+    usage: "/mouse [on|off]",
+    summary:
+      "Click tokens, menus and panel titles, or turn that off to select text the terminal's way.",
+    gmOnly: false,
+    seatOnly: true,
+    run: () => ({
+      kind: "refusal",
+      message: "/mouse changes a seat's own screen; this one has none.",
+    }),
+    complete: (_state, _actor, partial) =>
+      ["on", "off"].filter((w) => w.startsWith(partial.trim().toLowerCase())),
+  },
+  {
     name: "quit",
     usage: "/quit",
     summary: "Leave the table.",

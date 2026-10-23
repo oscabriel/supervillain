@@ -1,3 +1,4 @@
+import type { TokenAction } from "./actions.ts";
 import { core, labelOf } from "./core.ts";
 import {
   type CombatView,
@@ -7,11 +8,13 @@ import {
   type MapView,
   mapView,
   sheetText,
+  tokenActions,
   withHeroes,
 } from "./drawSteel/index.ts";
 import { compose, type CommandOf, GM, type Refused, type StateOf } from "./module.ts";
 import {
   completeFighters,
+  setActions,
   setBand,
   setMap,
   setSheet,
@@ -88,6 +91,19 @@ export const mapOf = (
   ruleset: Ruleset,
 ): MapView | undefined =>
   ruleset === "set-world" ? setMap(state.sw, actor) : mapView(state.ds, actor);
+
+/**
+ * What one seat may do with a hero, creature or fighter (its id, as the map and the band carry
+ * it), for the table's mouse: the campaign's ruleset's choices, each as the command it sends.
+ * Undefined when the seat may not act for it.
+ */
+export const actionsOf = (
+  state: Pick<TableState, "ds" | "sw">,
+  actor: string,
+  ruleset: Ruleset,
+  id: string,
+): ReadonlyArray<TokenAction> | undefined =>
+  ruleset === "set-world" ? setActions(state.sw, actor, id) : tokenActions(state.ds, actor, id);
 
 /** The /sheet text for a hero, creature or fighter, as commands name them, or why there's none. */
 export const sheetOf = (state: TableState, who: string, ruleset: Ruleset): string | Refused =>

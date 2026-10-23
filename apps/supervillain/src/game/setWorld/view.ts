@@ -2,11 +2,13 @@
  * What a seat at a set.world table sees: the band, the map and /sheet, in the shapes Draw Steel's
  * use (drawSteel/view.ts and mapView.ts), so the table draws either the same way.
  */
+import type { TokenAction } from "../actions.ts";
 import type { MapToken, MapView } from "../drawSteel/mapView.ts";
 import { reachable } from "../drawSteel/movement.ts";
 import type { Combatant, CombatView } from "../drawSteel/view.ts";
 import type { Refused } from "../module.ts";
 import {
+  controls,
   type Fighter,
   fighterOf,
   findFighter,
@@ -179,3 +181,27 @@ export const withFighters =
     const own = fighterOf(slice, actor);
     return own === undefined ? labelOf(actor) : `${labelOf(actor)} (${own.name})`;
   };
+
+/**
+ * What `actor` may do with the fighter `id`, for the table's mouse, or undefined when they may not
+ * act for it (a player for anyone but the fighter they play): Move while it stands on the map,
+ * Attack, and Done while it is its turn, since `/done` ends whoever's turn it is. The rules
+ * refuse what can't be done now, as they do a typed line.
+ */
+export function setActions(
+  slice: SetState,
+  actor: string,
+  id: string,
+): ReadonlyArray<TokenAction> | undefined {
+  const f = findFighter(slice, id);
+  if (f === undefined || !controls(actor, f)) return undefined;
+  return [
+    ...(slice.map === undefined || f.at === undefined
+      ? []
+      : [{ label: "Move", pick: "square" as const, line: `/move ${f.id}` }]),
+    { label: "Attack", pick: "target", line: `/attack ${f.id}` },
+    ...(slice.fight?.turn?.id === f.id
+      ? [{ label: "Done", pick: "none" as const, line: "/done" }]
+      : []),
+  ];
+}

@@ -1,12 +1,15 @@
-import type { Refused } from "../module.ts";
-import type { Ability, Characteristics, DamageModifier } from "./sheets.ts";
+import type { TokenAction } from "../actions.ts";
+import { GM, type Refused } from "../module.ts";
+import { type Ability, type Characteristics, type DamageModifier, isTrait } from "./sheets.ts";
 import {
   capitalized,
   CHARACTERISTICS,
   type Condition,
+  controls,
   creatureHealth,
   type DrawSteelState,
   everyone,
+  findWho,
   type Hero,
   heroHealth,
   marks,
@@ -280,4 +283,39 @@ export function sheetText(slice: DrawSteelState, typed: string): string | Refuse
     ...conditionsLine(c.conditions),
     ...(b.abilities.length > 0 ? ["", ...b.abilities.flatMap(abilityLines)] : []),
   ].join("\n");
+}
+
+/**
+ * What `actor` may do with the hero or creature `id`, for the table's mouse, or undefined when
+ * they may not act for it (a player for anyone but their own hero). Move while it stands on the
+ * map; each of its abilities but traits, as `/pr` (a hero's free strike is one of them); a
+ * creature's free strike for the GM, as `/fs`; and End turn while it is its turn, since `/done`
+ * ends whoever's turn it is. Nothing is checked beyond that: the rules refuse what can't be done
+ * now, as they do a typed line.
+ */
+export function tokenActions(
+  slice: DrawSteelState,
+  actor: string,
+  id: string,
+): ReadonlyArray<TokenAction> | undefined {
+  const who = findWho(slice, id);
+  if (who === undefined || !controls(actor, who)) return undefined;
+  const abilities =
+    who.kind === "hero"
+      ? who.hero.sheet.abilities
+      : (slice.blocks[who.creature.block]?.abilities ?? []);
+  return [
+    ...(slice.map?.tokens[who.id] === undefined
+      ? []
+      : [{ label: "Move", pick: "square" as const, line: `/move ${who.id}` }]),
+    ...abilities
+      .filter((a) => !isTrait(a))
+      .map((a) => ({ label: a.name, pick: "targets" as const, line: `/pr ${who.id} ${a.name}` })),
+    ...(who.kind === "creature" && actor === GM
+      ? [{ label: "Free strike", pick: "target" as const, line: `/fs ${who.id}` }]
+      : []),
+    ...(slice.combat.active && slice.combat.acting === who.id
+      ? [{ label: "End turn", pick: "none" as const, line: "/done" }]
+      : []),
+  ];
 }

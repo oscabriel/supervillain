@@ -477,6 +477,13 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
                 environment: { TERM: info.term, ...info.env },
                 exitOnCtrlC: false,
                 exitSignals: [],
+                // Button-event tracking (?1000, ?1002, SGR ?1006): presses, releases, drags and
+                // the wheel. Any-event tracking (?1003) would send every motion of the mouse
+                // over the wire, through a relay too, for hover effects the table doesn't have.
+                enableMouseMovement: false,
+                // A click focuses nothing: the table's input line keeps the keyboard, so a scroll
+                // box clicked can't take keys from it.
+                autoFocus: false,
                 consoleMode: "disabled",
                 externalOutputMode: "passthrough",
                 targetFps: 30,

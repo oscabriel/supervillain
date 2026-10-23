@@ -220,6 +220,19 @@ export function pictureWindow(
   };
 }
 
+/**
+ * The square a click at `col` and `row` lands on, counted inside the pane's frame (the column
+ * letters' row is row 0, the row numbers' gutter columns 0 to 2), or undefined off the squares.
+ * A square is SQUARE.cols columns by SQUARE.rows rows, and any of its cells is it.
+ */
+export function pictureSquareAt(w: PictureWindow, col: number, row: number): Focus | undefined {
+  if (col < GUTTER || row < LABEL_ROWS) return undefined;
+  const sx = Math.floor((col - GUTTER) / SQUARE.cols);
+  const sy = Math.floor((row - LABEL_ROWS) / SQUARE.rows);
+  if (sx >= w.cols || sy >= w.rows) return undefined;
+  return { x: w.x0 + sx, y: w.y0 + sy };
+}
+
 /** The tokens a window leaves out, living first. */
 export const outOfView = (map: MapView, w: PictureWindow): ReadonlyArray<MapToken> =>
   map.tokens.filter(

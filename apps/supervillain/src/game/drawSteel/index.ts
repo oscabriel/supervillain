@@ -88,7 +88,14 @@ export {
   type Hero,
   type Side,
 } from "./state.ts";
-export { type Combatant, type CombatView, combatView, sheetText, withHeroes } from "./view.ts";
+export {
+  type Combatant,
+  type CombatView,
+  combatView,
+  sheetText,
+  tokenActions,
+  withHeroes,
+} from "./view.ts";
 export {
   checkGrid,
   columnLabel,

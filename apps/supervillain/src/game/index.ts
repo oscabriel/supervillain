@@ -39,7 +39,9 @@ export {
   setNeed,
   withSetFact,
 } from "./setWorld/index.ts";
+export { type ActionPick, actionLine, type TokenAction } from "./actions.ts";
 export {
+  actionsOf,
   bandOf,
   type Command,
   commands,

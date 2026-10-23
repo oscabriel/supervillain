@@ -1,16 +1,20 @@
 import {
+  type BoxRenderable,
   decodePasteBytes,
   type KeyEvent,
+  MouseButton,
+  type MouseEvent,
   type PasteEvent,
   type ScrollBoxRenderable,
 } from "@opentui/core";
-import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
+import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { formatSquare } from "../game/drawSteel/map.ts";
 import { BAND_FRAME, Band } from "./Band.tsx";
 import { bandLayout } from "./band.ts";
 import { Feed } from "./Feed.tsx";
 import { Header } from "./Header.tsx";
-import { HintRow } from "./HintRow.tsx";
+import { HintRow, showsWidth } from "./HintRow.tsx";
 import {
   backspace,
   cancelCompletion,
@@ -22,6 +26,7 @@ import {
   historyDown,
   historyUp,
   insert,
+  insertWord,
   intentFor,
   keyAction,
   type Layout,
@@ -33,17 +38,39 @@ import {
   moveLeft,
   moveRight,
   NAME_PROMPT,
+  remember,
   restoreDraft,
   submitLine,
   tableCompletions,
 } from "./input.ts";
 import { InputLine } from "./InputLine.tsx";
 import { hanging } from "./hanging.ts";
-import { type Focus, focusOf, followed, MAP_FRAME, mapLayout, mapRowsWanted } from "./map.ts";
+import {
+  type Focus,
+  focusOf,
+  followed,
+  MAP_FRAME,
+  mapLayout,
+  mapRowsWanted,
+  tokenAt,
+} from "./map.ts";
 import { MapPane } from "./MapPane.tsx";
 import {
+  boxClick,
+  choose,
+  type Clicked,
+  clickOutcome,
+  menuOf,
+  type MenuItem,
+  menuRows,
+  menuStands,
+  type Selection,
+  wheel,
+} from "./mouse.ts";
+import {
   ALL_SHOWN,
-  allHiddenLine,
+  allHiddenParts,
+  hiddenPanels,
   type Panel,
   PANEL_KEYS,
   PANELS,
@@ -62,12 +89,17 @@ import type { CombatView, MapView, TableView } from "./view.ts";
 /** What the panel keys do, said in the hint row where it has room (from about 103 columns). */
 const PANEL_HINT = `${PANEL_KEYS} show or hide panels`;
 /**
- * The keys, longest first: the first that fits is shown. The last fits 80 columns whole, so the
- * hint row never truncates at the smallest supported size.
+ * The keys, longest first: the first that fits is shown, beside the hidden panels the mouse offers
+ * at the row's end, and none if none does. At 80 columns the second fits alone and the shorter
+ * ones beside the hidden panels, so the hint row never cuts a hint at the smallest supported size.
  */
 const HINTS = [
   `Tab completes · ↑↓ history · PgUp/PgDn scroll · ${PANEL_HINT} · /help · Ctrl-C leaves`,
   "Tab completes · ↑↓ history · PgUp/PgDn scroll · /help · Ctrl-C leaves",
+  "Tab completes · ↑↓ history · /help · Ctrl-C leaves",
+  "Tab completes · /help · Ctrl-C leaves",
+  "Tab completes · /help",
+  "",
 ];
 /**
  * Beside the map's reach label, the keys that matter most, longest first: the first that fits
@@ -91,6 +123,9 @@ const NAME_HINT = "type the name you want, then Enter · Ctrl-C leaves";
 const PANE_HINTS = [
   `Esc closes · Alt+${panelNumber("reply")} hides it · PgUp/PgDn scroll it · keep typing as usual`,
   "Esc closes · PgUp/PgDn scroll it · keep typing as usual",
+  "Esc closes · PgUp/PgDn scroll it",
+  "Esc closes",
+  "",
 ];
 /** Said on one line in place of a reply whose pane this seat has hidden. */
 const REPLY_HIDDEN = `your reply is hidden · Alt+${panelNumber("reply")} shows it · Esc drops it`;
@@ -122,10 +157,14 @@ const MAP_FLOOR = 5;
 const BAND_FOLDED = 4;
 const NO_MAP = "no map is loaded; the layout applies once one is";
 const NO_REPLY = "no reply is open; /sheet or /help opens one";
+const MOUSE_ON =
+  "mouse on: click your token for what it can do, a panel's title to hide it · Shift+drag selects text";
+const MOUSE_OFF = "mouse off: your terminal selects text as usual · /mouse on clicks again";
 
 /**
  * The one chat-first layout, for the GM's terminal and every SSH seat alike. It reads and
- * submits only through the TableView; the input line always owns the keyboard (Q3).
+ * submits only through the TableView; the input line always owns the keyboard (Q3): seats make
+ * their renderers with `autoFocus: false`, so a click focuses nothing.
  */
 export function App(props: { view: TableView }) {
   const view = props.view;
@@ -147,6 +186,14 @@ export function App(props: { view: TableView }) {
   const [look, setLook] = createSignal<Look>("text");
   const picturesShown = usePicturesShown();
   const pictures = () => look() === "pictures" && picturesShown();
+  /**
+   * Whether this seat's terminal reports clicks (`/mouse [on|off]`): on at first, never logged. Off,
+   * the terminal selects text its own way again.
+   */
+  const [mouse, setMouse] = createSignal(true);
+  /** The token whose menu is open, and the choice under way: this seat's alone, never logged. */
+  const [selection, setSelection] = createSignal<Selection>();
+  const renderer = useRenderer();
   /** The GM pressed Ctrl-C with players here, and the next Ctrl-C closes the table. */
   const [leaving, setLeaving] = createSignal(false);
   /** The line a hint just answered: sent again as it is, it goes ahead. */
@@ -169,8 +216,8 @@ export function App(props: { view: TableView }) {
   /** What the map's highlight means, leading the hint row while the map shows. */
   const reachLabel = () => (mode() === "chat" ? shownMap()?.reachLabel : undefined);
   const hint = () => {
-    // The row's padding takes two columns.
-    const width = size().width - 2;
+    // The row's padding takes two columns, and the hidden panels at its end theirs.
+    const width = size().width - 2 - showsWidth(shows());
     const fits = (hints: ReadonlyArray<string>) =>
       hints.find((h) => Bun.stringWidth(h) <= width) ?? hints.at(-1)!;
     if (paneOpen()) return fits(PANE_HINTS);
@@ -315,14 +362,20 @@ export function App(props: { view: TableView }) {
       asked = text;
       return setLine(restoreDraft(line(), text));
     }
+    if (intent.kind === "mouse") return switchMouse(intent.on);
     // A refused line isn't given back: the next one typed would run into it. Up brings it back.
-    const reply = queue.then(() => view.submit(intent.line));
+    return deliver(intent.line);
+  }
+
+  /** Sends a line to the host, typed or clicked, and shows its reply. */
+  async function deliver(text: string) {
+    const reply = queue.then(() => view.submit(text));
     queue = reply.catch(() => undefined);
     try {
-      const text = await reply;
+      const answer = await reply;
       // A new reply opens the pane again, though the last one was hidden: it was asked for.
-      if (text?.includes("\n") && !panels().reply) setPanels({ ...panels(), reply: true });
-      if (text !== undefined && text !== "") setNotice(text);
+      if (answer?.includes("\n") && !panels().reply) setPanels({ ...panels(), reply: true });
+      if (answer !== undefined && answer !== "") setNotice(answer);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     }
@@ -338,9 +391,129 @@ export function App(props: { view: TableView }) {
 
   function escape() {
     if (line().completion) return edit(cancelCompletion);
+    if (selection() !== undefined) return void setSelection(undefined);
     if (notice() !== undefined) return void setNotice(undefined);
     if (showDebug()) setShowDebug(false);
   }
+
+  /**
+   * `/mouse [on|off]`: whether this seat's terminal reports clicks, wheel and drags (OpenTUI's
+   * button-event tracking, never every motion). Off, the terminal selects text as usual.
+   */
+  function switchMouse(on: boolean | "toggle") {
+    const next = on === "toggle" ? !mouse() : on;
+    try {
+      renderer.useMouse = next;
+    } catch (error) {
+      return void setNotice(error instanceof Error ? error.message : String(error));
+    }
+    setMouse(next);
+    if (!next) setSelection(undefined);
+    setNotice(next ? MOUSE_ON : MOUSE_OFF);
+  }
+
+  /** A token or band row that is dead, on the map or in the band. */
+  const isDead = (id: string) =>
+    view.map?.()?.tokens.some((t) => t.id === id && t.dead) === true ||
+    view.combat?.()?.combatants.find((c) => c.id === id)?.health === "dead";
+  /**
+   * Whether this seat may act for a token: the rules say what it may do with it, or nothing. The
+   * dead open no menu.
+   */
+  const mayAct = (id: string) => view.actions?.(id) !== undefined && !isDead(id);
+
+  /** A click on the map or the band, as `clickOutcome` reads it. */
+  function clicked(click: Clicked) {
+    if (!mouse()) return;
+    const result = clickOutcome(selection(), click, mayAct);
+    switch (result.kind) {
+      case "select":
+        return void setSelection({ id: result.id, picked: [] });
+      case "clear":
+        return void setSelection(undefined);
+      case "picked": {
+        const s = selection();
+        return void (s && setSelection({ ...s, picked: result.picked }));
+      }
+      case "send":
+        return sendClicked(result.line);
+      case "insert":
+        return edit((s) => insertWord(s, result.text));
+      case "none":
+        return;
+    }
+  }
+
+  /** A line a click made: sent as typed lines are, and kept in history so Up shows it. */
+  function sendClicked(text: string) {
+    setSelection(undefined);
+    setNotice(undefined);
+    edit((s) => remember(s, text));
+    void deliver(text);
+  }
+
+  function onSquare(square: Focus) {
+    const map = view.map?.();
+    const token = map === undefined ? undefined : tokenAt(map, square);
+    clicked({
+      square: formatSquare(square),
+      ...(token === undefined ? {} : { token: { id: token.id, mark: token.mark } }),
+    });
+  }
+
+  function onWho(id: string) {
+    const c = view.combat?.()?.combatants.find((k) => k.id === id);
+    clicked({ token: { id, mark: c?.mark } });
+  }
+
+  function pickItem(item: MenuItem) {
+    const s = selection();
+    if (s === undefined || !mouse()) return;
+    switch (item.kind) {
+      case "cancel":
+        return void setSelection(undefined);
+      case "roll":
+        return sendClicked(item.line);
+      case "action": {
+        const next = choose(s, item.action);
+        return next.kind === "send" ? sendClicked(next.line) : void setSelection(next.selection);
+      }
+    }
+  }
+
+  /** How the menu names a token: its name on the map or in the band, else its id. */
+  const nameOf = (id: string) =>
+    view.map?.()?.tokens.find((t) => t.id === id)?.name ??
+    view.combat?.()?.combatants.find((c) => c.id === id)?.name ??
+    id;
+  /** How the menu names a target: its mark, as typed, else its id. */
+  const markOf = (id: string) =>
+    view.map?.()?.tokens.find((t) => t.id === id)?.mark ??
+    view.combat?.()?.combatants.find((c) => c.id === id)?.mark ??
+    id;
+
+  /** The open menu, while this seat may still act for the token it is for. */
+  const menu = createMemo(() => {
+    const s = selection();
+    if (s === undefined || !mouse() || small()) return undefined;
+    const actions = view.actions?.(s.id);
+    return actions === undefined ? undefined : menuOf(s, actions, nameOf, markOf);
+  });
+  // A token this seat can no longer act for (a hero given away, a fighter gone, a creature killed)
+  // closes its menu, and so does a choice no longer offered (Move once the map is unloaded).
+  createEffect(() => {
+    const s = selection();
+    if (s !== undefined && (!mayAct(s.id) || !menuStands(s, view.actions?.(s.id))))
+      setSelection(undefined);
+  });
+  const menuLines = createMemo(() => {
+    const m = menu();
+    // The rows' padding takes two columns.
+    return m === undefined ? [] : menuRows(m, size().width - 2);
+  });
+
+  let paneBox: BoxRenderable | undefined;
+  let debugBox: BoxRenderable | undefined;
 
   function scroll(direction: 1 | -1) {
     const target = paneOpen() ? pane : showDebug() ? debug : panels().feed ? feed : undefined;
@@ -453,7 +626,8 @@ export function App(props: { view: TableView }) {
    */
   function roomFor(shown: Panels, notice: boolean) {
     const h = size().height;
-    const room = h - FIXED_ROWS - (shown.feed ? FEED_MIN : 0) - (notice ? 1 : 0);
+    const room =
+      h - FIXED_ROWS - (shown.feed ? FEED_MIN : 0) - (notice ? 1 : 0) - menuLines().length;
     const cap = shown.feed ? Math.floor(view.combat?.()?.active ? (h * 2) / 3 : h / 2) : room;
     return { room, cap };
   }
@@ -524,6 +698,10 @@ export function App(props: { view: TableView }) {
       (p) => (p !== "map" || view.map?.() !== undefined) && (p !== "reply" || multiline()),
     );
 
+  /** The panels this seat has hidden, offered at the hint row's end while the mouse is on. */
+  const shows = () =>
+    mouse() && !small() && !nothingShown() ? hiddenPanels(panels(), available()) : [];
+
   /**
    * The feed's row has something to fill the screen with: the feed, the `/state` pane or the
    * all-hidden line. Without them the reply pane or a notice sits under the panels above, and the
@@ -558,6 +736,8 @@ export function App(props: { view: TableView }) {
             maxHeight={bandHeight()}
             heroesWhole={paneOpen()}
             mark={panelMark("band")}
+            onWho={onWho}
+            onTitle={() => toggle("band")}
           />
         </Show>
       </Show>
@@ -573,34 +753,73 @@ export function App(props: { view: TableView }) {
                 focus={focus()}
                 hint={picturesShown() ? "/view pictures" : undefined}
                 mark={panelMark("map")}
+                onSquare={onSquare}
+                onTitle={() => toggle("map")}
               />
             }
           >
-            <PictureMap map={map()} height={mapHeight()} focus={focus()} mark={panelMark("map")} />
+            <PictureMap
+              map={map()}
+              height={mapHeight()}
+              focus={focus()}
+              mark={panelMark("map")}
+              onSquare={onSquare}
+              onTitle={() => toggle("map")}
+            />
           </Show>
         )}
       </Show>
 
       <box flexDirection="row" flexGrow={rowFills() ? 1 : 0} minHeight={0}>
         <Show when={panels().feed}>
-          <Feed lines={view.feed()} ref={(el) => (feed = el)} mark={panelMark("feed")} />
+          <Feed
+            lines={view.feed()}
+            ref={(el) => (feed = el)}
+            mark={panelMark("feed")}
+            onTitle={() => toggle("feed")}
+          />
         </Show>
         <Show when={nothingShown()}>
-          <box flexGrow={1} paddingLeft={1} paddingRight={1}>
-            <text fg={color.notice} wrapMode="none">
-              {allHiddenLine(available(), size().width - 2)}
-            </text>
+          <box flexGrow={1} paddingLeft={1} paddingRight={1} flexDirection="row">
+            <For each={allHiddenParts(available(), size().width - 2)}>
+              {(part) => (
+                <text
+                  fg={color.notice}
+                  wrapMode="none"
+                  flexShrink={0}
+                  selectable={false}
+                  onMouseDown={(event: MouseEvent) => {
+                    const panel = part.panel;
+                    if (panel !== undefined && event.button === MouseButton.LEFT && mouse())
+                      toggle(panel);
+                  }}
+                >
+                  {part.text}
+                </text>
+              )}
+            </For>
           </box>
         </Show>
         <Show when={showDebug()}>
           <box
+            ref={(el: BoxRenderable) => (debugBox = el)}
+            onMouseDown={boxClick(
+              () => debugBox,
+              () => " /state · Esc closes ",
+              () => setShowDebug(false),
+            )}
             border
             borderColor={color.border}
             title=" /state · Esc closes "
             width={panels().feed ? "50%" : "100%"}
             flexShrink={0}
           >
-            <scrollbox ref={(el: ScrollBoxRenderable) => (debug = el)} flexGrow={1} paddingLeft={1}>
+            <scrollbox
+              ref={(el: ScrollBoxRenderable) => (debug = el)}
+              scrollAcceleration={wheel}
+              flexGrow={1}
+              paddingLeft={1}
+            >
               <text fg={color.debug}>{view.debug()}</text>
             </scrollbox>
           </box>
@@ -618,6 +837,12 @@ export function App(props: { view: TableView }) {
             }
           >
             <box
+              ref={(el: BoxRenderable) => (paneBox = el)}
+              onMouseDown={boxClick(
+                () => paneBox,
+                () => marked(" just for you ", panelMark("reply")),
+                () => toggle("reply"),
+              )}
               border
               borderColor={color.notice}
               title={marked(" just for you ", panelMark("reply"))}
@@ -626,6 +851,7 @@ export function App(props: { view: TableView }) {
             >
               <scrollbox
                 ref={(el: ScrollBoxRenderable) => (pane = el)}
+                scrollAcceleration={wheel}
                 flexGrow={1}
                 paddingLeft={1}
               >
@@ -653,7 +879,44 @@ export function App(props: { view: TableView }) {
         <box flexGrow={1} minHeight={0} />
       </Show>
 
-      <HintRow hint={hint()} completion={line().completion} lead={reachLabel()} />
+      <For each={menuLines()}>
+        {(row) => (
+          <box height={1} flexShrink={0} paddingLeft={1} paddingRight={1} flexDirection="row">
+            <For each={row}>
+              {(piece) => {
+                const index = piece.item;
+                if (index === undefined)
+                  return (
+                    <text fg={color.bright} wrapMode="none" flexShrink={0}>
+                      {piece.text}
+                    </text>
+                  );
+                return (
+                  <text
+                    wrapMode="none"
+                    flexShrink={0}
+                    selectable={false}
+                    onMouseDown={(event: MouseEvent) => {
+                      const item = menu()?.items[index];
+                      if (item !== undefined && event.button === MouseButton.LEFT) pickItem(item);
+                    }}
+                  >
+                    <span style={{ fg: color.cursorFg, bg: color.cursorBg }}>{piece.text}</span>
+                  </text>
+                );
+              }}
+            </For>
+          </box>
+        )}
+      </For>
+
+      <HintRow
+        hint={hint()}
+        completion={line().completion}
+        lead={reachLabel()}
+        shows={shows()}
+        onShow={(panel) => toggle(panel)}
+      />
       <InputLine
         prompt={mode() === "name" ? `${NAME_PROMPT} ` : "> "}
         line={line()}
