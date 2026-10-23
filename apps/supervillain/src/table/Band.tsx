@@ -2,6 +2,7 @@ import { useTerminalDimensions } from "@opentui/solid";
 import { createMemo, For, Show } from "solid-js";
 import { bandLayout, type Segment, type Tone } from "./band.ts";
 import { keepLines } from "./keep.ts";
+import { marked } from "./panels.ts";
 import { color, people, personColor, personLabel } from "./theme.ts";
 import type { CombatView, Present } from "./view.ts";
 
@@ -42,6 +43,8 @@ export function Band(props: {
   maxHeight: number;
   /** A reply pane shares the screen: creatures give way and no hero's row is cut. */
   heroesWhole?: boolean;
+  /** The panel's key, leading the title (`¹`). */
+  mark?: string | undefined;
 }) {
   return (
     <Show when={props.combat} fallback={<Presence {...props} />}>
@@ -50,13 +53,19 @@ export function Band(props: {
           combat={combat()}
           maxHeight={props.maxHeight}
           heroesWhole={props.heroesWhole ?? false}
+          mark={props.mark}
         />
       )}
     </Show>
   );
 }
 
-function Combat(props: { combat: CombatView; maxHeight: number; heroesWhole: boolean }) {
+function Combat(props: {
+  combat: CombatView;
+  maxHeight: number;
+  heroesWhole: boolean;
+  mark: string | undefined;
+}) {
   const size = useTerminalDimensions();
   const keep = keepLines<Segment>();
   const layout = createMemo(() => {
@@ -72,7 +81,7 @@ function Combat(props: { combat: CombatView; maxHeight: number; heroesWhole: boo
     <box
       border
       borderColor={props.combat.active ? color.brand : color.border}
-      title={layout().title}
+      title={marked(layout().title, props.mark)}
       bottomTitle={layout().more > 0 ? ` +${layout().more} more ` : ""}
       bottomTitleAlignment="right"
       flexShrink={0}
@@ -97,6 +106,7 @@ function Presence(props: {
   present: ReadonlyArray<Present>;
   joinHint?: string;
   joinNote?: string | undefined;
+  mark?: string | undefined;
 }) {
   const alone = () => people(props.present).every((p) => p.actor === props.me);
   const note = () =>
@@ -106,7 +116,7 @@ function Presence(props: {
     <box
       border
       borderColor={color.border}
-      title=" at the table "
+      title={marked(" at the table ", props.mark)}
       flexShrink={0}
       paddingLeft={1}
       paddingRight={1}

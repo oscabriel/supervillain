@@ -3,6 +3,7 @@ import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { createMemo, createSignal, Index, onCleanup } from "solid-js";
 import { columnLabel } from "../game/drawSteel/map.ts";
 import { type Focus, MAP_FRAME } from "./map.ts";
+import { fittedTitle } from "./panels.ts";
 import {
   type CellPixels,
   cellPixels,
@@ -74,7 +75,13 @@ export function useCellPixels(): () => CellPixels | undefined {
  * on a dense map at HiDPI, not megabytes). The view centres as the text map's does; tokens out of
  * view are named in the bottom border.
  */
-export function PictureMap(props: { map: MapView; height: number; focus?: Focus | undefined }) {
+export function PictureMap(props: {
+  map: MapView;
+  height: number;
+  focus?: Focus | undefined;
+  /** The panel's key, leading the title (`²`). */
+  mark?: string | undefined;
+}) {
   const size = useTerminalDimensions();
   const renderer = useRenderer();
   renderer.kittyImageTransport = "zlib";
@@ -112,7 +119,11 @@ export function PictureMap(props: { map: MapView; height: number; focus?: Focus 
     <box
       border
       borderColor={color.border}
-      title={` ${props.map.name} · /view text `}
+      title={fittedTitle(
+        [` ${props.map.name} · /view text `, ` ${props.map.name} `],
+        props.mark,
+        size().width,
+      )}
       bottomTitle={hidden()}
       bottomTitleAlignment="right"
       height={props.height}

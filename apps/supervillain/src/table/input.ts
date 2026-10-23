@@ -3,6 +3,7 @@
  * paste sanitising and the first-run name prompt. The App maps keys to these functions and
  * renders the result; nothing here touches OpenTUI.
  */
+import { type Panel, panelOf } from "./panels.ts";
 
 // ECMA-48 sequences in ESC and C1 form: a control sequence through its final byte, a control
 // string (OSC, DCS, SOS, PM, APC) through BEL or ST, a single shift (SS3, as F1 sends) with its
@@ -315,13 +316,20 @@ export function tableCompletions(line: string): ReadonlyArray<string> {
 export interface KeyLike {
   readonly name: string;
   readonly ctrl: boolean;
+  /** Alt (Option) or Meta: OpenTUI sets it for both. */
   readonly meta: boolean;
   readonly shift: boolean;
   readonly sequence: string;
+  /**
+   * Under the kitty keyboard protocol, the key's codepoint on the base (US) layout: the number
+   * row's digit where the layout types something else there (`&` for 1 on AZERTY).
+   */
+  readonly baseCode?: number | undefined;
 }
 
 type KeyAction =
   | { readonly kind: "insert"; readonly text: string }
+  | { readonly kind: "panel"; readonly panel: Panel }
   | { readonly kind: "complete"; readonly step: 1 | -1 }
   | { readonly kind: "scroll"; readonly direction: 1 | -1 }
   | {
@@ -344,8 +352,26 @@ type KeyAction =
     };
 
 /**
+ * The panel Alt+N shows or hides. OpenTUI 0.6.6 gives Alt+1 as name `1` with `meta` in each form
+ * a terminal sends it: ESC 1 (most terminals, and over SSH), CSI 49;3u (the kitty keyboard
+ * protocol, which the renderer turns on where the terminal has it) and CSI 27;3;49~
+ * (modifyOtherKeys). Under kitty's protocol a layout whose number row types other characters
+ * still gives the digit as `baseCode`.
+ */
+function panelKey(key: KeyLike): Panel | undefined {
+  if (!key.meta || key.ctrl) return undefined;
+  const digit = /^[1-9]$/.test(key.name)
+    ? Number(key.name)
+    : key.baseCode !== undefined && key.baseCode >= 0x31 && key.baseCode <= 0x39
+      ? key.baseCode - 0x30
+      : undefined;
+  return digit === undefined ? undefined : panelOf(digit);
+}
+
+/**
  * Maps a key to what the line does with it. The line always owns the keyboard (Q3): there are
- * no single-letter hotkeys, and only sanitised printable text is ever inserted.
+ * no single-letter hotkeys, and only sanitised printable text is ever inserted, so a bare digit
+ * types; Alt and a digit shows or hides a panel.
  */
 export function keyAction(key: KeyLike): KeyAction {
   if (key.ctrl && !key.meta) {
@@ -380,6 +406,8 @@ export function keyAction(key: KeyLike): KeyAction {
     case "backspace":
       return { kind: key.meta || key.ctrl ? "deleteWord" : "backspace" };
   }
+  const panel = panelKey(key);
+  if (panel !== undefined) return { kind: "panel", panel };
   if (key.ctrl || key.meta) return { kind: "none" };
   switch (key.name) {
     case "up":

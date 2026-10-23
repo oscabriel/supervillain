@@ -110,7 +110,8 @@ const entriesOf = (ruleset: Ruleset): ReadonlyArray<Entry> => [
     // The App changes its own layout on /view and never sends it; it's here for /help and Tab.
     name: "view",
     usage: "/view [map|feed|both|pictures|text|<square|who>]",
-    summary: "Show the map, the feed or both, in pictures or text; or centre the map somewhere.",
+    summary:
+      "Show the map, the feed or both, in pictures or text, or centre the map; Alt+1-4 show or hide each panel.",
     gmOnly: false,
     seatOnly: true,
     run: () => ({

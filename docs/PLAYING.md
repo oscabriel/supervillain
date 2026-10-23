@@ -49,7 +49,7 @@ The table asks **what should the table call you?** the first time. Type a name a
 
 ## The keyboard
 
-The input line at the bottom always has the keyboard. Nothing you type does anything until you press Enter, and no single key is a shortcut.
+The input line at the bottom always has the keyboard. Nothing you type does anything until you press Enter, and no single key is a shortcut: digits type digits, and only Alt with a digit shows or hides a panel.
 
 | Key | What it does |
 | --- | --- |
@@ -57,10 +57,15 @@ The input line at the bottom always has the keyboard. Nothing you type does anyt
 | Tab, Shift-Tab | Complete a command or a name; press again for the next match |
 | Up, Down | Go back through lines you've sent |
 | PgUp, PgDn | Scroll the feed, or a sheet you opened |
+| Alt+1, Alt+2, Alt+3, Alt+4 | Show or hide the band, the map, the feed, or a reply you opened |
 | Esc | Cancel a completion or close a message |
 | Ctrl-A, Ctrl-E | Jump to the start or end of the line |
 | Ctrl-W, Ctrl-U | Delete a word, or everything before the cursor |
 | Ctrl-C, Ctrl-D on an empty line, or `/quit` | Leave the table |
+
+Between the header and the input line are panels, top to bottom: the band (who's here, your party or the fight), the map, the feed, and a reply just for you, such as a sheet or `/help`. Each panel's title starts with its key as a small number, `¹` for the band to `⁴` for a reply, and Alt with that digit shows or hides it, like btop. Hidden panels give their rows to the others. If you hide them all, one line under the header says which keys bring them back, and `/view both` brings back every one. The choice is your seat's alone and lasts until you leave. A reply you hide waits on one line until Alt+4 shows it or Esc drops it, and the next reply you ask for opens again. The map and a reply take turns: showing one puts the other away.
+
+On a Mac, Option with a digit types a symbol (`¡`) unless the terminal sends Option as Alt: Terminal's "Use Option as Meta key", iTerm2's "Esc+" for Option, Ghostty's `macos-option-as-alt`. Some terminals take Alt and a digit to switch tabs (GNOME Terminal among them); there, change that shortcut in the terminal or use `/view`.
 
 Plain text is chat. Anything that starts with `/` is a command. `/help` lists them all, and `/help move` explains one. A bare `help`, `exit` or `quit` is answered first (did you mean `/help`?); press Enter again to say it to the table. When the table refuses a line, it says why and empties the input, so your next line starts clean; press Up to get the refused one back and fix it.
 
@@ -111,7 +116,7 @@ Squares are written as a column letter and a row number, like `c5`. Columns run 
 
 On the map, `·` is floor, a solid block is wall and `~` is difficult terrain. Tokens are marks: a hero's is a capital letter (`B` for Brann), a creature's a small one from the last word of its name (`c` for the Bandit Chief), with a digit when two would share a letter (`b1`, `b2`). In combat the band at the top shows each token's mark beside its name. A mark works in commands wherever a square does, and it's case-sensitive: `/dist B b`. When you're about to move, the squares you can reach are tinted and marked `•`, or `≈` on difficult terrain. A move costs 1 a square, diagonals too, and difficult terrain or an enemy's square costs 1 more. In combat you move only on your own turn, up to your speed over the whole turn.
 
-On a map bigger than your screen, the view follows whoever is acting. `/view f5` or `/view bandit-chief` centres it until the turn passes. `/view map` gives the map more room, `/view feed` hides it, and `/view` switches it on and off.
+On a map bigger than your screen, the view follows whoever is acting. `/view f5` or `/view bandit-chief` centres it until the turn passes. `/view map` shows every panel and gives the map more room, `/view feed` shows every panel but the map, `/view both` shows them all sharing the screen, and `/view` (like Alt+2) switches the map on and off.
 
 In a terminal that shows kitty graphics (Ghostty, kitty or WezTerm, not inside tmux), the map's title offers `/view pictures`: the map drawn in MEKMODE's pixel pictures, each square bigger, each token a figure in its side's colour with its mark in the corner. Commands still take the same squares and marks, and `/view text` goes back. Each move sends your seat a picture of tens of kilobytes, against a couple for text, and on a HiDPI (Retina) screen, where the picture is painted at its finer pixels to stay sharp, about three times that. Elsewhere the map stays text, since pictures there would come out as coloured blocks whose marks can't be read.
 

@@ -1,5 +1,6 @@
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { For } from "solid-js";
+import { marked } from "./panels.ts";
 import { color, feedStyle } from "./theme.ts";
 import type { FeedLine } from "./view.ts";
 
@@ -10,9 +11,17 @@ import type { FeedLine } from "./view.ts";
 export function Feed(props: {
   lines: ReadonlyArray<FeedLine>;
   ref: (el: ScrollBoxRenderable) => void;
+  /** The panel's key, leading the title (`³`). */
+  mark?: string | undefined;
 }) {
   return (
-    <box border borderColor={color.border} title=" feed " flexGrow={1} minWidth={0}>
+    <box
+      border
+      borderColor={color.border}
+      title={marked(" feed ", props.mark)}
+      flexGrow={1}
+      minWidth={0}
+    >
       <scrollbox
         ref={props.ref}
         flexGrow={1}

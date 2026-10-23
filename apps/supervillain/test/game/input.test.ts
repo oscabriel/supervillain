@@ -250,7 +250,7 @@ describe("helpText", () => {
         "/help [command]  List the commands, or explain one.",
         "/sheet <who>     Show a hero's or creature's sheet, to you alone.",
         "/view [map|feed|both|pictures|text|<square|who>]",
-        "                 Show the map, the feed or both, in pictures or text; or centre the map somewhere.",
+        "                 Show the map, the feed or both, in pictures or text, or centre the map; Alt+1-4 show or hide each panel.",
         "/quit            Leave the table.",
       ].join("\n"),
     );

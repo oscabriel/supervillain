@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { parseKeypress } from "@opentui/core";
 import {
   backspace,
   cancelCompletion,
@@ -376,6 +377,46 @@ describe("keyAction", () => {
     expect(keyAction(key("x", { ctrl: true, sequence: "\x18" }))).toEqual({ kind: "none" });
     expect(keyAction(key("x", { meta: true, sequence: "\x1bx" }))).toEqual({ kind: "none" });
     expect(keyAction(key("insert", { sequence: "\x1b[2~" }))).toEqual({ kind: "none" });
+  });
+});
+
+describe("keyAction: Alt and a digit shows or hides a panel", () => {
+  /** What OpenTUI 0.6.6 makes of the bytes a terminal sends, as the App receives it. */
+  const parsed = (bytes: string, kitty = false) => {
+    const key = parseKeypress(bytes, { useKittyKeyboard: kitty });
+    if (key === null) throw new Error(`OpenTUI parsed nothing from ${JSON.stringify(bytes)}`);
+    return key;
+  };
+
+  test("ESC and the digit, as most terminals send Alt+1 and as it arrives over SSH", () => {
+    expect(parsed("\x1b1")).toMatchObject({ name: "1", meta: true, ctrl: false });
+    expect(keyAction(parsed("\x1b1"))).toEqual({ kind: "panel", panel: "band" });
+    expect(keyAction(parsed("\x1b2"))).toEqual({ kind: "panel", panel: "map" });
+    expect(keyAction(parsed("\x1b3"))).toEqual({ kind: "panel", panel: "feed" });
+    expect(keyAction(parsed("\x1b4"))).toEqual({ kind: "panel", panel: "reply" });
+  });
+
+  test("the kitty keyboard protocol's CSI u, and xterm's modifyOtherKeys", () => {
+    expect(keyAction(parsed("\x1b[49;3u", true))).toEqual({ kind: "panel", panel: "band" });
+    expect(keyAction(parsed("\x1b[52;3u", true))).toEqual({ kind: "panel", panel: "reply" });
+    // Alt and Shift on the number row still means the number.
+    expect(keyAction(parsed("\x1b[50:64;4u", true))).toEqual({ kind: "panel", panel: "map" });
+    expect(keyAction(parsed("\x1b[27;3;51~"))).toEqual({ kind: "panel", panel: "feed" });
+  });
+
+  test("under kitty's protocol a layout whose number row types symbols still gives the digit", () => {
+    // AZERTY: the 1 key types &, and kitty reports the base layout's 1 beside it.
+    expect(keyAction(parsed("\x1b[38::49;3u", true))).toEqual({ kind: "panel", panel: "band" });
+  });
+
+  test("a bare digit types it, and keys no panel has do nothing", () => {
+    expect(keyAction(parsed("1"))).toEqual({ kind: "insert", text: "1" });
+    expect(keyAction(parsed("4"))).toEqual({ kind: "insert", text: "4" });
+    expect(keyAction(parsed("\x1b[49u", true))).toEqual({ kind: "insert", text: "1" });
+    for (const bytes of ["\x1b5", "\x1b9", "\x1b0"])
+      expect(keyAction(parsed(bytes))).toEqual({ kind: "none" });
+    // Ctrl-Alt-1 is the terminal's or the desktop's, not the table's.
+    expect(keyAction(parsed("\x1b[49;7u", true))).toEqual({ kind: "none" });
   });
 });
 

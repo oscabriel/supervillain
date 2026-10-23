@@ -1,6 +1,7 @@
 import { useTerminalDimensions } from "@opentui/solid";
 import { createMemo, For } from "solid-js";
 import { keepLines } from "./keep.ts";
+import { fittedTitle } from "./panels.ts";
 import { type Focus, MAP_FRAME, mapLayout, type MapSegment, type MapTone } from "./map.ts";
 import { color } from "./theme.ts";
 import type { MapView } from "./view.ts";
@@ -37,8 +38,13 @@ export function MapPane(props: {
   map: MapView;
   height: number;
   focus?: Focus | undefined;
-  /** Said after the title, e.g. `/view pictures` where this seat could draw the map in pictures. */
+  /**
+   * Said after the title, e.g. `/view pictures` where this seat could draw the map in pictures.
+   * Where the title can't hold it all, the hint goes first, then the rows and columns shown.
+   */
   hint?: string | undefined;
+  /** The panel's key, leading the title (`²`). */
+  mark?: string | undefined;
 }) {
   const size = useTerminalDimensions();
   const keep = keepLines<MapSegment>();
@@ -55,7 +61,15 @@ export function MapPane(props: {
     <box
       border
       borderColor={color.border}
-      title={props.hint ? `${layout().title.trimEnd()} · ${props.hint} ` : layout().title}
+      title={fittedTitle(
+        [
+          ...(props.hint ? [`${layout().title.trimEnd()} · ${props.hint} `] : []),
+          layout().title,
+          ` map · ${props.map.name} `,
+        ],
+        props.mark,
+        size().width,
+      )}
       bottomTitle={layout().bottomTitle}
       bottomTitleAlignment="right"
       height={props.height}
