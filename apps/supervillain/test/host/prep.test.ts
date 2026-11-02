@@ -10,7 +10,7 @@ import { openSeat } from "../../src/host/Seat.ts";
 import { type TableServices, tableServices } from "../../src/host/services.ts";
 import { SetWorld } from "../../src/host/SetWorld.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
-import type { TableView } from "../../src/table/view.ts";
+import type { PrepItem, TableView } from "../../src/table/view.ts";
 import { sampleCampaign } from "./campaign.ts";
 import { effect, waitFor } from "./effect.ts";
 
@@ -30,14 +30,25 @@ const said = (reply: Reply): ReadonlyArray<string> | string =>
 
 const stateNow = Effect.flatMap(TableRoom, (r) => r.state.get);
 
-/** The prep panel's sections as titles and items, once the seat has read the files. */
-const listed = (view: TableView) =>
-  view.prep
-    ?.view()
-    ?.sections.map((s) => [
-      s.title,
-      s.items.map((i) => `${i.label} ${i.line}${i.note ? ` (${i.note})` : ""}`),
-    ]);
+/**
+ * The prep panel at a glance, once the seat has read the files: each section's title and items,
+ * then the maps (the loaded one first), who waits for a square, and the fight's start.
+ */
+const listed = (view: TableView) => {
+  const v = view.prep?.view();
+  if (v === undefined) return undefined;
+  const items = (list: ReadonlyArray<PrepItem>) =>
+    list.map((i) => `${i.label} ${i.line}${i.note ? ` (${i.note})` : ""}`);
+  return [
+    ...v.sections.map((s) => [s.title, items(s.items)]),
+    [
+      "maps",
+      [...(v.maps.loaded ? [`${v.maps.loaded.name} (loaded)`] : []), ...items(v.maps.items)],
+    ],
+    ["place", v.place.map((t) => `${t.name} /place ${t.id}`)],
+    ["start", "line" in v.start ? v.start.line : v.start.note],
+  ];
+};
 
 const mapFiles = (dir: string) =>
   Effect.promise(async () => (await readdir(join(dir, "maps"))).toSorted());
@@ -57,11 +68,11 @@ describe("the prep panel's lists, from the campaign", () => {
           expect(yield* Effect.promise(() => gm.prep!.reload())).toBeUndefined();
           expect(listed(gm)).toEqual([
             [
-              "Heroes",
+              "heroes",
               ["Brann /hero brann", "Ilsa /hero ilsa", "Kesh /hero kesh", "Wren /hero wren"],
             ],
             [
-              "Monsters",
+              "monsters",
               [
                 "Bandit Bruiser /add bandit-bruiser",
                 "Bandit Chief /add bandit-chief",
@@ -70,7 +81,7 @@ describe("the prep panel's lists, from the campaign", () => {
               ],
             ],
             [
-              "Maps",
+              "maps",
               [
                 "The Ford Road /map ford-road",
                 "New crossing /map new crossing",
@@ -78,8 +89,8 @@ describe("the prep panel's lists, from the campaign", () => {
                 "New, by seed /map new ",
               ],
             ],
-            ["Place", []],
-            ["Start", ["Start combat /start"]],
+            ["place", []],
+            ["start", "/start"],
           ]);
           // What the table holds shows as it changes.
           yield* runLine("gm", "/hero brann");
@@ -87,14 +98,24 @@ describe("the prep panel's lists, from the campaign", () => {
           yield* runLine("gm", "/add bandit-chief");
           // The seat follows the room a moment behind: wait for the last of the three.
           yield* waitFor("the panel to follow the table", () =>
-            JSON.stringify(listed(gm)).includes("Bandit Chief /add bandit-chief (1 in play)"),
+            JSON.stringify(listed(gm)).includes("Bandit Chief /add bandit-chief (×1)"),
           );
-          expect(listed(gm)![0]![1]).toContain("Brann /hero brann (in play)");
+          // A hero in play leaves the heroes; a loaded map leads the maps, out of their list.
           const now = listed(gm)!;
-          expect(now[1]![1]).toContain("Bandit Chief /add bandit-chief (1 in play)");
-          expect(now[2]![1]).toContain("The Ford Road /map ford-road (loaded)");
+          expect(now[0]).toEqual([
+            "heroes",
+            ["Ilsa /hero ilsa", "Kesh /hero kesh", "Wren /hero wren"],
+          ]);
+          expect(now[1]![1]).toContain("Bandit Chief /add bandit-chief (×1)");
+          expect(now[2]![1]).toEqual([
+            "The Ford Road (loaded)",
+            "Put away /map off",
+            "New crossing /map new crossing",
+            "New keep /map new keep",
+            "New, by seed /map new ",
+          ]);
           expect(now[3]).toEqual([
-            "Place",
+            "place",
             ["Brann /place brann", "Bandit Chief /place bandit-chief"],
           ]);
         }),
@@ -145,9 +166,9 @@ describe("the prep panel's lists, from the campaign", () => {
           const gm = yield* openSeat({ actor: "gm", room: "den", leave: () => undefined });
           yield* Effect.promise(() => gm.prep!.reload());
           expect(listed(gm)).toEqual([
-            ["Fighters", ["Recruit /recruit ", "Foe /foe "]],
+            ["fighters", ["Recruit /recruit ", "Foe /foe "]],
             [
-              "Maps",
+              "maps",
               [
                 "The Ford Road /map ford-road",
                 "New crossing /map new crossing",
@@ -155,8 +176,8 @@ describe("the prep panel's lists, from the campaign", () => {
                 "New, by seed /map new ",
               ],
             ],
-            ["Place", []],
-            ["Start", ["Start the fight /start"]],
+            ["place", []],
+            ["start", "/start"],
           ]);
         }),
       );
@@ -284,7 +305,7 @@ describe("/map new: a generated map, written into maps/ and loaded", () => {
     }),
   );
 
-  effect("the GM's panel lists a map /map new just wrote, loaded, without being reopened", () =>
+  effect("the GM's panel lists the maps /map new wrote, without being reopened", () =>
     Effect.gen(function* () {
       const dir = yield* sampleCampaign;
       yield* atTable(
@@ -293,8 +314,15 @@ describe("/map new: a generated map, written into maps/ and loaded", () => {
           const gm = yield* openSeat({ actor: "gm", room: "den", leave: () => undefined });
           yield* Effect.promise(() => gm.prep!.reload());
           yield* runLine("gm", "/map new keep 42");
+          // A generated map offers another of its kind.
+          yield* waitFor(
+            "the panel to load it",
+            () => gm.prep?.view()?.maps.loaded?.again === "/map new keep",
+          );
+          // Another in its place, and the first is a file of the campaign's, to load again.
+          yield* runLine("gm", "/map new keep 43");
           yield* waitFor("the panel to read maps/ again", () =>
-            JSON.stringify(listed(gm)).includes("/map keep-42 (loaded)"),
+            JSON.stringify(listed(gm)).includes("/map keep-42"),
           );
         }),
       );
@@ -318,7 +346,7 @@ describe("the prep panel's maps", () => {
           const gm = yield* openSeat({ actor: "gm", room: "den", leave: () => undefined });
           yield* Effect.promise(() => gm.prep!.reload());
           expect(listed(gm)![2]).toEqual([
-            "Maps",
+            "maps",
             [
               "The Ford Road /map ford-road",
               "huge /map huge",

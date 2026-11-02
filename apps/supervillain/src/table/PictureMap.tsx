@@ -80,6 +80,8 @@ export function useCellPixels(): () => CellPixels | undefined {
 export function PictureMap(props: {
   map: MapView;
   height: number;
+  /** Its columns, the screen's width unless the prep panel takes some. */
+  width?: number | undefined;
   focus?: Focus | undefined;
   /** The panel's key, leading the title (`²`). */
   mark?: string | undefined;
@@ -88,7 +90,8 @@ export function PictureMap(props: {
   /** A click on the title. */
   onTitle?: (() => void) | undefined;
 }) {
-  const size = useTerminalDimensions();
+  const terminal = useTerminalDimensions();
+  const size = () => ({ width: props.width ?? terminal().width });
   const renderer = useRenderer();
   let box: BoxRenderable | undefined;
   renderer.kittyImageTransport = "zlib";

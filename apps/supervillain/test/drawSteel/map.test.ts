@@ -612,6 +612,8 @@ describe("mapView", () => {
           x: 4,
           y: 2,
           side: "director",
+          // Its picture is picked by its stat block, as every creature of it.
+          figure: "goblin-warrior",
           mine: false,
           acting: false,
           dead: false,
@@ -623,6 +625,8 @@ describe("mapView", () => {
           x: 9,
           y: 4,
           side: "director",
+          // Its picture is picked by its stat block, as every creature of it.
+          figure: "goblin-runner",
           mine: false,
           acting: false,
           dead: false,

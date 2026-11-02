@@ -14,9 +14,12 @@ export type {
   Combatant,
   CombatView,
   FeedLine,
+  PrepFigure,
   PrepItem,
   PrepKind,
   PrepSection,
+  PrepStep,
+  PrepToken,
   PrepView,
   TokenAction,
 } from "../game/index.ts";
@@ -46,6 +49,8 @@ export interface MapToken {
   readonly x: number;
   readonly y: number;
   readonly side: "heroes" | "director";
+  /** What its picture is picked by, when not its id: a creature's stat block, so all look alike. */
+  readonly figure?: string;
   readonly mine: boolean;
   readonly acting: boolean;
   readonly dead: boolean;

@@ -1,10 +1,12 @@
 import type { TokenAction } from "../actions.ts";
 import { GM, type Refused } from "../module.ts";
 import {
-  mapsSection,
-  placeSection,
+  partyFirst,
   type PrepCatalog,
   type PrepItem,
+  prepMaps,
+  prepSteps,
+  type PrepToken,
   type PrepView,
 } from "../prep.ts";
 import { ADD_MAX } from "./commands.ts";
@@ -330,31 +332,51 @@ export function tokenActions(
   ];
 }
 
-/** The prep panel at a Draw Steel table: heroes, monsters, maps, placing and combat. */
+/**
+ * The prep panel at a Draw Steel table: the maps, who waits for a square, the heroes not in play
+ * and every monster, and combat's start.
+ */
 export function drawSteelPrep(slice: DrawSteelState, catalog: PrepCatalog): PrepView {
   const inPlay = new Set(slice.heroes.map((h) => h.id));
   const added = (block: string) => slice.creatures.filter((c) => c.block === block).length;
   const board = slice.map;
-  const unplaced = [
-    ...slice.heroes.map((h) => ({ id: h.id, name: h.sheet.name })),
-    ...slice.creatures.filter((c) => c.stamina > 0),
-  ].filter((w) => board?.tokens[w.id] === undefined);
+  const living = everyone(slice).filter((w) => w.kind === "hero" || w.creature.stamina > 0);
+  const place = living
+    .filter((w) => board?.tokens[w.id] === undefined)
+    .map(
+      (w): PrepToken => ({
+        id: w.id,
+        name: w.name,
+        figure:
+          w.kind === "hero"
+            ? { id: w.id, side: "heroes" }
+            : { id: w.creature.block, side: "director" },
+      }),
+    );
+  const joining = catalog.heroes.filter((h) => !inPlay.has(h.id));
   return {
+    steps: prepSteps(
+      board !== undefined,
+      living.map((w) => ({ side: sideOf(w), placed: board?.tokens[w.id] !== undefined })),
+    ),
+    maps: prepMaps(catalog, board),
+    place: board === undefined ? [] : partyFirst(place),
     sections: [
       {
-        title: "Heroes",
-        items: catalog.heroes.map(
+        title: "heroes",
+        items: joining.map(
           (h): PrepItem => ({
             kind: "send",
             label: h.name,
             line: `/hero ${h.id}`,
-            ...(inPlay.has(h.id) && { note: "in play" }),
+            figure: { id: h.id, side: "heroes" },
           }),
         ),
         ...(catalog.heroes.length === 0 && { note: "no sheets in heroes/" }),
+        ...(joining.length > 1 && { all: joining.map((h) => `/hero ${h.id}`) }),
       },
       {
-        title: "Monsters",
+        title: "monsters",
         items: catalog.monsters.map((m): PrepItem => {
           const n = added(m.id);
           return {
@@ -362,19 +384,13 @@ export function drawSteelPrep(slice: DrawSteelState, catalog: PrepCatalog): Prep
             label: m.name,
             line: `/add ${m.id}`,
             max: ADD_MAX,
-            ...(n > 0 && { note: `${n} in play` }),
+            figure: { id: m.id, side: "director" },
+            ...(n > 0 && { note: `×${n}` }),
           };
         }),
         ...(catalog.monsters.length === 0 && { note: "no stat blocks in monsters/" }),
       },
-      mapsSection(catalog, board?.id),
-      placeSection(board !== undefined, unplaced),
-      slice.combat.active
-        ? { title: "Start", items: [], note: `combat is on, round ${slice.combat.round}` }
-        : {
-            title: "Start",
-            items: [{ kind: "send", label: "Start combat", line: "/start" }],
-          },
     ],
+    start: slice.combat.active ? { note: `round ${slice.combat.round}` } : { line: "/start" },
   };
 }

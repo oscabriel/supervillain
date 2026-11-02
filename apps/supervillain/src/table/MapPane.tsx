@@ -46,6 +46,8 @@ const styleOf = (s: MapSegment) => ({
 export function MapPane(props: {
   map: MapView;
   height: number;
+  /** Its columns, the screen's width unless the prep panel takes some. */
+  width?: number | undefined;
   focus?: Focus | undefined;
   /**
    * Said after the title, e.g. `/view pictures` where this seat could draw the map in pictures.
@@ -59,7 +61,8 @@ export function MapPane(props: {
   /** A click on the title. */
   onTitle?: (() => void) | undefined;
 }) {
-  const size = useTerminalDimensions();
+  const terminal = useTerminalDimensions();
+  const size = () => ({ width: props.width ?? terminal().width });
   const keep = keepLines<MapSegment>();
   let box: BoxRenderable | undefined;
   const layout = createMemo(() => {

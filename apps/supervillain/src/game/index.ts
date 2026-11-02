@@ -47,9 +47,12 @@ export { type ActionPick, actionLine, type TokenAction } from "./actions.ts";
 export {
   type PrepCatalog,
   type PrepEntry,
+  type PrepFigure,
   type PrepItem,
   type PrepKind,
   type PrepSection,
+  type PrepStep,
+  type PrepToken,
   type PrepView,
 } from "./prep.ts";
 export {

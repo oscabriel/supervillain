@@ -7,7 +7,7 @@ import type { MapToken, MapView } from "../drawSteel/mapView.ts";
 import { reachable } from "../drawSteel/movement.ts";
 import type { Combatant, CombatView } from "../drawSteel/view.ts";
 import type { Refused } from "../module.ts";
-import { mapsSection, placeSection, type PrepCatalog, type PrepView } from "../prep.ts";
+import { partyFirst, type PrepCatalog, prepMaps, prepSteps, type PrepView } from "../prep.ts";
 import {
   controls,
   type Fighter,
@@ -210,28 +210,35 @@ export function setActions(
   ];
 }
 
-/** The prep panel at a set.world table: fighters, maps, placing and the fight. */
+/** The prep panel at a set.world table: the maps, who waits for a square, fighters, the fight. */
 export function setWorldPrep(slice: SetState, catalog: PrepCatalog): PrepView {
+  const standing = slice.fighters.filter((f) => !isDown(f));
   const party = slice.fighters.filter((f) => f.side === "party").length;
   const foes = slice.fighters.length - party;
   return {
+    steps: prepSteps(
+      slice.map !== undefined,
+      standing.map((f) => ({ side: mapSide(f), placed: f.at !== undefined })),
+    ),
+    maps: prepMaps(catalog, slice.map),
+    place:
+      slice.map === undefined
+        ? []
+        : partyFirst(
+            standing
+              .filter((f) => f.at === undefined)
+              .map((f) => ({ id: f.id, name: f.name, figure: { id: f.id, side: mapSide(f) } })),
+          ),
     sections: [
       {
-        title: "Fighters",
+        title: "fighters",
         items: [
           { kind: "fill", label: "Recruit", line: "/recruit " },
           { kind: "fill", label: "Foe", line: "/foe " },
         ],
         note: `${party} in the party, ${foes} ${foes === 1 ? "foe" : "foes"}`,
       },
-      mapsSection(catalog, slice.map?.id),
-      placeSection(
-        slice.map !== undefined,
-        slice.fighters.filter((f) => f.at === undefined && !isDown(f)),
-      ),
-      slice.fight === undefined
-        ? { title: "Start", items: [{ kind: "send", label: "Start the fight", line: "/start" }] }
-        : { title: "Start", items: [], note: "the fight is on" },
     ],
+    start: slice.fight === undefined ? { line: "/start" } : { note: "the fight is on" },
   };
 }

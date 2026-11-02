@@ -1,204 +1,178 @@
 /**
- * The GM's prep panel as pure data: its sections laid out in rows of pieces, each item with the
- * command it sends said dim beside it (it teaches typing), and the count a monster opens. The rules
- * project the items and their lines (`PrepView`); this lays them out and turns a click into what it
- * does. The panel never changes state itself: a click sends a line, as typing would, or puts one on
- * the input line for the GM to finish.
+ * The GM's prep panel as pure data: what the next square clicked on the map does, the lines that
+ * sends, and where a group just added goes. The rules project the panel (`PrepView`) with the
+ * line each item sends; this only fills in the count and the square, so the panel never changes
+ * state itself: a click sends a line, as typing would, or puts one on the input line.
  */
-import type { PrepItem, PrepView } from "./view.ts";
+import { formatSquare } from "../game/drawSteel/map.ts";
+import type { MapView, PrepFigure, PrepItem, PrepView } from "./view.ts";
 
-/** An item by where it is: its section and its place in it. */
-export interface PrepAt {
-  readonly section: number;
-  readonly index: number;
-}
+/** The panel's columns, beside the map and the feed: a third of the seat, within these. */
+export const PREP_WIDTH = { least: 26, most: 34 } as const;
 
-/** A monster clicked, and how many of it the GM is about to add. */
-export interface PrepCount extends PrepAt {
-  readonly n: number;
-}
+export const prepWidth = (cols: number): number =>
+  Math.min(PREP_WIDTH.most, Math.max(PREP_WIDTH.least, Math.floor(cols / 3)));
 
-/** What a piece of the panel does when clicked. */
-export type PrepAction =
-  | ({ readonly kind: "item" } & PrepAt)
-  | { readonly kind: "less" }
-  | { readonly kind: "more" }
-  | { readonly kind: "add" }
-  | { readonly kind: "cancel" };
+/**
+ * What the GM picked in the panel for the next square: a token off the map (any of them, else
+ * the first waiting goes), or how many of a monster to add there.
+ */
+export type PrepArmed =
+  | { readonly kind: "token"; readonly id: string }
+  | {
+      readonly kind: "count";
+      readonly section: number;
+      readonly index: number;
+      readonly n: number;
+    };
 
-/** How a piece is drawn. */
-export type PrepTone = "title" | "item" | "active" | "button" | "note" | "plain";
-
-/** One piece of a row: a section's title, an item, a button of the count, or words. */
-export interface PrepPiece {
-  readonly text: string;
-  readonly tone: PrepTone;
-  /** Dim, after the text: the command line a click sends or fills. */
-  readonly command?: string;
-  /** After that and ` · `, in the note colour: `in play`, `loaded`. */
-  readonly note?: string;
-  readonly action?: PrepAction;
-}
+/** What the next square clicked does, as the panel shows it. */
+export type PrepNext =
+  | {
+      readonly kind: "place";
+      readonly id: string;
+      readonly name: string;
+      readonly figure: PrepFigure;
+    }
+  | {
+      readonly kind: "add";
+      readonly name: string;
+      readonly figure: PrepFigure;
+      readonly n: number;
+      /** The line it sends: `/add bandit x3`. */
+      readonly line: string;
+    };
 
 /** The line a count item sends for `n`: `/add bandit` for one, `/add bandit x3` for more. */
 export const countLine = (item: PrepItem, n: number): string =>
   n <= 1 ? item.line : `${item.line} x${n}`;
 
+/** The item at `section` and `index`, if the view still has it. */
+const itemAt = (view: PrepView, section: number, index: number): PrepItem | undefined =>
+  view.sections[section]?.items[index];
+
 /**
- * What an item shows it sends: its line, `/add bandit xN` for a count, `/place vex <square>` for a
- * place, and a fill's line with `…` where the GM goes on typing.
+ * What the next square clicked does: what `armed` names, if the view still offers it, else place
+ * the first who waits. A hero just sent for (`/hero vex`) may not wait yet; its item names it.
  */
-export function itemCommand(item: PrepItem): string {
-  switch (item.kind) {
-    case "send":
-      return item.line;
-    case "fill":
-      return `${item.line.trimEnd()} …`;
-    case "count":
-      return `${item.line} xN`;
-    case "place":
-      return `${item.line} <square>`;
+export function prepNext(view: PrepView, armed: PrepArmed | undefined): PrepNext | undefined {
+  if (armed?.kind === "count") {
+    const item = itemAt(view, armed.section, armed.index);
+    if (item?.kind === "count" && item.figure !== undefined)
+      return {
+        kind: "add",
+        name: item.label,
+        figure: item.figure,
+        n: armed.n,
+        line: countLine(item, armed.n),
+      };
   }
+  if (armed?.kind === "token") {
+    const waiting = view.place.find((t) => t.id === armed.id);
+    if (waiting !== undefined) return { kind: "place", ...waiting };
+    const joining = view.sections
+      .flatMap((s) => s.items)
+      .find((i) => i.kind === "send" && i.figure?.id === armed.id);
+    if (joining?.figure !== undefined)
+      return { kind: "place", id: armed.id, name: joining.label, figure: joining.figure };
+  }
+  const first = view.place[0];
+  return first === undefined ? undefined : { kind: "place", ...first };
 }
 
-/** The columns a piece takes: its text, its command after a space, and its note after ` · `. */
-export const pieceWidth = (p: PrepPiece): number =>
-  Bun.stringWidth(p.text) +
-  (p.command === undefined ? 0 : 1 + Bun.stringWidth(p.command)) +
-  (p.note === undefined ? 0 : 3 + Bun.stringWidth(p.note));
-
-/** Between two items on a row. */
-const GAP = "  ";
-
-/** An item's label is drawn as a button, a space either side. */
-const button = (label: string) => ` ${label} `;
+/** Whether `armed` still names something the view offers, so it is kept. */
+export const armedStands = (view: PrepView, armed: PrepArmed): boolean => {
+  const next = prepNext(view, armed);
+  return armed.kind === "count"
+    ? next?.kind === "add"
+    : next?.kind === "place" && next.id === armed.id;
+};
 
 /**
- * The panel's rows in `width` columns: each section's title in a column of its own, its items
- * after it, wrapping under the first where a row is full, then its note. A clicked monster's count
- * gets a row under its section: `−`, the count, `+`, Add (with the line it sends) and Cancel. The
- * item a Place is waiting on (`placing`, by token id) or that a count is for is drawn active.
+ * A click on a monster's item: one more of it for the next square, up to its most, or (`by` -1)
+ * one fewer, none putting it down.
  */
-export function prepRows(
+export function prepCount(
   view: PrepView,
-  width: number,
-  count?: PrepCount,
-  placing?: string,
-): ReadonlyArray<ReadonlyArray<PrepPiece>> {
-  const titleWidth = Math.max(0, ...view.sections.map((s) => Bun.stringWidth(s.title))) + 1;
-  const indent: PrepPiece = { text: " ".repeat(titleWidth), tone: "plain" };
-  const rows: PrepPiece[][] = [];
-  for (const [section, s] of view.sections.entries()) {
-    let row: PrepPiece[] = [{ text: s.title.padEnd(titleWidth), tone: "title" }];
-    let used = titleWidth;
-    let first = true;
-    const put = (piece: PrepPiece) => {
-      const w = pieceWidth(piece);
-      if (!first && used + GAP.length + w > width) {
-        rows.push(row);
-        row = [indent];
-        used = titleWidth;
-        first = true;
-      }
-      if (!first) row.push({ text: GAP, tone: "plain" });
-      row.push(piece);
-      used += (first ? 0 : GAP.length) + w;
-      first = false;
-    };
-    for (const [index, item] of s.items.entries()) {
-      const active =
-        (count?.section === section && count.index === index) ||
-        (placing !== undefined && item.kind === "place" && item.id === placing);
-      put({
-        text: button(item.label),
-        tone: active ? "active" : "item",
-        command: itemCommand(item),
-        ...(item.note !== undefined && { note: item.note }),
-        action: { kind: "item", section, index },
-      });
-    }
-    if (s.note !== undefined) put({ text: s.note, tone: "note" });
-    rows.push(row);
-    const counted = count?.section === section ? s.items[count.index] : undefined;
-    if (counted !== undefined && count !== undefined)
-      rows.push([
-        indent,
-        // Under the items' labels, which their buttons' first space puts a column in.
-        { text: ` ${counted.label}:`, tone: "plain" },
-        { text: " ", tone: "plain" },
-        { text: button("−"), tone: "button", action: { kind: "less" } },
-        { text: ` ${count.n} `, tone: "plain" },
-        { text: button("+"), tone: "button", action: { kind: "more" } },
-        { text: GAP, tone: "plain" },
-        {
-          text: button("Add"),
-          tone: "button",
-          command: countLine(counted, count.n),
-          action: { kind: "add" },
-        },
-        { text: GAP, tone: "plain" },
-        { text: button("Cancel"), tone: "button", action: { kind: "cancel" } },
-      ]);
-  }
-  return rows;
+  armed: PrepArmed | undefined,
+  section: number,
+  index: number,
+  by: 1 | -1,
+): PrepArmed | undefined {
+  const item = itemAt(view, section, index);
+  if (item?.kind !== "count") return armed;
+  const same = armed?.kind === "count" && armed.section === section && armed.index === index;
+  const n = Math.min(item.max ?? Number.POSITIVE_INFINITY, (same ? armed.n : 0) + by);
+  return n <= 0 ? undefined : { kind: "count", section, index, n };
 }
 
-/** The item at `at`, if the view still has it. */
-export const itemAt = (view: PrepView | undefined, at: PrepAt): PrepItem | undefined =>
-  view?.sections[at.section]?.items[at.index];
+interface Square {
+  readonly x: number;
+  readonly y: number;
+}
 
-/** What a click on a piece comes to, given the count open: a line to send, one to fill, a count. */
-export type PrepOutcome =
-  | { readonly kind: "send"; readonly line: string }
-  | { readonly kind: "fill"; readonly line: string }
-  /** Open, change or close the count (undefined closes it). */
-  | { readonly kind: "count"; readonly count: PrepCount | undefined }
-  /** Wait for a square for this token, with the line its Place sends. */
-  | { readonly kind: "place"; readonly id: string; readonly line: string }
-  | { readonly kind: "none" };
+/** The squares a token may be put on: floor or difficult ground, with no token on it. */
+const free = (map: MapView): Square[] => {
+  const taken = new Set(map.tokens.filter((t) => !t.dead).map((t) => `${t.x},${t.y}`));
+  const out: Square[] = [];
+  for (const [y, row] of map.terrain.entries())
+    for (const [x, t] of [...row].entries())
+      if ((t === "." || t === "~") && !taken.has(`${x},${y}`)) out.push({ x, y });
+  return out;
+};
 
 /**
- * What clicking `action` does. An item sends its line, fills it, opens its count (clicked again,
- * closes it) or waits for a square; the count's buttons step it between 1 and the item's most, Add
- * sends it, Cancel closes it.
+ * Where a group just added goes: the free squares nearest `at`, the clicked square first, one for
+ * each of `ids`, as `/place` lines. Ids past the free squares are left waiting.
  */
-export function prepClick(
-  view: PrepView | undefined,
-  action: PrepAction,
-  count: PrepCount | undefined,
-): PrepOutcome {
-  if (action.kind === "item") {
-    const item = itemAt(view, action);
-    if (item === undefined) return { kind: "none" };
-    switch (item.kind) {
-      case "send":
-        return { kind: "send", line: item.line };
-      case "fill":
-        return { kind: "fill", line: item.line };
-      case "place":
-        return item.id === undefined
-          ? { kind: "none" }
-          : { kind: "place", id: item.id, line: item.line };
-      case "count": {
-        const same = count?.section === action.section && count.index === action.index;
-        return {
-          kind: "count",
-          count: same ? undefined : { section: action.section, index: action.index, n: 1 },
-        };
-      }
-    }
-  }
-  if (action.kind === "cancel") return { kind: "count", count: undefined };
-  if (count === undefined) return { kind: "none" };
-  const item = itemAt(view, count);
-  if (item === undefined) return { kind: "count", count: undefined };
-  const max = item.max ?? Number.POSITIVE_INFINITY;
-  switch (action.kind) {
-    case "less":
-      return { kind: "count", count: { ...count, n: Math.max(1, count.n - 1) } };
-    case "more":
-      return { kind: "count", count: { ...count, n: Math.min(max, count.n + 1) } };
-    case "add":
-      return { kind: "send", line: countLine(item, count.n) };
-  }
+export function placeNear(map: MapView, ids: ReadonlyArray<string>, at: Square): string[] {
+  const d = (s: Square) => (s.x - at.x) ** 2 + (s.y - at.y) ** 2;
+  const squares = free(map).toSorted((a, b) => d(a) - d(b) || a.y - b.y || a.x - b.x);
+  return ids.flatMap((id, i) => {
+    const s = squares[i];
+    return s === undefined ? [] : [`/place ${id} ${formatSquare(s)}`];
+  });
+}
+
+/** The hint row while the panel is open, longest first: what the next square sends, typed. */
+export function prepHints(next: PrepNext | undefined, key: number): ReadonlyArray<string> {
+  const hide = `Alt+${key} hides it`;
+  if (next === undefined)
+    return [
+      `click to send · Up shows what was sent · ${hide} · /help`,
+      `click to send · ${hide}`,
+      hide,
+      "",
+    ];
+  const typed = next.kind === "place" ? `/place ${next.id} <square>` : `${next.line} then /place`;
+  const does = next.kind === "place" ? `a square places ${next.name}` : `a square adds them there`;
+  return [`${does} · ${typed} · Esc puts it down · ${hide}`, `${does} · ${typed}`, typed, ""];
+}
+
+/** Quadrant blocks by which quarters are lit: upper left 1, upper right 2, lower left 4, lower right 8. */
+const QUADRANTS = " ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█";
+
+/**
+ * A MEKMODE figure (8 by 12 pixels, a row a byte in hex) in four columns and two rows of quadrant
+ * blocks, for a terminal without pictures: each quarter of a cell is a pixel wide and three tall,
+ * lit when two of them are.
+ */
+export function figureText(glyph: string | undefined): [string, string] {
+  const lit = (x: number, y: number) =>
+    (Number.parseInt(glyph?.slice(y * 2, y * 2 + 2) || "00", 16) & (0x80 >> x)) !== 0;
+  const quarter = (x: number, qy: number) => {
+    let n = 0;
+    for (let y = qy * 3; y < qy * 3 + 3; y++) n += +lit(x, y);
+    return n >= 2;
+  };
+  const row = (r: number) =>
+    Array.from({ length: 4 }, (_, c) => {
+      const bits =
+        +quarter(c * 2, r * 2) +
+        2 * +quarter(c * 2 + 1, r * 2) +
+        4 * +quarter(c * 2, r * 2 + 1) +
+        8 * +quarter(c * 2 + 1, r * 2 + 1);
+      return QUADRANTS[bits]!;
+    }).join("");
+  return [row(0), row(1)];
 }

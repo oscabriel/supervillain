@@ -180,10 +180,13 @@ const HERO_FIGURES = [..."1234567890&@"];
 const DIRECTOR_FIGURES = [..."!\"#$%'()*+/:;=?"];
 const hash = (s: string) => [...s].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 7);
 
-/** A token's figure: chosen by its id, so a creature looks the same every fight. */
-export const figureOf = (token: Pick<MapToken, "id" | "side">): string => {
+/**
+ * A token's figure: chosen by its id, or a creature's by its stat block, so a creature looks the
+ * same every fight and the prep panel can show it before it is added.
+ */
+export const figureOf = (token: Pick<MapToken, "id" | "side" | "figure">): string => {
   const figures = token.side === "heroes" ? HERO_FIGURES : DIRECTOR_FIGURES;
-  return figures[hash(token.id) % figures.length]!;
+  return figures[hash(token.figure ?? token.id) % figures.length]!;
 };
 
 export const sideColour = (t: MapToken): Rgb =>

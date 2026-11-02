@@ -8,7 +8,7 @@ import {
   type ScrollBoxRenderable,
 } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/solid";
-import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { formatSquare } from "../game/drawSteel/map.ts";
 import { BAND_FRAME, Band } from "./Band.tsx";
 import { bandLayout } from "./band.ts";
@@ -84,7 +84,15 @@ import {
   viewPreset,
 } from "./panels.ts";
 import { Prep } from "./Prep.tsx";
-import { type PrepAction, prepClick, type PrepCount, prepRows } from "./prep.ts";
+import {
+  armedStands,
+  placeNear,
+  type PrepArmed,
+  prepCount,
+  prepHints,
+  prepNext,
+  prepWidth,
+} from "./prep.ts";
 import { GUTTER, LABEL_ROWS, pictureRowsWanted, pictureWindow, SQUARE } from "./picture.ts";
 import { PictureMap, usePicturesShown } from "./PictureMap.tsx";
 import { color, people } from "./theme.ts";
@@ -138,18 +146,6 @@ const CONFIRM_LEAVE = "Players are still here. Ctrl-C again closes the table for
 const PAGE = 0.8;
 /** The header, hint and input rows, which never give way. */
 const FIXED_ROWS = 3;
-/**
- * The prep panel asks for its rows up to half of what the band, the map and it share (a third
- * while a map shows, which a Place needs a square of), and at least this, scrolling for the rest.
- */
-const PREP_MIN = 5;
-/** While the prep panel is open and nothing else leads the hint row, longest first. */
-const PREP_HINTS = [
-  `click an item to send it · the wheel scrolls it · Alt+${panelNumber("prep")} hides it · Tab completes · /help`,
-  `click an item to send it · Alt+${panelNumber("prep")} hides it · /help`,
-  `Alt+${panelNumber("prep")} hides it`,
-  "",
-];
 /** The feed keeps at least its border and three lines, however full the band and the pane are. */
 const FEED_MIN = 5;
 /** The band never shrinks below one row inside its border. */
@@ -209,8 +205,17 @@ export function App(props: { view: TableView }) {
   const [mouse, setMouse] = createSignal(true);
   /** The token whose menu is open, and the choice under way: this seat's alone, never logged. */
   const [selection, setSelection] = createSignal<Selection>();
-  /** The monster whose count the prep panel has open, and how many: the GM's seat's alone. */
-  const [prepCount, setPrepCount] = createSignal<PrepCount>();
+  /** What the prep panel put up for the next square clicked: the GM's seat's alone, never logged. */
+  const [armed, setArmed] = createSignal<PrepArmed>();
+  /**
+   * Monsters just added from the prep panel, for the free squares nearest where the GM clicked
+   * once the view has them: their figure, the square, and who was waiting before.
+   */
+  const [adding, setAdding] = createSignal<{
+    readonly figure: string;
+    readonly at: Focus;
+    readonly before: ReadonlySet<string>;
+  }>();
   const renderer = useRenderer();
   /** The GM pressed Ctrl-C with players here, and the next Ctrl-C closes the table. */
   const [leaving, setLeaving] = createSignal(false);
@@ -244,7 +249,8 @@ export function App(props: { view: TableView }) {
     if (paneOpen()) return fits(PANE_HINTS);
     if (mode() === "name") return NAME_HINT;
     const lead = reachLabel();
-    if (lead === undefined) return fits(prepOpen() ? PREP_HINTS : keyHints(keys));
+    if (lead === undefined)
+      return fits(prepOpen() ? prepHints(prepUp(), panelNumber("prep")) : keyHints(keys));
     // " · " takes three columns between the label and the keys.
     const room = width - Bun.stringWidth(lead) - 3;
     const hints = reachClipped()
@@ -354,7 +360,7 @@ export function App(props: { view: TableView }) {
     if (prep === undefined) return;
     const shown = !panels().prep || open;
     setPanels({ ...panels(), prep: shown });
-    if (!shown) return void setPrepCount(undefined);
+    if (!shown) return void setArmed(undefined);
     void prep.reload().then((problem) => {
       if (problem !== undefined) setNotice(problem);
     });
@@ -407,17 +413,24 @@ export function App(props: { view: TableView }) {
     return deliver(intent.line);
   }
 
-  /** Sends a line to the host, typed or clicked, and shows its reply. */
-  async function deliver(text: string) {
+  /**
+   * Sends a line to the host, typed or clicked, and shows its reply. Resolves to the reply, or
+   * undefined when there was none to show.
+   */
+  async function deliver(text: string): Promise<string | undefined> {
     const reply = queue.then(() => view.submit(text));
     queue = reply.catch(() => undefined);
     try {
       const answer = await reply;
       // A new reply opens the pane again, though the last one was hidden: it was asked for.
       if (answer?.includes("\n") && !panels().reply) setPanels({ ...panels(), reply: true });
-      if (answer !== undefined && answer !== "") setNotice(answer);
+      if (answer === undefined || answer === "") return undefined;
+      setNotice(answer);
+      return answer;
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
+      const said = error instanceof Error ? error.message : String(error);
+      setNotice(said);
+      return said;
     }
   }
 
@@ -432,7 +445,7 @@ export function App(props: { view: TableView }) {
   function escape() {
     if (line().completion) return edit(cancelCompletion);
     if (selection() !== undefined) return void setSelection(undefined);
-    if (prepCount() !== undefined) return void setPrepCount(undefined);
+    if (armed() !== undefined) return void setArmed(undefined);
     if (notice() !== undefined) return void setNotice(undefined);
     if (showDebug()) setShowDebug(false);
   }
@@ -486,16 +499,18 @@ export function App(props: { view: TableView }) {
   }
 
   /** A line a click made: sent as typed lines are, and kept in history so Up shows it. */
-  function sendClicked(text: string) {
+  function sendClicked(text: string): Promise<string | undefined> {
     setSelection(undefined);
     setNotice(undefined);
     edit((s) => remember(s, text));
-    void deliver(text);
+    return deliver(text);
   }
 
   function onSquare(square: Focus) {
     const map = view.map?.();
     const token = map === undefined ? undefined : tokenAt(map, square);
+    // A free square, with nothing chosen from a token's menu, takes what the prep panel put up.
+    if (token === undefined && selection() === undefined && placeFromPrep(square)) return;
     clicked({
       square: formatSquare(square),
       ...(token === undefined ? {} : { token: { id: token.id, mark: token.mark } }),
@@ -525,58 +540,83 @@ export function App(props: { view: TableView }) {
   /** The prep panel, while it is on screen: the GM's, opened, and not below the smallest seat. */
   const prepOpen = () => view.prep !== undefined && panels().prep && !small();
   const prepView = () => (prepOpen() ? view.prep?.view() : undefined);
-  /** The token a Place from the prep panel waits on a square for. */
-  const placing = () => {
-    const s = selection();
-    return s?.chosen?.label === "Place" ? s.id : undefined;
-  };
-  const prepLines = createMemo(() => {
+  /** Its columns, right of the map and the feed. */
+  const prepColumns = () => (prepOpen() && prepView() !== undefined ? prepWidth(size().width) : 0);
+  /** What the next free square clicked on the map does, while the panel shows. */
+  const prepUp = createMemo(() => {
     const v = prepView();
-    // The border, the padding and the scroll bar take four columns.
-    return v === undefined ? [] : prepRows(v, size().width - 4, prepCount(), placing());
+    return v === undefined || view.map?.() === undefined ? undefined : prepNext(v, armed());
   });
+  // What the panel put up and is gone (placed, or no longer offered) is put down.
+  createEffect(() => {
+    const v = view.prep?.view();
+    const a = armed();
+    if (a !== undefined && (v === undefined || !armedStands(v, a))) setArmed(undefined);
+  });
+  // Monsters just added go to the free squares nearest the one clicked, once the view has them.
+  createEffect(() => {
+    const a = adding();
+    const map = view.map?.();
+    const fresh = (view.prep?.view()?.place ?? []).filter(
+      (t) => a !== undefined && t.figure.id === a.figure && !a.before.has(t.id),
+    );
+    if (a === undefined || map === undefined || fresh.length === 0) return;
+    setAdding(undefined);
+    for (const line of placeNear(
+      map,
+      fresh.map((t) => t.id),
+      a.at,
+    ))
+      void sendClicked(line);
+  });
+  // While a square is wanted the pointer is a crosshair, where the terminal draws pointers.
+  createEffect(() => renderer.setMousePointer(prepUp() !== undefined ? "crosshair" : "default"));
+  onCleanup(() => renderer.setMousePointer("default"));
 
   /**
-   * A click in the prep panel, as `prepClick` reads it: a line sent as typed lines are, a line put
-   * on the input for the GM to finish, a count changed, or a Place waiting for a square on the
-   * map, through the same selection a token's Place in its menu makes.
+   * A free square clicked while the prep panel has something up: places the token, or adds the
+   * monsters (`/add … xN`) and then places them nearest it. False when nothing is up.
    */
-  function pickPrep(action: PrepAction) {
-    if (!mouse()) return;
-    const outcome = prepClick(view.prep?.view(), action, prepCount());
-    switch (outcome.kind) {
-      case "send":
-        setPrepCount(undefined);
-        return sendClicked(outcome.line);
-      case "fill":
-        setPrepCount(undefined);
-        return edit((s) => fillLine(s, outcome.line));
-      case "count":
-        return void setPrepCount(outcome.count);
-      case "place": {
-        const place = view.actions?.(outcome.id)?.find((a) => a.line === outcome.line);
-        if (place === undefined) return;
-        setPrepCount(undefined);
-        setSelection({ id: outcome.id, chosen: place, picked: [] });
-        // The square is clicked on the map, so it comes back if this seat had put it away.
-        if (multiline()) setNotice(undefined);
-        if (!panels().map) setPanels({ ...panels(), map: true });
-        return;
-      }
-      case "none":
-        return;
+  function placeFromPrep(square: Focus): boolean {
+    const next = prepUp();
+    const v = prepView();
+    if (next === undefined || v === undefined || !mouse()) return false;
+    setArmed(undefined);
+    if (next.kind === "place") {
+      void sendClicked(`/place ${next.id} ${formatSquare(square)}`);
+      return true;
     }
+    const before = new Set(v.place.map((t) => t.id));
+    void sendClicked(next.line).then((answer) => {
+      if (answer === undefined) setAdding({ figure: next.figure.id, at: square, before });
+    });
+    return true;
+  }
+
+  /** A line the prep panel sends: kept in history, as any click's is. */
+  function sendFromPrep(text: string): Promise<string | undefined> {
+    return mouse() ? sendClicked(text) : Promise.resolve(undefined);
+  }
+
+  /** "+ all": every line, one after another, as the queue keeps them in order. */
+  function sendAllFromPrep(lines: ReadonlyArray<string>) {
+    for (const text of lines) void sendFromPrep(text);
+  }
+
+  /** Fight: starts it, and the panel steps aside for the map and the band. */
+  function startFromPrep(text: string) {
+    if (!mouse()) return;
+    void sendClicked(text).then((answer) => {
+      if (answer === undefined) setPanels({ ...panels(), prep: false });
+    });
   }
 
   /** How the menu names a token: its name on the map, in the band or in Place, else its id. */
   const nameOf = (id: string) =>
     view.map?.()?.tokens.find((t) => t.id === id)?.name ??
     view.combat?.()?.combatants.find((c) => c.id === id)?.name ??
-    // Off the map and out of the band, as one the prep panel's Place offers.
-    view.prep
-      ?.view()
-      ?.sections.flatMap((s) => s.items)
-      .find((i) => i.kind === "place" && i.id === id)?.label ??
+    // Off the map and out of the band, as one waiting in the prep panel.
+    view.prep?.view()?.place.find((t) => t.id === id)?.name ??
     id;
   /** How the menu names a target: its mark, as typed, else its id. */
   const markOf = (id: string) =>
@@ -602,37 +642,6 @@ export function App(props: { view: TableView }) {
     const m = menu();
     // The rows' padding takes two columns.
     return m === undefined ? [] : menuRows(m, size().width - 2);
-  });
-
-  /**
-   * The prep panel's rows: all it wants up to half of what the fixed rows, the feed's five, a
-   * notice and the menu leave (a third beside a map; at least PREP_MIN), always leaving the band
-   * its least, and beside a map the band's living rows and the map's MAP_FLOOR, so a square stays
-   * there to click. With too little for that it keeps one line, and scrolls, unless a Place waits
-   * for a square: then it steps aside until the square is clicked.
-   */
-  const prepHeight = createMemo(() => {
-    if (!prepOpen()) return 0;
-    const shown = panels();
-    const base =
-      size().height -
-      FIXED_ROWS -
-      (shown.feed ? FEED_MIN : 0) -
-      (noticeLine() ? 1 : 0) -
-      menuLines().length;
-    const wanted = Math.max(1, prepLines().length) + 2;
-    const map = shownMap();
-    const most = Math.max(PREP_MIN, Math.floor(base / (map === undefined ? 2 : 3)));
-    const band = !shown.band
-      ? 0
-      : map === undefined
-        ? BAND_MIN
-        : shown.mapFirst
-          ? Math.min(bandRows(view.combat?.(), base).wanted, BAND_FOLDED)
-          : bandRows(view.combat?.(), base).keep;
-    const others = band + (map === undefined ? 0 : MAP_FLOOR);
-    if (map !== undefined && base - others < 3 && placing() !== undefined) return 0;
-    return Math.max(3, Math.min(wanted, most, base - others));
   });
 
   let paneBox: BoxRenderable | undefined;
@@ -765,12 +774,7 @@ export function App(props: { view: TableView }) {
   function roomFor(shown: Panels, notice: boolean) {
     const h = size().height;
     const room =
-      h -
-      FIXED_ROWS -
-      (shown.feed ? FEED_MIN : 0) -
-      (notice ? 1 : 0) -
-      menuLines().length -
-      prepHeight();
+      h - FIXED_ROWS - (shown.feed ? FEED_MIN : 0) - (notice ? 1 : 0) - menuLines().length;
     const cap = shown.feed ? Math.floor(view.combat?.()?.active ? (h * 2) / 3 : h / 2) : room;
     return { room, cap };
   }
@@ -886,87 +890,116 @@ export function App(props: { view: TableView }) {
         </Show>
       </Show>
 
-      <Show when={mapHeight() > 0 ? shownMap() : undefined}>
-        {(map) => (
-          <Show
-            when={pictures()}
-            fallback={
-              <MapPane
-                map={map()}
-                height={mapHeight()}
-                focus={focus()}
-                hint={picturesShown() ? "/view pictures" : undefined}
-                mark={panelMark("map")}
-                onSquare={onSquare}
-                onTitle={() => toggle("map")}
-              />
-            }
-          >
-            <PictureMap
-              map={map()}
-              height={mapHeight()}
-              focus={focus()}
-              mark={panelMark("map")}
-              onSquare={onSquare}
-              onTitle={() => toggle("map")}
-            />
-          </Show>
-        )}
-      </Show>
-
-      <box flexDirection="row" flexGrow={rowFills() ? 1 : 0} minHeight={0}>
-        <Show when={panels().feed}>
-          <Feed
-            lines={view.feed()}
-            ref={(el) => (feed = el)}
-            mark={panelMark("feed")}
-            onTitle={() => toggle("feed")}
-          />
-        </Show>
-        <Show when={nothingShown()}>
-          <box flexGrow={1} paddingLeft={1} paddingRight={1} flexDirection="row">
-            <For each={allHiddenParts(available(), size().width - 2, keys)}>
-              {(part) => (
-                <text
-                  fg={color.notice}
-                  wrapMode="none"
-                  flexShrink={0}
-                  selectable={false}
-                  onMouseDown={(event: MouseEvent) => {
-                    const panel = part.panel;
-                    if (panel !== undefined && event.button === MouseButton.LEFT && mouse())
-                      toggle(panel);
-                  }}
-                >
-                  {part.text}
-                </text>
-              )}
-            </For>
-          </box>
-        </Show>
-        <Show when={showDebug()}>
-          <box
-            ref={(el: BoxRenderable) => (debugBox = el)}
-            onMouseDown={boxClick(
-              () => debugBox,
-              () => " /state · Esc closes ",
-              () => setShowDebug(false),
+      {/* The map and the feed, with the GM's prep panel in a column on their right. */}
+      <box flexDirection="row" flexGrow={rowFills() || prepColumns() > 0 ? 1 : 0} minHeight={0}>
+        <box flexDirection="column" flexGrow={1} minWidth={0}>
+          <Show when={mapHeight() > 0 ? shownMap() : undefined}>
+            {(map) => (
+              <Show
+                when={pictures()}
+                fallback={
+                  <MapPane
+                    map={map()}
+                    height={mapHeight()}
+                    width={size().width - prepColumns()}
+                    focus={focus()}
+                    hint={picturesShown() ? "/view pictures" : undefined}
+                    mark={panelMark("map")}
+                    onSquare={onSquare}
+                    onTitle={() => toggle("map")}
+                  />
+                }
+              >
+                <PictureMap
+                  map={map()}
+                  height={mapHeight()}
+                  width={size().width - prepColumns()}
+                  focus={focus()}
+                  mark={panelMark("map")}
+                  onSquare={onSquare}
+                  onTitle={() => toggle("map")}
+                />
+              </Show>
             )}
-            border
-            borderColor={color.border}
-            title=" /state · Esc closes "
-            width={panels().feed ? "50%" : "100%"}
-            flexShrink={0}
-          >
-            <scrollbox
-              ref={(el: ScrollBoxRenderable) => (debug = el)}
-              scrollAcceleration={wheel}
-              flexGrow={1}
-              paddingLeft={1}
-            >
-              <text fg={color.debug}>{view.debug()}</text>
-            </scrollbox>
+          </Show>
+
+          <box flexDirection="row" flexGrow={rowFills() ? 1 : 0} minHeight={0}>
+            <Show when={panels().feed}>
+              <Feed
+                lines={view.feed()}
+                ref={(el) => (feed = el)}
+                mark={panelMark("feed")}
+                onTitle={() => toggle("feed")}
+              />
+            </Show>
+            <Show when={nothingShown()}>
+              <box flexGrow={1} paddingLeft={1} paddingRight={1} flexDirection="row">
+                <For each={allHiddenParts(available(), size().width - 2, keys)}>
+                  {(part) => (
+                    <text
+                      fg={color.notice}
+                      wrapMode="none"
+                      flexShrink={0}
+                      selectable={false}
+                      onMouseDown={(event: MouseEvent) => {
+                        const panel = part.panel;
+                        if (panel !== undefined && event.button === MouseButton.LEFT && mouse())
+                          toggle(panel);
+                      }}
+                    >
+                      {part.text}
+                    </text>
+                  )}
+                </For>
+              </box>
+            </Show>
+            <Show when={showDebug()}>
+              <box
+                ref={(el: BoxRenderable) => (debugBox = el)}
+                onMouseDown={boxClick(
+                  () => debugBox,
+                  () => " /state · Esc closes ",
+                  () => setShowDebug(false),
+                )}
+                border
+                borderColor={color.border}
+                title=" /state · Esc closes "
+                width={panels().feed ? "50%" : "100%"}
+                flexShrink={0}
+              >
+                <scrollbox
+                  ref={(el: ScrollBoxRenderable) => (debug = el)}
+                  scrollAcceleration={wheel}
+                  flexGrow={1}
+                  paddingLeft={1}
+                >
+                  <text fg={color.debug}>{view.debug()}</text>
+                </scrollbox>
+              </box>
+            </Show>
           </box>
+        </box>
+        <Show when={prepColumns() > 0 ? prepView() : undefined}>
+          {(v) => (
+            <Prep
+              view={v()}
+              next={prepUp()}
+              armed={armed()}
+              width={prepColumns()}
+              mark={panelMark("prep")}
+              pictures={picturesShown()}
+              onSend={sendFromPrep}
+              onFill={(text) => mouse() && edit((s) => fillLine(s, text))}
+              onAll={sendAllFromPrep}
+              onArm={(a) => mouse() && setArmed(a)}
+              onCount={(section, index, by) =>
+                mouse() && setArmed(prepCount(v(), armed(), section, index, by))
+              }
+              onStart={startFromPrep}
+              onTitle={() => toggle("prep")}
+              ref={(el) => (prepBox = el)}
+            />
+          )}
         </Show>
       </box>
 
@@ -1019,19 +1052,7 @@ export function App(props: { view: TableView }) {
         )}
       </Show>
 
-      <Show when={prepHeight() > 0}>
-        <Prep
-          rows={prepLines()}
-          height={prepHeight()}
-          width={size().width}
-          mark={panelMark("prep")}
-          onPick={pickPrep}
-          onTitle={() => toggle("prep")}
-          ref={(el) => (prepBox = el)}
-        />
-      </Show>
-
-      <Show when={!rowFills()}>
+      <Show when={!rowFills() && prepColumns() === 0}>
         <box flexGrow={1} minHeight={0} />
       </Show>
 

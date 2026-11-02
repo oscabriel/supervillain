@@ -104,20 +104,21 @@ The host refuses a `host_key` other users can read (`chmod 600` it). Players are
 
 ## Preparing a game
 
-At your seat, Alt+5 or `/prep` opens the prep panel, under the feed. It is the GM's alone: a player's Alt+5 or `/prep` is told so. Each time it opens it reads `heroes/`, `monsters/` and `maps/` again, so a sheet you saved a minute ago is there, and a file that won't load is listed by its id (loading it says why). Every item shows, dim, the command a click sends: the very line you could type, so the log can't tell a click from typing, and Up brings back what a click sent. Nothing in the panel changes the table by itself, and you can go on typing commands as before.
+At your seat, Alt+5 or `/prep` opens the GM prep panel, a column right of the map and the feed. It is the GM's alone: a player's Alt+5 or `/prep` is told so. Each time it opens it reads `heroes/`, `monsters/` and `maps/` again, so a sheet you saved a minute ago is there, and a file that won't load is listed by its id (loading it says why). A click sends the very line you could type, so the log can't tell a click from typing, and Up brings back what a click sent; the hint row says what the next square clicked will send. Nothing in the panel changes the table by itself, and you can go on typing commands as before.
 
-| Section | What a click does |
-| --- | --- |
-| Heroes (Draw Steel) | Brings a hero into the party: `/hero brann`. One already in it is marked `in play`, and clicking it reloads its sheet |
-| Monsters (Draw Steel) | Opens a count under the section: − and + set it, Add sends `/add bandit-chief` (one) or `/add bandit-chief x3`, Cancel or Esc closes it |
-| Fighters (set.world) | Recruit or Foe puts `/recruit ` or `/foe ` on the input line: type the name and, if you like, a seed, then Enter |
-| Maps | Loads one: `/map ford-road`, marked `loaded` once it is. Put away sends `/map off`. New crossing and New keep generate one (`/map new keep`), and New, by seed puts `/map new ` on the input line for a kind and a seed |
-| Place | Lists whoever isn't on the loaded map yet. Click one, then a square on the map: `/place bandit-chief p5` |
-| Start | `/start`; while the fight is on it says so instead |
+Top to bottom, the panel shows:
 
-The panel takes rows under the feed: what its sections need, up to half of what the band and the map would have (a third once a map shows), and the wheel scrolls the rest. It always leaves the band its living rows and the map enough to click a square, so in a big fight at 80x24 it may be down to one line, and it steps aside while a Place waits for its square. Otherwise at 80x24 that's three to six lines. Alt+5 or a click on its title hides it again; hidden, the hint row offers `⁵ prep` to click.
+- **The steps to a fight**: map, party, foes, then ▶. Each is ◆ when done (a map loaded; everyone on each side on it), and the one to do now is lit.
+- **What the next square does**: who or what goes on the map when you click a free square on it, drawn as its token, with a bar and ⌖. While something waits the panel's border is red, and in terminals that draw pointer shapes the pointer is a crosshair. Once everyone is placed this is **fight**, which sends `/start` and puts the panel away; in a fight it says the round.
+- **map**: the loaded map, with ↻ to generate another of its kind (`/map new keep`, for a generated one) and ⇄ to choose again. Until one is loaded, every map in `maps/`, then + crossing and + keep (`/map new keep`) and + by seed, which puts `/map new ` on the input line for a kind and a seed. Put away sends `/map off`.
+- **to place**: whoever is in play and off the map, heroes first. The next square places the first (`/place brann b6`), so placing a party is a click a square; click one in the list to place it next instead.
+- **heroes** (Draw Steel): the campaign's heroes not yet in play. A click sends `/hero brann`, and that hero is next for a square. + all brings every one in.
+- **monsters** (Draw Steel): every stat block, with how many are in play (`×2`). Each click counts one more (`+3`), − one fewer; the next square then sends `/add bandit-cutpurse x3` and places what it added on the free squares nearest that square (a squad of minions is one token). Esc puts the count down.
+- **fighters** (set.world): + Recruit or + Foe puts `/recruit ` or `/foe ` on the input line: type the name and, if you like, a seed, then Enter. The fighter is then next for a square.
 
-`/map new crossing|keep [seed]` makes a map at the table the way `supervillain map` does, through the same code: it writes `maps/<kind>-<seed>.txt`, picking a seed when you leave it out, then loads it as `/map <id>` would. The event carries the grid, as every `/map` does, so replay never generates or reads the file. The seed is in the map's id, and a kind and seed always make the same map; one whose file is already in `maps/` (in any letter case) is refused with the `/map` that loads it. A map you generate shows in the panel's Maps at once, marked `loaded`.
+A click on a token on the map still opens its menu, as it does without the panel; a token placed in the wrong square goes elsewhere with a typed `/place brann c4`. The panel takes a third of the seat's columns, between 26 and 34, and the map and the feed draw beside it; its list scrolls with the wheel. Alt+5 or a click on its title hides it again; hidden, the hint row offers `⁵ prep` to click. Each token is drawn as the picture map draws it in a terminal with kitty graphics, and in blocks anywhere else.
+
+`/map new crossing|keep [seed]` makes a map at the table the way `supervillain map` does, through the same code: it writes `maps/<kind>-<seed>.txt`, picking a seed when you leave it out, then loads it as `/map <id>` would. The event carries the grid, as every `/map` does, so replay never generates or reads the file. The seed is in the map's id, and a kind and seed always make the same map; one whose file is already in `maps/` (in any letter case) is refused with the `/map` that loads it. A map you generate is the panel's map at once, and the one it replaced stays in the list behind ⇄.
 
 ## 1. Same network, or Tailscale
 

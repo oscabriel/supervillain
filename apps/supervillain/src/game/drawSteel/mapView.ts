@@ -23,6 +23,8 @@ export interface MapToken {
   readonly x: number;
   readonly y: number;
   readonly side: Side;
+  /** What its picture is picked by, when not its id: a creature's stat block, so all look alike. */
+  readonly figure?: string;
   readonly mine: boolean;
   readonly acting: boolean;
   readonly dead: boolean;
@@ -80,6 +82,7 @@ export function mapView(slice: DrawSteelState, actor: string): MapView | undefin
         x: at.x,
         y: at.y,
         side: sideOf(who),
+        ...(who.kind === "creature" && { figure: who.creature.block }),
         mine: who.kind === "hero" && who.hero.player === actor,
         acting: slice.combat.acting === who.id,
         dead: isDead(who),
