@@ -311,8 +311,10 @@ describe("supervillain host --relay, through supervillain relay", () => {
           { cols: 100, rows: 30 },
           { key: vex, user: "lobby" },
         );
-        yield* waitFor("the lobby", () => terminal.output().includes("Press Enter to join den"));
-        expect(terminal.output()).toContain("Your table open now:\r\n  1  den (0 seated)\r\n");
+        yield* waitFor("the lobby", () =>
+          Bun.stripANSI(terminal.output()).includes("Enter sits you at den"),
+        );
+        expect(Bun.stripANSI(terminal.output())).toMatch(/│ ▌ 1 {2}den +○ 0 │/);
         terminal.write("\r");
         yield* waitFor(
           "the name prompt",

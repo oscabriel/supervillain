@@ -1,8 +1,9 @@
 // The relay's lobby, on the real relay with stand-in GM tables and OpenSSH players: a player who
 // comes with a key and no room is shown the open tables that know their key, and picks one.
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { Effect } from "effect";
 import { JOIN_HINT } from "../../src/relay/protocol.ts";
+import { type LobbyScreen, lobbyFrame } from "../../src/relay/lobby.ts";
 import { lobbyText } from "../../src/relay/server.ts";
 import { effect, waitFor } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
@@ -23,6 +24,11 @@ const openTable = (relay: Relay, room: string, knows?: GmTableOptions["knows"]) 
 
 const SIZE = { cols: 100, rows: 30 };
 
+/** What the player's terminal shows, its colours and cursor moves left out. */
+const shown = (terminal: { output: () => string }) => Bun.stripANSI(terminal.output());
+/** The lobby's prompt, at the bottom of each frame it draws. */
+const PROMPT = "Enter sits you at";
+
 describe("relay: the lobby", () => {
   effect("a known key sees its table, and Enter seats it there as a <room>@ would", () =>
     Effect.gen(function* () {
@@ -34,13 +40,21 @@ describe("relay: the lobby", () => {
       });
       const keep = yield* openTable(relay, "keep", { actors: [] });
       const terminal = yield* sshShell(relay.playerPort, SIZE, { key: vex, user: "lobby" });
-      yield* waitFor("the lobby", () => terminal.output().includes("or Ctrl-C to leave: "));
-      expect(terminal.output()).toBe(
-        "Your table open now:\r\n  1  ford (3 seated)\r\nPress Enter to join ford, or Ctrl-C to leave: ",
+      yield* waitFor("the lobby", () => shown(terminal).includes(PROMPT));
+      const lobby = shown(terminal);
+      expect(lobby).toContain(
+        "a virtual tabletop you reach with ssh  ·  1 open table knows your key",
       );
-      // A window change while at the prompt reaches the table with the seat.
+      expect(lobby).toContain("┌─ ¹ tables ─");
+      expect(lobby).toMatch(/│ ▌ 1 {2}ford +● 3 │/);
+      expect(lobby).not.toContain("keep");
+      // Who the relay takes the player for: their key, nothing more.
+      expect(lobby).toContain("key       ssh-ed25519");
+      expect(lobby).toContain(`│ ${vex.fingerprint}`);
+      expect(lobby).toContain("> Enter sits you at ford");
+      // A window change at the prompt draws the lobby again, and reaches the table with the seat.
       terminal.resize(120, 40);
-      yield* Effect.sleep("200 millis");
+      yield* waitFor("the lobby again", () => shown(terminal).split(PROMPT).length === 3);
       terminal.write("\r");
       yield* waitFor("the seat", () =>
         terminal.output().includes(`seat key:${vex.fingerprint} xterm-256color 120x40 pty=true`),
@@ -66,15 +80,22 @@ describe("relay: the lobby", () => {
       yield* openTable(relay, "ford", { actors, seated: 2 });
       // The local username a bare ssh sends, not a room anyone holds.
       const terminal = yield* sshShell(relay.playerPort, SIZE, { key: vex, user: "alex" });
-      yield* waitFor("the lobby", () => terminal.output().includes("or Ctrl-C to leave: "));
-      expect(terminal.output()).toBe(
-        "There's no table called alex here.\r\nYour tables open now:\r\n  1  ford (2 seated)\r\n  2  keep (1 seated)\r\nPick a table (1-2), or Ctrl-C to leave: ",
-      );
-      // Enter alone, a number off the list, an arrow key and a backspace are all taken in stride.
-      terminal.write("\r");
+      yield* waitFor("the lobby", () => shown(terminal).includes(PROMPT));
+      const lobby = shown(terminal);
+      expect(lobby).toContain("› There's no table called alex here.");
+      expect(lobby).toContain("2 open tables know your key");
+      expect(lobby).toMatch(/│ ▌ 1 {2}ford +● 2 │/);
+      expect(lobby).toMatch(/│ {3}2 {2}keep +● 1 │/);
+      expect(lobby).toContain("↑↓ pick · 1-2 by number · Enter sits you down · Ctrl-C leaves");
+      // A number off the list is refused; ↓ moves the pick; a number moves it too.
       terminal.write("7\r");
-      yield* waitFor("the refusal", () => terminal.output().includes("There's no 7 on the list."));
-      terminal.write("\x1b[A1\x7f2\r");
+      yield* waitFor("the refusal", () => shown(terminal).includes("› There's no 7 on the list."));
+      terminal.write("\x1b[B");
+      yield* waitFor("the pick", () => /│ ▌ 2 {2}keep/.test(shown(terminal).split(PROMPT).at(-2)!));
+      terminal.write("1");
+      yield* waitFor("the number", () => shown(terminal).endsWith("> 1"));
+      // A backspace takes it back; ↑ from the first wraps to the last; Enter sits at the pick.
+      terminal.write("\x7f\x1b[A\r");
       yield* waitFor("the seat", () => terminal.output().includes(`seat key:${vex.fingerprint}`));
       expect(terminal.output()).toContain("Joining keep…");
       terminal.write("q");
@@ -191,13 +212,12 @@ describe("relay: the lobby", () => {
       const vex = yield* clientKey(yield* tempDir, "vex");
       yield* openTable(relay, "ford", { actors: [`key:${vex.fingerprint}`] });
       const terminal = yield* sshShell(relay.playerPort, SIZE, { key: vex, user: "lobby" });
-      yield* waitFor("the lobby", () => terminal.output().includes("or Ctrl-C to leave: "));
-      // With one table, a stray LF read as a second Enter would seat the player.
+      yield* waitFor("the lobby", () => shown(terminal).includes(PROMPT));
+      // A stray LF read as a second Enter would seat the player at the pick.
       terminal.write("5\r\n");
-      yield* waitFor("the refusal", () => terminal.output().includes("There's no 5 on the list."));
+      yield* waitFor("the refusal", () => shown(terminal).includes("There's no 5 on the list."));
       yield* Effect.sleep("300 millis");
       expect(terminal.output()).not.toContain("Joining");
-      expect(terminal.output().split("Press Enter to join ford").length).toBe(3);
       // Esc, then Enter: the Enter still counts.
       terminal.write("\x1b");
       yield* Effect.sleep("100 millis");
@@ -214,17 +234,77 @@ describe("relay: the lobby", () => {
       const vex = yield* clientKey(yield* tempDir, "vex");
       const ford = yield* openTable(relay, "ford", { actors: [`key:${vex.fingerprint}`] });
       const leaving = yield* sshShell(relay.playerPort, SIZE, { key: vex, user: "lobby" });
-      yield* waitFor("the lobby", () => leaving.output().includes("or Ctrl-C to leave: "));
+      yield* waitFor("the lobby", () => shown(leaving).includes(PROMPT));
       // Ctrl-C leaves even just after a lone Esc.
       leaving.write("1\x1b\x03");
       expect(yield* Effect.promise(() => leaving.exited)).toBe(0);
       expect(leaving.output()).not.toContain("Joining");
 
       const idle = yield* sshShell(relay.playerPort, SIZE, { key: vex, user: "lobby" });
-      yield* waitFor("the lobby", () => idle.output().includes("or Ctrl-C to leave: "));
+      yield* waitFor("the lobby", () => shown(idle).includes(PROMPT));
       expect(yield* Effect.promise(() => idle.exited)).toBe(1);
       expect(idle.output()).toContain("No table picked; come back any time.");
       expect(ford.ended).toEqual([]);
     }),
   );
+});
+
+describe("the lobby's frame", () => {
+  const screen: LobbyScreen = {
+    tables: [
+      { room: "ford", seated: 3 },
+      { room: "the-keep", seated: 0 },
+    ],
+    picked: 0,
+    typed: "",
+    you: {
+      fingerprint: "SHA256:Lb2N0yQ8m4fBkqyC2r0wbqv1o3cJm7k6zgWcT4m2Ywo",
+      algorithm: "ssh-ed25519",
+      term: "xterm-ghostty",
+    },
+  };
+  const rows = (frame: string) => Bun.stripANSI(frame).split("\r\n");
+
+  test("it fits the terminal, from a narrow one to a wide one, cleared and drawn from the top", () => {
+    for (const [cols, height] of [
+      [60, 20],
+      [80, 24],
+      [100, 30],
+      [140, 40],
+    ] as const) {
+      const frame = lobbyFrame(screen, cols, height);
+      expect(frame).toStartWith("\x1b[H\x1b[2J");
+      const lines = rows(frame);
+      expect(lines.length).toBeLessThanOrEqual(height);
+      for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(cols);
+      // The cursor is left at the prompt, the last row.
+      expect(frame).toEndWith(`\x1b[${lines.length};${lines.at(-1)!.indexOf(">") + 3}H`);
+    }
+  });
+
+  test("the title: between a hero and a villain when wide, in quadrants at 80, a word when short", () => {
+    const wide = rows(lobbyFrame(screen, 140, 40));
+    expect(Math.max(...wide.slice(0, 6).map((l) => Bun.stringWidth(l.trim())))).toBeGreaterThan(
+      110,
+    );
+    const eighty = rows(lobbyFrame(screen, 80, 24));
+    expect(eighty[0]).toMatch(/[▘▝▖▗▚▞▙▟▛▜]/);
+    expect(rows(lobbyFrame(screen, 80, 16))[0]!.trim()).toBe("supervillain");
+  });
+
+  test("the pick is marked and named at the prompt; a number typed shows; a line is said", () => {
+    const first = Bun.stripANSI(lobbyFrame(screen, 100, 30));
+    expect(first).toMatch(/│ ▌ 1 {2}ford +● 3 │/);
+    expect(first).toMatch(/│ {3}2 {2}the-keep +○ 0 │/);
+    expect(first).toContain("> Enter sits you at ford");
+    const second = Bun.stripANSI(
+      lobbyFrame({ ...screen, picked: 1, typed: "2", said: "There's no 7 on the list." }, 100, 30),
+    );
+    expect(second).toMatch(/│ ▌ 2 {2}the-keep/);
+    expect(second).toContain("› There's no 7 on the list.");
+    expect(second.split("\r\n").at(-1)!.trim()).toBe("> 2");
+    // Wide enough, the player's key whole; narrow, the tables alone.
+    expect(first).toContain(screen.you.fingerprint);
+    expect(Bun.stripANSI(lobbyFrame(screen, 60, 20))).not.toContain("² you");
+  });
 });

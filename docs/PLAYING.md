@@ -23,17 +23,18 @@ Check that the fingerprint matches the one your GM sent you, then type `yes`. Af
 
 ### Back at a table you've sat at
 
-If your GM's table goes through a relay and you've sat there before with your key, you don't need the room's name. `ssh` to the relay with `lobby` for the room (`ssh -p 2222 lobby@relay.example.net`) and it lists the tables open right now that know your key:
+If your GM's table goes through a relay and you've sat there before with your key, you don't need the room's name. `ssh` to the relay with `lobby` for the room (`ssh -p 2222 lobby@relay.example.net`) and it shows the tables open right now that know your key, in a frame under the supervillain title:
 
 ```
-Your tables open now:
-  1  first-fight (3 seated)
-  2  the-keep (1 seated)
-Pick a table (1-2), or Ctrl-C to leave: 2
-Joining the-keep…
+┌─ ¹ tables ─────────────────────┐ ┌─ ² you ──────────────────────────────────┐
+│ ▌ 1  first-fight           ● 3 │ │ There's no account: your ssh key is who  │
+│   2  the-keep              ● 1 │ │ you are.                                 │
+…
+ ↑↓ pick · 1-2 by number · Enter sits you down · Ctrl-C leaves
+ > Enter sits you at first-fight
 ```
 
-Type a number and press Enter; with one table, Enter alone joins it. Ctrl-C or Ctrl-D leaves, and after a minute without a pick the relay says goodbye. You sit down exactly as if you had typed the room's name. A bare `ssh -p 2222 relay.example.net` works too, but ssh sends your own username as the room, so the list comes after `There's no table called <you> here.` A table knows your key once you've done something there with it (set your name, rolled, chatted). Guests are never shown a list, and neither is a key no open table knows: they get the hint below. A GM can keep their table off the list with `--no-lobby`. Asked with a command (`ssh -p 2222 lobby@relay.example.net help`), the relay prints the list and the command to join one, and runs nothing.
+↑ and ↓ move the pick (the ▌), or type a table's number; Enter sits you at it. Ctrl-C or Ctrl-D leaves, and after a minute without a pick the relay says goodbye. The `you` pane shows your key's fingerprint, the one thing the relay knows you by. You sit down exactly as if you had typed the room's name. A bare `ssh -p 2222 relay.example.net` works too, but ssh sends your own username as the room, so the lobby also says `There's no table called <you> here.` A table knows your key once you've done something there with it (set your name, rolled, chatted). Guests are never shown a list, and neither is a key no open table knows: they get the hint below. A GM can keep their table off the list with `--no-lobby`. Asked with a command (`ssh -p 2222 lobby@relay.example.net help`), the relay prints the list and the command to join one, and runs nothing.
 
 If your GM's table goes through a relay, a few things can come back instead of the table:
 

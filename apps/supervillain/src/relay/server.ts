@@ -1,6 +1,6 @@
 // `supervillain relay`: players SSH in on one port, GMs' hosts dial in on another, and the relay
 // carries each player's session as a channel on their room's GM link. It renders nothing (its
-// lobby is a few lines of plain text) and keeps nothing but rooms.json and its two keys. See
+// lobby is one frame of text, lobby.ts) and keeps nothing but rooms.json and its two keys. See
 // protocol.ts for the link and ASSESSMENT §6 for why.
 import { randomBytes } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
@@ -53,6 +53,7 @@ import {
   type RoomsError,
   touchRoom,
 } from "./rooms.ts";
+import { lobbyFrame, type LobbyTable } from "./lobby.ts";
 
 export class RelayError extends Schema.TaggedError<RelayError>()("RelayError", {
   message: Schema.String,
@@ -223,12 +224,6 @@ interface GmLink {
   asking: number;
 }
 
-/** An open table that knows a player's key, as the lobby lists it. */
-export interface LobbyTable {
-  readonly room: string;
-  readonly seated: number;
-}
-
 const tableLabel = (table: LobbyTable) => `${table.room} (${table.seated} seated)`;
 
 /**
@@ -242,46 +237,56 @@ export const lobbyText = (before: string | undefined, tables: ReadonlyArray<Lobb
     `Join one with its name before the @, as you came here: ssh ${tables[0]!.room}@…`,
   ].join("\n");
 
-/** The lobby's list, numbered for the prompt. */
-const lobbyMenu = (before: string | undefined, tables: ReadonlyArray<LobbyTable>): string =>
-  [
-    ...(before === undefined ? [] : [before]),
-    `Your table${tables.length === 1 ? "" : "s"} open now:`,
-    ...tables.map((table, i) => `  ${i + 1}  ${tableLabel(table)}`),
-  ].join("\n");
-
-const lobbyPrompt = (rooms: ReadonlyArray<string>) =>
-  rooms.length === 1
-    ? `Press Enter to join ${rooms[0]}, or Ctrl-C to leave: `
-    : `Pick a table (1-${rooms.length}), or Ctrl-C to leave: `;
-
 type Picked = { readonly room: string } | "left" | "idle";
 
+/** Clears the screen and homes the cursor: the lobby's frame, put away. */
+const CLEAR = "\x1b[H\x1b[2J";
+
 /**
- * Reads the player's pick at the lobby's prompt, from their raw terminal, echoing as it goes:
- * digits, backspace, Enter (alone, the only table); Ctrl-C, Ctrl-D or EOF leave; escape
- * sequences (arrows, say) are dropped. The stream is left paused, with whatever followed Enter
- * put back, for the table to read.
+ * The lobby on the player's raw terminal: draws it (`draw`, with what to show), then reads keys
+ * until they pick a table. ↑ and ↓ move the pick, digits type a number, backspace takes one back,
+ * Enter sits at the number typed or else at the pick; Ctrl-C, Ctrl-D or EOF leave; other escape
+ * sequences are dropped. `redraw` is handed a function that draws it again, for a resize. The
+ * stream is left paused, with whatever followed Enter put back, for the table to read.
  */
-const pickTable = (session: RawSession, rooms: ReadonlyArray<string>, idleMs: number) =>
+const pickTable = (
+  session: RawSession,
+  rooms: ReadonlyArray<string>,
+  idleMs: number,
+  draw: (state: { picked: number; typed: string; said?: string }) => void,
+  redraw: (again: (() => void) | undefined) => void,
+  /** Said at first, until a key is pressed: `There's no table called alex here.` */
+  first?: string,
+) =>
   Effect.callback<Picked>((resume) => {
     const { stream } = session;
     let typed = "";
+    let picked = 0;
+    let said = first;
+    const show = () => draw({ picked, typed, ...(said === undefined ? {} : { said }) });
     /** Inside an escape sequence: just after ESC, or in its body until a final byte. */
     let escape: "no" | "esc" | "body" = "no";
+    /** The sequence so far after ESC: `[A` is ↑. */
+    let sequence = "";
     /** Whether the last byte was a CR: an LF just after it is the same Enter. */
     let afterCr = false;
     let idle = setTimeout(() => finish("idle"), idleMs);
     const stop = () => {
       clearTimeout(idle);
+      redraw(undefined);
       stream.removeListener("data", onData);
       stream.removeListener("end", onEnd);
     };
-    const finish = (picked: Picked, rest?: Buffer) => {
+    const finish = (result: Picked, rest?: Buffer) => {
       stop();
       stream.pause();
       if (rest !== undefined && rest.length > 0) stream.unshift(rest);
-      resume(Effect.succeed(picked));
+      resume(Effect.succeed(result));
+    };
+    const move = (by: 1 | -1) => {
+      picked = (picked + by + rooms.length) % rooms.length;
+      typed = "";
+      said = undefined;
     };
     const onData = (chunk: Buffer) => {
       clearTimeout(idle);
@@ -296,11 +301,18 @@ const pickTable = (session: RawSession, rooms: ReadonlyArray<string>, idleMs: nu
           // ESC [ and ESC O start a sequence; after a lone Esc, the next key counts as itself.
           if (byte === 0x5b || byte === 0x4f) {
             escape = "body";
+            sequence = String.fromCharCode(byte);
             continue;
           }
           escape = "no";
         } else if (escape === "body") {
-          if (byte >= 0x40 && byte <= 0x7e) escape = "no";
+          sequence += String.fromCharCode(byte);
+          if (byte >= 0x40 && byte <= 0x7e) {
+            escape = "no";
+            if (sequence === "[A" || sequence === "OA") move(-1);
+            if (sequence === "[B" || sequence === "OB") move(1);
+            show();
+          }
           continue;
         }
         if (lfOfCrLf) continue;
@@ -308,28 +320,29 @@ const pickTable = (session: RawSession, rooms: ReadonlyArray<string>, idleMs: nu
         else if (byte === 0x7f || byte === 0x08) {
           if (typed === "") continue;
           typed = typed.slice(0, -1);
-          stream.write("\b \b");
+          show();
         } else if (byte === 0x0d || byte === 0x0a) {
-          const n = typed === "" && rooms.length === 1 ? 1 : Number(typed);
-          if (typed !== "" || rooms.length === 1) {
-            if (Number.isInteger(n) && n >= 1 && n <= rooms.length) {
-              stream.write("\r\n");
-              // A terminal that sends CR LF for Enter: the LF was part of it.
-              const next = byte === 0x0d && chunk[i + 1] === 0x0a ? i + 2 : i + 1;
-              return finish({ room: rooms[n - 1]! }, chunk.subarray(next));
-            }
-            stream.write(`\r\nThere's no ${typed} on the list.`);
+          const n = typed === "" ? picked + 1 : Number(typed);
+          if (Number.isInteger(n) && n >= 1 && n <= rooms.length) {
+            // A terminal that sends CR LF for Enter: the LF was part of it.
+            const next = byte === 0x0d && chunk[i + 1] === 0x0a ? i + 2 : i + 1;
+            return finish({ room: rooms[n - 1]! }, chunk.subarray(next));
           }
+          said = `There's no ${typed} on the list.`;
           typed = "";
-          stream.write(`\r\n${lobbyPrompt(rooms)}`);
+          show();
         } else if (byte >= 0x30 && byte <= 0x39 && typed.length < 3) {
           typed += String.fromCharCode(byte);
-          stream.write(String.fromCharCode(byte));
+          said = undefined;
+          const n = Number(typed);
+          if (n >= 1 && n <= rooms.length) picked = n - 1;
+          show();
         }
       }
     };
     const onEnd = () => finish("left");
-    stream.write(lobbyPrompt(rooms));
+    show();
+    redraw(show);
     stream.on("data", onData);
     stream.once("end", onEnd);
     return Effect.sync(stop);
@@ -806,18 +819,34 @@ const make = (
             say(lobbyText(named ? unknown : undefined, tables));
             return session.exit(1);
           }
-          say(lobbyMenu(named ? unknown : undefined, tables));
+          const id = info.identity;
+          if (id.kind !== "key") return session.exit(1);
           const picked = yield* pickTable(
             session,
             tables.map((t) => t.room),
             lobbyIdleMs,
+            (state) =>
+              session.stream.write(
+                lobbyFrame(
+                  {
+                    tables,
+                    ...state,
+                    you: { fingerprint: id.fingerprint, algorithm: id.algorithm, term: info.term },
+                  },
+                  size.cols,
+                  size.rows,
+                ),
+              ),
+            (again) => {
+              resize = again === undefined ? undefined : () => again();
+            },
+            named ? unknown : undefined,
           );
-          if (picked === "left") {
-            session.stream.write("\r\n");
-            return session.exit(0);
-          }
+          // The lobby's frame is put away, whatever comes next.
+          session.stream.write(CLEAR);
+          if (picked === "left") return session.exit(0);
           if (picked === "idle") {
-            say("\nNo table picked; come back any time.");
+            say("No table picked; come back any time.");
             return session.exit(1);
           }
           room = picked.room;
