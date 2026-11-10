@@ -78,11 +78,11 @@ describe("relay: the lobby", () => {
       const actors = [`key:${vex.fingerprint}`];
       yield* openTable(relay, "keep", { actors, seated: 1 });
       yield* openTable(relay, "ford", { actors, seated: 2 });
-      // The local username a bare ssh sends, not a room anyone holds.
+      // The local username a bare ssh sends, not a room anyone holds, and not called a table.
       const terminal = yield* sshShell(relay.playerPort, SIZE, { key: vex, user: "alex" });
       yield* waitFor("the lobby", () => shown(terminal).includes(PROMPT));
       const lobby = shown(terminal);
-      expect(lobby).toContain("› There's no table called alex here.");
+      expect(lobby).not.toContain("alex");
       expect(lobby).toContain("2 open tables know your key");
       expect(lobby).toMatch(/│ ▌ 1 {2}ford +● 2 │/);
       expect(lobby).toMatch(/│ {3}2 {2}keep +● 1 │/);
@@ -115,7 +115,7 @@ describe("relay: the lobby", () => {
         expect(unknown).toEqual({ stdout: "", stderr: `${JOIN_HINT}\n`, exitCode: 1 });
       }
       const named = yield* sshExec(relay.playerPort, ["hi"], { key: kai, user: "nowhere" });
-      expect(named.stderr).toBe("There's no table called nowhere here.\n");
+      expect(named.stderr).toBe(`There's no table called nowhere here.\n${JOIN_HINT}\n`);
       const asked = ford.asked.count;
       const guest = yield* sshExec(relay.playerPort, ["hi"], { user: "lobby" });
       expect(guest).toEqual({ stdout: "", stderr: `${JOIN_HINT}\n`, exitCode: 1 });
@@ -137,7 +137,7 @@ describe("relay: the lobby", () => {
       expect(Date.now() - started).toBeGreaterThanOrEqual(400);
       expect(listed).toEqual({
         stdout: "",
-        stderr: `${lobbyText(undefined, [{ room: "ford", seated: 1 }])}\n`,
+        stderr: `${lobbyText([{ room: "ford", seated: 1 }])}\n`,
         exitCode: 1,
       });
       expect(slow.asked.count).toBe(1);
@@ -160,7 +160,7 @@ describe("relay: the lobby", () => {
         const started = Date.now();
         const listed = yield* sshExec(relay.playerPort, ["hi"], { key: vex, user: "lobby" });
         expect(Date.now() - started).toBeLessThan(3000);
-        expect(listed.stderr).toBe(`${lobbyText(undefined, [{ room: "ford", seated: 1 }])}\n`);
+        expect(listed.stderr).toBe(`${lobbyText([{ room: "ford", seated: 1 }])}\n`);
       }
       expect(frozen.asked.count).toBe(0);
     }),
@@ -203,6 +203,21 @@ describe("relay: the lobby", () => {
         flags: ["-T"],
       });
       expect(plain.stderr).toContain("Your tables open now:");
+    }),
+  );
+
+  effect("a key that changes nothing on screen sends nothing", () =>
+    Effect.gen(function* () {
+      const relay = yield* startRelay();
+      const vex = yield* clientKey(yield* tempDir, "vex");
+      yield* openTable(relay, "ford", { actors: [`key:${vex.fingerprint}`] });
+      const terminal = yield* sshShell(relay.playerPort, SIZE, { key: vex, user: "lobby" });
+      yield* waitFor("the lobby", () => shown(terminal).includes(PROMPT));
+      // → and a backspace with nothing typed change nothing; a digit does.
+      terminal.write("\x1b[C\x1b[C\x7f");
+      terminal.write("1");
+      yield* waitFor("the number", () => shown(terminal).endsWith("> 1"));
+      expect(terminal.output().split("\x1b[H\x1b[2J")).toHaveLength(3);
     }),
   );
 
@@ -290,6 +305,17 @@ describe("the lobby's frame", () => {
     const eighty = rows(lobbyFrame(screen, 80, 24));
     expect(eighty[0]).toMatch(/[▘▝▖▗▚▞▙▟▛▜]/);
     expect(rows(lobbyFrame(screen, 80, 16))[0]!.trim()).toBe("supervillain");
+  });
+
+  test("a colour is set where it changes, not for every cell, so a frame stays small", () => {
+    for (const [cols, height] of [
+      [80, 24],
+      [100, 30],
+      [140, 40],
+    ] as const) {
+      const frame = lobbyFrame(screen, cols, height);
+      expect(Buffer.byteLength(frame)).toBeLessThan(3 * Buffer.byteLength(Bun.stripANSI(frame)));
+    }
   });
 
   test("the pick is marked and named at the prompt; a number typed shows; a line is said", () => {

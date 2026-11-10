@@ -1,3 +1,4 @@
+import { crc32, deflateSync } from "node:zlib";
 import { LEGEND, type Tone } from "../game/drawSteel/mekmode.ts";
 import { DINGS_ATLAS } from "./atlas/dings.ts";
 import { TEXT_ATLAS } from "./atlas/text.ts";
@@ -135,6 +136,17 @@ export const letterAt = (map: MapView, x: number, y: number): string | undefined
   return PLAIN[map.terrain[y]?.[x] ?? " "];
 };
 
+/** One PNG chunk: its length, its type, `data`, and a CRC of the type and data. */
+const pngChunk = (type: string, data: Uint8Array) => {
+  const chunk = new Uint8Array(12 + data.length);
+  const view = new DataView(chunk.buffer);
+  view.setUint32(0, data.length);
+  chunk.set(new TextEncoder().encode(type), 4);
+  chunk.set(data, 8);
+  view.setUint32(8 + data.length, crc32(chunk.subarray(4, 8 + data.length)));
+  return chunk;
+};
+
 export class Canvas {
   readonly pixels: Uint8Array;
   constructor(
@@ -163,6 +175,37 @@ export class Canvas {
     this.rect(x, y + h - t, w, t, c);
     this.rect(x, y, t, h, c);
     this.rect(x + w - t, y, t, h, c);
+  }
+  /**
+   * The pixels as a PNG, which OpenTUI hands the terminal as it is. Each row is sent as its
+   * difference from the row above, which a glyph's blocks and a square's ground make mostly zero,
+   * so it deflates to a third of what OpenTUI's own fast zlib makes of the pixels, or less.
+   */
+  png(): Uint8Array {
+    const { width, height, pixels } = this;
+    const row = 1 + width * 3;
+    const rows = new Uint8Array(row * height);
+    for (let y = 0; y < height; y++) {
+      // Filter 2, Up: the bytes wrap around as PNG's do.
+      rows[y * row] = 2;
+      for (let x = 0; x < width; x++)
+        for (let c = 0; c < 3; c++) {
+          const i = (y * width + x) * 4 + c;
+          rows[y * row + 1 + x * 3 + c] = pixels[i]! - (y > 0 ? pixels[i - width * 4]! : 0);
+        }
+    }
+    const header = new Uint8Array(13);
+    const view = new DataView(header.buffer);
+    view.setUint32(0, width);
+    view.setUint32(4, height);
+    // 8 bits a channel, RGB.
+    header.set([8, 2], 8);
+    return Buffer.concat([
+      Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10),
+      pngChunk("IHDR", header),
+      pngChunk("IDAT", deflateSync(rows)),
+      pngChunk("IEND", new Uint8Array(0)),
+    ]);
   }
   /** An 8x12 atlas glyph (24 hex chars, a row byte each), each bit a `scale` block. */
   glyph(rows: string | undefined, x: number, y: number, scale: number, c: Rgb) {

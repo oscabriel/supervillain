@@ -2,7 +2,7 @@ import { GM, type Refused } from "../module.ts";
 import { orList, quote } from "../text.ts";
 import type { Square } from "./map.ts";
 import { marksOf } from "./marks.ts";
-import type { HeroSheet, StatBlock } from "./sheets.ts";
+import type { Ability, HeroSheet, StatBlock } from "./sheets.ts";
 
 export type Side = "heroes" | "director";
 
@@ -145,6 +145,12 @@ export const everyone = (slice: DrawSteelState): ReadonlyArray<Who> => [
 
 export const findWho = (slice: DrawSteelState, id: string): Who | undefined =>
   everyone(slice).find((w) => w.id === id);
+
+/** A hero's abilities from its sheet, a creature's from its stat block. */
+export const abilitiesOf = (slice: DrawSteelState, who: Who): ReadonlyArray<Ability> =>
+  who.kind === "hero"
+    ? who.hero.sheet.abilities
+    : (slice.blocks[who.creature.block]?.abilities ?? []);
 
 export { CHARACTERISTICS } from "./sheets.ts";
 
@@ -298,19 +304,21 @@ export const waiting = (slice: DrawSteelState, side: Side): ReadonlyArray<Who> =
 
 /**
  * Which side acts next, counting whoever is acting as done: the side that goes first when nobody
- * has acted this round (or everyone has), else the other side from the last to act, unless it
- * has nobody left, when the same side goes again.
+ * has acted this round (or everyone has), else the other side from the last to act. A side with
+ * nobody left to act is skipped, so the same side goes again.
  */
 export function nextSide(slice: DrawSteelState): Side | undefined {
   const { combat } = slice;
   if (!combat.active) return undefined;
   const last = combat.acted.at(-1);
   const lastWho = last === undefined ? undefined : findWho(slice, last);
-  if (lastWho === undefined) return combat.first;
+  if (lastWho === undefined || roundOver(slice)) {
+    const { first } = combat;
+    const alive = (side: Side) => everyone(slice).some((w) => sideOf(w) === side && !isDead(w));
+    return first !== undefined && !alive(first) ? other(first) : first;
+  }
   const side = sideOf(lastWho);
-  if (waiting(slice, other(side)).length > 0) return other(side);
-  if (waiting(slice, side).length > 0) return side;
-  return combat.first;
+  return waiting(slice, other(side)).length > 0 ? other(side) : side;
 }
 
 /** Whether every living creature and hero has started a turn this round. */

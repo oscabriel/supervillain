@@ -8,6 +8,57 @@ import { tempDir } from "../host/tempDir.ts";
 import { campaignDir, cli, startHost } from "./cli.ts";
 import { clientKey, sshExec, sshShell, waitFor } from "./openssh.ts";
 
+const main = join(import.meta.dir, "../../src/main.ts");
+const root = join(import.meta.dir, "../../../..");
+
+/**
+ * The host with the GM's seat in a real pseudo-terminal, once the table is drawn. `detached` runs
+ * it in a session of its own, where the terminal going away sends it no hang-up.
+ */
+const seatedHost = (campaign: string, detached: boolean) =>
+  Effect.acquireRelease(
+    Effect.promise(async () => {
+      let screen = "";
+      const decoder = new TextDecoder();
+      const command = ["bun", main, "host", campaign, "--port", "0", "--room", "den"];
+      const proc = Bun.spawn(detached ? ["setsid", "--wait", ...command] : command, {
+        cwd: root,
+        env: { ...process.env, TERM: "xterm-256color" },
+        terminal: {
+          cols: 100,
+          rows: 30,
+          data: (_terminal, data) => {
+            screen += decoder.decode(data, { stream: true });
+          },
+        },
+      });
+      const start = Date.now();
+      let port: number | undefined;
+      while (port === undefined || !screen.includes("at the table")) {
+        if (Date.now() - start > 15_000)
+          throw new Error(`the GM's table never came up:\n${screen}`);
+        await Bun.sleep(20);
+        const log = await readFile(join(campaign, "host.log"), "utf8").catch(() => "");
+        const found = /on 127\.0\.0\.1:(\d+)/.exec(log);
+        if (found) port = Number(found[1]);
+      }
+      // The lock names the host itself, which `setsid` stands in front of.
+      const pid = Number(await readFile(join(campaign, "events.lock"), "utf8"));
+      return { proc, pid, port, closeTerminal: () => proc.terminal?.close() };
+    }),
+    ({ proc, pid }) =>
+      Effect.promise(async () => {
+        for (const each of [pid, proc.pid]) {
+          try {
+            process.kill(each, "SIGKILL");
+          } catch {
+            // Gone already, as it should be.
+          }
+        }
+        await proc.exited;
+      }),
+  );
+
 const logOf = (dir: string) =>
   Effect.promise(async () =>
     (await readFile(join(dir, "events.jsonl"), "utf8"))
@@ -168,4 +219,61 @@ describe("supervillain host --headless", () => {
       }
     }),
   );
+
+  effect(
+    "a port out of range, or a --bind that isn't an address, is one plain line",
+    () =>
+      Effect.gen(function* () {
+        const campaign = yield* campaignDir;
+        for (const [flags, said] of [
+          [["--port", "99999"], "--port takes a port from 0 to 65535, not 99999"],
+          [["--port", "-5"], "--port takes a port from 0 to 65535, not -5"],
+          // Either would have the host listen on every interface.
+          [
+            ["--bind", "127.0.0.256"],
+            '--bind takes an IP address, such as 127.0.0.1 or 0.0.0.0, or localhost, not "127.0.0.256"',
+          ],
+          [
+            ["--bind", "127.0.0.1 "],
+            '--bind takes an IP address, such as 127.0.0.1 or 0.0.0.0, or localhost, not "127.0.0.1 "',
+          ],
+        ] as const) {
+          const result = yield* cli(["host", campaign, "--headless", ...flags, "--port", "0"]);
+          expect(result.exitCode).toBe(1);
+          expect(result.stderr.trim().split("\n")).toEqual([`supervillain: ${said}`]);
+        }
+      }),
+    30_000,
+  );
+});
+
+describe("supervillain host, the GM at its terminal", () => {
+  for (const [how, detached] of [
+    ["with a hang-up", false],
+    ["without one", true],
+  ] as const)
+    effect(
+      `the GM's terminal going away ${how} closes the table: players told, their terminals put back, no lock left`,
+      () =>
+        Effect.gen(function* () {
+          const campaign = yield* campaignDir;
+          const host = yield* seatedHost(campaign, detached);
+          const terminal = yield* sshShell(host.port);
+          yield* waitFor("the player's seat", () => terminal.text().includes("call you?"));
+          host.closeTerminal();
+          // With no hang-up the host learns of it when the GM's seat next draws: here, a new name.
+          terminal.write("Kai\r");
+          yield* waitFor("the host to stop", () => !existsSync(join(campaign, "events.lock")));
+          yield* waitFor("the goodbye", () => terminal.text().includes("The GM closed the table."));
+          const output = terminal.output();
+          // Off the alternate screen first, so the notice stays on the player's own.
+          expect(output.lastIndexOf("\x1b[?1049l")).toBeGreaterThan(
+            output.lastIndexOf("\x1b[?1049h"),
+          );
+          expect(output.lastIndexOf("The GM closed the table.")).toBeGreaterThan(
+            output.lastIndexOf("\x1b[?1049l"),
+          );
+        }),
+      30_000,
+    );
 });

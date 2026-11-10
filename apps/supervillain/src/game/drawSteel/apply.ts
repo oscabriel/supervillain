@@ -3,18 +3,14 @@ import * as Schema from "effect/Schema";
 import { signed } from "../dice.ts";
 import type { FeedNote } from "../module.ts";
 import { hasTerminalControls } from "../text.ts";
+import { occupants } from "./board.ts";
 import { type EventType, type Payload, Payloads } from "./events.ts";
 import { distance, formatSquare, misshapen, sameSquare, type Square, standable } from "./map.ts";
 
 import { safeSheet } from "./schema.ts";
+import { bestScore, type HeroSheet, isTrait, reachOf, TIER_PLUS } from "./sheets.ts";
 import {
-  type Ability,
-  characteristicOfLetter,
-  type HeroSheet,
-  isTrait,
-  reachOf,
-} from "./sheets.ts";
-import {
+  abilitiesOf,
   andList,
   type Board,
   capitalized,
@@ -283,10 +279,10 @@ function roundStarted(slice: DrawSteelState, envelope: Envelope): Applied {
   const { round, heroes, malice } = decode("ds.round-started", envelope);
   if (!slice.combat.active) bad(envelope, "comes outside combat");
   if (round !== slice.combat.round + 1) bad(envelope, `skips from round ${slice.combat.round}`);
-  const { acting: _acting, ...combat } = slice.combat;
+  if (slice.combat.acting !== undefined) bad(envelope, "starts a round during a turn");
   const total = slice.malice + malice;
   return {
-    slice: { ...slice, malice: total, combat: { ...combat, round, acted: [] } },
+    slice: { ...slice, malice: total, combat: { ...slice.combat, round, acted: [] } },
     feed: {
       kind: "ds-turn",
       text: `Round ${round}. Malice +${malice} (${plural(heroes, "hero", "heroes")}, round ${round}) → ${total}.`,
@@ -416,17 +412,13 @@ function rested(slice: DrawSteelState, envelope: Envelope): Applied {
   };
 }
 
-/** "8 + M damage" read with the hero's Might of 2: "8 + M (2) = 10 damage". */
+/** "8 + M or A damage" read with the hero's best, Might 2: "8 + M or A (2) = 10 damage". */
 const withScores = (text: string, sheet: HeroSheet) =>
-  text.replace(/\b(\d+) \+ ([MARIP])\b/g, (_match, n: string, letter: string) => {
-    const score = sheet.characteristics[characteristicOfLetter(letter)!];
-    return `${n} + ${letter} (${score}) = ${Number(n) + score}`;
+  text.replace(TIER_PLUS, (match, n: string, letters?: string) => {
+    if (letters === undefined) return match;
+    const score = bestScore(letters, sheet.characteristics);
+    return `${n} + ${letters} (${score}) = ${Math.max(0, Number(n) + score)}`;
   });
-
-const abilitiesOf = (slice: DrawSteelState, found: Who): ReadonlyArray<Ability> =>
-  found.kind === "hero"
-    ? found.hero.sheet.abilities
-    : (slice.blocks[found.creature.block]?.abilities ?? []);
 
 /** A cost off the hero's resource or the Malice pool, and how the feed says it: " (3 Wrath → 1)". */
 function spend(
@@ -783,6 +775,19 @@ const withToken = (
   map: { ...board, tokens: { ...board.tokens, [id]: at } },
 });
 
+/** Halts a token that would end where another living one stands: nobody shares a square. */
+function checkFree(
+  slice: DrawSteelState,
+  envelope: Envelope,
+  board: Board,
+  id: string,
+  at: Square,
+): void {
+  const there = occupants(slice, board, id)(at);
+  if (there !== undefined)
+    bad(envelope, `puts '${id}' at ${formatSquare(at)}, where '${there.id}' stands`);
+}
+
 /** Checks a decided path: each square next to the one before and one a creature can stand on. */
 function checkPath(
   envelope: Envelope,
@@ -835,6 +840,7 @@ function placed(slice: DrawSteelState, envelope: Envelope): Applied {
   const board = boardOf(slice, envelope);
   const found = who(slice, envelope, id);
   if (!standable(board.terrain, at)) bad(envelope, `places '${id}' where nobody can stand`);
+  checkFree(slice, envelope, board, id, at);
   return {
     slice: withToken(slice, board, id, at),
     feed: { kind: "ds", text: `${found.name} is placed at ${formatSquare(at)}.` },
@@ -848,6 +854,7 @@ function moved(slice: DrawSteelState, envelope: Envelope): Applied {
   const from = board.tokens[id] ?? bad(envelope, `moves '${id}', who isn't on the map`);
   const to = path.at(-1) ?? bad(envelope, "has an empty path");
   checkPath(envelope, board, from, path);
+  checkFree(slice, envelope, board, id, to);
   if (cost < path.length) bad(envelope, "costs less than its squares");
   let next = withToken(slice, board, id, to);
   let turn = "";
@@ -897,21 +904,22 @@ function forceMoved(slice: DrawSteelState, envelope: Envelope): Applied {
         ? "a wall"
         : who(slice, envelope, p.slam.into).name;
   const to = p.path.at(-1);
+  if (to !== undefined) checkFree(slice, envelope, board, p.id, to);
   const verb = FORCED_VERBS[p.kind];
+  // After the count, so a numbered creature's number doesn't run into it.
+  const by = p.source === undefined ? "" : ` by ${nameOf(slice, p.source)}`;
   const text = [
     `${found.name} is ${verb}`,
     to === undefined
-      ? " but doesn't move"
-      : ` ${plural(p.path.length, "square")} to ${formatSquare(to)}`,
+      ? `${by} but doesn't move`
+      : ` ${plural(p.path.length, "square")}${by} to ${formatSquare(to)}`,
     p.slam === undefined
       ? ""
       : ` and slams into ${into} with ${plural(p.slam.remaining, "square")} to go`,
     p.edge === true ? ", stopped by the map's edge" : "",
     parenthesis([
       p.stability > 0 ? `${p.kind} ${p.distance}, stability ${p.stability}` : "",
-      p.apart !== undefined && p.apart > 1 && p.source !== undefined
-        ? `${nameOf(slice, p.source)} is ${plural(p.apart, "square")} away`
-        : "",
+      p.apart !== undefined && p.apart > 1 ? `${plural(p.apart, "square")} away` : "",
     ]),
     ".",
   ].join("");

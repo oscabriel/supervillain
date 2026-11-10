@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { View } from "@supervillain/engine";
 import { type AttachOptions, isFingerprint } from "@supervillain/ssh";
 import {
+  Clock,
   Context,
   Deferred,
   Duration,
@@ -164,7 +165,8 @@ export const linkAlert = (status: RelayStatus): string | undefined => {
 
 /** How one link ended, or why it never came up. */
 type Outcome =
-  | { readonly _tag: "dropped" }
+  /** `held`: it stayed up for the first redial delay at least; one the relay closes after login didn't. */
+  | { readonly _tag: "dropped"; readonly held: boolean }
   | { readonly _tag: "failed"; readonly error: string }
   | { readonly _tag: "answered"; readonly reason: string }
   | { readonly _tag: "keyRefused"; readonly reason: string; readonly final: boolean };
@@ -241,8 +243,9 @@ const readReply = (socket: Socket) =>
  * link with the relay as the only client it lets in, trusting the relay's key only if it is the
  * pinned one (`--relay-key`, else relay_known, which the first link fills, with the `--relay-key`
  * when there is one). A link that drops is
- * redialed with backoff; a relay key that isn't the pinned one is refused and not redialed until
- * the GM fixes relay_known. Nothing said in plaintext is trusted.
+ * redialed with backoff, which starts over only after a link that held; a relay key that isn't the
+ * pinned one is refused and not redialed until the GM fixes relay_known. Nothing said in plaintext
+ * is trusted.
  */
 export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
   "supervillain/host/RelayLink",
@@ -408,8 +411,10 @@ export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
               } as const);
         }
         yield* setStatus({ state: "connected", ...up.value });
+        const since = yield* Clock.currentTimeMillis;
         yield* Deferred.await(closed);
-        return { _tag: "dropped" } satisfies Outcome;
+        const held = (yield* Clock.currentTimeMillis) - since >= FIRST_DELAY_MS;
+        return { _tag: "dropped", held } satisfies Outcome;
       }).pipe(Effect.scoped);
 
       /** Waits for the GM to change relay_known after a refusal. A pin on the command line can't change. */
@@ -435,8 +440,15 @@ export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
           );
           switch (outcome._tag) {
             case "dropped":
-              attempt = 0;
-              yield* setStatus({ state: "connecting", lastError: "the link dropped" });
+              // The relay logs in before it knows it can keep the link: one it then closes never
+              // held, so the backoff goes on, and the GM is told where a reason would be.
+              if (outcome.held) attempt = 0;
+              yield* setStatus({
+                state: "connecting",
+                lastError: outcome.held
+                  ? "the link dropped"
+                  : "the link dropped within a second of login; if it keeps on, the relay's log says why",
+              });
               break;
             case "failed":
               yield* setStatus({ state: "connecting", lastError: outcome.error });

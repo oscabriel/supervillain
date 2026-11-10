@@ -180,6 +180,21 @@ describe("runLine with Draw Steel", () => {
     ),
   );
 
+  effect("a name can't be a hero's or a creature's in play, so no line reads as theirs", () =>
+    atSampleTable(() =>
+      Effect.gen(function* () {
+        yield* runLine("gm", "/hero brann");
+        yield* runLine("gm", "/add bandit-cut");
+        expect(said(yield* runLine(bob, "/name Brann"))).toBe(
+          '"Brann" is taken; pick another name.',
+        );
+        expect(said(yield* runLine(bob, "/name Bandit Cutpurse A"))).toBe(
+          '"Bandit Cutpurse A" is taken; pick another name.',
+        );
+      }),
+    ),
+  );
+
   effect("a sheet that's missing or wrong is refused, naming the file and the field", () =>
     atSampleTable((dir) =>
       Effect.gen(function* () {
@@ -374,6 +389,23 @@ describe("runLine with Draw Steel", () => {
     ),
   );
 
+  effect("a guest who has left answers to no name: the key who has it now does", () =>
+    atSampleTable(() =>
+      Effect.gen(function* () {
+        const guest = "guest:robinROBIN";
+        const seat = yield* Scope.make();
+        yield* Effect.flatMap(Presence, (p) => p.enter(guest)).pipe(Scope.provide(seat));
+        yield* runLine(guest, "/name Robin");
+        yield* Scope.close(seat, Exit.void);
+        // Bob takes the freed name, and is away when the GM hands out heroes.
+        expect((yield* runLine(bob, "/name Robin")).kind).toBe("done");
+        yield* runLine("gm", "/hero brann");
+        expect(said(yield* runLine("gm", "/play brann Robin"))).toEqual(["Robin takes Brann."]);
+        expect((yield* stateNow).ds.heroes[0]!.player).toBe(bob);
+      }),
+    ),
+  );
+
   effect("/sheet answers the sender alone, at a seat or over exec, and writes nothing", () =>
     atSampleTable(() =>
       Effect.gen(function* () {
@@ -480,9 +512,10 @@ describe("runLine with the map and undo", () => {
           const state = yield* stateNow;
           expect(state.ds.map?.tokens).toEqual({});
           expect(state.ds.heroes[0]?.stamina).toBe(state.ds.heroes[0]!.sheet.stamina - 3);
-          expect(said(yield* runLine("gm", "/redo"))).toEqual([
-            "↷ GM redid: Brann is placed at b5.",
-          ]);
+          // It wasn't the latest change, so it isn't put back on top of the damage that came after.
+          expect(said(yield* runLine("gm", "/redo"))).toBe(
+            "That can't be put back now: the game has changed under it.",
+          );
         }),
       ),
   );

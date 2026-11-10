@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { NativeImage } from "@opentui/core";
 import {
   cellPixels,
   FALLBACK_TILE,
@@ -91,6 +92,17 @@ describe("the painted squares", () => {
     };
     expect(pixels(4, 2).has(SIDES.director.join())).toBe(true);
     expect(pixels(1, 1).has(SIDES.mine.join())).toBe(true);
+  });
+
+  test("goes to the terminal as a PNG of exactly its pixels, a small part of their size", () => {
+    const picture = paintPicture(hall(), pictureWindow(hall(), 12, 8));
+    const png = picture.png();
+    const image = NativeImage.decode(png);
+    expect(image.info().format).toBe("png");
+    const decoded = image.raw().data;
+    image.dispose();
+    expect(decoded).toEqual(picture.pixels);
+    expect(png.length).toBeLessThan(picture.pixels.length / 100);
   });
 
   test("a figure is the token's own, by id, from its side's figures", () => {

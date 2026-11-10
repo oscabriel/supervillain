@@ -11,6 +11,7 @@ import {
 } from "./map.ts";
 import { type HeroSheet, isTrait, type StatBlock } from "./sheets.ts";
 import {
+  abilitiesOf,
   type ConditionName,
   CONDITIONS,
   type Duration,
@@ -75,7 +76,10 @@ export type DsCommand =
   | {
       readonly type: "pr";
       readonly who: string;
-      /** An ability or characteristic name, as typed; absent for a flat `+N` roll. */
+      /**
+       * An ability or characteristic name as typed, with any edge, bane and `on <targets>` after
+       * it, which decide splits off (`splitRoll`); absent for a flat `+N` roll.
+       */
       readonly ability?: string;
       readonly bonus?: number;
       readonly edges: number;
@@ -372,39 +376,65 @@ function modifiersOff(rest: string[], into: { edges: number; banes: number }): v
   }
 }
 
+/** A /pr's roll as typed, split from the edges, banes and targets typed after it. */
+interface TypedRoll {
+  readonly roll: string;
+  readonly edges: number;
+  readonly banes: number;
+  readonly targets: ReadonlyArray<string>;
+}
+
+/** Splits the edges and banes off the end of `rest`, and the targets after its last `on`. */
+function keywordsOff(rest: string[]): TypedRoll | Refused {
+  const modifiers = { edges: 0, banes: 0 };
+  modifiersOff(rest, modifiers);
+  const on = rest.findLastIndex((w) => w.toLowerCase() === "on");
+  const targets = on === -1 ? [] : rest.splice(on).slice(1);
+  if (on !== -1 && targets.length === 0) return usage(pr);
+  modifiersOff(rest, modifiers);
+  return { roll: rest.join(" "), ...modifiers, targets };
+}
+
+/**
+ * What /pr's words after <who> roll, with what edges, banes and targets. A whole name from
+ * `names` that the words begin with wins over the edge, bane or on in it ("Cutting Edge", "Hold
+ * On"); otherwise the keywords come off the end, and the rest is the roll.
+ */
+export function splitRoll(typed: string, names: ReadonlyArray<string>): TypedRoll | Refused {
+  const rest = words(typed);
+  for (const name of [...names].sort((a, b) => b.length - a.length)) {
+    const own = words(name);
+    if (!own.every((w, i) => w.toLowerCase() === rest[i]?.toLowerCase())) continue;
+    const after = keywordsOff(rest.slice(own.length));
+    if (!("refusal" in after) && after.roll === "") return { ...after, roll: name };
+  }
+  const split = keywordsOff(rest);
+  return "refusal" in split || split.roll !== "" ? split : usage(pr);
+}
+
 const pr: Spec<"pr"> = {
   usage: "/pr <who> <ability|+N> [edge|bane|edge2|bane2] [on <target>…]",
   summary: "Power roll with the tier's result and its damage to each target, or use an ability.",
   gmOnly: false,
+  // The rules split an ability's words once they know its sheet: see `splitRoll`.
   parse: (args) => {
     const [who, ...rest] = words(args);
-    const modifiers = { edges: 0, banes: 0 };
-    modifiersOff(rest, modifiers);
-    const on = rest.findLastIndex((w) => w.toLowerCase() === "on");
-    const targets = on === -1 ? [] : rest.splice(on).slice(1);
-    if (on !== -1 && targets.length === 0) return usage(pr);
-    modifiersOff(rest, modifiers);
-    const { edges, banes } = modifiers;
-    const aimed = targets.length === 0 ? {} : { targets };
-    const roll = rest.join(" ");
-    if (who === undefined || roll === "") return usage(pr);
-    if (/^[+-]\d+$/.test(roll)) {
-      const bonus = Number(roll);
-      if (Math.abs(bonus) > BONUS_MAX)
-        return { refusal: `Keep the bonus within ${BONUS_MAX} either way.` };
-      return { type: "pr", who, bonus, edges, banes, ...aimed };
-    }
-    return { type: "pr", who, ability: roll, edges, banes, ...aimed };
+    if (who === undefined || rest.length === 0) return usage(pr);
+    const typed = rest.join(" ");
+    const split = keywordsOff(rest);
+    if ("refusal" in split || !/^[+-]\d+$/.test(split.roll))
+      return { type: "pr", who, ability: typed, edges: 0, banes: 0 };
+    const { roll, edges, banes, targets } = split;
+    const bonus = Number(roll);
+    if (Math.abs(bonus) > BONUS_MAX)
+      return { refusal: `Keep the bonus within ${BONUS_MAX} either way.` };
+    return { type: "pr", who, bonus, edges, banes, ...(targets.length > 0 && { targets }) };
   },
   complete: targetThen((slice, who, typed) => {
     const found = resolve(slice, who);
     if ("refusal" in found) return [];
-    const abilities =
-      found.kind === "hero"
-        ? found.hero.sheet.abilities
-        : (slice.blocks[found.creature.block]?.abilities ?? []);
     return matching(
-      abilities.filter((a) => !isTrait(a)),
+      abilitiesOf(slice, found).filter((a) => !isTrait(a)),
       (a) => a.name,
       (a) => [a.name],
       typed,

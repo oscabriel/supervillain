@@ -29,7 +29,15 @@ export type SetCommand =
     }
   | RollCommand<"set-recruit">
   | RollCommand<"set-foe">
-  | { readonly type: "set-play"; readonly who: string }
+  | {
+      readonly type: "set-play";
+      readonly who: string;
+      /**
+       * Actors with a seat open, filled in by the host (presence isn't in the log): a fighter whose
+       * guest has left is free to take, since a guest never comes back as the same actor.
+       */
+      readonly seated?: ReadonlyArray<string>;
+    }
   | { readonly type: "set-unplay"; readonly who?: string }
   | { readonly type: "set-place"; readonly who: string; readonly at: Square }
   | { readonly type: "set-start" }

@@ -666,6 +666,39 @@ describe("clicking at the table", () => {
     expect(fake.submitted).toEqual([]);
   });
 
+  test("a target that dies or leaves is no longer picked", async () => {
+    const { fake, t, run } = await seat(drawSteelTable(), ALICE, "draw-steel");
+    await clickOn(t, "V", mapTop(t));
+    await clickOn(t, " Spinning Strike ", 20);
+    await clickOn(t, "w1", mapTop(t));
+    await clickOn(t, "w2", mapTop(t));
+    expect(rowsOf(t.captureCharFrame()).at(-3)).toBe(
+      " Vex · Spinning Strike: on w1 w2  Roll   Cancel",
+    );
+    const frame = await run(GM, { type: "dmg", who: "goblin-warrior-1", amount: 99 });
+    expect(rowsOf(frame).at(-3)).toBe(" Vex · Spinning Strike: on w2  Roll   Cancel");
+    await clickOn(t, "Roll   Cancel", 20);
+    expect(fake.submitted).toEqual(["/pr vex Spinning Strike on goblin-warrior-2"]);
+  });
+
+  test("a menu goes when the seat is too small to show it, and Esc is the notice's again", async () => {
+    const { fake, t } = await seat(drawSteelTable(), ALICE, "draw-steel");
+    await clickOn(t, "V", mapTop(t));
+    await clickOn(t, " Move ", 20);
+    t.resize(70, 18);
+    await settle(t);
+    await t.mockInput.typeText("/mouse x");
+    t.mockInput.pressEnter();
+    expect(await settle(t)).toContain("Usage: /mouse");
+    t.mockInput.pressEscape();
+    await Bun.sleep(40);
+    expect(await settle(t)).not.toContain("Usage: /mouse");
+    t.resize(80, 24);
+    await settle(t);
+    expect(await settle(t)).not.toContain("Cancel");
+    expect(fake.submitted).toEqual([]);
+  });
+
   test("a click focuses nothing and clears text selected by a drag; tokens are never selected", async () => {
     const { t } = await seat(drawSteelTable(), ALICE, "draw-steel");
     const feed = where(t, "welcome to the yard");

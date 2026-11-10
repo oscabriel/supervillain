@@ -63,6 +63,36 @@ describe("session lifetime", () => {
     }),
   );
 
+  effect("a session accepted before the server began to close can't start once it has", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      let seats = 0;
+      const server = yield* testServer({
+        allowGuests: true,
+        onShell: () =>
+          Effect.gen(function* () {
+            seats++;
+            // A seat's goodbye takes a while, as a renderer's restore may.
+            yield* Effect.addFinalizer(() => Effect.sleep("600 millis"));
+            yield* Effect.never;
+          }),
+      }).pipe(Scope.provide(scope));
+      const guest = { port: server.port, keyboard: true };
+      yield* ssh2Shell(yield* ssh2Client(guest), { cols: 80, rows: 24 });
+      yield* waitFor("the first seat", () => seats === 1);
+      // The second's session channel opens now; its shell request goes out 300 ms later.
+      const late = yield* ssh2Client(guest);
+      const protocol = (late as unknown as { _protocol: { shell: (...args: unknown[]) => void } })
+        ._protocol;
+      const shell = protocol.shell;
+      protocol.shell = (...args) => void setTimeout(() => shell.apply(protocol, args), 300);
+      late.shell({ term: "xterm-256color", cols: 80, rows: 24 }, () => undefined);
+      yield* Effect.sleep("100 millis");
+      yield* Scope.close(scope, Exit.void);
+      expect(seats).toBe(1);
+    }),
+  );
+
   effect("the session ends when the handler returns, restoring the client's screen", () =>
     Effect.gen(function* () {
       const key = yield* clientKey(yield* tempDir, "alice");

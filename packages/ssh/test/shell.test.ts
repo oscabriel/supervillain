@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test";
-import { TextRenderable } from "@opentui/core";
-import { Effect } from "effect";
+import { BoxRenderable, TextRenderable } from "@opentui/core";
+import { Effect, Logger } from "effect";
 import type { ShellSession } from "../src/index.ts";
 import { effect } from "./effect.ts";
 import { clientKey, sshShell, waitFor } from "./openssh.ts";
@@ -46,6 +46,62 @@ describe("shell", () => {
         "the renderer to clamp",
         () => session!.renderer.width === 300 && session!.renderer.height === 100,
       );
+    }),
+  );
+
+  effect("a window-change that lands while the renderer is being made still sizes it", () =>
+    Effect.gen(function* () {
+      const sessions: ShellSession[] = [];
+      const server = yield* testServer({
+        allowGuests: true,
+        onShell: (session) =>
+          Effect.sync(() => void sessions.push(session)).pipe(Effect.andThen(Effect.never)),
+      });
+      const client = yield* ssh2Client({ port: server.port, keyboard: true });
+      const channel = yield* ssh2Shell(client, { cols: 100, rows: 30 });
+      // The terminal is resized as the shell opens, as a tiling window manager lays a new window out.
+      channel.setWindow(40, 120, 0, 0);
+      yield* waitFor("the renderer to take the size", () => {
+        const renderer = sessions[0]?.renderer;
+        return renderer?.width === 120 && renderer.height === 40;
+      });
+    }),
+  );
+
+  effect("a frame that fails is said in the log once, and opens no console over the seat", () =>
+    Effect.gen(function* () {
+      const sessions: ShellSession[] = [];
+      const logged: string[] = [];
+      const collect = Logger.layer([Logger.make(({ message }) => logged.push(String(message)))]);
+      const server = yield* testServer({
+        allowGuests: true,
+        onShell: (session) =>
+          Effect.gen(function* () {
+            session.renderer.root.add(
+              new BoxRenderable(session.renderer, {
+                width: 5,
+                height: 2,
+                renderBefore: () => {
+                  throw new Error("frame blew up");
+                },
+              }),
+            );
+            sessions.push(session);
+            yield* Effect.never;
+          }),
+      }).pipe(Effect.provide(collect));
+      const client = yield* ssh2Client({ port: server.port, keyboard: true });
+      yield* ssh2Shell(client, { cols: 80, rows: 24 });
+      const said = () => logged.filter((line) => line.includes("a frame failed: frame blew up"));
+      yield* waitFor("the failed frame in the log", () => said().length > 0);
+      const { renderer } = sessions[0]!;
+      // The next frames fail the same way.
+      for (let i = 0; i < 3; i++) {
+        renderer.requestRender();
+        yield* Effect.sleep("60 millis");
+      }
+      expect(said()).toHaveLength(1);
+      expect(renderer.console.visible).toBe(false);
     }),
   );
 

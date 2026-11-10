@@ -66,6 +66,21 @@ describe("attach", () => {
     }),
   );
 
+  effect("a socket that closed before it was attached takes no place", () =>
+    Effect.gen(function* () {
+      const key = yield* clientKey(yield* tempDir, "alice");
+      const server = yield* testServer({ ...whoami, limits: { connections: 1 } });
+      const relay = yield* tcpListener(() => undefined);
+      const gone = connect(relay.port, "127.0.0.1");
+      yield* Effect.promise(() => new Promise<void>((r) => gone.once("connect", () => r())));
+      gone.destroy();
+      yield* Effect.promise(() => new Promise<void>((r) => gone.once("close", () => r())));
+      server.attach(gone);
+      // The server's one place is still free.
+      expect((yield* sshExec(server.port, ["who"], { key })).exitCode).toBe(0);
+    }),
+  );
+
   effect("a persistent link carrying nobody outlives the session-start timer", () =>
     Effect.gen(function* () {
       const relayKey = yield* clientKey(yield* tempDir, "relay");

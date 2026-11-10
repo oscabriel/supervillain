@@ -1,7 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createServer, type Socket } from "node:net";
-import { CliRenderEvents, type CliRenderer, createCliRenderer, NativeSession } from "@opentui/core";
+import type { Writable } from "node:stream";
+import {
+  CliRenderEvents,
+  type CliRenderer,
+  type CliRendererErrorEvent,
+  createCliRenderer,
+  NativeSession,
+} from "@opentui/core";
 import { Cause, Deferred, Effect, Exit, FiberSet, type Scope } from "effect";
 import ssh2, { type AuthContext, type Connection, type ServerChannel } from "ssh2";
 import { addressBucket, normalizeAddress } from "./address.ts";
@@ -35,6 +42,8 @@ const DEFAULT_LIMITS = {
   sessionsPerRelay: 64,
   sessionsPerAddress: 16,
   sessions: 64,
+  /** Each shell costs a renderer's setup: hundreds a second from one address keep the host busy. */
+  sessionRate: { burst: 20, perSecond: 1 },
 };
 const DEFAULT_TIMEOUTS = {
   loginMs: 20_000,
@@ -42,6 +51,19 @@ const DEFAULT_TIMEOUTS = {
   keepaliveMs: 15_000,
   keepaliveCount: 3,
 };
+/**
+ * Key exchanges a connection may ask for after its first: a few at once, then one a minute. Each
+ * costs the host's one thread about a millisecond; OpenSSH rekeys after a gigabyte or so, PuTTY
+ * hourly, so only a client doing it to keep the host busy goes past this.
+ */
+const REKEY_RATE = { burst: 10, perSecond: 1 / 60 };
+/**
+ * The most bytes a connection may leave waiting for its peer, on its socket or on any one channel,
+ * before it is cut: a peer that stops reading would otherwise have them held in memory for good.
+ * A 300×100 repaint is about 39 KB and a picture map's frame up to about 1 MB, and OpenSSH lets a
+ * channel have 2 MB unread before it says to wait: 4 MiB is all of that for a slow reader.
+ */
+const MAX_QUEUED_BYTES = 4 * 1024 * 1024;
 /** How long a closing session waits for the renderer to restore the client's terminal. */
 const RESTORE_TIMEOUT_MS = 2000;
 const NO_PTY_MESSAGE = "This needs a terminal: connect with ssh -t.";
@@ -187,7 +209,34 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
       if (counts && counts.connections === 0 && counts.sessions === 0) byAddress.delete(address);
     };
 
-    const runSession = (label: string, body: Effect.Effect<void, never, Scope.Scope>) =>
+    const sessionAllowed = rateLimiter(limits.sessionRate);
+
+    /** Cuts `socket`'s connection, saying so, whenever a write leaves too much waiting in `stream`. */
+    const boundQueue = (stream: Writable, socket: Socket, address: string) => {
+      const write = stream.write;
+      stream.write = ((...args: Parameters<Writable["write"]>) => {
+        const written = write.apply(stream, args);
+        if (stream.writableLength > MAX_QUEUED_BYTES && !socket.destroyed) {
+          void fork(
+            Effect.logInfo(
+              `ssh: cut ${address}: it stopped reading, with ${stream.writableLength} bytes waiting`,
+            ),
+          );
+          socket.destroy();
+        }
+        return written;
+      }) as Writable["write"];
+    };
+
+    /**
+     * Runs a session in its own fiber and scope. Once it has ended the server has ended its
+     * channel, so `release` gives its place back then, whether or not the client answers the close.
+     */
+    const runSession = (
+      label: string,
+      release: () => void,
+      body: Effect.Effect<void, never, Scope.Scope>,
+    ) =>
       fork(
         body.pipe(
           Effect.scoped,
@@ -196,6 +245,7 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
               ? Effect.void
               : Effect.logError(`ssh session ${label} failed`, Cause.pretty(cause)),
           ),
+          Effect.ensuring(Effect.sync(release)),
         ),
       );
 
@@ -262,8 +312,22 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
 
       client.once("ready", () => {
         link.authenticated();
+        // A relay link carries many players' channels, each with its own window, so together
+        // they may rightly hold more than the bound: only its channels are bounded.
+        if (!relay) boundQueue(link.socket, link.socket, remoteAddress);
         startIdle();
       });
+      const rekeyAllowed = rateLimiter(REKEY_RATE);
+      client.on("rekey", () => {
+        if (rekeyAllowed("", Date.now())) return;
+        void fork(Effect.logInfo(`ssh: cut ${remoteAddress}: it rekeys too often`));
+        link.socket.destroy();
+      });
+      /** A channel accepted, its queue bounded like the socket's. */
+      const bounded = (channel: ServerChannel) => {
+        boundQueue(channel, link.socket, remoteAddress);
+        return channel;
+      };
 
       client.on("session", (acceptSession, rejectSession) => {
         const limit = relay ? limits.sessionsPerRelay : limits.sessionsPerConnection;
@@ -273,7 +337,8 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
           connectionSessions >= limit ||
           openSessions >= limits.sessions ||
           // A relay carries every player through one address, so only its own limit applies.
-          (!relay && counts.sessions >= limits.sessionsPerAddress)
+          (!relay && counts.sessions >= limits.sessionsPerAddress) ||
+          (!relay && !sessionAllowed(link.bucket, Date.now()))
         ) {
           return rejectSession();
         }
@@ -361,44 +426,52 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
           ...(relayedActor === undefined ? {} : { relayedActor }),
         });
 
-        /** Whether this channel may start. A relay's channel must name its player. */
-        const mayStart = () => !started && (!relay || relayedActor !== undefined);
+        /** Whether this channel may start: never once the server is closing; a relay's names its player. */
+        const mayStart = () => accepting && !started && (!relay || relayedActor !== undefined);
 
-        const onResize = (onResize: (cols: number, rows: number) => void) => (resize = onResize);
+        /** Takes the session's resize handler and tells it the size now: one may have come before it. */
+        const onResize = (handler: (cols: number, rows: number) => void) => {
+          resize = handler;
+          handler(pty.cols, pty.rows);
+        };
 
         session.on("shell", (accept, reject) => {
           const { onRaw, onShell } = options;
           if (!mayStart() || (!onRaw && !onShell)) return reject?.();
           start();
-          const channel = accept();
+          const channel = bounded(accept());
           if (onRaw) {
             const sessionInfo = info();
             const request: RawRequest = { kind: "shell" };
             return void runSession(
               sessionInfo.identity.actor,
+              release,
               rawSession(client, channel, sessionInfo, request, hasPty, onRaw, onResize),
             );
           }
           if (!hasPty || !onShell) {
             // A renderer would pour escape codes into a pipe and never notice the input ending.
             channel.stderr.write(`${options.noPtyMessage ?? NO_PTY_MESSAGE}\n`);
-            return endChannel(channel, 1);
+            endChannel(channel, 1);
+            return release();
           }
           const sessionInfo = info();
           runSession(
             sessionInfo.identity.actor,
+            release,
             shellSession(channel, sessionInfo, onShell, onResize),
           );
         });
         session.on("subsystem", (accept, reject, { name }) => {
           const handler = relay ? options.relaySubsystems?.[name] : undefined;
-          if (started || handler === undefined) return reject?.();
+          if (!accepting || started || handler === undefined) return reject?.();
           start();
-          const channel = accept();
+          const channel = bounded(accept());
           const sessionInfo = info();
           const request: RawRequest = { kind: "subsystem", name };
           runSession(
             `${sessionInfo.identity.actor} ${name}`,
+            release,
             rawSession(client, channel, sessionInfo, request, hasPty, handler, onResize),
           );
         });
@@ -406,18 +479,20 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
           const { onRaw, onExec } = options;
           if (!mayStart() || (!onRaw && !onExec)) return reject?.();
           start();
-          const channel = accept();
+          const channel = bounded(accept());
           const sessionInfo = info();
           if (onRaw) {
             const request: RawRequest = { kind: "exec", command };
             return void runSession(
               sessionInfo.identity.actor,
+              release,
               rawSession(client, channel, sessionInfo, request, hasPty, onRaw, onResize),
             );
           }
           if (!onExec) return;
           runSession(
             sessionInfo.identity.actor,
+            release,
             execSession(channel, sessionInfo, command, onExec, hasPty ? crlf : (text) => text),
           );
         });
@@ -497,6 +572,8 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
                 // box clicked can't take keys from it.
                 autoFocus: false,
                 consoleMode: "disabled",
+                // A frame that fails is said in the host's log, not in a console drawn over the seat.
+                openConsoleOnError: false,
                 externalOutputMode: "passthrough",
                 targetFps: 30,
               }),
@@ -530,6 +607,15 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
         renderer = created;
         const live = created;
         live.on(CliRenderEvents.DESTROY, end);
+        // A seat too small to lay out fails every frame the same way: said once, not for each.
+        let failure = "";
+        live.on(CliRenderEvents.RENDER_ERROR, ({ error }: CliRendererErrorEvent) => {
+          if (error.message === failure) return;
+          failure = error.message;
+          void fork(
+            Effect.logError(`ssh shell for ${info.identity.actor}: a frame failed: ${failure}`),
+          );
+        });
         onResize((cols, rows) => {
           streams.stdout.columns = cols;
           streams.stdout.rows = rows;
@@ -659,6 +745,8 @@ export const serve = (options: ServeOptions): Effect.Effect<SshServer, SshError,
     /** A refused socket is said in the log, at most a few times a minute for one address. */
     const refusalLogged = rateLimiter({ burst: 3, perSecond: 1 / 60 });
     const serveSocket = (socket: Socket, attachOptions: AttachOptions = {}) => {
+      // One that has closed already would never say so again, and keep its place for good.
+      if (socket.destroyed) return;
       const extraTrust = new Set(attachOptions.trustedRelayKeys ?? []);
       const address = normalizeAddress(socket.remoteAddress);
       const bucket = addressBucket(address);

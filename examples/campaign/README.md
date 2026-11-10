@@ -78,7 +78,7 @@ A text field may run over several lines (a folded `>` or literal `|` block); the
 
 If you edit a monster file mid-fight and `/add` it again, creatures already in the fight take its new abilities and modifiers, but a squad keeps the Stamina per minion it was added with.
 
-Ability fields: `name`, then any of `kind` (main action, maneuver…), `characteristics` (a hero's: `might` or `[might, agility]`), `bonus` (a monster's flat roll bonus), `cost` (spent when the ability is rolled: the hero's resource or the Director's Malice), `keywords` (`Melee, Strike, Weapon`), `distance`, `target`, `tier1`, `tier2`, `tier3` and `effect`.
+Ability fields: `name`, then any of `kind` (main action, maneuver…), `characteristics` (a hero's: `might` or `[might, agility]`), `bonus` (a monster's flat roll bonus), `cost` (spent when the ability is rolled: the hero's resource or the Director's Malice), `keywords` (`Melee, Strike, Weapon`), `distance`, `target`, `tier1`, `tier2`, `tier3` and `effect`. A tier's damage written as `5 + M damage` or `5 + M or A damage` (the best of them) is what `/pr … on` deals; damage with dice in it is left to the table.
 
 ## Drawing your own map
 
@@ -113,7 +113,7 @@ supervillain map crossing ~/campaigns/first-fight --seed 7
 supervillain map keep ~/campaigns/first-fight
 ```
 
-A `crossing` is a river the road fords, with reeds, woods, boulders and a ruin; a `keep` is a curtain wall with towers, a gate west, a breach east, a roofed hall, a well and a statue. The same kind and seed always make the same map, every map can be crossed from west to east, and the outer three columns are room for each side to start. It writes `maps/<kind>-<seed>.txt` (or `--id`), never over a map that's there, prints it with where each side can start, and says how to load it: `/map keep-7`. At the table, `/map new keep 7` (or the prep panel's New keep) writes the same file and loads it at once; leave the seed out and the host picks one. Edit the file as you like afterwards.
+A `crossing` is a river the road fords, with reeds, woods, boulders and a ruin; a `keep` is a curtain wall with towers, a gate west, a breach east, a roofed hall, a well and a statue. The same kind and seed always make the same map, every map can be crossed from west to east, and the outer three columns are room for each side to start. It writes `maps/<kind>-<seed>.txt` (or `--id`), never over a map that's there, prints it with where each side can start, and says how to load it: `/map keep-7`. At the table, `/map new keep 7` (or the prep panel's + keep) writes the same file and loads it at once; leave the seed out and the host picks one. Edit the file as you like afterwards.
 
 ## Importing monsters from Steel Compendium
 

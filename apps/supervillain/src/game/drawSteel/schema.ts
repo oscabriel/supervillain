@@ -139,14 +139,20 @@ export function sheetProblems(sheet: HeroSheet | StatBlock): ReadonlyArray<Sheet
   for (const [field, text] of strings(sheet))
     if (hasTerminalControls(text)) problems.push({ field, problem: "holds control characters" });
   if (sheet.stamina < 1) problems.push({ field: "stamina", problem: "must be at least 1" });
+  const atLeastZero = (field: string, value: number | undefined) => {
+    if (value !== undefined && value < 0) problems.push({ field, problem: "must be 0 or more" });
+  };
+  atLeastZero("level", sheet.level);
   if ("resource" in sheet) {
     const { perTurn, min } = sheet.resource;
     if (typeof perTurn === "string" && !PER_TURN.test(perTurn))
       problems.push({ field: "resource.perTurn", problem: "must be a number or dice like 1d3" });
     if (min !== undefined && min > 0)
       problems.push({ field: "resource.min", problem: "must be 0 or below" });
-    if (sheet.recoveries < 0) problems.push({ field: "recoveries", problem: "must be 0 or more" });
-  }
+    atLeastZero("recoveries", sheet.recoveries);
+    atLeastZero("recoveryValue", sheet.recoveryValue);
+    atLeastZero("victories", sheet.victories);
+  } else atLeastZero("freeStrike", sheet.freeStrike);
   return problems;
 }
 

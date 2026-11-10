@@ -41,9 +41,14 @@ export const COMPRESS: Array<ssh2.CompressionAlgorithm> = ["none"];
 
 /** Parses one key in any form ssh2 reads (PEM, OpenSSH, an authorized_keys line), or undefined. */
 export const parseKey = (input: string | Buffer): ParsedKey | undefined => {
-  const parsed = ssh2.utils.parseKey(input);
-  if (parsed instanceof Error) return undefined;
-  return Array.isArray(parsed) ? parsed[0] : parsed;
+  try {
+    const parsed = ssh2.utils.parseKey(input);
+    if (parsed instanceof Error) return undefined;
+    return Array.isArray(parsed) ? parsed[0] : parsed;
+  } catch {
+    // Some malformed keys a stranger can send make ssh2 throw instead of returning its Error.
+    return undefined;
+  }
 };
 
 interface HostKey {

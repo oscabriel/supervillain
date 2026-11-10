@@ -117,22 +117,37 @@ const LETTERS: Readonly<Record<string, Characteristic>> = {
   P: "presence",
 };
 
-/** The characteristic a tier's "N + M" names, by its letter. */
-export const characteristicOfLetter = (letter: string): Characteristic | undefined =>
-  LETTERS[letter];
+/**
+ * A tier's number and the characteristics added to it: "6", "6 + M", "2 + M or A", "5 + M, A, or
+ * P". Never a number after a plus, so "1d6 + 2" reads as nothing.
+ */
+const PLUS = String.raw`(?<!\+\s*)\b(\d+)(?:\s*\+\s*([MARIP](?:\s*,\s*(?:or\s+)?[MARIP]|\s+or\s+[MARIP])*)\b)?`;
+
+/** "6 + M" and the like, everywhere in a tier's text. */
+export const TIER_PLUS = new RegExp(PLUS, "gi");
+
+const DAMAGE = new RegExp(String.raw`${PLUS}(?:\s+([a-z]+))?\s+damage\b`, "i");
+
+/** The best of the characteristics a tier adds, by their letters ("M or A"), as heroes roll. */
+export const bestScore = (letters: string, scores: Characteristics | undefined): number =>
+  Math.max(
+    ...[...letters.matchAll(/\b[MARIP]\b/gi)].map(
+      ([l]) => scores?.[LETTERS[l.toUpperCase()]!] ?? 0,
+    ),
+  );
 
 /**
  * The damage a tier's text deals, as printed: "6 + M damage" with Might 2 is 8, "6 holy damage"
- * is 6 holy. Undefined when the text deals none.
+ * is 6 holy, and never below 0. Undefined when the text deals none it can read.
  */
 export function tierDamage(
   text: string | undefined,
   scores: Characteristics | undefined,
 ): { readonly amount: number; readonly type?: string } | undefined {
-  const match = /\b(\d+)(?:\s*\+\s*([MARIP]))?(?:\s+([a-z]+))?\s+damage\b/i.exec(text ?? "");
+  const match = DAMAGE.exec(text ?? "");
   if (match === null) return undefined;
-  const letter = match[2] === undefined ? undefined : characteristicOfLetter(match[2]);
-  const amount = Number(match[1]) + (letter === undefined ? 0 : (scores?.[letter] ?? 0));
+  const added = match[2] === undefined ? 0 : bestScore(match[2], scores);
+  const amount = Math.max(0, Number(match[1]) + added);
   const type = match[3]?.toLowerCase();
   return type === undefined ? { amount } : { amount, type };
 }

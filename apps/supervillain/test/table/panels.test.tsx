@@ -412,7 +412,7 @@ describe("Alt+1-4 show and hide this seat's panels", () => {
     });
     const t = await mount(fake, 80, 24);
     const before = t.captureCharFrame();
-    expect(rowsOf(before)[1]).toStartWith("┌─ ¹ set.world · 0.93 s · turn 1 ");
+    expect(rowsOf(before)[1]).toStartWith("┌─ ¹ set.world · 0.93 s · turn 1: Ada ");
     expect(before).toContain("² map · Field");
     const rows = rowsOf(await alt(t, 1));
     expect(rows.join("\n")).not.toContain("set.world ·");

@@ -34,17 +34,18 @@ If your GM's table goes through a relay and you've sat there before with your ke
  > Enter sits you at first-fight
 ```
 
-↑ and ↓ move the pick (the ▌), or type a table's number; Enter sits you at it. Ctrl-C or Ctrl-D leaves, and after a minute without a pick the relay says goodbye. The `you` pane shows your key's fingerprint, the one thing the relay knows you by. You sit down exactly as if you had typed the room's name. A bare `ssh -p 2222 relay.example.net` works too, but ssh sends your own username as the room, so the lobby also says `There's no table called <you> here.` A table knows your key once you've done something there with it (set your name, rolled, chatted). Guests are never shown a list, and neither is a key no open table knows: they get the hint below. A GM can keep their table off the list with `--no-lobby`. Asked with a command (`ssh -p 2222 lobby@relay.example.net help`), the relay prints the list and the command to join one, and runs nothing.
+↑ and ↓ move the pick (the ▌), or type a table's number; Enter sits you at it. Ctrl-C or Ctrl-D leaves, and after a minute without a pick the relay says goodbye. The `you` pane shows your key's fingerprint, the one thing the relay knows you by. You sit down exactly as if you had typed the room's name. A bare `ssh -p 2222 relay.example.net` works too, since ssh sends your own username as the room. A table knows your key once you've done something there with it (set your name, rolled, chatted). Guests are never shown a list, and neither is a key no open table knows: they get the hint below. A GM can keep their table off the list with `--no-lobby`. Asked with a command (`ssh -p 2222 lobby@relay.example.net help`), the relay prints the list and the command to join one, and runs nothing.
 
 If your GM's table goes through a relay, a few things can come back instead of the table:
 
 - `The table first-fight isn't open right now.` The GM's machine isn't linked. Try again once they say it's up.
-- `There's no table called first-fight here.` Check the room name before the `@` with your GM. If tables you've sat at are open, they're listed after it.
+- `There's no table called first-fight here.`, then the join hint below. Check the room name before the `@` with your GM. If tables you've sat at are open, you get their list instead.
 - `To join a table, put its room's name before the @ (ssh <room>@…). Your GM has it.` The command was missing the room, so ssh sent your own username instead, and no open table knows your key (or you came as a guest).
 - `The table first-fight is full right now.` The room has all the players the relay carries for one table. Try again when someone leaves.
 - `The table closed.` or `The GM closed the table.` The table went away while you were seated. Run the same command again when it's back; your name and hero are kept for your key.
 - `The relay is shutting down.` The relay is restarting, usually for an upgrade. Run the same command again in a moment.
 - `Connection reset by peer`, before anything else. Your address has as many connections open as the table or relay allows (8), or opened them too fast. Close the others or wait a minute.
+- `channel 0: open failed`, right after connecting. Your address started sessions too fast (20, then 1 a second) or has its most open. Wait a moment.
 
 If your terminal looks garbled after the table drops (odd characters when you move the mouse, no cursor), type `reset` and press Enter.
 
@@ -57,10 +58,12 @@ If your terminal looks garbled after the table drops (odd characters when you mo
       IdentityFile ~/.ssh/id_ed25519
       IdentitiesOnly yes
   ```
-- **If you don't have one,** you come in as a guest. You don't need a password. A guest is new every time they connect, so your name lasts only until you leave. When you come back, pick your name again and `/play` your hero: a hero whose guest has left is free to take. To come in as a guest even if you have a key, add `-o PubkeyAuthentication=no`.
+- **If you don't have one,** you come in as a guest. You don't need a password. A guest is new every time they connect, so your name lasts only until you leave. When you come back, pick your name again and `/play` your hero or fighter: one whose guest has left is free to take. To come in as a guest even if you have a key, add `-o PubkeyAuthentication=no`.
 - **If your key is RSA** and your ssh is set to sign with `rsa-sha2-512` only (`PubkeyAcceptedAlgorithms rsa-sha2-512` in `~/.ssh/config`), ssh skips the key: you come in as a guest, or see `Permission denied (publickey)`. The table's SSH library never offers `rsa-sha2-512`. ssh's defaults fall back to `rsa-sha2-256` and work, so add `-o PubkeyAcceptedAlgorithms=+rsa-sha2-256` to the command, or make an ed25519 key.
 
-The table asks **what should the table call you?** the first time. Type a name and press Enter. Change it later with `/name Ilsa`. Names are 1 to 24 characters, and nobody can take a name that looks like someone else's.
+The table asks **what should the table call you?** the first time. Type a name and press Enter. Change it later with `/name Ilsa`. Names are 1 to 24 characters, without brackets, and nobody can take a name that looks like someone else's or like a hero's or creature's in play.
+
+Once you have a name, a player without a hero sees the free ones on the hint row above the input line (`free to play: Brann, Kesh · /play <name> takes one`). On your hero's turn, that row says `your turn · /done ends it`.
 
 ## The keyboard
 
@@ -80,7 +83,7 @@ The input line at the bottom always has the keyboard. Nothing you type does anyt
 
 Between the header and the input line are panels, top to bottom: the band (who's here, your party or the fight), the map, the feed, and a reply just for you, such as a sheet or `/help`. Each panel's title starts with its key as a small number, `¹` for the band to `⁴` for a reply, and Alt with that digit shows or hides it, like btop. Hidden panels give their rows to the others. If you hide them all, one line under the header says which keys bring them back (click one to show its panel), and `/view both` brings back every one. The choice is your seat's alone and lasts until you leave. A reply you hide waits on one line until Alt+4 shows it or Esc drops it, and the next reply you ask for opens again. The map and a reply take turns: showing one puts the other away. The GM's seat has a fifth panel, `⁵` GM prep, a column beside the map that Alt+5 or `/prep` opens: the GM's way to set up a game with the mouse (see [HOSTING.md](HOSTING.md#preparing-a-game)). On a player's seat Alt+5 says it's the GM's.
 
-On a Mac, Option with a digit types a symbol (`¡`) unless the terminal sends Option as Alt: Terminal's "Use Option as Meta key", iTerm2's "Esc+" for Option, Ghostty's `macos-option-as-alt`. Some terminals take Alt and a digit to switch tabs (GNOME Terminal among them); there, change that shortcut in the terminal or use `/view`.
+On a Mac, Option with a digit types a symbol (`¡`) unless the terminal sends Option as Alt: Terminal's "Use Option as Meta key", iTerm2's "Esc+" for Option, Ghostty's `macos-option-as-alt`. Some terminals take Alt and a digit to switch tabs (GNOME Terminal among them); there, change that shortcut in the terminal, or click a panel's title to hide it and its name on the hint row to show it.
 
 Plain text is chat. Anything that starts with `/` is a command. `/help` lists them all, and `/help move` explains one. A bare `help`, `exit` or `quit` is answered first (did you mean `/help`?); press Enter again to say it to the table. When the table refuses a line, it says why and empties the input, so your next line starts clean; press Up to get the refused one back and fix it.
 
@@ -112,6 +115,7 @@ Your GM brings heroes and monsters in, starts combat and runs the Director's sid
 | `/me draws her sword` | Act something out |
 | `/roll 2d10+3` | Roll dice for everyone to see |
 | `/play brann` | Play a hero the GM brought in. A unique start of a name is enough: `/play bra`. `/play` alone lists the heroes nobody plays |
+| `/unplay` | Stop playing your hero, so someone else can take it |
 | `/sheet brann` | Show a hero's or creature's sheet, to you alone |
 | `/turn` | Start your hero's turn; `/done` ends it |
 | `/pr brann Judgment Strike` | Make a power roll with an ability: 2d10 plus the characteristic, the tier's result and the ability's effect. An ability with no roll is used, its cost spent |
@@ -123,10 +127,11 @@ Your GM brings heroes and monsters in, starts combat and runs the Director's sid
 | `/save brann` | Roll a save against save-ends conditions |
 | `/res brann +2`, `/surge brann -1` | Gain or spend your heroic resource or surges |
 | `/token -1` | Spend a hero token |
+| `/place brann b5` | Put your hero's token on the map (in combat, once) |
 | `/move brann f5` | Move your token along the shortest path |
 | `/move brann f5 main` | Move again, using your main action |
 | `/dist brann bandit-chief` | Count the squares between two tokens or squares |
-| `/push bandit-chief 2 from brann` | Push a creature (also `/pull`, and `/slide … to <square>`) |
+| `/push bandit-chief 2` | On your turn, push a creature away from your hero (also `/pull`, and `/slide … to <square>`) |
 | `/undo`, `/redo` | Take back your latest change, or put it back |
 
 ### At a set.world table
@@ -135,7 +140,7 @@ Some campaigns play set.world's rules instead of Draw Steel; `/help` shows which
 
 | Command | What it does |
 | --- | --- |
-| `/play ada` | Play a party member nobody else plays; `/unplay` lets it go |
+| `/play ada` | Play a party member nobody else plays, or one whose guest has left; `/unplay` lets it go |
 | `/sheet ada` | Show a fighter's sheet: class, health, stamina, weapon, stats and gear |
 | `/move ada c5` | Move on your fighter's turn, up to its speed |
 | `/attack ada grub` | Attack once on your turn, if your weapon reaches |
@@ -147,25 +152,25 @@ There are no rounds: each fighter's turns come as often as its initiative says, 
 
 Squares are written as a column letter and a row number, like `c5`. Columns run `a` to `z` from the left, then `aa`, `ab` and so on. Row 1 is the top row. The letters are along the top of the map and the numbers down its side.
 
-On the map, `·` is floor, a solid block is wall and `~` is difficult terrain. Tokens are marks: a hero's is a capital letter (`B` for Brann), a creature's a small one from the last word of its name (`c` for the Bandit Chief), with a digit when two would share a letter (`b1`, `b2`). In combat the band at the top shows each token's mark beside its name. A mark works in commands wherever a square does, and it's case-sensitive: `/dist B b`. When you're about to move, the squares you can reach are tinted and marked `•`, or `≈` on difficult terrain. A move costs 1 a square, diagonals too, and difficult terrain or an enemy's square costs 1 more. In combat you move only on your own turn, up to your speed over the whole turn.
+On the map, `·` is floor, a solid block is wall and `~` is difficult terrain. Tokens are marks: a hero's is a capital letter (`B` for Brann), a creature's a small one from the last word of its name (`c` for the Bandit Chief), with a digit when two would share a letter (`b1`, `b2`). In combat the band at the top shows each token's mark beside its name. A mark works in commands wherever a name does, and it's case-sensitive: `/dist B b`. When you're about to move, the squares you can reach are tinted and marked `•`, or `≈` on difficult terrain. A move costs 1 a square, diagonals too, and difficult terrain or an enemy's square costs 1 more. In combat you move only on your own turn, up to your speed over the whole turn.
 
 On a map bigger than your screen, the view follows whoever is acting. `/view f5` or `/view bandit-chief` centres it until the turn passes. `/view map` shows every panel and gives the map more room, `/view feed` shows every panel but the map, `/view both` shows them all sharing the screen, and `/view` (like Alt+2) switches the map on and off.
 
-In a terminal that shows kitty graphics (Ghostty, kitty or WezTerm, not inside tmux), the map's title offers `/view pictures`: the map drawn in MEKMODE's pixel pictures, each square bigger, each token a figure in its side's colour with its mark in the corner. Commands still take the same squares and marks, and `/view text` goes back. Each move sends your seat a picture of tens of kilobytes, against a couple for text, and on a HiDPI (Retina) screen, where the picture is painted at its finer pixels to stay sharp, about three times that. Elsewhere the map stays text, since pictures there would come out as coloured blocks whose marks can't be read.
+In a terminal that shows kitty graphics (Ghostty, kitty or WezTerm, not inside tmux), the map's title offers `/view pictures`: the map drawn in MEKMODE's pixel pictures, each square bigger, each token a figure in its side's colour with its mark in the corner. Commands still take the same squares and marks, and `/view text` goes back. Each move sends your seat a picture of about 5 to 10 kilobytes, against a couple for text, and on a HiDPI (Retina) screen, where the picture is painted at its finer pixels to stay sharp, about twice that; a change that leaves the map as it was sends none. Elsewhere the map stays text, since pictures there would come out as coloured blocks whose marks can't be read.
 
 ## Taking things back
 
-`/undo` takes back your latest change within 30 seconds, even if someone else has done something since. Then `/redo` puts it back. The feed says what was undone.
+`/undo` takes back your latest change within 30 seconds, even if someone else has done something since. Then `/redo` puts it back, if it was the table's latest change and nothing has changed since. The feed says what was undone.
 
 - A change that rolled dice (a power roll, a save, a turn that rolled your resource) can only be undone by the GM, so nobody can roll again by undoing.
 - If something that happened later depends on your change, the table refuses and says what to undo first.
-- Chat, names and `/roll` are never taken back.
+- Chat, names, `/roll` and who plays which hero are never taken back.
 
 The GM can undo anyone's latest change with `/undo <who>`.
 
 ## "widen your terminal"
 
-The table needs at least 80 columns and 24 rows. On a smaller window it shows `widen your terminal to 80x24 · it is 60x20` and only the feed and the input line. Make the window bigger or the font smaller, and the table comes back right away without reconnecting. 80x24 works, but a fight with a map is tight there: about 100x30 shows the whole band, more of the map and a longer feed.
+The table needs at least 72 columns and 20 rows. On a smaller window it shows only the feed and the input line, and the hint row says which side is short: `widen your terminal to 72 columns · it is 71 wide`, or `make your terminal 72x20 · it is 60x16`. Make the window bigger or the font smaller, and the table comes back right away without reconnecting. 80x24 works, but a fight with a map is tight there: about 100x30 shows the whole band, more of the map and a longer feed.
 
 ## One command at a time
 

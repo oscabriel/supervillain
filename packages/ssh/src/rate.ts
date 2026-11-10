@@ -21,7 +21,8 @@ export function tokenBuckets(rate: Rate): TokenBuckets {
   const refill = (bucket: { tokens: number; at: number }, now: number) => {
     bucket.tokens = Math.min(
       rate.burst,
-      bucket.tokens + ((now - bucket.at) / 1000) * rate.perSecond,
+      // A clock set back refills nothing; it must not take tokens away.
+      bucket.tokens + (Math.max(0, now - bucket.at) / 1000) * rate.perSecond,
     );
     bucket.at = now;
   };

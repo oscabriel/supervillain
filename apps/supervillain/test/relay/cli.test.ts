@@ -2,6 +2,7 @@ import { describe, expect } from "bun:test";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
+import { JOIN_HINT } from "../../src/relay/protocol.ts";
 import { cli } from "../e2e/cli.ts";
 import { effect, waitFor } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
@@ -60,7 +61,10 @@ describe("supervillain relay", () => {
         const playerPort = Number(/ssh -p (\d+) <room>@/.exec(relay.output())?.[1]);
         const vex = yield* clientKey(yield* tempDir, "vex");
         const ran = yield* sshExec(playerPort, ["hi"], { key: vex, user: "den" });
-        expect(ran).toMatchObject({ exitCode: 1, stderr: "There's no table called den here.\n" });
+        expect(ran).toMatchObject({
+          exitCode: 1,
+          stderr: `There's no table called den here.\n${JOIN_HINT}\n`,
+        });
         // Its keys are its owner's alone.
         const { stat } = yield* Effect.promise(() => import("node:fs/promises"));
         for (const name of ["relay_key", "host_key"])
@@ -114,6 +118,29 @@ describe("supervillain relay", () => {
       expect(started.exitCode).toBe(1);
       expect(started.stderr).toContain("--claim-days takes a number of days from 1, not 0");
     }),
+  );
+
+  effect(
+    "a port out of range, or a --bind that isn't an address, is one plain line",
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* tempDir;
+        for (const [flags, said] of [
+          [["--player-port", "99999"], "--player-port takes a port from 0 to 65535, not 99999"],
+          [["--gm-port", "-1"], "--gm-port takes a port from 0 to 65535, not -1"],
+          [
+            ["--bind", "999.1.1.1"],
+            '--bind takes an IP address, such as 127.0.0.1 or 0.0.0.0, or localhost, not "999.1.1.1"',
+          ],
+        ] as const) {
+          // The first of a flag given twice is the one taken.
+          const args = [...flags, "--player-port", "0", "--gm-port", "0", "--bind", "127.0.0.1"];
+          const started = yield* cli(["relay", ...args, "--dir", dir]);
+          expect(started.exitCode).toBe(1);
+          expect(started.stderr.trim().split("\n")).toEqual([`supervillain: ${said}`]);
+        }
+      }),
+    30_000,
   );
 
   effect("relay forget fails on a folder that holds no relay, naming it", () =>

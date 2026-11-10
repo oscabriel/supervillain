@@ -8,7 +8,16 @@ import {
   type ScrollBoxRenderable,
 } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/solid";
-import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  ErrorBoundary,
+  For,
+  on,
+  onCleanup,
+  Show,
+} from "solid-js";
 import { formatSquare } from "../game/drawSteel/map.ts";
 import { BAND_FRAME, Band } from "./Band.tsx";
 import { bandLayout } from "./band.ts";
@@ -102,8 +111,8 @@ import type { CombatView, MapView, TableView } from "./view.ts";
 const panelHint = (keys: string) => `${keys} show or hide panels`;
 /**
  * The keys, longest first: the first that fits is shown, beside the hidden panels the mouse offers
- * at the row's end, and none if none does. At 80 columns the second fits alone and the shorter
- * ones beside the hidden panels, so the hint row never cuts a hint at the smallest supported size.
+ * at the row's end, and none if none does. At the smallest seat the second fits alone and the
+ * shorter ones beside the hidden panels, so the hint row never cuts a hint.
  */
 const keyHints = (keys: string) => [
   `Tab completes · ↑↓ history · PgUp/PgDn scroll · ${panelHint(keys)} · /help · Ctrl-C leaves`,
@@ -131,6 +140,28 @@ const CLIPPED_HINTS = {
   mine: ["/view map to see all your reach", "/view map", ""],
   theirs: ["/view map to see all of it", "/view map", ""],
 } as const;
+/** The GM's, before there is a party, a fight or a map: where a game is set up. */
+const SETUP_HINTS = [
+  `Alt+${panelNumber("prep")} or /prep sets up a game in the prep panel · /help lists the commands`,
+  `Alt+${panelNumber("prep")} or /prep sets up a game · /help lists the commands`,
+  "/prep sets up a game · /help",
+  "",
+];
+/** A player's without a hero, while some are free: which, and how to take one. */
+const playHints = (free: ReadonlyArray<string>) => [
+  `free to play: ${free.join(", ")} · /play <name> takes one · /help`,
+  `free to play: ${free.join(", ")} · /play <name>`,
+  "/play <name> takes a free hero · /help",
+  "/play <name>",
+  "",
+];
+/** On the seat's own hero's turn the row says so first, then what else fits. */
+const turnHints = (hints: ReadonlyArray<string>) => [
+  ...hints.filter((h) => h !== "").map((h) => `your turn · /done ends it · ${h}`),
+  "your turn · /done ends it",
+  "your turn",
+  "",
+];
 const NAME_HINT = "type the name you want, then Enter · Ctrl-C leaves";
 const PANE_HINTS = [
   `Esc closes · Alt+${panelNumber("reply")} hides it · PgUp/PgDn scroll it · keep typing as usual`,
@@ -156,11 +187,12 @@ const BAND_MIN = 3;
  */
 const PANE_MIN = 8;
 /**
- * The smallest seat. Everything is laid out for it, and the Draw Steel band keeps every hero's
- * whole row at 80 columns. Below it the band would cut heroes' numbers and hide creatures, so
- * instead one line asks for a bigger terminal, and the feed and the input go on working.
+ * The smallest seat: 80x24 under tmux's status line, or beside a scroll bar, is well above it.
+ * Down to here the band keeps every living combatant's row with creatures paired, the feed its
+ * five rows and the hint row a whole hint. Below it the band and the map go and the hint row asks
+ * for the side that is short; the feed and the input go on working.
  */
-const MIN_SEAT = { width: 80, height: 24 } as const;
+const MIN_SEAT = { width: 72, height: 20 } as const;
 /** Sharing the screen, the map asks for half the room the band and it share, and at least this. */
 const MAP_MIN = 8;
 /** Below its border, its letters and two rows of squares, the map isn't drawn at all. */
@@ -172,6 +204,29 @@ const NO_REPLY = "no reply is open; /sheet or /help opens one";
 const MOUSE_ON =
   "mouse on: click your token for what it can do, a panel's title to hide it · Shift+drag selects text";
 const MOUSE_OFF = "mouse off: your terminal selects text as usual · /mouse on clicks again";
+
+/**
+ * What the seat shows where its panes threw while drawing: one line saying so. The next change it
+ * is sent may well draw, so that tries them again.
+ */
+function Undrawn(props: { error: unknown; reset: () => void; view: TableView }) {
+  const { view } = props;
+  createEffect(
+    on(
+      () => [view.feed(), view.present(), view.combat?.(), view.map?.(), view.prep?.view()],
+      () => props.reset(),
+      { defer: true },
+    ),
+  );
+  const why = props.error instanceof Error ? props.error.message : String(props.error);
+  return (
+    <box flexGrow={1} paddingLeft={1} paddingRight={1}>
+      <text fg={color.notice} wrapMode="none">
+        {`this seat couldn't draw the table (${why}) · it tries again at the next change`}
+      </text>
+    </box>
+  );
+}
 
 /**
  * The one chat-first layout, for the GM's terminal and every SSH seat alike. It reads and
@@ -217,10 +272,14 @@ export function App(props: { view: TableView }) {
     readonly before: ReadonlySet<string>;
   }>();
   const renderer = useRenderer();
-  /** The GM pressed Ctrl-C with players here, and the next Ctrl-C closes the table. */
-  const [leaving, setLeaving] = createSignal(false);
-  /** The line a hint just answered: sent again as it is, it goes ahead. */
-  let asked: string | undefined;
+  /**
+   * The GM pressed Ctrl-C with players here, and the next Ctrl-C closes the table: only while the
+   * warning is on screen, so whatever puts another notice up or takes it down calls it off.
+   */
+  const leaving = () => notice() === CONFIRM_LEAVE;
+  /** The line a hint answered, and the hint: sent again while the hint shows, it goes ahead. */
+  let hinted: { readonly line: string; readonly hint: string } | undefined;
+  const asked = () => (hinted !== undefined && notice() === hinted.hint ? hinted.line : undefined);
   /** Lines reach the host one at a time, so one that waits on a file can't be overtaken. */
   let queue: Promise<unknown> = Promise.resolve();
   let feed: ScrollBoxRenderable | undefined;
@@ -248,16 +307,55 @@ export function App(props: { view: TableView }) {
       hints.find((h) => Bun.stringWidth(h) <= width) ?? hints.at(-1)!;
     if (paneOpen()) return fits(PANE_HINTS);
     if (mode() === "name") return NAME_HINT;
+    if (small()) return fits(tooSmall());
     const lead = reachLabel();
-    if (lead === undefined)
-      return fits(prepOpen() ? prepHints(prepUp(), panelNumber("prep")) : keyHints(keys));
+    const free = freeHeroes();
+    const said =
+      free.length > 0
+        ? playHints(free)
+        : lead === undefined
+          ? prepOpen()
+            ? prepHints(prepUp(), panelNumber("prep"))
+            : unset()
+              ? SETUP_HINTS
+              : keyHints(keys)
+          : reachClipped()
+            ? CLIPPED_HINTS[followed(shownMap()?.tokens ?? [])?.mine ? "mine" : "theirs"]
+            : mapHints(keys);
+    const hints = myTurn() ? turnHints(said) : said;
+    if (lead === undefined) return fits(hints);
     // " · " takes three columns between the label and the keys.
     const room = width - Bun.stringWidth(lead) - 3;
-    const hints = reachClipped()
-      ? CLIPPED_HINTS[followed(shownMap()?.tokens ?? [])?.mine ? "mine" : "theirs"]
-      : mapHints(keys);
     return hints.find((h) => Bun.stringWidth(h) <= room) ?? "";
   };
+  /** Below the smallest seat: the side that is short, and by how much, for the hint row. */
+  const tooSmall = () => {
+    const { width: w, height: h } = size();
+    const { width: W, height: H } = MIN_SEAT;
+    const [ask, need, is] =
+      w < W && h < H
+        ? [`make your terminal ${W}x${H}`, `${W}x${H}`, `${w}x${h}`]
+        : w < W
+          ? [`widen your terminal to ${W} columns`, `${W} columns`, `${w} wide`]
+          : [`make your terminal ${H} rows tall`, `${H} rows`, `${h} tall`];
+    return [
+      `${ask} for the band and the map · it is ${is}`,
+      `${ask} · it is ${is}`,
+      `${need} needed`,
+      "",
+    ];
+  };
+  /** The seat's own hero or fighter, while it is its turn. */
+  const myTurn = () => view.combat?.()?.combatants.some((c) => c.acting && c.mine) ?? false;
+  /** For a player without a hero, the names of those free to take; none for the GM. */
+  const freeHeroes = (): ReadonlyArray<string> => {
+    const band = view.combat?.()?.combatants ?? [];
+    if (view.me === "gm" || band.some((c) => c.mine)) return [];
+    return band.filter((c) => c.free).map((c) => c.name);
+  };
+  /** The GM's table before there is a party, a fight or a map to show. */
+  const unset = () =>
+    view.prep !== undefined && view.combat?.() === undefined && view.map?.() === undefined;
   /**
    * Whether the map pane leaves some of the reach out of view, or isn't drawn at all for want of
    * rows, where `/view map` would give it more. On `/view map` there is no more room to give, and
@@ -305,14 +403,9 @@ export function App(props: { view: TableView }) {
     const t = view.map?.()?.tokens.find((k) => k.id === p.token);
     return t === undefined ? undefined : { x: t.x, y: t.y };
   };
-  // A new turn puts the map back to following whoever acts.
-  createEffect(
-    on(
-      () => view.map?.()?.tokens.find((t) => t.acting && !t.dead)?.id,
-      () => setPin(undefined),
-      { defer: true },
-    ),
-  );
+  // A new turn puts the map back to following whoever acts; nothing else on the map does.
+  const acting = createMemo(() => view.map?.()?.tokens.find((t) => t.acting && !t.dead)?.id);
+  createEffect(on(acting, () => setPin(undefined), { defer: true }));
 
   /** The host's completions and the table's own (`/view`), when this table has maps. */
   const completer = (text: string) => {
@@ -340,6 +433,7 @@ export function App(props: { view: TableView }) {
    * player's Alt+5 is told the prep panel is the GM's.
    */
   function toggle(panel: Panel) {
+    disarm();
     if (panel === "prep") return view.prep === undefined ? setNotice(PREP_IS_GMS) : showPrep();
     if (panel === "reply" && !multiline()) return void setNotice(NO_REPLY);
     if (panel === "map" && view.map?.() === undefined) {
@@ -353,16 +447,18 @@ export function App(props: { view: TableView }) {
   /**
    * Alt+5 shows or hides the GM's prep panel, and `/prep` (`open`) shows it. Each time it opens it
    * reads the campaign's files again, since they change between sessions; a folder it can't read
-   * is said in the notice.
+   * is said in the notice, and with nothing read before there is no panel to show.
    */
   function showPrep(open = false) {
     const prep = view.prep;
     if (prep === undefined) return;
     const shown = !panels().prep || open;
     setPanels({ ...panels(), prep: shown });
-    if (!shown) return void setArmed(undefined);
+    if (!shown) return;
     void prep.reload().then((problem) => {
-      if (problem !== undefined) setNotice(problem);
+      if (problem === undefined) return;
+      setNotice(problem);
+      if (prep.view() === undefined) setPanels({ ...panels(), prep: false });
     });
   }
 
@@ -393,9 +489,9 @@ export function App(props: { view: TableView }) {
     const { state, line: text } = submitLine(line());
     setLine(state);
     if (text === undefined) return;
+    const intent = intentFor(text, mode(), view.me, asked());
+    hinted = undefined;
     setNotice(undefined);
-    const intent = intentFor(text, mode(), view.me, asked);
-    asked = undefined;
     if (intent.kind === "quit") return view.leave();
     if (intent.kind === "state") return void setShowDebug(!showDebug());
     if (intent.kind === "view") return changeLayout(intent.layout);
@@ -404,7 +500,7 @@ export function App(props: { view: TableView }) {
     if (intent.kind === "hint") {
       setNotice(intent.text);
       if (!intent.again) return;
-      asked = text;
+      hinted = { line: text, hint: intent.text };
       return setLine(restoreDraft(line(), text));
     }
     if (intent.kind === "mouse") return switchMouse(intent.on);
@@ -438,8 +534,16 @@ export function App(props: { view: TableView }) {
   function leave() {
     const others = people(view.present()).some((p) => p.actor !== view.me);
     if (view.me !== "gm" || !others || leaving()) return view.leave();
-    setLeaving(true);
     setNotice(CONFIRM_LEAVE);
+  }
+
+  /**
+   * Anything else the GM does (a key, a paste, a click or the wheel) takes the warning down and
+   * calls the closing off. A click whose handler removes what was clicked never bubbles up to the
+   * App, so those handlers (a panel's title, a menu's choice) call this themselves.
+   */
+  function disarm() {
+    if (leaving()) setNotice(undefined);
   }
 
   function escape() {
@@ -470,6 +574,11 @@ export function App(props: { view: TableView }) {
   const isDead = (id: string) =>
     view.map?.()?.tokens.some((t) => t.id === id && t.dead) === true ||
     view.combat?.()?.combatants.find((c) => c.id === id)?.health === "dead";
+  /** A token or band row still at the table and alive: what a choice may be aimed at. */
+  const inPlay = (id: string) =>
+    !isDead(id) &&
+    (view.map?.()?.tokens.some((t) => t.id === id) === true ||
+      view.combat?.()?.combatants.some((c) => c.id === id) === true);
   /**
    * Whether this seat may act for a token: the rules say what it may do with it, or nothing. The
    * dead open no menu.
@@ -523,6 +632,7 @@ export function App(props: { view: TableView }) {
   }
 
   function pickItem(item: MenuItem) {
+    disarm();
     const s = selection();
     if (s === undefined || !mouse()) return;
     switch (item.kind) {
@@ -537,19 +647,20 @@ export function App(props: { view: TableView }) {
     }
   }
 
-  /** The prep panel, while it is on screen: the GM's, opened, and not below the smallest seat. */
-  const prepOpen = () => view.prep !== undefined && panels().prep && !small();
-  const prepView = () => (prepOpen() ? view.prep?.view() : undefined);
+  /** The prep panel's lists, while it is on screen: opened, read, and not below the smallest seat. */
+  const prepView = () => (panels().prep && !small() ? view.prep?.view() : undefined);
+  const prepOpen = () => prepView() !== undefined;
   /** Its columns, right of the map and the feed. */
-  const prepColumns = () => (prepOpen() && prepView() !== undefined ? prepWidth(size().width) : 0);
+  const prepColumns = () => (prepOpen() ? prepWidth(size().width) : 0);
   /** What the next free square clicked on the map does, while the panel shows. */
   const prepUp = createMemo(() => {
     const v = prepView();
     return v === undefined || view.map?.() === undefined ? undefined : prepNext(v, armed());
   });
-  // What the panel put up and is gone (placed, or no longer offered) is put down.
+  // What the panel put up is put down once it is gone (placed, or no longer offered) or the panel
+  // is off screen, however it left: nothing waits for a square unseen.
   createEffect(() => {
-    const v = view.prep?.view();
+    const v = prepView();
     const a = armed();
     if (a !== undefined && (v === undefined || !armedStands(v, a))) setArmed(undefined);
   });
@@ -627,16 +738,20 @@ export function App(props: { view: TableView }) {
   /** The open menu, while this seat may still act for the token it is for. */
   const menu = createMemo(() => {
     const s = selection();
-    if (s === undefined || !mouse() || small()) return undefined;
+    if (s === undefined || !mouse()) return undefined;
     const actions = view.actions?.(s.id);
     return actions === undefined ? undefined : menuOf(s, actions, nameOf, markOf);
   });
   // A token this seat can no longer act for (a hero given away, a fighter gone, a creature killed)
-  // closes its menu, and so does a choice no longer offered (Move once the map is unloaded).
+  // closes its menu, and so does a choice no longer offered (Move once the map is unloaded) and a
+  // seat too small to show it. Targets that died or left are no longer picked.
   createEffect(() => {
     const s = selection();
-    if (s !== undefined && (!mayAct(s.id) || !menuStands(s, view.actions?.(s.id))))
-      setSelection(undefined);
+    if (s === undefined) return;
+    if (small() || !mayAct(s.id) || !menuStands(s, view.actions?.(s.id)))
+      return void setSelection(undefined);
+    const picked = s.picked.filter(inPlay);
+    if (picked.length < s.picked.length) setSelection({ ...s, picked });
   });
   const menuLines = createMemo(() => {
     const m = menu();
@@ -662,12 +777,9 @@ export function App(props: { view: TableView }) {
 
   useKeyboard((key: KeyEvent) => {
     const action = keyAction(key);
+    if (action.kind !== "leave") disarm();
     if (action.kind === "none") return;
     key.preventDefault();
-    if (action.kind !== "leave" && leaving()) {
-      setLeaving(false);
-      if (notice() === CONFIRM_LEAVE) setNotice(undefined);
-    }
     switch (action.kind) {
       case "insert":
         return edit((s) => insert(s, action.text));
@@ -710,6 +822,7 @@ export function App(props: { view: TableView }) {
 
   usePaste((event: PasteEvent) => {
     event.preventDefault();
+    disarm();
     edit((s) => insert(s, decodePasteBytes(event.bytes)));
   });
 
@@ -743,11 +856,7 @@ export function App(props: { view: TableView }) {
         )
       : 0;
     if (small())
-      return {
-        band: 1,
-        pane: paneOpen() ? Math.max(3, Math.min(paneWanted, room - 1)) : 0,
-        map: 0,
-      };
+      return { band: 0, pane: paneOpen() ? Math.max(3, Math.min(paneWanted, room)) : 0, map: 0 };
     const map = shownMap();
     if (map !== undefined) return { ...mapHeights(map, combat, room, cap, shown), pane: 0 };
     if (!shown.band) return { band: 0, pane: paneOpen() ? Math.min(paneWanted, room) : 0, map: 0 };
@@ -862,230 +971,240 @@ export function App(props: { view: TableView }) {
   const mapHeight = () => heights().map;
 
   return (
-    <box flexDirection="column" width="100%" height="100%">
-      <Header room={view.room} me={view.me} present={view.present()} alert={view.alert?.()} />
-      <Show
-        when={!small()}
-        fallback={
-          <box flexShrink={0} height={1} paddingLeft={1} paddingRight={1}>
-            <text fg={color.notice} wrapMode="none">
-              {`widen your terminal to ${MIN_SEAT.width}x${MIN_SEAT.height} · it is ${size().width}x${size().height}`}
-            </text>
-          </box>
-        }
-      >
-        <Show when={panels().band}>
-          <Band
-            me={view.me}
-            present={view.present()}
-            joinHint={view.joinHint}
-            joinNote={view.joinNote?.()}
-            combat={view.combat?.()}
-            maxHeight={bandHeight()}
-            heroesWhole={paneOpen()}
-            mark={panelMark("band")}
-            onWho={onWho}
-            onTitle={() => toggle("band")}
-          />
-        </Show>
-      </Show>
-
-      {/* The map and the feed, with the GM's prep panel in a column on their right. */}
-      <box flexDirection="row" flexGrow={rowFills() || prepColumns() > 0 ? 1 : 0} minHeight={0}>
-        <box flexDirection="column" flexGrow={1} minWidth={0}>
-          <Show when={mapHeight() > 0 ? shownMap() : undefined}>
-            {(map) => (
-              <Show
-                when={pictures()}
-                fallback={
-                  <MapPane
-                    map={map()}
-                    height={mapHeight()}
-                    width={size().width - prepColumns()}
-                    focus={focus()}
-                    hint={picturesShown() ? "/view pictures" : undefined}
-                    mark={panelMark("map")}
-                    onSquare={onSquare}
-                    onTitle={() => toggle("map")}
-                  />
-                }
-              >
-                <PictureMap
-                  map={map()}
-                  height={mapHeight()}
-                  width={size().width - prepColumns()}
-                  focus={focus()}
-                  mark={panelMark("map")}
-                  onSquare={onSquare}
-                  onTitle={() => toggle("map")}
-                />
-              </Show>
-            )}
+    // A click or the wheel bubbles up to here after its panel's handlers, unless one removed what
+    // was clicked. Not hover: the renderer reports it whenever the layout moves under the pointer.
+    <box
+      flexDirection="column"
+      width="100%"
+      height="100%"
+      onMouseDown={disarm}
+      onMouseScroll={disarm}
+    >
+      {/*
+        All that gives way on a seat too short for it, cut off at the hint row: whatever is open,
+        the input line stays on screen.
+      */}
+      <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} overflow="hidden">
+        <Header room={view.room} me={view.me} present={view.present()} alert={view.alert?.()} />
+        {/*
+          The panes, which a throw while drawing one swaps for a line saying so, the hint and the
+          input working on below it, until the next change the seat is sent draws them again.
+        */}
+        <ErrorBoundary
+          fallback={(error, reset) => <Undrawn error={error} reset={reset} view={view} />}
+        >
+          {/* Below the smallest seat the hint row says what is short. */}
+          <Show when={!small() && panels().band}>
+            <Band
+              me={view.me}
+              present={view.present()}
+              joinHint={view.joinHint}
+              joinNote={view.joinNote?.()}
+              combat={view.combat?.()}
+              maxHeight={bandHeight()}
+              heroesWhole={paneOpen()}
+              mark={panelMark("band")}
+              onWho={onWho}
+              onTitle={() => toggle("band")}
+            />
           </Show>
 
-          <box flexDirection="row" flexGrow={rowFills() ? 1 : 0} minHeight={0}>
-            <Show when={panels().feed}>
-              <Feed
-                lines={view.feed()}
-                ref={(el) => (feed = el)}
-                mark={panelMark("feed")}
-                onTitle={() => toggle("feed")}
-              />
-            </Show>
-            <Show when={nothingShown()}>
-              <box flexGrow={1} paddingLeft={1} paddingRight={1} flexDirection="row">
-                <For each={allHiddenParts(available(), size().width - 2, keys)}>
-                  {(part) => (
-                    <text
-                      fg={color.notice}
-                      wrapMode="none"
-                      flexShrink={0}
-                      selectable={false}
-                      onMouseDown={(event: MouseEvent) => {
-                        const panel = part.panel;
-                        if (panel !== undefined && event.button === MouseButton.LEFT && mouse())
-                          toggle(panel);
-                      }}
+          {/* The map and the feed, with the GM's prep panel in a column on their right. */}
+          <box flexDirection="row" flexGrow={rowFills() || prepColumns() > 0 ? 1 : 0} minHeight={0}>
+            <box flexDirection="column" flexGrow={1} minWidth={0}>
+              <Show when={mapHeight() > 0 ? shownMap() : undefined}>
+                {(map) => (
+                  <Show
+                    when={pictures()}
+                    fallback={
+                      <MapPane
+                        map={map()}
+                        height={mapHeight()}
+                        width={size().width - prepColumns()}
+                        focus={focus()}
+                        hint={picturesShown() ? "/view pictures" : undefined}
+                        mark={panelMark("map")}
+                        onSquare={onSquare}
+                        onTitle={() => toggle("map")}
+                      />
+                    }
+                  >
+                    <PictureMap
+                      map={map()}
+                      height={mapHeight()}
+                      width={size().width - prepColumns()}
+                      focus={focus()}
+                      mark={panelMark("map")}
+                      onSquare={onSquare}
+                      onTitle={() => toggle("map")}
+                    />
+                  </Show>
+                )}
+              </Show>
+
+              <box flexDirection="row" flexGrow={rowFills() ? 1 : 0} minHeight={0}>
+                <Show when={panels().feed}>
+                  <Feed
+                    lines={view.feed()}
+                    ref={(el) => (feed = el)}
+                    mark={panelMark("feed")}
+                    onTitle={() => toggle("feed")}
+                  />
+                </Show>
+                <Show when={nothingShown()}>
+                  <box flexGrow={1} paddingLeft={1} paddingRight={1} flexDirection="row">
+                    <For each={allHiddenParts(available(), size().width - 2, keys)}>
+                      {(part) => (
+                        <text
+                          fg={color.notice}
+                          wrapMode="none"
+                          flexShrink={0}
+                          selectable={false}
+                          onMouseDown={(event: MouseEvent) => {
+                            const panel = part.panel;
+                            if (panel !== undefined && event.button === MouseButton.LEFT && mouse())
+                              toggle(panel);
+                          }}
+                        >
+                          {part.text}
+                        </text>
+                      )}
+                    </For>
+                  </box>
+                </Show>
+                <Show when={showDebug()}>
+                  <box
+                    ref={(el: BoxRenderable) => (debugBox = el)}
+                    onMouseDown={boxClick(
+                      () => debugBox,
+                      () => " /state · Esc closes ",
+                      () => setShowDebug(false),
+                    )}
+                    border
+                    borderColor={color.border}
+                    title=" /state · Esc closes "
+                    width={panels().feed ? "50%" : "100%"}
+                    flexShrink={0}
+                  >
+                    <scrollbox
+                      ref={(el: ScrollBoxRenderable) => (debug = el)}
+                      scrollAcceleration={wheel}
+                      flexGrow={1}
+                      paddingLeft={1}
                     >
-                      {part.text}
-                    </text>
-                  )}
-                </For>
+                      <text fg={color.debug}>{view.debug()}</text>
+                    </scrollbox>
+                  </box>
+                </Show>
               </box>
+            </box>
+            <Show when={prepView()}>
+              {(v) => (
+                <Prep
+                  view={v()}
+                  next={prepUp()}
+                  armed={armed()}
+                  width={prepColumns()}
+                  mark={panelMark("prep")}
+                  pictures={picturesShown()}
+                  onSend={sendFromPrep}
+                  onFill={(text) => mouse() && edit((s) => fillLine(s, text))}
+                  onAll={sendAllFromPrep}
+                  onArm={(a) => mouse() && setArmed(a)}
+                  onCount={(item, by) => mouse() && setArmed(prepCount(armed(), item, by))}
+                  onStart={startFromPrep}
+                  onTitle={() => toggle("prep")}
+                  ref={(el) => (prepBox = el)}
+                />
+              )}
             </Show>
-            <Show when={showDebug()}>
+          </box>
+        </ErrorBoundary>
+
+        <Show when={notice()}>
+          {(text) => (
+            <Show
+              when={paneOpen()}
+              fallback={
+                <box flexShrink={0} paddingLeft={1} paddingRight={1}>
+                  <text fg={color.notice}>{`› ${multiline() ? REPLY_HIDDEN : text()}`}</text>
+                </box>
+              }
+            >
               <box
-                ref={(el: BoxRenderable) => (debugBox = el)}
+                ref={(el: BoxRenderable) => (paneBox = el)}
                 onMouseDown={boxClick(
-                  () => debugBox,
-                  () => " /state · Esc closes ",
-                  () => setShowDebug(false),
+                  () => paneBox,
+                  () => marked(" just for you ", panelMark("reply")),
+                  () => toggle("reply"),
                 )}
                 border
-                borderColor={color.border}
-                title=" /state · Esc closes "
-                width={panels().feed ? "50%" : "100%"}
+                borderColor={color.notice}
+                title={marked(" just for you ", panelMark("reply"))}
+                height={paneHeight()}
                 flexShrink={0}
               >
                 <scrollbox
-                  ref={(el: ScrollBoxRenderable) => (debug = el)}
+                  ref={(el: ScrollBoxRenderable) => (pane = el)}
                   scrollAcceleration={wheel}
                   flexGrow={1}
                   paddingLeft={1}
                 >
-                  <text fg={color.debug}>{view.debug()}</text>
+                  <For each={hanging(text())}>
+                    {(line) => (
+                      <box flexDirection="row" flexShrink={0}>
+                        <Show when={line.lead !== ""}>
+                          <text fg={color.text} flexShrink={0} wrapMode="none">
+                            {line.lead}
+                          </text>
+                        </Show>
+                        <text fg={color.text} flexGrow={1} flexShrink={1} minWidth={0}>
+                          {line.rest}
+                        </text>
+                      </box>
+                    )}
+                  </For>
                 </scrollbox>
               </box>
             </Show>
-          </box>
-        </box>
-        <Show when={prepColumns() > 0 ? prepView() : undefined}>
-          {(v) => (
-            <Prep
-              view={v()}
-              next={prepUp()}
-              armed={armed()}
-              width={prepColumns()}
-              mark={panelMark("prep")}
-              pictures={picturesShown()}
-              onSend={sendFromPrep}
-              onFill={(text) => mouse() && edit((s) => fillLine(s, text))}
-              onAll={sendAllFromPrep}
-              onArm={(a) => mouse() && setArmed(a)}
-              onCount={(section, index, by) =>
-                mouse() && setArmed(prepCount(v(), armed(), section, index, by))
-              }
-              onStart={startFromPrep}
-              onTitle={() => toggle("prep")}
-              ref={(el) => (prepBox = el)}
-            />
           )}
         </Show>
-      </box>
 
-      <Show when={notice()}>
-        {(text) => (
-          <Show
-            when={paneOpen()}
-            fallback={
-              <box flexShrink={0} paddingLeft={1} paddingRight={1}>
-                <text fg={color.notice}>{`› ${multiline() ? REPLY_HIDDEN : text()}`}</text>
-              </box>
-            }
-          >
-            <box
-              ref={(el: BoxRenderable) => (paneBox = el)}
-              onMouseDown={boxClick(
-                () => paneBox,
-                () => marked(" just for you ", panelMark("reply")),
-                () => toggle("reply"),
-              )}
-              border
-              borderColor={color.notice}
-              title={marked(" just for you ", panelMark("reply"))}
-              height={paneHeight()}
-              flexShrink={0}
-            >
-              <scrollbox
-                ref={(el: ScrollBoxRenderable) => (pane = el)}
-                scrollAcceleration={wheel}
-                flexGrow={1}
-                paddingLeft={1}
-              >
-                <For each={hanging(text())}>
-                  {(line) => (
-                    <box flexDirection="row" flexShrink={0}>
-                      <Show when={line.lead !== ""}>
-                        <text fg={color.text} flexShrink={0} wrapMode="none">
-                          {line.lead}
-                        </text>
-                      </Show>
-                      <text fg={color.text} flexGrow={1} flexShrink={1} minWidth={0}>
-                        {line.rest}
+        <Show when={!rowFills() && prepColumns() === 0}>
+          <box flexGrow={1} minHeight={0} />
+        </Show>
+
+        <For each={menuLines()}>
+          {(row) => (
+            <box height={1} flexShrink={0} paddingLeft={1} paddingRight={1} flexDirection="row">
+              <For each={row}>
+                {(piece) => {
+                  const index = piece.item;
+                  if (index === undefined)
+                    return (
+                      <text fg={color.bright} wrapMode="none" flexShrink={0}>
+                        {piece.text}
                       </text>
-                    </box>
-                  )}
-                </For>
-              </scrollbox>
-            </box>
-          </Show>
-        )}
-      </Show>
-
-      <Show when={!rowFills() && prepColumns() === 0}>
-        <box flexGrow={1} minHeight={0} />
-      </Show>
-
-      <For each={menuLines()}>
-        {(row) => (
-          <box height={1} flexShrink={0} paddingLeft={1} paddingRight={1} flexDirection="row">
-            <For each={row}>
-              {(piece) => {
-                const index = piece.item;
-                if (index === undefined)
+                    );
                   return (
-                    <text fg={color.bright} wrapMode="none" flexShrink={0}>
-                      {piece.text}
+                    <text
+                      wrapMode="none"
+                      flexShrink={0}
+                      selectable={false}
+                      onMouseDown={(event: MouseEvent) => {
+                        const item = menu()?.items[index];
+                        if (item !== undefined && event.button === MouseButton.LEFT) pickItem(item);
+                      }}
+                    >
+                      <span style={{ fg: color.cursorFg, bg: color.cursorBg }}>{piece.text}</span>
                     </text>
                   );
-                return (
-                  <text
-                    wrapMode="none"
-                    flexShrink={0}
-                    selectable={false}
-                    onMouseDown={(event: MouseEvent) => {
-                      const item = menu()?.items[index];
-                      if (item !== undefined && event.button === MouseButton.LEFT) pickItem(item);
-                    }}
-                  >
-                    <span style={{ fg: color.cursorFg, bg: color.cursorBg }}>{piece.text}</span>
-                  </text>
-                );
-              }}
-            </For>
-          </box>
-        )}
-      </For>
+                }}
+              </For>
+            </box>
+          )}
+        </For>
+      </box>
 
       <HintRow
         hint={hint()}

@@ -59,6 +59,25 @@ describe("heroes join from their sheets", () => {
     expect(t.hero(forty).sheet.id).toBe(forty);
   });
 
+  test("a sheet's level, Victories, Recovery value and free strike can't be below 0", () => {
+    const t = new Table();
+    const hero = { ...VEX, level: -1, victories: -2, recoveryValue: -3 };
+    expect(t.submit(GM, { type: "hero", hero: "vex", sheet: hero })).toBe(
+      "'vex' can't be used: level must be 0 or more; recoveryValue must be 0 or more; victories must be 0 or more.",
+    );
+    const block = { ...GOBLIN, freeStrike: -1 };
+    expect(t.submit(GM, { type: "add", monster: "goblin-warrior", count: 1, sheet: block })).toBe(
+      "'goblin-warrior' can't be used: freeStrike must be 0 or more.",
+    );
+    t.run(GM, { type: "hero", hero: "vex", sheet: { ...VEX, level: 0, victories: 0 } });
+    t.run(GM, {
+      type: "add",
+      monster: "goblin-warrior",
+      count: 1,
+      sheet: { ...GOBLIN, freeStrike: 0 },
+    });
+  });
+
   test("the host learns which commands need a sheet or a player looked up", () => {
     expect(hostNeeds({ type: "hero", hero: "vex" })).toEqual({ kind: "hero", id: "vex" });
     expect(hostNeeds({ type: "add", monster: "goblin-warrior", count: 2 })).toEqual({
@@ -80,6 +99,24 @@ describe("heroes join from their sheets", () => {
     expect(t.hero("vex")).toMatchObject({ stamina: 16, player: ALICE });
     expect(t.hero("vex").sheet.stamina).toBe(30);
     expect(t.lastFeed()).toEqual(["Vex's sheet is reloaded: Censor 2, 30 Stamina."]);
+  });
+
+  test("a reloaded sheet can't raise the dead or kill the dying with its Stamina", () => {
+    const t = party();
+    // Vex: 21 Stamina, dead at -10; with 30 she would be dying at -10.
+    t.run(GM, { type: "dmg", who: "vex", amount: 31 });
+    expect(t.submit(GM, { type: "hero", hero: "vex", sheet: { ...VEX, stamina: 30 } })).toBe(
+      "Vex is dead, and that sheet's 30 Stamina would raise them; /heal them first.",
+    );
+    t.run(GM, { type: "hero", hero: "vex", sheet: { ...VEX, level: 2 } });
+    // Kor: 24 Stamina, dying at -6; with 10 he would be dead at -5.
+    t.run(GM, { type: "dmg", who: "kor", amount: 30 });
+    expect(t.submit(GM, { type: "hero", hero: "kor", sheet: { ...KOR, stamina: 10 } })).toBe(
+      "That sheet's 10 Stamina would kill Kor at -6; /heal them first.",
+    );
+    t.run(GM, { type: "heal", who: "kor", amount: 2 });
+    t.run(GM, { type: "hero", hero: "kor", sheet: { ...KOR, stamina: 10 } });
+    expect(t.hero("kor")).toMatchObject({ stamina: -4 });
   });
 });
 
@@ -186,6 +223,17 @@ describe("adding creatures", () => {
       ],
     });
     expect(t.feed[0]).toBe("Goblin Warrior 1 and Goblin Warrior 2 join the fight.");
+  });
+
+  test("one at a time, the second of a kind is 2 and the third 3; the first keeps its name", () => {
+    const t = new Table();
+    for (let i = 0; i < 3; i++)
+      t.run(GM, { type: "add", monster: "goblin-warrior", count: 1, sheet: GOBLIN });
+    expect(t.ds.creatures.map((c) => [c.id, c.name])).toEqual([
+      ["goblin-warrior", "Goblin Warrior"],
+      ["goblin-warrior-2", "Goblin Warrior 2"],
+      ["goblin-warrior-3", "Goblin Warrior 3"],
+    ]);
   });
 
   test("minions form squads of up to 8", () => {

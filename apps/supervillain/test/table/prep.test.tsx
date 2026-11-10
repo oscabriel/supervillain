@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { type Renderable, TextRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import {
@@ -7,12 +8,14 @@ import {
   helpText,
   mapOf,
   type PrepCatalog,
+  type PrepItem,
   prepOf,
   type PrepView,
 } from "../../src/game/index.ts";
 import { App } from "../../src/table/App.tsx";
 import { DINGS_ATLAS } from "../../src/table/atlas/dings.ts";
 import { emptyLine, fillLine, historyUp, insert, PREP_IS_GMS } from "../../src/table/input.ts";
+import { kept } from "../../src/table/keep.ts";
 import { figureOf } from "../../src/table/picture.ts";
 import {
   armedStands,
@@ -185,7 +188,7 @@ async function seat(
   actor: string,
   ruleset: "draw-steel" | "set-world",
   height = 24,
-  reply?: (line: string) => string | undefined,
+  reply?: (line: string) => string | undefined | Promise<string | undefined>,
   width = 80,
 ) {
   const [version, setVersion] = createSignal(0);
@@ -387,7 +390,7 @@ describe("the prep panel, as data", () => {
       name: "Kor",
       figure: { id: "kor", side: "heroes" },
     });
-    expect(prepNext(view, { kind: "count", section: 1, index: 0, n: 3 })).toEqual({
+    expect(prepNext(view, { kind: "count", line: "/add goblin-warrior", n: 3 })).toEqual({
       kind: "add",
       name: "Goblin Warrior",
       figure: { id: "goblin-warrior", side: "director" },
@@ -397,7 +400,7 @@ describe("the prep panel, as data", () => {
     // What the view no longer offers is put down, and the first who waits goes next.
     expect(armedStands(view, { kind: "token", id: "vex" })).toBe(false);
     expect(prepNext(view, { kind: "token", id: "vex" })).toMatchObject({ id: "goblin-warrior-1" });
-    expect(armedStands(view, { kind: "count", section: 0, index: 0, n: 1 })).toBe(false);
+    expect(armedStands(view, { kind: "count", line: "/add ogre", n: 1 })).toBe(false);
     expect(armedStands(view, { kind: "token", id: "kor" })).toBe(true);
     expect([1, 3].map((n) => countLine(goblins, n))).toEqual([
       "/add goblin-warrior",
@@ -406,15 +409,29 @@ describe("the prep panel, as data", () => {
   });
 
   test("a monster's count: each click one more, up to its most; − one fewer, to none", () => {
-    const one = prepCount(view, undefined, 1, 0, 1);
-    expect(one).toEqual({ kind: "count", section: 1, index: 0, n: 1 });
-    expect(prepCount(view, one, 1, 0, 1)).toMatchObject({ n: 2 });
-    expect(prepCount(view, { ...one!, n: 40 } as typeof one, 1, 0, 1)).toMatchObject({ n: 40 });
-    expect(prepCount(view, one, 1, 0, -1)).toBeUndefined();
+    const one = prepCount(undefined, goblins, 1);
+    expect(one).toEqual({ kind: "count", line: "/add goblin-warrior", n: 1 });
+    expect(prepCount(one, goblins, 1)).toMatchObject({ n: 2 });
+    expect(prepCount({ ...one!, n: 40 } as typeof one, goblins, 1)).toMatchObject({ n: 40 });
+    expect(prepCount(one, goblins, -1)).toBeUndefined();
     // A hero isn't counted: what was picked stays.
-    expect(prepCount(view, one, 0, 0, 1)).toBe(one);
+    expect(prepCount(one, view.sections[0]!.items[0]!, 1)).toBe(one);
     // A token picked gives way to the count.
-    expect(prepCount(view, { kind: "token", id: "kor" }, 1, 0, 1)).toMatchObject({ n: 1 });
+    expect(prepCount({ kind: "token", id: "kor" }, goblins, 1)).toMatchObject({ n: 1 });
+  });
+
+  test("a count names its monster, wherever a list read again puts it", () => {
+    const armed = prepCount(prepCount(undefined, goblins, 1), goblins, 1)!;
+    // A stat block that sorts first was added to monsters/ and the folder read again.
+    const more = prepOf(
+      drawSteelTable().state,
+      { ...CATALOG, monsters: [{ id: "ankheg", name: "Ankheg" }, ...CATALOG.monsters] },
+      "draw-steel",
+    );
+    expect(prepNext(more, armed)).toMatchObject({ name: "Goblin Warrior", n: 2 });
+    // The file gone, the count is put down.
+    const fewer = prepOf(drawSteelTable().state, { ...CATALOG, monsters: [] }, "draw-steel");
+    expect(armedStands(fewer, armed)).toBe(false);
   });
 
   test("a group goes to the free squares nearest the one clicked, past walls and tokens", () => {
@@ -439,9 +456,9 @@ describe("the prep panel, as data", () => {
     expect(prepHints(prepNext(view, undefined), 5)[1]).toBe(
       "a square places Goblin Warrior 1 · /place goblin-warrior-1 <square>",
     );
-    expect(prepHints(prepNext(view, { kind: "count", section: 1, index: 0, n: 2 }), 5)[1]).toBe(
-      "a square adds them there · /add goblin-warrior x2 then /place",
-    );
+    expect(
+      prepHints(prepNext(view, { kind: "count", line: "/add goblin-warrior", n: 2 }), 5)[1],
+    ).toBe("a square adds them there · /add goblin-warrior x2 then /place");
     expect(prepHints(undefined, 5)[1]).toBe("click to send · Alt+5 hides it");
   });
 
@@ -499,6 +516,48 @@ describe("the prep panel at the GM's seat", () => {
     expect(fake.submitted).toEqual([]);
   });
 
+  test("a monster's count changing draws its row again, and only its row", async () => {
+    const bandit = (n: number, note?: string): PrepItem => ({
+      kind: "count",
+      label: `Bandit ${n}`,
+      line: `/add bandit-${n}`,
+      figure: { id: `bandit-${n}`, side: "director" },
+      ...(note === undefined ? {} : { note }),
+    });
+    const prep = (note?: string): PrepView => ({
+      steps: [{ label: "map", done: false }],
+      maps: { items: [] },
+      place: [],
+      sections: [{ title: "monsters", items: [bandit(1, note), bandit(2), bandit(3)] }],
+      start: { line: "/start" },
+    });
+    const fake = fakeView({ me: GM, prep: prep() });
+    setup = await testRender(() => <App view={fake.view} />, {
+      width: 80,
+      height: 24,
+      exitOnCtrlC: false,
+      autoFocus: false,
+    });
+    expect(await typeLine(setup, "/prep")).toContain("Bandit 3");
+    /** The text renderables reading `text`. */
+    const texts = (text: string) => {
+      const found: Array<Renderable> = [];
+      const walk = (r: Renderable) => {
+        if (r instanceof TextRenderable && r.plainText === text) found.push(r);
+        for (const child of r.getChildren()) walk(child);
+      };
+      walk(setup!.renderer.root);
+      return found;
+    };
+    const [two] = texts("Bandit 2");
+    expect(two).toBeDefined();
+    // As the host sends it: what reads the same is last time's.
+    fake.setPrep(kept(fake.view.prep!.view(), prep("×2")));
+    expect(await settle(setup)).toContain("×2");
+    expect(texts("Bandit 2")).toEqual([two!]);
+    expect(two!.isDestroyed).toBe(false);
+  });
+
   test("a folder that can't be read says why", async () => {
     const fake = fakeView({ me: GM, prep: null, prepProblem: "can't list heroes/: EACCES" });
     setup = await testRender(() => <App view={fake.view} />, {
@@ -508,6 +567,29 @@ describe("the prep panel at the GM's seat", () => {
       autoFocus: false,
     });
     expect(await typeLine(setup, "/prep")).toContain("can't list heroes/: EACCES");
+  });
+
+  test("a folder that never read leaves the panel hidden: the hint row and the all-hidden line say so", async () => {
+    const fake = fakeView({ me: GM, prep: null, prepProblem: "can't list heroes/: EACCES" });
+    setup = await testRender(() => <App view={fake.view} />, {
+      width: 80,
+      height: 24,
+      exitOnCtrlC: false,
+      autoFocus: false,
+    });
+    const t = setup;
+    await typeLine(t, "/prep");
+    let hint = rowsOf(await escape(t)).at(-2);
+    expect(hint).not.toContain("click to send");
+    expect(hint).toEndWith("show ⁵ prep");
+    // Asked for again, the folder is read again.
+    t.mockInput.pressKey("5", { meta: true });
+    expect(await settle(t)).toContain("can't list heroes/: EACCES");
+    expect(fake.reloads()).toBe(2);
+    for (const key of ["1", "3"]) t.mockInput.pressKey(key, { meta: true });
+    expect(await settle(t)).toContain("every panel is hidden");
+    hint = rowsOf(t.captureCharFrame()).at(-2);
+    expect(hint).not.toContain("click to send");
   });
 
   test("Draw Steel: right of the map, the steps, who's next, who waits and what comes in", async () => {
@@ -623,6 +705,67 @@ describe("the prep panel at the GM's seat", () => {
     expect(fake.submitted).toHaveLength(3);
   });
 
+  test("a count is its monster's, though the folder read again lists another before it", async () => {
+    const t0 = drawSteelTable();
+    const { fake, t } = await seat(t0, GM, "draw-steel", 40);
+    await typeLine(t, "/prep");
+    for (let i = 0; i < 2; i++) await clickInPrep(t, "Goblin Warr", "monsters");
+    fake.setPrep(
+      prepOf(
+        t0.state,
+        { ...CATALOG, monsters: [{ id: "ankheg", name: "Ankheg" }, ...CATALOG.monsters] },
+        "draw-steel",
+      ),
+    );
+    expect(rowsOf(await settle(t)).at(-2)).toContain("/add goblin-warrior x2 then /place");
+    expect(inPrep(t, "+2", "monsters").row).toBe(inPrep(t, "Goblin Warr", "monsters").row + 1);
+    await clickSquare(t, "d4");
+    expect(fake.submitted).toEqual(["/add goblin-warrior x2"]);
+  });
+
+  test("a count goes with the panel, however it leaves: ▶ starting the fight, or a seat too small", async () => {
+    const t0 = drawSteelTable();
+    t0.run(GM, { type: "place", who: "goblin-warrior-1", at: { x: 9, y: 0 } });
+    t0.run(GM, { type: "place", who: "goblin-warrior-2", at: { x: 9, y: 1 } });
+    const { fake, t, run } = await seat(t0, GM, "draw-steel", 40);
+    await typeLine(t, "/prep");
+    for (let i = 0; i < 2; i++) await clickInPrep(t, "Goblin Warr", "monsters");
+    // Below the smallest seat the panel goes, and what it had up with it.
+    t.resize(70, 18);
+    await settle(t);
+    t.resize(80, 40);
+    await settle(t);
+    expect(await settle(t)).not.toContain("+2");
+    for (let i = 0; i < 2; i++) await clickInPrep(t, "Goblin Warr", "monsters");
+    expect(t.captureCharFrame()).toContain("+2");
+    await clickInPrep(t, "▶");
+    expect(fake.submitted).toEqual(["/start"]);
+    await run(GM, { type: "start" }, fixedDice(8));
+    expect(t.captureCharFrame()).not.toContain("⁵ GM prep");
+    // Nothing waits unseen: Esc takes the notice at once, and the panel opens with nothing up.
+    await typeLine(t, "/mouse x");
+    expect(await escape(t)).not.toContain("Usage: /mouse");
+    expect(await typeLine(t, "/prep")).not.toContain("+2");
+    await clickSquare(t, "d4");
+    expect(fake.submitted).toEqual(["/start"]);
+  });
+
+  test("a hero refused late puts down only itself, not what was put up since", async () => {
+    let refuse: (text: string) => void = () => undefined;
+    const { fake, t } = await seat(drawSteelTable(), GM, "draw-steel", 40, (line) =>
+      line === "/hero kor" ? new Promise<string>((resolve) => (refuse = resolve)) : undefined,
+    );
+    await typeLine(t, "/prep");
+    await clickInPrep(t, "Kor");
+    expect(fake.submitted).toEqual(["/hero kor"]);
+    // While the host reads Kor's sheet, the GM counts two goblins for the next square.
+    for (let i = 0; i < 2; i++) await clickInPrep(t, "Goblin Warr", "monsters");
+    refuse("heroes/kor.yaml doesn't read.");
+    const frame = await settle(t);
+    expect(frame).toContain("heroes/kor.yaml doesn't read.");
+    expect(frame).toContain("+2");
+  });
+
   test("Draw Steel: once everyone is placed, fight starts combat and the panel steps aside", async () => {
     const t0 = drawSteelTable();
     t0.run(GM, { type: "place", who: "goblin-warrior-1", at: { x: 9, y: 0 } });
@@ -657,6 +800,23 @@ describe("the prep panel at the GM's seat", () => {
     expect(again.submitted).toEqual(["/map new keep"]);
   });
 
+  test("a click in the panel, even one that sends nothing, calls off the GM's first Ctrl-C", async () => {
+    const { fake, t } = await seat(drawSteelTable(), GM, "draw-steel", 40);
+    await typeLine(t, "/prep");
+    fake.setPresent([
+      { actor: GM, label: "Oscar", gm: true },
+      { actor: ALICE, label: "Alice", gm: false },
+    ]);
+    t.mockInput.pressCtrlC();
+    expect(await settle(t)).toContain("Ctrl-C again");
+    // A monster counted for the next square, which sends nothing yet.
+    expect(await clickInPrep(t, "Goblin Warr", "monsters")).not.toContain("Ctrl-C again");
+    t.mockInput.pressCtrlC();
+    expect(await settle(t)).toContain("Ctrl-C again");
+    expect(fake.left()).toBe(0);
+    expect(fake.submitted).toEqual([]);
+  });
+
   test("set.world: Recruit and Foe fill the line for a name; a square places; fight starts", async () => {
     const { fake, t, run } = await seat(setWorldTable(), GM, "set-world");
     await typeLine(t, "/prep");
@@ -670,6 +830,47 @@ describe("the prep panel at the GM's seat", () => {
     await run(GM, { type: "set-place", who: "grub", at: { x: 2, y: 1 } });
     await clickInPrep(t, "fight");
     expect(fake.submitted).toEqual(["/recruit Bea", "/foe Old Grub 7", "/place grub c2", "/start"]);
+  });
+});
+
+describe("what an empty table says, by ruleset", () => {
+  const hintRow = (t: Setup) => rowsOf(t.captureCharFrame()).at(-2) ?? "";
+
+  for (const ruleset of ["draw-steel", "set-world"] as const)
+    test(`${ruleset}: the GM is pointed at the prep panel until there is a party or a map`, async () => {
+      const { t, run } = await seat(new Table(), GM, ruleset);
+      expect(hintRow(t)).toStartWith(" Alt+5 or /prep sets up a game · /help lists the commands");
+      // Open, the panel's own hints say what to do in it.
+      expect(await typeLine(t, "/prep")).toContain("─ ⁵ GM prep");
+      expect(hintRow(t)).not.toContain("sets up a game");
+      t.mockInput.pressKey("5", { meta: true });
+      await settle(t);
+      expect(hintRow(t)).toContain("sets up a game");
+      await run(
+        GM,
+        ruleset === "draw-steel"
+          ? { type: "map", id: "yard", grid: YARD }
+          : { type: "set-map", id: "yard", grid: YARD },
+      );
+      expect(hintRow(t)).not.toContain("sets up a game");
+      expect(hintRow(t)).toContain("Tab completes");
+    });
+
+  test("draw-steel: a player without a hero hears the free ones, and how to take one", async () => {
+    const table = new Table();
+    table.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+    table.run(GM, { type: "hero", hero: "kor", sheet: KOR });
+    const { t, run } = await seat(table, ALICE, "draw-steel");
+    expect(hintRow(t)).toBe(" free to play: Vex, Kor · /play <name> takes one · /help");
+    await run(ALICE, { type: "play", hero: "vex" });
+    expect(hintRow(t)).toContain("Tab completes");
+  });
+
+  test("set-world: a player without a fighter hears the free ones, and how to take one", async () => {
+    const { t, run } = await seat(setWorldTable(), ALICE, "set-world");
+    expect(hintRow(t)).toBe(" free to play: Ada · /play <name> takes one · /help");
+    await run(ALICE, { type: "set-play", who: "ada" });
+    expect(hintRow(t)).not.toContain("free to play");
   });
 });
 

@@ -10,7 +10,7 @@ This page covers installing the binary, starting a table, and the three ways pla
 
 ## Install
 
-There is no release of the rebuild yet: build the binary yourself (below) or run from source (`bun install`, then `bun supervillain …` from the repo root). The releases on GitHub up to v0.2.0 are the archived build and don't have these files. Once a release is tagged, it has one self-contained executable per platform, plus `SHA256SUMS`:
+Each release from v0.3.0 on has one self-contained executable per platform, plus `SHA256SUMS` (the releases up to v0.2.0 are the archived build, without these files):
 
 | File | For |
 | --- | --- |
@@ -22,15 +22,15 @@ There is no release of the rebuild yet: build the binary yourself (below) or run
 The repository is private for now, so download with the GitHub CLI while signed in:
 
 ```sh
-gh release download <tag> -R oscabriel/supervillain -p supervillain-linux-x64 -p SHA256SUMS
+gh release download -R oscabriel/supervillain -p supervillain-linux-x64 -p SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS      # macOS: shasum -a 256 --ignore-missing -c SHA256SUMS
 sudo install -m 0755 supervillain-linux-x64 /usr/local/bin/supervillain
 supervillain --version
 ```
 
-Replace `<tag>` with the release you want (`gh release list -R oscabriel/supervillain`), and the file name with your platform's. Downloading with `gh` or `curl` is fine on macOS. If you download with a browser, macOS quarantines the file and won't open it. Clear that with `xattr -d com.apple.quarantine supervillain-darwin-arm64`.
+That fetches the latest release; put a tag after `download` for another (`gh release list -R oscabriel/supervillain`). Replace the file name with your platform's. Downloading with `gh` or `curl` is fine on macOS. If you download with a browser, macOS quarantines the file and won't open it. Clear that with `xattr -d com.apple.quarantine supervillain-darwin-arm64`.
 
-To build it yourself from a checkout, run `bun install`, then `bun run release:build`. That writes `dist/supervillain-<os>-<arch>` for your machine. Use `--all` for every platform after `bun install --os="*" --cpu="*"`.
+To run from source instead, run `bun install` in a checkout, then `bun supervillain …` from its root. To build the binary yourself, run `bun run release:build` there. That writes `dist/supervillain-<os>-<arch>` for your machine. Use `--all` for every platform after `bun install --os="*" --cpu="*"`.
 
 ## Start a table
 
@@ -74,14 +74,16 @@ players join with: ssh -p 2222 first-fight@127.0.0.1
 host key SHA256:gkYn722z8+JIXdkwJa/9amF10Y2+zkGdElyWlj0LZHk
 ```
 
-Send players the join command, with your address in place of `127.0.0.1` (see below), and the host key. When ssh first connects it shows them that fingerprint, and comparing the two is how they know they reached you. Your seat covers that output once it opens, so while you sit alone its band shows `players join with: ssh -p 2222 first-fight@127.0.0.1 · host key SHA256:…`, and the end of `/help` and `host.log` have both too. Ctrl-C at your seat closes the table. While players are seated it asks you to press it again.
+Send players the join command, with your address in place of `127.0.0.1` (see below), and the host key. When ssh first connects it shows them that fingerprint, and comparing the two is how they know they reached you. Your seat covers that output once it opens, so while you sit alone its band shows `players join with: ssh -p 2222 first-fight@127.0.0.1 · host key SHA256:…`, and the end of `/help` and `host.log` have both too. Ctrl-C at your seat closes the table. While players are seated it asks you to press it again, and any other key, paste, click or wheel in between calls that off.
+
+At your seat, `/narrate <text>` describes the scene in the feed with no speaker, and `/state` shows or hides the table's state and its latest log lines, raw.
 
 If the port is taken, by another table say, `host` says so and stops: `port 2222 on 127.0.0.1 is in use (another table?); pick another with --port, or --port 0 for any free one`.
 
 | Option | What it does |
 | --- | --- |
-| `--port 2222` | The port players connect to. `0` picks a free one |
-| `--bind 127.0.0.1` | The address to listen on. The default lets in only this machine and tunnels running on it; `0.0.0.0` listens on every network |
+| `--port 2222` | The port players connect to, 0 to 65535. `0` picks a free one |
+| `--bind 127.0.0.1` | The IP address to listen on, or `localhost`. The default lets in only this machine and tunnels running on it; `0.0.0.0` listens on every network |
 | `--room <name>` | The room's name, which players type before the `@`. It defaults to the campaign folder's name |
 | `--headless` | Runs without the GM's seat, with logs on stdout. Nobody has GM powers, so this is for trying a server, not for running a game |
 | `--relay host[:7022]` | Also take players through a relay; see [3. The relay](#3-the-relay-on-a-small-vps) |
@@ -92,13 +94,13 @@ If the port is taken, by another table say, `host` says so and stops: `port 2222
 
 The campaign folder is yours alone (mode 700). Beside `campaign.yaml` and what you put in it, the host writes these files into it:
 
-- `events.jsonl`: the log, one event per line. It holds every word said at the table.
+- `events.jsonl`: the log, one event per line. It holds every word said at the table. A write that fails (a full disk, say) is cut back, leaving the log as it was, and the table refuses every change after it until you restart the host.
 - `host_key`: the table's SSH identity. Keep it, or players' ssh will warn that the key changed.
-- `events.lock`: while a host runs, so only one host at a time writes to a campaign.
+- `events.lock`: while a host runs, so only one host at a time writes to a campaign. The next host takes over a lock whose host has died. A second host that gets in anyway writes nothing: its first write finds the log changed, and it halts.
 - `host.log`: what the host did, when you have the GM's seat.
 - `relay_known`: the relay key this campaign trusts, written on the first link to a relay (the `--relay-key`, if you passed one).
 
-The host refuses a `host_key` other users can read (`chmod 600` it). Players are capped so one stranger can't take the table down: 8 connections and 16 sessions from one address, 64 of each in all, 20 seconds to log in, and a few lines a second per player.
+The host refuses a `host_key` other users can read (`chmod 600` it). Players are capped so one stranger can't take the table down: 8 connections and 16 sessions from one address, 64 of each in all, 20 new sessions from one address and then 1 a second, 20 seconds to log in, and a few lines a second per player. A connection that stops reading, leaving more than 4 MiB waiting, or rekeys over and over, is cut, and the host's log says so.
 
 `supervillain check ~/campaigns/first-fight` reads a log without opening the table: a summary, skipped events, the feed and the final state.
 
@@ -162,7 +164,7 @@ Players run `ssh -p 2222 first-fight@your.vps`. The VPS's sshd binds remote forw
 
 **Not cloudflared.** A Cloudflare quick tunnel carries only HTTP. A named tunnel can carry SSH, but every player then needs `cloudflared` installed and set up as an ssh `ProxyCommand`. That breaks "nothing to install".
 
-Through a tunnel every player arrives from the tunnel's address. The host limits connections per address (8 at once), so a tunnelled table holds about 6 players with a couple of one-off commands in flight.
+Through a tunnel every player arrives from the tunnel's address. The host limits connections per address (8 at once), so a tunnelled table holds about 6 players with a couple of one-off commands in flight, and they share one address's rate of new sessions (20, then 1 a second).
 
 ## 3. The relay on a small VPS
 
@@ -235,7 +237,7 @@ a room's claim lapses after 180 days with no GM linked
 
 The relay key is what GMs' hosts pin. The host key is what players' ssh shows them the first time. `/var/lib/supervillain-relay` holds both keys (`relay_key`, `host_key`) and `rooms.json`, and nothing else: the relay keeps no logs of play and renders nothing. Back the folder up. If the keys are lost, every GM's host and every player's ssh will see a new relay. Without `--dir`, the relay keeps its files in `~/.supervillain-relay`.
 
-The relay limits each player address to 8 connections and 8 sessions, with a rate on new connections and sessions; each room to 32 players' sessions at once (`The table first-fight is full right now.`); each GM address to 8 links; and the GMs linked at once to 256. An IPv6 address counts by its /64, which one person usually holds whole. A player over a limit sees `Connection reset by peer`, and the journal says `refused a connection from <address>: …` (a few times a minute at most for one address).
+The relay limits each player address to 8 connections and 8 sessions, with a rate on new connections and sessions; each room to 32 players' sessions at once (`The table first-fight is full right now.`); each GM address to 8 links; and the GMs linked at once to 256. An IPv6 address counts by its /64, which one person usually holds whole. A player over a connection limit sees `Connection reset by peer`, and the journal says `refused a connection from <address>: …` (a few times a minute at most for one address); over a session limit, ssh says `channel 0: open failed`.
 
 The relay refuses to start if group or others can write to its folder, since whoever can write `rooms.json` can take any room: `chmod 700` it.
 
@@ -267,11 +269,11 @@ supervillain host ~/campaigns/first-fight --room first-fight \
 
 A relay that shows a different key is refused, loudly: your band says `relay refused: its key … doesn't match …`, and the host stops dialing it. If the relay's key really changed (its folder was lost), check the new fingerprint with whoever runs it, put it in `relay_known` (or pass the new `--relay-key`), and the host links again within a few seconds. `relay_known` takes one fingerprint a line, and `#` starts a comment: a relay that is moving to a new key can tell its GMs ahead, and a host with both lines links with either.
 
-While the link isn't up, the header at the top of your seat says so beside the room, whatever else is on screen: `relay: connecting…`, `relay: down, redialing`, `relay: refused, redialing`, or `relay: refused, see host.log`. The band below it says more while you sit alone: `players join with: ssh -p 2222 first-fight@table.example.com` once it's up, `relay: connecting…` with the last error while it isn't, and `relay refused: …` if the relay turned the room down (saying why: `this address claims rooms too fast`, `the relay holds its most rooms`, `the relay has its most GMs linked`) or its key was wrong. A refused host redials with the same backoff. If the link drops, the host redials on its own, waiting 1 second, then 2, 4 and so on up to 30. The join command assumes the relay's player port is 2222; if it isn't, tell the host with `--relay-player-port`.
+While the link isn't up, the header at the top of your seat says so beside the room, whatever else is on screen: `relay: connecting…`, `relay: down, redialing`, `relay: refused, redialing`, or `relay: refused, see host.log`. The band below it says more while you sit alone: `players join with: ssh -p 2222 first-fight@table.example.com` once it's up, `relay: connecting…` with the last error while it isn't, and `relay refused: …` if the relay turned the room down (saying why: `this address claims rooms too fast`, `the relay holds its most rooms`, `the relay has its most GMs linked`) or its key was wrong. A refused host redials with the same backoff. If the link drops, the host redials on its own, waiting 1 second, then 2, 4 and so on up to 30; the wait starts over once a link has held for a second. If a link drops within a second of login, the band says `relay: connecting… (the link dropped within a second of login; if it keeps on, the relay's log says why)`: a relay that lets the host in and then can't keep the room does this, so ask whoever runs it. The join command assumes the relay's player port is 2222; if it isn't, tell the host with `--relay-player-port`.
 
 The host still listens on `--port` and `--bind` as before, so local players can connect directly while remote ones come through the relay. Room names on a relay are 1 to 32 characters of `a-z`, `0-9` and `-`, starting with a letter, and not one of the names the relay keeps (`root`, `admin`, `ubuntu`, `pi`, `git`, `lobby`, `help` and the like; the host says so). Pass `--room` if your folder's name doesn't fit.
 
-Players run `ssh -p 2222 first-fight@table.example.com`. The first time, ssh shows them the relay's host key, not your table's, so give them the relay's fingerprint (`host key SHA256:… (what players' ssh sees)` in its journal). Pass it to your host with `--relay-host-key` and it's printed with the join command, in your `/help` and in `host.log`; without it, the host says to ask whoever runs the relay. Your table's own host key is for players who connect directly, and all three say so. If your machine is off, they're told `The table first-fight isn't open right now.` A room nobody has linked is `There's no table called first-fight here.` If your host stops or its link drops while they're seated, they're told `The GM closed the table.` or `The table closed.`, and can connect again once your host is back.
+Players run `ssh -p 2222 first-fight@table.example.com`. The first time, ssh shows them the relay's host key, not your table's, so give them the relay's fingerprint (`host key SHA256:… (what players' ssh sees)` in its journal). Pass it to your host with `--relay-host-key` and it's printed with the join command, in your `/help` and in `host.log`; without it, the host says to ask whoever runs the relay. Your table's own host key is for players who connect directly, and all three say so. If your machine is off, they're told `The table first-fight isn't open right now.` A room nobody has linked is `There's no table called first-fight here.` and the join hint, unless an open table knows their key: then they get [the lobby](#the-lobby). If your host stops or its link drops while they're seated, they're told `The GM closed the table.` or `The table closed.`, and can connect again once your host is back.
 
 ### The lobby
 

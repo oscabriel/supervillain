@@ -297,12 +297,25 @@ function keep(combatants: ReadonlyArray<Combatant>, room: number): ReadonlyArray
     .sort((a, b) => a - b);
 }
 
+/** A hero's own name, without its player's: "Brann" of "Brann (Alice)". */
+const ownName = (name: string) => /^(.+) \(.+\)$/.exec(name)?.[1] ?? name;
+
+/**
+ * The title: the round, whose turn it is while one is on (else the side that goes next, so the
+ * side next is never read as the one acting), Malice, hero tokens and Victories.
+ */
 function titleOf(view: CombatView): string {
   if (view.title !== undefined) return view.title;
   const victories = view.victories === undefined ? "" : ` · victories ${view.victories}`;
   if (!view.active) return ` party · hero tokens ${view.heroTokens}${victories} `;
-  const next = view.next === undefined ? "" : ` · ${view.next} next`;
-  return ` round ${view.round}${next} · Malice ${view.malice} · hero tokens ${view.heroTokens}${victories} `;
+  const acting = view.combatants.find((c) => c.acting);
+  const turn =
+    acting !== undefined
+      ? ` · ${ownName(acting.name)}'s turn`
+      : view.next === undefined
+        ? ""
+        : ` · ${view.next} next`;
+  return ` round ${view.round}${turn} · Malice ${view.malice} · hero tokens ${view.heroTokens}${victories} `;
 }
 
 /**

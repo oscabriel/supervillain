@@ -246,13 +246,20 @@ export function occupants(slice: SetState, except?: string): Occupants {
 }
 
 /**
+ * When a fighter acts next, or undefined for one with no turn coming (down when the fight began).
+ * By its own entry: an id may be a word every object answers to (`constructor`).
+ */
+export const nextOf = (fight: Fight, id: string): number | undefined =>
+  Object.hasOwn(fight.next, id) ? fight.next[id] : undefined;
+
+/**
  * Who acts next on Set's schedule: the soonest turn. Exact ties keep Set's participant order, the
  * party and then the foes, each in the order they came to the table.
  */
 export function soonest(slice: SetState, fight: Fight): Fighter | undefined {
   let best: Fighter | undefined;
   for (const f of [...living(slice, "party"), ...living(slice, "foes")]) {
-    const at = fight.next[f.id];
+    const at = nextOf(fight, f.id);
     if (at !== undefined && (best === undefined || at < fight.next[best.id]!)) best = f;
   }
   return best;

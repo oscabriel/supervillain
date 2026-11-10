@@ -88,6 +88,7 @@ export interface FeedEntry extends FeedNote {
  * retractable in the middle of a submission splits its batch in two.
  */
 export interface UndoBatch {
+  /** Its events' seqs; none when a lenient reader knows it only by what it skipped (`loose`). */
   readonly seqs: ReadonlyArray<number>;
   /** Whose change it is: who wrote it, or for a redone change, who wrote it first. */
   readonly actor: string;
@@ -97,13 +98,15 @@ export interface UndoBatch {
    * batch's result: an undo or redo that folds it again must get the very same lines back.
    */
   readonly undone: ReadonlyArray<string>;
-  /**
-   * The slices of every module with retractable events, as they were before the batch, with
-   * every later event that isn't retractable folded in, so a retraction leaves those standing.
-   */
+  /** The slices of every module with retractable events, as they were before the batch. */
   readonly before: Readonly<Record<string, unknown>>;
   /** Its events as written: folded again when an older batch is taken back, put back by /redo. */
   readonly events: ReadonlyArray<Envelope>;
+  /**
+   * The events after it, up to the next batch, that aren't retractable but change those slices
+   * (a claim). An undo folds them again in log order, so they stand (see `refold`).
+   */
+  readonly after: ReadonlyArray<Envelope>;
   /** Whether any of them rolled dice: then only the GM may take it back. */
   readonly rolled: boolean;
   /** Seqs of the submission a lenient reader skipped, which a retraction may also name. */
@@ -117,9 +120,17 @@ export interface RedoEntry {
   readonly actor: string;
   readonly by: string;
   readonly events: ReadonlyArray<Envelope>;
+  /** What its undo skipped, as what they name went with it: putting it back folds them again. */
+  readonly after: ReadonlyArray<Envelope>;
   readonly rolled: boolean;
   /** Its feed text when it was taken back: putting it back must read the same. */
   readonly undone: ReadonlyArray<string>;
+  /**
+   * The snapshotted slices as its undo left them, when it was the latest batch. /redo puts it back
+   * only onto these: an older batch would land on top of what came after it, and a claim since
+   * may have changed whose it is, with none of decide's checks.
+   */
+  readonly left?: Readonly<Record<string, unknown>>;
 }
 
 /** The parts of the table state every module shares. */
@@ -309,6 +320,18 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
   /** The last seq a batch holds, counting what a lenient reader skipped in it. */
   const lastOf = (batch: UndoBatch) => Math.max(...batch.seqs, ...(batch.loose ?? []));
 
+  /** A new batch of one event, with a snapshot of the slices before it. */
+  const opened = (state: TableBase, envelope: Envelope): UndoBatch => ({
+    seqs: [envelope.seq],
+    actor: envelope.actor,
+    timestamp: envelope.timestamp,
+    undone: [],
+    before: snapshot(state),
+    events: [envelope],
+    after: [],
+    rolled: rolls(envelope),
+  });
+
   /**
    * The stack after a retractable event: it joins the latest batch if it continues that
    * submission, else it opens a new batch with a snapshot of the slices before it.
@@ -331,71 +354,63 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
       };
       return [...state.undo.slice(0, -1), joined];
     }
-    const batch: UndoBatch = {
-      seqs: [envelope.seq],
-      actor: envelope.actor,
-      timestamp: envelope.timestamp,
-      undone,
-      before: snapshot(state),
-      events: [envelope],
-      rolled: rolls(envelope),
-    };
-    return [...state.undo, batch].slice(-UNDO_DEPTH);
+    return [...state.undo, { ...opened(state, envelope), undone }].slice(-UNDO_DEPTH);
   };
 
   /**
-   * The stack after an event that isn't retractable changes a snapshotted slice: it is folded
-   * into every snapshot, so undo leaves it standing. A snapshot it can't apply to (a claim on a
-   * hero the batch brought in) is left as it is: what it depends on isn't there to change.
+   * Folds stored events onto snapshotted slices, the way apply would, with the feed text of the
+   * retractable ones. A retractable event throws where it won't go; any other (a claim) is
+   * skipped there, as what it names is gone, so undo takes back no claim it can keep.
    */
-  const rebased = (stack: ReadonlyArray<UndoBatch>, module: AnyModule, envelope: Envelope) =>
-    stack.map((batch) => {
-      try {
-        const slice = module.apply(batch.before[module.key], envelope).slice;
-        return { ...batch, before: { ...batch.before, [module.key]: slice } };
-      } catch {
-        return batch;
-      }
-    });
-
-  /** Folds stored events onto snapshotted slices, the way apply would. Throws where one won't go. */
   const refold = (
-    slices: Record<string, unknown>,
+    slices: Readonly<Record<string, unknown>>,
     events: ReadonlyArray<Envelope>,
-  ): { slices: Record<string, unknown>; texts: string[] } => {
+  ): { slices: Record<string, unknown>; texts: string[]; skipped: Envelope[] } => {
     const next = { ...slices };
     const texts: string[] = [];
+    const skipped: Envelope[] = [];
     for (const e of events) {
-      const module = byEvent.get(e.type);
-      if (module === undefined || !retractable.has(e.type))
-        throw new Error(`"${e.type}" can't be folded again`);
-      const applied = module.apply(next[module.key], e);
-      next[module.key] = applied.slice;
-      if (applied.feed) texts.push(applied.feed.text);
+      const module = byEvent.get(e.type)!;
+      try {
+        const applied = module.apply(next[module.key], e);
+        next[module.key] = applied.slice;
+        if (applied.feed && retractable.has(e.type)) texts.push(applied.feed.text);
+      } catch (error) {
+        if (retractable.has(e.type)) throw error;
+        skipped.push(e);
+      }
     }
-    return { slices: next, texts };
+    return { slices: next, texts, skipped };
   };
 
   /**
-   * The state with the batch at `index` taken back: the slices from before it, with every later
-   * batch folded again on top (each keeping a snapshot of what is now before it). A later batch
+   * The state with the batch at `index` taken back: the slices from before it, with what followed
+   * it folded again on top, in log order: the claims after it, now after the batch before it, and
+   * each later batch with its own (each keeping a snapshot of what is now before it). A later batch
    * must come out exactly as it did, the same feed lines, or the feed and the band would disagree
    * and one seat's undo would rewrite another's result; else `changed` names every later batch
-   * that wouldn't, up to the first that no longer applies at all.
+   * that wouldn't, up to the first that no longer applies at all. `skipped` is the claims that
+   * went with it.
    */
   const without = (
     state: S,
     index: number,
-  ): { restored: S; batch: UndoBatch } | { changed: ReadonlyArray<Changed> } => {
+  ):
+    | { restored: S; batch: UndoBatch; skipped: ReadonlyArray<Envelope> }
+    | { changed: ReadonlyArray<Changed> } => {
     const batch = state.undo[index]!;
-    let slices: Record<string, unknown> = { ...batch.before };
+    let { slices, skipped } = refold(batch.before, batch.after);
     const kept: UndoBatch[] = state.undo.slice(0, index);
+    const standing = (events: ReadonlyArray<Envelope>) =>
+      events.filter((e) => !skipped.includes(e));
+    const previous = kept.pop();
+    if (previous !== undefined)
+      kept.push({ ...previous, after: [...previous.after, ...standing(batch.after)] });
     const changed: Changed[] = [];
     for (const later of state.undo.slice(index + 1)) {
-      kept.push({ ...later, before: slices });
       let refolded: ReturnType<typeof refold>;
       try {
-        refolded = refold(slices, later.events);
+        refolded = refold(slices, [...later.events, ...later.after]);
       } catch (e) {
         changed.push({
           batch: later,
@@ -406,10 +421,12 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
       }
       const why = difference(later.undone, refolded.texts);
       if (why !== undefined) changed.push({ batch: later, why, broken: false });
+      skipped = [...skipped, ...refolded.skipped];
+      kept.push({ ...later, before: slices, after: standing(later.after) });
       slices = refolded.slices;
     }
     if (changed.length > 0) return { changed };
-    return { restored: { ...state, ...slices, undo: kept }, batch };
+    return { restored: { ...state, ...slices, undo: kept }, batch, skipped };
   };
 
   /** Names the later changes an undo would change: `Bob's "Brann regains 5 Stamina → 17/24"`. */
@@ -438,10 +455,10 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
     const stack = state.undo;
     if (stack.length === 0) return { refusal: "Nothing to undo." };
     let index = stack.length - 1;
+    if (command.who !== undefined && command.whose === undefined)
+      return { refusal: `Nobody at the table is called '${quote(command.who)}'.` };
     if (actor === GM) {
       if (command.who !== undefined) {
-        if (command.whose === undefined)
-          return { refusal: `Nobody at the table is called '${quote(command.who)}'.` };
         index = stack.findLastIndex((b) => b.actor === command.whose);
         if (index === -1) return { refusal: `${quote(command.who)} has no change left to undo.` };
       }
@@ -474,7 +491,10 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
       return { refusal: "Only the GM can redo someone else's undo." };
     let same: boolean;
     try {
-      same = difference(top.undone, refold(snapshot(state), top.events).texts) === undefined;
+      same =
+        top.left !== undefined &&
+        JSON.stringify(snapshot(state)) === JSON.stringify(top.left) &&
+        difference(top.undone, refold(snapshot(state), top.events).texts) === undefined;
     } catch {
       same = false;
     }
@@ -506,14 +526,17 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
           : `the retraction at seq ${envelope.seq} would change a later change at seq ${first.batch.seqs[0]}: ${first.why}`,
       );
     }
-    const { restored, batch } = taken;
+    const { restored, batch, skipped } = taken;
     const entry: RedoEntry = {
-      seqs: batch.seqs,
+      // As the retraction names them, which is how the redo will: a lenient reader's batch may hold fewer.
+      seqs,
       actor: batch.actor,
       by: envelope.actor,
       events: batch.events,
+      after: skipped,
       rolled: batch.rolled,
       undone: batch.undone,
+      ...(index === state.undo.length - 1 && { left: snapshot(restored) }),
     };
     return {
       kind: UNDO_KIND,
@@ -532,7 +555,7 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
       top.seqs.some((s, i) => s !== seqs[i])
     )
       throw new Error(`the redo at seq ${envelope.seq} isn't of the latest undo`);
-    const { slices, texts } = refold(snapshot(state), top.events);
+    const { slices, texts, skipped } = refold(snapshot(state), [...top.events, ...top.after]);
     const why = difference(top.undone, texts);
     if (why !== undefined)
       throw new Error(`the redo at seq ${envelope.seq} would come out differently: ${why}`);
@@ -543,6 +566,7 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
       undone: texts,
       before: snapshot(state),
       events: top.events,
+      after: top.after.filter((e) => !skipped.includes(e)),
       rolled: top.rolled,
     };
     return {
@@ -598,9 +622,11 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
         if (retractable.has(envelope.type)) {
           undo = pushed(state, envelope, feed);
           redo = [];
-        } else if (snapshotted.includes(module) && applied.slice !== before) {
-          // An event that changes nothing (a measurement) needn't be folded into the snapshots.
-          undo = rebased(state.undo, module, envelope);
+        } else if (snapshotted.includes(module) && applied.slice !== before && undo.length > 0) {
+          // It follows the latest batch, for an undo to fold again. One that changes nothing (a
+          // measurement) needn't be.
+          const top = undo.at(-1)!;
+          undo = [...undo.slice(0, -1), { ...top, after: [...top.after, envelope] }];
         }
         next = { ...state, undo, redo, [module.key]: applied.slice };
       }
@@ -622,7 +648,7 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
       return { ...next, seq: envelope.seq, actors, feed: entries };
     },
     // A lenient reader skipped an event it doesn't know: a later retraction may name it, so the
-    // batch it would have joined remembers its seq.
+    // batch it would have joined remembers its seq, or it opens one with no event of its own.
     skip: (state, envelope) => {
       const top = state.undo.at(-1);
       const joins =
@@ -632,7 +658,10 @@ export function compose<const Ms extends ReadonlyArray<AnyModule>>(
         lastOf(top) === state.seq;
       const undo = joins
         ? [...state.undo.slice(0, -1), { ...top, loose: [...(top.loose ?? []), envelope.seq] }]
-        : state.undo;
+        : [
+            ...state.undo,
+            { ...opened(state, envelope), seqs: [], events: [], loose: [envelope.seq] },
+          ].slice(-UNDO_DEPTH);
       return { ...state, undo, seq: Math.max(state.seq, envelope.seq) };
     },
   };

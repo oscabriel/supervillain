@@ -55,8 +55,10 @@ const refused = (e: LoadError | MapLoadError) =>
   });
 
 /**
- * The actor a typed label names: someone seated first, then anyone the log knows. Labels are
- * compared the way names are (case and lookalikes don't count), by their own label, not their hero.
+ * The actor a typed label names: someone seated first, then any key the log knows. A guest who has
+ * left answers to no name: they are a new actor next time, and someone else may have the name now.
+ * Labels are compared the way names are (case and lookalikes don't count), by their own label, not
+ * their hero.
  */
 const actorLabelled = (
   state: TableState,
@@ -65,14 +67,15 @@ const actorLabelled = (
 ): string | undefined => {
   const label = labelOf(state);
   const key = nameKey(typed);
-  const known = [...seated, ...state.actors, ...Object.keys(state.core.names)];
+  const away = [...state.actors, ...Object.keys(state.core.names)];
+  const known = [...seated, ...away.filter((actor) => !actor.startsWith("guest:"))];
   return known.find((actor) => actor !== GM && nameKey(label(actor)) === key);
 };
 
 /**
  * Adds what the host knows and the rules can't see: who is seated, for a name to be checked against
- * and a hero whose guest has left to be taken; the time now, for a player's /undo window, and whose
- * change a GM's `/undo <who>` means; the sheet a /hero or /add brings in, or the map a /map loads,
+ * (with the names in play, whichever ruleset's) and a hero whose guest has left to be taken; the
+ * time now, for a player's /undo window, and whose change a GM's `/undo <who>` means; the sheet a /hero or /add brings in, or the map a /map loads,
  * read from the campaign folder now so the event carries it (a /map new writes it there first, from
  * its seed); the character a set.world /recruit or /foe rolls at set.world, by its seed or one
  * picked here; and the actor a GM's /play names. A file that can't be read, or a roll that doesn't
@@ -86,10 +89,14 @@ const withHostFacts = (
   Effect.gen(function* () {
     // Whose guest has left, for a hero they held to be free to take.
     const command: Command =
-      typed.type === "play" ? { ...typed, seated: yield* (yield* Presence).here.get } : typed;
+      typed.type === "play" || typed.type === "set-play"
+        ? { ...typed, seated: yield* (yield* Presence).here.get }
+        : typed;
     if (command.type === "name") {
       const seated = yield* (yield* Presence).here.get;
-      return { ...command, seated };
+      const { ds, sw } = yield* (yield* TableRoom).state.get;
+      const inPlay = [...ds.heroes.map((h) => h.sheet), ...ds.creatures, ...sw.fighters];
+      return { ...command, seated, cast: inPlay.map((w) => w.name) };
     }
     // The same clock the room stamps envelopes with, so the window is measured on one clock; and
     // for `/undo <who>`, whose change, found the way a GM's /play finds a player.

@@ -18,7 +18,7 @@ export const showsWidth = (shows: ReadonlyArray<Panel>): number =>
  * One dim row under the feed: what the keys do now, or the Tab candidates with the current one lit.
  * A `lead` (what the map's highlight means) goes first, on the reach tint, so it is the legend too.
  * The panels this seat has hidden end the row (`· show ¹ band ³ feed`), each shown again by a
- * click, while the mouse is on.
+ * click, while the mouse is on. On a seat one row tall it gives that row to the input line.
  */
 export function HintRow(props: {
   hint: string;
@@ -29,7 +29,7 @@ export function HintRow(props: {
 }) {
   const shows = () => (props.completion === undefined ? (props.shows ?? []) : []);
   return (
-    <box height={1} flexShrink={0} paddingLeft={1} paddingRight={1} flexDirection="row">
+    <box height={1} flexShrink={1} paddingLeft={1} paddingRight={1} flexDirection="row">
       <text wrapMode="none" truncate flexShrink={1} minWidth={0}>
         <Show
           when={props.completion}

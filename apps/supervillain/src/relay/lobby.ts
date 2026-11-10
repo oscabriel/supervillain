@@ -3,7 +3,7 @@
 // title in MEKMODE Text between a hero and a villain from MEKMODE Dings, then framed panes in the
 // table's style: the open tables that know the player's key, numbered, with the pick marked, and
 // who the relay takes them for. Everything shown is what the relay knows: the room's name, how many
-// are seated there, the key and the terminal. server.ts redraws it on each key and resize.
+// are seated there, the key and the terminal. server.ts redraws it when a key or resize changes it.
 import { DINGS_ATLAS } from "../table/atlas/dings.ts";
 import { TEXT_ATLAS } from "../table/atlas/text.ts";
 import { color } from "../table/theme.ts";
@@ -303,18 +303,32 @@ function layout(screen: LobbyScreen, cols: number, rows: number) {
 const rgb = (hex: string) =>
   [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16)).join(";");
 
-/** A row as ANSI: each segment in its colours, bold where it is, then reset. */
-const ansi = (r: Row): string =>
-  r
-    .map((s) => {
-      const codes = [
-        ...(s.bold ? ["1"] : []),
-        ...(s.fg === undefined ? [] : [`38;2;${rgb(s.fg)}`]),
-        ...(s.bg === undefined ? [] : [`48;2;${rgb(s.bg)}`]),
-      ];
-      return codes.length === 0 ? s.text : `\x1b[${codes.join(";")}m${s.text}\x1b[0m`;
-    })
-    .join("");
+/**
+ * A row as ANSI: colours and bold set only where they change, then reset. The title is a segment a
+ * cell, so setting each one's colour made a frame several times the text it shows. Blank cells
+ * show no foreground, so they keep whatever is set, unless it has a background.
+ */
+const ansi = (r: Row): string => {
+  let out = "";
+  let style = "";
+  let shaded = false;
+  for (const s of r) {
+    if (s.bg === undefined && !shaded && s.text.trim() === "") {
+      out += s.text;
+      continue;
+    }
+    const next = [
+      ...(s.bold ? ["1"] : []),
+      ...(s.fg === undefined ? [] : [`38;2;${rgb(s.fg)}`]),
+      ...(s.bg === undefined ? [] : [`48;2;${rgb(s.bg)}`]),
+    ].join(";");
+    if (next !== style) out += `\x1b[0${next === "" ? "" : `;${next}`}m`;
+    style = next;
+    shaded = s.bg !== undefined;
+    out += s.text;
+  }
+  return style === "" ? out : `${out}\x1b[0m`;
+};
 
 /**
  * The lobby as one frame for a `cols` by `rows` terminal: the screen cleared, every row from the

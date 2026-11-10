@@ -237,6 +237,27 @@ export const IMP: StatBlock = {
   abilities: [],
 };
 
+/** Runs one typed line through the command registry, as a seat would, and returns any refusal. */
+export function type(
+  t: Table,
+  actor: string,
+  line: string,
+  dice = fixedDice(),
+): string | undefined {
+  const [, name = "", args = ""] = /^\/(\S+)\s*(.*)$/.exec(line) ?? [];
+  const spec = table.commands.find((c) => c.name === name);
+  if (spec === undefined) throw new Error(`no command /${name}`);
+  const command = spec.parse(args);
+  if ("refusal" in command) return command.refusal;
+  return t.submit(actor, command, dice);
+}
+
+/** Like `type`, but fails the test on a refusal. */
+export function ok(t: Table, actor: string, line: string, dice = fixedDice()): void {
+  const refusal = type(t, actor, line, dice);
+  if (refusal !== undefined) throw new Error(`refused: ${refusal}`);
+}
+
 /** A party of Vex (played by Alice) and Kor, as the GM sets it up. */
 export function party(): Table {
   const t = new Table();

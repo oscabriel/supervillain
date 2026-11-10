@@ -268,7 +268,8 @@ export function mapLayout(map: MapView, width: number, height: number, focus?: F
   const crowded = () => {
     let best: { at: Focus; seen: number } | undefined;
     for (const t of [...living].sort((a, b) => rank(b) - rank(a))) {
-      const seen = living.filter((u) => inView(viewAt(t), u)).length;
+      const view = viewAt(t);
+      const seen = living.filter((u) => inView(view, u)).length;
       if (best === undefined || seen > best.seen) best = { at: t, seen };
     }
     return best?.at;

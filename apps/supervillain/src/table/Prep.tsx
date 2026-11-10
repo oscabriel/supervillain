@@ -5,7 +5,7 @@ import {
   NativeImage,
   type ScrollBoxRenderable,
 } from "@opentui/core";
-import { createSignal, For, type JSX, onCleanup, Show } from "solid-js";
+import { createSignal, For, Index, type JSX, onCleanup, Show } from "solid-js";
 import { DINGS_ATLAS } from "./atlas/dings.ts";
 import { boxClick, wheel } from "./mouse.ts";
 import { fittedTitle } from "./panels.ts";
@@ -13,7 +13,7 @@ import { Canvas, figureOf, SIDES, tileFor } from "./picture.ts";
 import { useCellPixels } from "./PictureMap.tsx";
 import { figureText, type PrepArmed, type PrepNext } from "./prep.ts";
 import { color } from "./theme.ts";
-import type { PrepFigure, PrepView } from "./view.ts";
+import type { PrepFigure, PrepItem, PrepView } from "./view.ts";
 
 /** The titles the panel's border takes, longest first: the first that fits is drawn. */
 const TITLES = [" GM prep ", " prep "];
@@ -25,10 +25,13 @@ const PLAY = ["█▄  ", "███▄", "███▀", "█▀  "];
 /** The rows under the steps for what is next, as tall as its picture and as Fight. */
 const SLOT_ROWS = 4;
 
-/** A left click runs `fn`, and goes no further than this piece: a chip's row never sees it. */
+/**
+ * A left click runs `fn`, the innermost piece's alone: a chip's row skips a click its chip took.
+ * The click still goes on up, so the App sees every click, as it calls off the GM's Ctrl-C.
+ */
 const left = (fn: () => void) => (event: MouseEvent) => {
-  if (event.button !== MouseButton.LEFT) return;
-  event.stopPropagation();
+  if (event.button !== MouseButton.LEFT || event.defaultPrevented) return;
+  event.preventDefault();
   fn();
 };
 /** `s` in `n` columns, cut with `…`. */
@@ -66,7 +69,7 @@ export function Prep(props: {
   /** Sends each line, one after another. */
   onAll: (lines: ReadonlyArray<string>) => void;
   onArm: (armed: PrepArmed | undefined) => void;
-  onCount: (section: number, index: number, by: 1 | -1) => void;
+  onCount: (item: PrepItem, by: 1 | -1) => void;
   onStart: (line: string) => void;
   onTitle: () => void;
   ref?: (el: ScrollBoxRenderable) => void;
@@ -101,7 +104,7 @@ export function Prep(props: {
     ]);
     const glyph = DINGS_ATLAS[figureOf(figure)];
     c.glyph(glyph, Math.floor((w - 8 * scale) / 2), Math.floor((h - 12 * scale) / 2), scale, tone);
-    const made = NativeImage.fromRgba(c.pixels, c.width, c.height);
+    const made = NativeImage.decode(c.png());
     images.set(key, made);
     return made;
   };
@@ -359,31 +362,29 @@ export function Prep(props: {
           </For>
         </Show>
 
-        <For each={props.view.sections}>
-          {(section, s) => (
-            <Show when={section.items.length > 0 || section.note !== undefined}>
-              {heading(section.title)}
-              <Show when={section.all}>
+        <Index each={props.view.sections}>
+          {(section) => (
+            <Show when={section().items.length > 0 || section().note !== undefined}>
+              {heading(section().title)}
+              <Show when={section().all}>
                 {(all) => (
                   <box flexDirection="row" height={1} flexShrink={0}>
                     {chip("+ all", () => props.onAll(all()), color.heroes)}
                   </box>
                 )}
               </Show>
-              <Show when={section.note}>
+              <Show when={section().note}>
                 {(note) => (
                   <text fg={color.dim} wrapMode="none">
                     {fit(note(), inner())}
                   </text>
                 )}
               </Show>
-              <For each={section.items}>
-                {(item, i) => {
+              <For each={section().items}>
+                {(item) => {
                   const counted = () => {
                     const a = props.armed;
-                    return a?.kind === "count" && a.section === s() && a.index === i()
-                      ? a.n
-                      : undefined;
+                    return a?.kind === "count" && a.line === item.line ? a.n : undefined;
                   };
                   const figure = item.figure;
                   if (figure === undefined)
@@ -403,10 +404,13 @@ export function Prep(props: {
                       dim: true,
                       onClick: () => {
                         if (item.kind === "fill") return props.onFill(item.line);
-                        // Who joins goes next, at once; a refusal puts them down again.
+                        // Who joins goes next, at once; a refusal puts them down again, unless
+                        // something else was put up meanwhile.
                         props.onArm({ kind: "token", id: figure.id });
                         void props.onSend(item.line).then((refused) => {
-                          if (refused !== undefined) props.onArm(undefined);
+                          const a = props.armed;
+                          if (refused !== undefined && a?.kind === "token" && a.id === figure.id)
+                            props.onArm(undefined);
                         });
                       },
                     });
@@ -421,10 +425,10 @@ export function Prep(props: {
                       ) : (
                         <span style={{ fg: color.director }}>{item.note ?? ""}</span>
                       ),
-                    onClick: () => props.onCount(s(), i(), 1),
+                    onClick: () => props.onCount(item, 1),
                     extra: () => (
                       <Show when={counted() !== undefined}>
-                        {chip("−", () => props.onCount(s(), i(), -1), color.notice)}
+                        {chip("−", () => props.onCount(item, -1), color.notice)}
                       </Show>
                     ),
                   });
@@ -432,7 +436,7 @@ export function Prep(props: {
               </For>
             </Show>
           )}
-        </For>
+        </Index>
       </scrollbox>
     </box>
   );

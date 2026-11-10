@@ -183,7 +183,9 @@ const LONG_REACH = 40;
  * auras 3, the last two as magic. A mainhand the table doesn't know reaches like a sword.
  */
 export function reachOf(mainhand: string): Reach {
-  const weapon = WEAPONS[mainhand.toLowerCase()] ?? { delivery: "melee", reach: 36 };
+  const kind = mainhand.toLowerCase();
+  const known = Object.hasOwn(WEAPONS, kind) ? WEAPONS[kind] : undefined;
+  const weapon = known ?? { delivery: "melee", reach: 36 };
   switch (weapon.delivery) {
     case "projectile":
       return { delivery: "projectile", squares: 10, magic: false };

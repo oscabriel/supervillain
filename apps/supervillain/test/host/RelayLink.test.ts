@@ -200,6 +200,10 @@ const advance = (duration: Duration.Input) => Effect.andThen(moment, TestClock.a
 
 const isState = (state: RelayStatus["state"]) => (s: RelayStatus) => s.state === state;
 
+/** What the GM is told of a link that closed before the test's clock moved: it never held. */
+const CLOSED_AFTER_LOGIN =
+  "the link dropped within a second of login; if it keeps on, the relay's log says why";
+
 describe("RelayLink", () => {
   effect(
     "links, serves the relay's players, pins its key on first use and refuses another for good",
@@ -227,7 +231,7 @@ describe("RelayLink", () => {
 
           // The relay's client went, and the link with it: the host redials after a second.
           yield* waitFor("the drop", () => status().state === "connecting");
-          expect(status()).toEqual({ state: "connecting", lastError: "the link dropped" });
+          expect(status()).toEqual({ state: "connecting", lastError: CLOSED_AFTER_LOGIN });
           yield* advance("1 second");
           yield* waitFor("the redial", () => relay.links.length === 2);
 
@@ -385,6 +389,44 @@ describe("RelayLink", () => {
           expect(relay.hellos).toHaveLength(3);
           yield* advance("1 millis");
           yield* waitFor("the third redial", () => relay.hellos.length === 4);
+        }),
+      ),
+    30_000,
+  );
+
+  effect(
+    "a relay that closes each link right after login is backed off from; a link that held starts over",
+    () =>
+      controlled(
+        Effect.gen(function* () {
+          const relayKey = yield* clientKey(yield* tempDir, "relay");
+          const relay = yield* fakeRelay();
+          const { status } = yield* linked(relay.port);
+          // Three links that end as soon as the relay has logged in: no time passes on them.
+          for (const [n, before] of [
+            [1, "999 millis"],
+            [2, "1999 millis"],
+            [3, "3999 millis"],
+          ] as const) {
+            yield* waitFor("the hello", () => relay.links.length === n);
+            expect((yield* relay.exec(relayKey, "who")).exitCode).toBe(0);
+            yield* waitFor("the drop", () => isState("connecting")(status()));
+            expect(status()).toEqual({ state: "connecting", lastError: CLOSED_AFTER_LOGIN });
+            yield* advance(before);
+            yield* moment;
+            expect(relay.hellos).toHaveLength(n);
+            yield* advance("1 millis");
+          }
+          yield* waitFor("the fourth hello", () => relay.links.length === 4);
+          // One that holds for a second is a link: when it drops, the redials start from 1 s again.
+          yield* relay.hold(relayKey);
+          yield* waitFor("the login", () => isState("connected")(status()));
+          yield* advance("1 second");
+          relay.links[3]!.destroy();
+          yield* waitFor("the drop", () => isState("connecting")(status()));
+          expect(status()).toEqual({ state: "connecting", lastError: "the link dropped" });
+          yield* advance("1 second");
+          yield* waitFor("the redial", () => relay.links.length === 5);
         }),
       ),
     30_000,

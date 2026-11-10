@@ -215,13 +215,23 @@ function join(
   );
 }
 
-function play(slice: SetState, actor: string, who: string): Decision {
+/**
+ * A player takes a party member. One held by a guest who has left is free: a guest is a new actor
+ * every time they connect, so they'd never get it back.
+ */
+function play(
+  slice: SetState,
+  actor: string,
+  { who, seated }: Extract<SetCommand, { type: "set-play" }>,
+): Decision {
   if (actor === GM) return refuse("The GM plays every fighter already.");
   const f = resolveFighter(slice, who);
   if ("refusal" in f) return f;
   if (f.side !== "party") return refuse(`${f.name} fights for the foes.`);
   if (f.player === actor) return refuse(`You play ${f.name} already.`);
-  if (f.player !== undefined) return refuse(`Someone else plays ${f.name}.`);
+  const holder = f.player;
+  const left = holder?.startsWith("guest:") && seated !== undefined && !seated.includes(holder);
+  if (holder !== undefined && !left) return refuse(`Someone else plays ${f.name}.`);
   const own = fighterOf(slice, actor);
   if (own !== undefined) return refuse(`You play ${own.name}; /unplay first.`);
   return decided(event("sw.fighter-claimed", { id: f.id, player: actor }));
@@ -290,7 +300,8 @@ function move(
   const path = cheapestPath(map.terrain, f.at, command.to, mover, occupants(slice, f.id));
   if (path === undefined) return refuse(`${f.name} can't get to ${named}.`);
   if (acting && actor !== GM) {
-    const left = speedOf(f.character) - fight!.turn!.moved;
+    // The GM's moves may have taken it past its speed.
+    const left = Math.max(0, speedOf(f.character) - fight!.turn!.moved);
     if (path.cost > left)
       return refuse(`${named} is ${plural(path.cost, "square")} away; ${f.name} has ${left} left.`);
   }
@@ -331,10 +342,16 @@ function attack(
     ...outcome,
     ...(apart !== undefined && { apart }),
   });
-  const standing = living(slice, t.side).filter((f) => f.id !== t.id || outcome.damage < t.health);
-  return standing.length > 0
+  const won = winner(slice, outcome.damage < t.health ? undefined : t.id);
+  return won === undefined
     ? decided(attacked)
-    : decided(attacked, event("sw.fight-ended", { winner: a.side }));
+    : decided(attacked, event("sw.fight-ended", { winner: won }));
+}
+
+/** The side that has won: the other has nobody standing, counting `felled` as down. */
+function winner(slice: SetState, felled?: string): SetSide | undefined {
+  const stands = (side: SetSide) => living(slice, side).some((f) => f.id !== felled);
+  return !stands("foes") ? "party" : !stands("party") ? "foes" : undefined;
 }
 
 function done(slice: SetState, actor: string): Decision {
@@ -342,7 +359,10 @@ function done(slice: SetState, actor: string): Decision {
   if (fight?.turn === undefined) return refuse(NO_FIGHT);
   const f = findFighter(slice, fight.turn.id)!;
   if (!controls(actor, f)) return refuse(`It's ${f.name}'s turn, not yours to end.`);
-  const next = nextTurn(slice, ended(fight, f));
+  // A side may have been left with nobody standing by an undo: then the fight is over.
+  const won = winner(slice);
+  const next: NewEvent | undefined =
+    won === undefined ? nextTurn(slice, ended(fight, f)) : event("sw.fight-ended", { winner: won });
   return decided(
     event("sw.turn-ended", { id: f.id, rested: !fight.turn.attacked }),
     ...(next === undefined ? [] : [next]),
@@ -357,7 +377,7 @@ export function decide(slice: SetState, actor: string, command: SetCommand, dice
     case "set-foe":
       return join(slice, command);
     case "set-play":
-      return play(slice, actor, command.who);
+      return play(slice, actor, command);
     case "set-unplay":
       return unplay(slice, actor, command.who);
     case "set-place":
@@ -548,6 +568,9 @@ const appliers: { readonly [T in EventType]: (slice: SetState, envelope: Envelop
     if (cost < distance(f.at, at)) bad(envelope, "costs less than the squares it crosses");
     standOn(slice, envelope, id, at);
     const fight = slice.fight;
+    // A player's move is its turn's: folded again under another's turn, an undo would hand out a second.
+    if (fight !== undefined && fight.turn?.id !== id && envelope.actor !== GM)
+      bad(envelope, `moves '${id}' when it isn't its turn`);
     const turn =
       fight?.turn?.id === id ? { ...fight.turn, moved: fight.turn.moved + cost } : undefined;
     return {
@@ -587,7 +610,7 @@ const appliers: { readonly [T in EventType]: (slice: SetState, envelope: Envelop
     )
       bad(envelope, "doesn't recover stamina by the clock");
     const fighters = slice.fighters.map((x) =>
-      stamina[x.id] === undefined ? x : { ...x, stamina: stamina[x.id]! },
+      Object.hasOwn(stamina, x.id) ? { ...x, stamina: stamina[x.id]! } : x,
     );
     const now = Math.floor(stamina[id]!);
     const tired = now < ATTACK_STAMINA ? " Too tired to attack: /done rests." : "";
@@ -617,6 +640,12 @@ const appliers: { readonly [T in EventType]: (slice: SetState, envelope: Envelop
     const t = fighter(slice, envelope, p.target);
     if (isDown(t) || t.side === a.side) bad(envelope, "attacks someone who isn't a standing foe");
     if (a.stamina < ATTACK_STAMINA) bad(envelope, "attacks without the stamina for it");
+    if (
+      a.at !== undefined &&
+      t.at !== undefined &&
+      distance(a.at, t.at) > reachOf(a.character.mainhand).squares
+    )
+      bad(envelope, "attacks someone out of reach");
     if (
       (p.dodged ? p.landed !== 0 : p.landed < 1) ||
       p.damage !== Math.min(t.health, p.landed) ||

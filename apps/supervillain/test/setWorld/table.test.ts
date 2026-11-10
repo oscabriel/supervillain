@@ -108,7 +108,7 @@ describe("what a set.world seat sees", () => {
     const state = midFight().state;
     expect(bandOf(state, ALICE, "draw-steel")).toBeUndefined();
     const band = bandOf(state, ALICE, "set-world")!;
-    expect(band.title).toBe(" set.world · 0.93 s · turn 1 ");
+    expect(band.title).toBe(" set.world · 0.93 s · turn 1: Ada ");
     expect(
       band.combatants.map((c) => [c.name, c.side, c.stamina, c.max, c.acting, c.mine, c.mark]),
     ).toEqual([
@@ -119,6 +119,19 @@ describe("what a set.world seat sees", () => {
     // Another seat sees who plays Ada.
     expect(bandOf(state, GM, "set-world")!.combatants[0]!.name).toBe("Ada (Alice)");
     expect(tableLabel(state, "set-world")(ALICE)).toBe("Alice (Ada)");
+  });
+
+  test("a standing party member nobody plays is free to take; a foe never is", () => {
+    const table = new Table();
+    table.run(GM, { type: "set-recruit", name: "Ada", character: recorded(101) });
+    table.run(GM, { type: "set-foe", name: "Grub", character: recorded(501) });
+    const free = () => bandOf(table.state, ALICE, "set-world")!.combatants.map((c) => c.free);
+    // Outside a fight the band is the party alone.
+    expect(free()).toEqual([true]);
+    table.run(GM, { type: "set-start" });
+    expect(free()).toEqual([true, undefined]);
+    table.run(ALICE, { type: "set-play", who: "ada" });
+    expect(free()).toEqual([undefined, undefined]);
   });
 
   test("a player is labelled by what they play in the table's ruleset, never the other's", () => {

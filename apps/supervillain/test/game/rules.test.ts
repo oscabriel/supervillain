@@ -255,17 +255,39 @@ describe("names", () => {
     expect(named("R2-D2 \u00e9t\u00e9")).toBe("R2-D2 \u00e9t\u00e9");
   });
 
-  test("a name can't carry the table's own markers", () => {
-    expect(named("Bob (GM)")).toBe('"Bob (GM)" would read like a marker; pick another name.');
-    expect(named("Bob (you)")).toBe('"Bob (you)" would read like a marker; pick another name.');
+  test("a name can't carry the table's own markers, brackets or the feed's marks", () => {
+    for (const marked of ["Bob (GM)", "Bob (you)", "Alice (Vex)", "Alice [GM]", "↶ GM", "a → b"])
+      expect(named(marked)).toBe(`"${marked}" would read like a marker; pick another name.`);
   });
 
   test("a name someone else has is refused, whatever its case", () => {
     const table = new Table();
     table.submit(ALICE, { type: "name", name: "Alice" });
-    expect(table.submit(BOB, { type: "name", name: "aLiCe" })).toBe(
-      '"aLiCe" is taken; pick another name.',
+    table.submit(GUEST, { type: "name", name: "ilsa" });
+    for (const [other, seated] of [
+      ["aLiCe", []],
+      ["ALICE", []],
+      ["Ilsa", [GUEST]],
+    ] as const)
+      expect(table.submit(BOB, { type: "name", name: other, seated })).toBe(
+        `"${other}" is taken; pick another name.`,
+      );
+  });
+
+  test("the name of a hero, creature or fighter in play is taken", () => {
+    const table = new Table();
+    expect(table.submit(BOB, { type: "name", name: "kor", cast: ["Kor", "Goblin 1"] })).toBe(
+      '"kor" is taken; pick another name.',
     );
+    expect(table.submit(BOB, { type: "name", name: "Goblin l", cast: ["Kor", "Goblin 1"] })).toBe(
+      '"Goblin l" is taken; pick another name.',
+    );
+    expect(table.submit(BOB, { type: "name", name: "Korin", cast: ["Kor"] })).toBeUndefined();
+  });
+
+  test("a stored name the rules would refuse today still replays", () => {
+    const log = [env(1, "core.name-set", { name: "Alice (Vex)" }, ALICE)];
+    expect(labelOf(fold(rules, log, { strict: true }).state)(ALICE)).toBe("Alice (Vex)");
   });
 
   test("another key's default label is taken, even after they pick a name", () => {

@@ -1,11 +1,11 @@
 import type { Decision, Dice, NewEvent } from "@supervillain/engine";
 import { parseNotation } from "../dice.ts";
-import { clearedAtEnd, forceMove, loadMap, measure, move, place } from "./board.ts";
+import { clearedAtEnd, forceMove, loadMap, measure, move, occupants, place } from "./board.ts";
 import { GM, type Refused, type Shared } from "../module.ts";
 import { cleanText, hasControls, quote } from "../text.ts";
-import { type DsCommand, SQUAD_SIZE } from "./commands.ts";
+import { type DsCommand, splitRoll, SQUAD_SIZE } from "./commands.ts";
 import { event } from "./events.ts";
-import { distance } from "./map.ts";
+import { distance, formatSquare } from "./map.ts";
 import { modifiedDamage, powerRoll } from "./math.ts";
 import { decodeHeroSheet, decodeStatBlock, ID } from "./schema.ts";
 import {
@@ -17,6 +17,7 @@ import {
   tierDamage,
 } from "./sheets.ts";
 import {
+  abilitiesOf,
   capitalized,
   CHARACTERISTICS,
   conditionsOf,
@@ -64,7 +65,7 @@ function changeable(slice: DrawSteelState, actor: string, typed: string): Who | 
   return who;
 }
 
-/** A hero the actor may change, or why not. */
+/** A living hero the actor may change, or why not. */
 function changeableHero(
   slice: DrawSteelState,
   actor: string,
@@ -75,6 +76,7 @@ function changeableHero(
   if ("refusal" in who) return who;
   if (who.kind !== "hero") return refuse(`Only heroes have ${what}; ${who.name} is a creature.`);
   if (!controls(actor, who)) return refuse(OWN);
+  if (isDead(who)) return refuse(`${who.name} is dead.`);
   return who.hero;
 }
 
@@ -104,6 +106,17 @@ function addHero(slice: DrawSteelState, command: Extract<DsCommand, { type: "her
   if ("refusal" in sheet) return sheet;
   if (slice.creatures.some((c) => c.id === sheet.id))
     return refuse(`'${sheet.id}' is already a creature's id.`);
+  // A reload keeps the hero's Stamina, so the new max may not move them across death's line.
+  const hero = slice.heroes.find((h) => h.id === sheet.id);
+  if (hero !== undefined) {
+    const dead = heroHealth({ ...hero, sheet }) === "dead";
+    if (dead !== (heroHealth(hero) === "dead"))
+      return refuse(
+        dead
+          ? `That sheet's ${sheet.stamina} Stamina would kill ${sheet.name} at ${hero.stamina}; /heal them first.`
+          : `${hero.sheet.name} is dead, and that sheet's ${sheet.stamina} Stamina would raise them; /heal them first.`,
+      );
+  }
   return decided(event("ds.hero-joined", { sheet }));
 }
 
@@ -144,9 +157,10 @@ function addCreatures(
     const numberedAlready = [...taken].some(
       (id) => id.startsWith(`${baseId}-`) && /^\d+$/.test(id.slice(baseId.length + 1)),
     );
+    // The first, added alone, keeps the bare name, which a stored event can't change, and is 1.
     if (command.count === 1 && !taken.has(baseId) && !numberedAlready) claim(baseId, baseName);
     else
-      for (let n = 1; creatures.length < command.count; n++)
+      for (let n = taken.has(baseId) ? 2 : 1; creatures.length < command.count; n++)
         if (!taken.has(`${baseId}-${n}`)) claim(`${baseId}-${n}`, `${baseName} ${n}`);
   }
   return decided(event("ds.creatures-added", { block, creatures }));
@@ -325,8 +339,7 @@ function turn(
     if (combat.acting !== undefined)
       return refuse(`${findWho(slice, combat.acting)?.name ?? combat.acting} is still acting.`);
     if (combat.first === undefined) return refuse("Nobody has said who goes first yet (/first).");
-    const side = over ? combat.first : nextSide(slice);
-    if (side !== "heroes") return refuse("It's the Director's turn to pick a creature.");
+    if (nextSide(slice) !== "heroes") return refuse("It's the Director's turn to pick a creature.");
   }
   if (combat.acted.includes(who.id) && !over)
     return refuse(`${who.name} has already acted this round.`);
@@ -437,18 +450,24 @@ function powerRollFor(
   const who = resolve(slice, command.who);
   if ("refusal" in who) return who;
   if (!controls(actor, who)) return refuse("You can only roll for your own hero.");
+  if (isDead(who)) return refuse(`${who.name} is dead.`);
   const scores = characteristicsOf(slice, who);
-  const aimed = targetsOf(slice, who, command.targets ?? []);
+  const abilities = abilitiesOf(slice, who);
+  const typed =
+    command.ability === undefined
+      ? undefined
+      : splitRoll(
+          command.ability,
+          abilities.map((a) => a.name),
+        );
+  if (typed !== undefined && "refusal" in typed) return typed;
+  const aimed = targetsOf(slice, who, [...(command.targets ?? []), ...(typed?.targets ?? [])]);
   if ("refusal" in aimed) return aimed;
   let bonus = command.bonus ?? 0;
   let named: { ability: string } | { characteristic: Characteristic } | undefined;
   let chosen: Ability | undefined;
   let bleeds = false;
-  if (command.ability !== undefined) {
-    const abilities =
-      who.kind === "hero"
-        ? who.hero.sheet.abilities
-        : (slice.blocks[who.creature.block]?.abilities ?? []);
+  if (typed !== undefined) {
     type Choice =
       | { readonly kind: "ability"; readonly name: string; readonly index: number }
       | { readonly kind: "characteristic"; readonly name: Characteristic };
@@ -460,8 +479,8 @@ function powerRollFor(
       choices,
       (c) => [c.name],
       (c) => (c.kind === "ability" ? c.name : capitalized(c.name)),
-      command.ability,
-      `${who.name} has no ability or characteristic called '${quote(command.ability)}'.`,
+      typed.roll,
+      `${who.name} has no ability or characteristic called '${quote(typed.roll)}'.`,
     );
     if ("refusal" in choice) return choice;
     if (choice.kind === "characteristic") {
@@ -483,8 +502,8 @@ function powerRollFor(
   const short = cost === undefined ? undefined : shortOf(slice, who, cost);
   if (short !== undefined) return refuse(`${short}; ${chosen?.name} costs ${cost}.`);
   const pair = [roll(dice, 10), roll(dice, 10)] as const;
-  const edges = Math.min(command.edges, 2);
-  const banes = Math.min(command.banes, 2);
+  const edges = Math.min(command.edges + (typed?.edges ?? 0), 2);
+  const banes = Math.min(command.banes + (typed?.banes ?? 0), 2);
   const { total, tier } = powerRoll(pair, bonus, edges, banes);
   const hurt = tierDamage(chosen?.[`tier${tier}`], scores);
   return decided(
@@ -616,6 +635,16 @@ function heal(
     return refuse("Minions can't regain Stamina.");
   // The GM may raise the dead: until undo arrives, it's how a slip gets fixed.
   if (isDead(who) && actor !== GM) return refuse(`${who.name} is dead.`);
+  // The dead take up no space, so someone may stand there now: nobody is raised under them.
+  const board = slice.map;
+  const at = board?.tokens[who.id];
+  if (board !== undefined && at !== undefined && isDead(who)) {
+    const there = occupants(slice, board, who.id)(at);
+    if (there !== undefined)
+      return refuse(
+        `${findWho(slice, there.id)?.name} stands where ${who.name} lies, at ${formatSquare(at)}; /move them first.`,
+      );
+  }
   const { stamina, max } = staminaOf(who);
   if (stamina >= max) return refuse(`${who.name} is already at full Stamina.`);
   return decided(
@@ -647,10 +676,8 @@ function recover(
   const hero = changeableHero(slice, actor, command.who, "Recoveries");
   if ("refusal" in hero) return hero;
   const name = hero.sheet.name;
-  const health = heroHealth(hero);
-  if (health === "dead") return refuse(`${name} is dead.`);
   // Catch Breath is a combat maneuver; out of combat a dying hero spends Recoveries as usual.
-  if (health === "dying" && !command.ally && slice.combat.active)
+  if (heroHealth(hero) === "dying" && !command.ally && slice.combat.active)
     return refuse(
       `${name} is dying and can't Catch Breath; /recover ${hero.id} ally if an ally's ability lets them spend one.`,
     );

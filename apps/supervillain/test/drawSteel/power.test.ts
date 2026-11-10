@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { HeroSheet, StatBlock } from "../../src/game/drawSteel/sheets.ts";
+import { type HeroSheet, type StatBlock, tierDamage } from "../../src/game/drawSteel/sheets.ts";
 import {
   ALICE,
   type Command,
@@ -7,9 +7,11 @@ import {
   GM,
   GOBLIN,
   KOR,
+  ok,
   party,
   table,
   Table,
+  type,
   VEX,
 } from "./harness.ts";
 
@@ -323,20 +325,106 @@ describe("power rolls at targets", () => {
   });
 
   test("the command line names targets after 'on', with edges and banes before or after", () => {
-    const spec = table.commands.find((c) => c.name === "pr")!;
-    expect(spec.parse("rook spinning strike edge on goblin b1")).toEqual({
-      type: "pr",
-      who: "rook",
-      ability: "spinning strike",
+    const t = rookTable();
+    ok(t, ALICE, "/pr rook spinning strike edge on warrior kor", fixedDice(5, 5));
+    expect(t.envelopes.at(-3)?.payload).toMatchObject({
+      ability: "Spinning Strike",
       edges: 1,
       banes: 0,
-      targets: ["goblin", "b1"],
+      targets: [{ id: "goblin-warrior" }, { id: "kor" }],
     });
-    expect(spec.parse("rook spin on goblin bane")).toMatchObject({
-      ability: "spin",
+    ok(t, ALICE, "/pr rook spin on warrior bane", fixedDice(5, 5));
+    expect(t.envelopes.at(-2)?.payload).toMatchObject({
       banes: 1,
-      targets: ["goblin"],
+      targets: [{ id: "goblin-warrior" }],
     });
-    expect(spec.parse("rook spin on")).toEqual({ refusal: `Usage: ${spec.usage}` });
+    const spec = table.commands.find((c) => c.name === "pr")!;
+    expect(type(t, ALICE, "/pr rook spin on")).toBe(`Usage: ${spec.usage}`);
+  });
+
+  test("an ability's whole name wins over the edge, bane or on in it, as the mouse and Tab type it", () => {
+    const t = new Table();
+    const tiers = { tier1: "3 damage", tier2: "5 damage", tier3: "7 damage" } as const;
+    const names = ["Cutting Edge", "Wyrm's Bane", "Stand On Guard", "Hold On"];
+    const abilities = names.map((name) => ({
+      name,
+      characteristics: ["might" as const],
+      ...tiers,
+    }));
+    t.run(GM, { type: "hero", hero: "vex", sheet: { ...VEX, abilities } });
+    t.run(GM, { type: "add", monster: "goblin-warrior", count: 1, sheet: GOBLIN });
+    const rolled = () => t.envelopes.findLast((e) => e.type === "ds.power-rolled")?.payload;
+    ok(t, GM, "/pr vex Cutting Edge", fixedDice(5, 5));
+    expect(rolled()).toMatchObject({ ability: "Cutting Edge", edges: 0, banes: 0 });
+    ok(t, GM, "/pr vex wyrm's bane", fixedDice(5, 5));
+    expect(rolled()).toMatchObject({ ability: "Wyrm's Bane", edges: 0, banes: 0 });
+    ok(t, GM, "/pr vex Stand On Guard", fixedDice(5, 5));
+    expect(rolled()).toMatchObject({ ability: "Stand On Guard" });
+    expect(rolled()).not.toHaveProperty("targets");
+    ok(t, GM, "/pr vex Hold On", fixedDice(5, 5));
+    expect(rolled()).toMatchObject({ ability: "Hold On" });
+    // What follows the whole name is read as usual, and a start of the name still works.
+    ok(t, GM, "/pr vex Hold On edge on goblin", fixedDice(5, 5));
+    expect(rolled()).toMatchObject({
+      ability: "Hold On",
+      edges: 1,
+      targets: [{ id: "goblin-warrior" }],
+    });
+    ok(t, GM, "/pr vex cutting edge edge", fixedDice(5, 5));
+    expect(rolled()).toMatchObject({ ability: "Cutting Edge", edges: 1 });
+    ok(t, GM, "/pr vex cut bane on goblin", fixedDice(5, 5));
+    expect(rolled()).toMatchObject({
+      ability: "Cutting Edge",
+      banes: 1,
+      targets: [{ id: "goblin-warrior" }],
+    });
+    ok(t, GM, "/pr vex hold on goblin", fixedDice(5, 5));
+    expect(rolled()).toMatchObject({ ability: "Hold On", targets: [{ id: "goblin-warrior" }] });
+  });
+});
+
+describe("a tier's damage, as printed", () => {
+  const scores = { might: 2, agility: 3, reason: -1, intuition: 0, presence: 1 };
+
+  test("a number plus the best of the characteristics it names, in either case, never below 0", () => {
+    expect(tierDamage("6 + M damage", scores)).toEqual({ amount: 8 });
+    expect(tierDamage("6 + m damage", scores)).toEqual({ amount: 8 });
+    expect(tierDamage("2 + M or A damage", scores)).toEqual({ amount: 5 });
+    expect(tierDamage("5 + M, A, or P damage", scores)).toEqual({ amount: 8 });
+    expect(tierDamage("3 + R psychic damage; slide 2", scores)).toEqual({
+      amount: 2,
+      type: "psychic",
+    });
+    expect(tierDamage("0 + R damage", scores)).toEqual({ amount: 0 });
+    expect(tierDamage("Slide 2", scores)).toBeUndefined();
+  });
+
+  test("dice aren't read, so their damage is left to the table", () => {
+    expect(tierDamage("1d6 + 2 damage", scores)).toBeUndefined();
+    expect(tierDamage("2d6 fire damage", scores)).toBeUndefined();
+  });
+
+  test("a hero's free strike deals the better of Might or Agility, and the feed shows it", () => {
+    const t = new Table();
+    const strike = {
+      name: "Melee Free Strike",
+      kind: "free strike",
+      characteristics: ["might", "agility"] as const,
+      tier1: "2 + M or A damage",
+      tier2: "5 + M or A damage",
+      tier3: "7 + M or A damage",
+    };
+    const characteristics = { ...VEX.characteristics, agility: 3 };
+    t.run(GM, {
+      type: "hero",
+      hero: "vex",
+      sheet: { ...VEX, characteristics, abilities: [strike] },
+    });
+    t.run(GM, { type: "add", monster: "goblin-warrior", count: 1, sheet: GOBLIN });
+    ok(t, GM, "/pr vex melee on goblin", fixedDice(5, 5));
+    expect(t.lastFeed(2)).toEqual([
+      "Vex uses Melee Free Strike on Goblin Warrior: [5, 5] +3 = 13 · tier 2 — 5 + M or A (3) = 8 damage",
+      "Goblin Warrior takes 8 damage → 7/15 · winded",
+    ]);
   });
 });

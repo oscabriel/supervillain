@@ -1,4 +1,4 @@
-import { createCliRenderer } from "@opentui/core";
+import { CliRenderEvents, type CliRendererErrorEvent, createCliRenderer } from "@opentui/core";
 import type { View } from "@supervillain/engine";
 import { Deferred, Effect, Exit } from "effect";
 import { GM } from "../game/index.ts";
@@ -18,8 +18,8 @@ export interface LocalSeatOptions {
 }
 
 /**
- * The GM's own terminal: the same App, as actor `gm`. Completes when the GM leaves (Ctrl-C or
- * /quit), after restoring the terminal. Logs must not reach this terminal while it runs.
+ * The GM's own terminal: the same App, as actor `gm`. Completes when the GM leaves (Ctrl-C, /quit,
+ * or their terminal going away), after restoring the terminal. Logs must not reach this terminal while it runs.
  */
 export const localSeat = (options: LocalSeatOptions): Effect.Effect<void, never, TableServices> =>
   Effect.gen(function* () {
@@ -33,6 +33,8 @@ export const localSeat = (options: LocalSeatOptions): Effect.Effect<void, never,
           exitSignals: [],
           enableMouseMovement: false,
           autoFocus: false,
+          // A frame that fails is said in host.log, not in a console drawn over the table.
+          openConsoleOnError: false,
         }),
       ),
       (r) =>
@@ -42,10 +44,21 @@ export const localSeat = (options: LocalSeatOptions): Effect.Effect<void, never,
         }),
     );
     const left = yield* Deferred.make<void>();
+    const leave = () => void Deferred.doneUnsafe(left, Exit.void);
+    // A terminal that goes away takes the renderer with it: the GM has left then, as a player has.
+    renderer.on(CliRenderEvents.DESTROY, leave);
+    const fork = Effect.runForkWith(yield* Effect.context());
+    // A table too small to lay out fails every frame the same way: said once, not for each.
+    let failure = "";
+    renderer.on(CliRenderEvents.RENDER_ERROR, ({ error }: CliRendererErrorEvent) => {
+      if (error.message === failure) return;
+      failure = error.message;
+      void fork(Effect.logError(`seat ${GM}: a frame failed: ${failure}`));
+    });
     const view = yield* openSeat({
       actor: GM,
       room: options.room,
-      leave: () => void Deferred.doneUnsafe(left, Exit.void),
+      leave,
       ...(options.helpFooter === undefined ? {} : { helpFooter: options.helpFooter }),
       ...(options.joinHint === undefined ? {} : { joinHint: options.joinHint }),
       ...(options.joinNote === undefined ? {} : { joinNote: options.joinNote }),

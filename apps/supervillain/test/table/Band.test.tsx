@@ -62,19 +62,27 @@ function bandRows(t: Setup): ReadonlyArray<string> {
   return rows.slice(0, bottom + 1);
 }
 
+/** The first row with `text` below the title, which names whose turn it is. */
 const rowWith = (rows: ReadonlyArray<string>, text: string) =>
-  rows.find((r) => r.includes(text)) ?? "";
+  rows.slice(1).find((r) => r.includes(text)) ?? "";
 
 const party = [vex, spearmen, brakka, ogre, sera, sniper];
 
 describe("in combat", () => {
-  test("at 100x30 the title has the round, the side next, Malice and hero tokens", async () => {
+  test("at 100x30 the title has the round, whose turn it is, Malice and hero tokens", async () => {
     const t = await mount(fight(party), 100, 30);
     const top = bandRows(t)[0];
-    expect(top).toContain("round 2");
-    expect(top).toContain("director next");
-    expect(top).toContain("Malice 5");
-    expect(top).toContain("hero tokens 2");
+    expect(top).toContain("round 2 · Vex's turn · Malice 5 · hero tokens 2");
+    expect(top).not.toContain("next");
+  });
+
+  test("another's hero's turn is named by the hero alone; between turns the side next is", async () => {
+    const theirs = { ...brakka, name: "Brakka (Bob)", acting: true, acted: false };
+    const t = await mount(fight([{ ...vex, acting: false }, theirs]), 100, 30);
+    expect(bandRows(t)[0]).toContain("round 2 · Brakka's turn · Malice 5");
+    setup?.renderer.destroy();
+    const u = await mount(fight([{ ...vex, acting: false }, brakka]), 100, 30);
+    expect(bandRows(u)[0]).toContain("round 2 · director next · Malice 5");
   });
 
   test("at 100x30 each combatant has one row, in turn order, with its meter and numbers", async () => {
@@ -164,8 +172,9 @@ describe("in combat", () => {
   test("the seat's own hero is highlighted: bold, on its own background", async () => {
     const t = await mount(fight(party), 100, 30);
     const spans = t.captureSpans().lines.flatMap((l) => l.spans);
-    const mine = spans.find((s) => s.text.includes("Vex"));
-    const other = spans.find((s) => s.text.includes("Brakka"));
+    // Its name, not the title's "Vex's turn".
+    const mine = spans.find((s) => s.text.startsWith("Vex"));
+    const other = spans.find((s) => s.text.startsWith("Brakka"));
     expect(mine).toBeDefined();
     expect(other).toBeDefined();
     expect((mine?.attributes ?? 0) & TextAttributes.BOLD).toBeTruthy();

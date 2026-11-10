@@ -1,9 +1,10 @@
 import type { CliRenderer } from "@opentui/core";
 import { render } from "@opentui/solid";
 import type { View } from "@supervillain/engine";
-import { Effect, FiberSet, type Scope, Stream } from "effect";
+import { Cause, Effect, FiberSet, type Scope, Stream } from "effect";
 import {
   type Accessor,
+  catchError,
   createComponent,
   createEffect,
   createMemo,
@@ -15,7 +16,6 @@ import {
   actionsOf,
   bandOf,
   completeLine,
-  type FeedLine,
   feedLines,
   GM,
   mapOf,
@@ -26,6 +26,7 @@ import {
 } from "../game/index.ts";
 import { CampaignContent } from "../content/index.ts";
 import { App } from "../table/App.tsx";
+import { kept } from "../table/keep.ts";
 import type { PrepSource, Present, TableView } from "../table/view.ts";
 import { debugText, type Reply, runLine } from "./line.ts";
 import { Presence } from "./Presence.ts";
@@ -62,34 +63,15 @@ const follow = <A>(view: View<A>): Effect.Effect<Accessor<A>, never, Scope.Scope
         Effect.sync(() => {
           // By length, not by value: a view may well change to undefined.
           if (batch.length > 0) set(() => batch[batch.length - 1] as A);
-        }),
+        }).pipe(
+          // Drawing it threw. Say why, and follow on: the next change may well draw.
+          Effect.catchCause((cause) => Effect.logError("a seat couldn't draw a change", cause)),
+        ),
       ),
       Effect.forkScoped,
     );
     return get;
   });
-
-/**
- * Reuses last time's row for every line whose seq, label, kind and text are unchanged. The feed
- * renders rows by identity, so an append adds one row instead of rebuilding up to FEED_LIMIT.
- */
-const keepRows = () => {
-  let previous = new Map<number, FeedLine>();
-  return (lines: ReadonlyArray<FeedLine>): ReadonlyArray<FeedLine> => {
-    const next = new Map<number, FeedLine>();
-    const kept = lines.map((line) => {
-      const old = previous.get(line.seq);
-      const row =
-        old && old.who === line.who && old.kind === line.kind && old.text === line.text
-          ? old
-          : line;
-      next.set(line.seq, row);
-      return row;
-    });
-    previous = next;
-    return kept;
-  };
-};
 
 /** What the App shows for a reply: nothing once the line is in the feed, else the text. */
 const replyText = (reply: Reply): string | undefined =>
@@ -118,7 +100,20 @@ export const openSeat = (
     const alert = options.alert === undefined ? undefined : yield* follow(options.alert);
     // In-flight submits end with the seat.
     const run = yield* FiberSet.makeRuntimePromise<TableServices>();
-    const rows = keepRows();
+    /**
+     * One of the seat's views, projected from the table's state and kept as last time's wherever
+     * it reads the same, so the App draws nothing again for it. One that throws is logged with
+     * why, and the seat shows what it last could until a state it can project.
+     */
+    const projected = <A>(project: () => A, initial: A) =>
+      createMemo<A>((was) => {
+        try {
+          return kept(was, project());
+        } catch (error) {
+          void run(Effect.logError(`seat ${actor}: couldn't project the table`, Cause.die(error)));
+          return was;
+        }
+      }, initial);
     // The prep panel's files, as the GM's seat last read them (when the panel opened).
     const [catalog, setCatalog] = createSignal<PrepCatalog>();
     const reload = () =>
@@ -129,16 +124,17 @@ export const openSeat = (
             onSuccess: (files) => void setCatalog(files),
           }),
         ),
-      );
+        // The seat closed while it read: nothing is left to list them.
+      ).catch(() => undefined);
 
     const derived = createRoot((dispose) => ({
       dispose,
-      feed: createMemo(() => rows(feedLines(state(), tableLabel(state(), ruleset)))),
-      present: createMemo((): ReadonlyArray<Present> => {
+      feed: projected(() => feedLines(state(), tableLabel(state(), ruleset)), []),
+      present: projected((): ReadonlyArray<Present> => {
         const label = tableLabel(state(), ruleset);
         return here().map((a) => ({ actor: a, label: label(a), gm: a === GM }));
-      }),
-      myName: createMemo(() => nameOf(state(), actor)),
+      }, []),
+      myName: projected(() => nameOf(state(), actor), undefined),
       ...(() => {
         // The band and the map read the game's slices and the names, which a chat line leaves
         // as they were: then neither is built, nor drawn, again.
@@ -146,11 +142,13 @@ export const openSeat = (
         const sw = createMemo(() => state().sw);
         const names = createMemo(() => state().core.names);
         // A map loaded that the files read last didn't have (a `/map new` just wrote it): read
-        // them again, so the GM's prep panel lists it, loaded.
+        // them again, so the GM's prep panel lists it, loaded. Once for the map, not for every
+        // event while it is loaded.
+        const mapId = createMemo(() => (ruleset === "set-world" ? sw().map?.id : ds().map?.id));
         if (actor === GM)
           createEffect(
             on(
-              () => (ruleset === "set-world" ? sw().map?.id : ds().map?.id),
+              mapId,
               (id) => {
                 const files = catalog();
                 if (id !== undefined && files !== undefined && !files.maps.some((m) => m.id === id))
@@ -160,14 +158,15 @@ export const openSeat = (
             ),
           );
         return {
-          combat: createMemo(() =>
-            bandOf({ ds: ds(), sw: sw(), core: { names: names() } }, actor, ruleset),
+          combat: projected(
+            () => bandOf({ ds: ds(), sw: sw(), core: { names: names() } }, actor, ruleset),
+            undefined,
           ),
-          map: createMemo(() => mapOf({ ds: ds(), sw: sw() }, actor, ruleset)),
-          prep: createMemo(() => {
+          map: projected(() => mapOf({ ds: ds(), sw: sw() }, actor, ruleset), undefined),
+          prep: projected(() => {
             const files = catalog();
             return files === undefined ? undefined : prepOf({ ds: ds(), sw: sw() }, files, ruleset);
-          }),
+          }, undefined),
         };
       })(),
     }));
@@ -208,6 +207,17 @@ export const openSeat = (
     } satisfies TableView;
   });
 
-/** Draws the table App for `view` on a renderer. The App goes when the renderer is destroyed. */
+/**
+ * Draws the table App for `view` on a renderer. The App goes when the renderer is destroyed. A
+ * throw while it lays the table out is logged with why: caught here, it leaves the rest of the
+ * App drawing, where it would otherwise freeze the seat, and the App says so on the seat.
+ */
 export const mountTable = (renderer: CliRenderer, view: TableView): Effect.Effect<void> =>
-  Effect.promise(() => render(() => createComponent(App, { view }), renderer));
+  Effect.gen(function* () {
+    const fork = Effect.runForkWith(yield* Effect.context());
+    const report = (error: unknown) =>
+      void fork(Effect.logError(`seat ${view.me}: couldn't draw the table`, Cause.die(error)));
+    yield* Effect.promise(() =>
+      render(() => catchError(() => createComponent(App, { view }), report), renderer),
+    );
+  });

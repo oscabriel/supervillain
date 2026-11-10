@@ -18,6 +18,7 @@ import {
   marksOf,
   maxHealth,
   maxStamina,
+  nextOf,
   occupants,
   resolveFighter,
   type SetState,
@@ -50,7 +51,7 @@ export function setBand(
       : slice.fighters.toSorted(
           (a, b) =>
             Number(isDown(a)) - Number(isDown(b)) ||
-            (fight.next[a.id] ?? Infinity) - (fight.next[b.id] ?? Infinity),
+            (nextOf(fight, a.id) ?? Infinity) - (nextOf(fight, b.id) ?? Infinity),
         );
   const combatant = (f: Fighter): Combatant => {
     const max = maxHealth(f.character);
@@ -73,9 +74,12 @@ export function setBand(
       acted: false,
       acting: fight?.turn?.id === f.id,
       mine: f.player === actor,
+      ...(f.side === "party" && f.player === undefined && !isDown(f) && { free: true }),
       ...(mark !== undefined && { mark }),
     };
   };
+  // Whose turn it is, by the fighter's own name, so no seat misreads it.
+  const turn = fight?.turn === undefined ? undefined : findFighter(slice, fight.turn.id);
   return {
     round: fight?.turns ?? 0,
     active: fight !== undefined,
@@ -84,7 +88,7 @@ export function setBand(
     title:
       fight === undefined
         ? " party "
-        : ` set.world · ${seconds(fight.clock)} · turn ${fight.turns} `,
+        : ` set.world · ${seconds(fight.clock)} · turn ${fight.turns}${turn === undefined ? "" : `: ${turn.name}`} `,
     combatants: shown.map(combatant),
   };
 }

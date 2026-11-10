@@ -246,6 +246,19 @@ describe("chat", () => {
     expect(fake.left()).toBe(0);
   });
 
+  test("Enter again holds only while the question is on screen", async () => {
+    const fake = fakeView({ myName: "Alice" });
+    const t = await mount(fake);
+    await enter(t, "quit");
+    // The question is dismissed and the line cleared: the same word later is asked about again.
+    t.mockInput.pressEscape();
+    await Bun.sleep(40);
+    t.mockInput.pressKey("u", { ctrl: true });
+    expect(await settle(t)).not.toContain("Did you mean");
+    expect(await enter(t, "quit")).toContain('› Did you mean /quit? Enter again to say "quit"');
+    expect(fake.submitted).toEqual([]);
+  });
+
   test("Ctrl-D on an empty line leaves, as in a shell", async () => {
     const fake = fakeView({ myName: "Alice" });
     const t = await mount(fake);
@@ -279,6 +292,27 @@ describe("chat", () => {
     await enter(t, "qsh");
     expect(fake.submitted).toEqual(["qsh"]);
     expect(fake.left()).toBe(0);
+  });
+
+  test("a pane that throws while drawing leaves one line saying so and the input working, and the next state draws", async () => {
+    const fake = table();
+    const t = await mount(fake);
+    // A line the feed can't draw stands in for any bug in a pane.
+    const unreadable = Object.defineProperty(line(3, "Bob", ""), "text", {
+      get: () => {
+        throw new Error("no text here");
+      },
+    });
+    fake.setFeed([...fake.view.feed(), unreadable]);
+    const broken = await settle(t);
+    expect(broken).toContain("this seat couldn't draw the table (no text here)");
+    expect(broken).not.toContain("welcome to the den");
+    expect(await enter(t, "still here")).toContain("this seat couldn't draw the table");
+    expect(fake.submitted).toEqual(["still here"]);
+    fake.setFeed([line(1, "Oscar", "welcome to the den"), line(4, "Bob", "all better")]);
+    const drawn = await settle(t);
+    expect(drawn).toContain("Bob: all better");
+    expect(drawn).not.toContain("couldn't draw");
   });
 });
 
@@ -476,6 +510,56 @@ describe("leaving and the debug pane", () => {
     expect(fake.left()).toBe(0);
   });
 
+  test("a key the line has no use for calls the GM's first Ctrl-C off as well", async () => {
+    for (const key of ["l", "z"]) {
+      const fake = fakeView({ me: "gm", present: [gm, alice] });
+      const t = await mount(fake);
+      t.mockInput.pressCtrlC();
+      expect(await settle(t)).toContain("Ctrl-C again");
+      t.mockInput.pressKey(key, { ctrl: true });
+      expect(await settle(t)).not.toContain("Ctrl-C again");
+      t.mockInput.pressCtrlC();
+      expect(await settle(t)).toContain("Ctrl-C again");
+      expect(fake.left()).toBe(0);
+      t.renderer.destroy();
+    }
+  });
+
+  test("a paste, a click or a panel's title clicked after the GM's first Ctrl-C calls it off too, and the warning goes", async () => {
+    for (const between of ["paste", "click", "title"] as const) {
+      const fake = fakeView({ me: "gm", present: [gm, alice], feed: [line(1, "Alice", "hi")] });
+      const t = await mount(fake);
+      t.mockInput.pressCtrlC();
+      expect(await settle(t)).toContain("Ctrl-C again");
+      if (between === "paste") await t.mockInput.pasteBracketedText("see you next week");
+      else {
+        const seen = between === "click" ? "Alice: hi" : "³ feed";
+        const rows = rowsOf(t.captureCharFrame());
+        const at = rows.findIndex((r) => r.includes(seen));
+        const x = between === "click" ? 10 : rows[at]!.indexOf(seen) + 1;
+        await t.mockMouse.click(x, at, undefined, { delayMs: 0 });
+      }
+      expect(await settle(t)).not.toContain("Ctrl-C again");
+      t.mockInput.pressCtrlC();
+      expect(await settle(t)).toContain("Ctrl-C again");
+      expect(fake.left()).toBe(0);
+      t.renderer.destroy();
+    }
+  });
+
+  test("the pointer the warning's row moves the table under is no click: the next Ctrl-C leaves", async () => {
+    const fake = fakeView({ me: "gm", present: [gm, alice], feed: [line(1, "Alice", "hi")] });
+    const t = await mount(fake, 80, 24);
+    // The feed's last row, where the feed's border comes up to once the warning takes a row.
+    await t.mockMouse.click(10, 20, undefined, { delayMs: 0 });
+    t.mockInput.pressCtrlC();
+    expect(await settle(t)).toContain("Ctrl-C again");
+    await settle(t);
+    t.mockInput.pressCtrlC();
+    await settle(t);
+    expect(fake.left()).toBe(1);
+  });
+
   test("a GM alone at the table leaves on the first Ctrl-C", async () => {
     const fake = fakeView({ me: "gm", present: [gm] });
     const t = await mount(fake);
@@ -492,6 +576,58 @@ describe("leaving and the debug pane", () => {
     expect(open).toContain('{ "seq": 42, "names": {} }');
     expect(await enter(t, "/state")).not.toContain('"seq": 42');
     expect(fake.submitted).toEqual([]);
+  });
+});
+
+describe("what the hint row says first", () => {
+  const hintRow = (t: Setup) => rowsOf(t.captureCharFrame()).at(-2) ?? "";
+  const free = (c: typeof vex) => ({ ...c, acting: false, mine: false, free: true });
+  const party = (...heroes: ReadonlyArray<typeof vex>) => fight(heroes, { active: false });
+
+  test("a player without a hero hears which heroes are free and how to take one", async () => {
+    const fake = fakeView({
+      myName: "Alice",
+      present: [gm, alice],
+      combat: party(free(vex), free(sera), { ...brakka, name: "Brakka (Bob)" }),
+    });
+    const t = await mount(fake, 80, 24);
+    expect(hintRow(t)).toBe(" free to play: Vex, Sera · /play <name> takes one · /help");
+    // Taken, the keys are back.
+    fake.setCombat(party({ ...vex, acting: false }, free(sera)));
+    await settle(t);
+    expect(hintRow(t)).not.toContain("free to play");
+    expect(hintRow(t)).toContain("Tab completes");
+  });
+
+  test("with no hero free, or none in the party yet, a player gets the keys as ever", async () => {
+    const fake = fakeView({ myName: "Alice", present: [gm, alice], combat: party(brakka) });
+    const t = await mount(fake, 80, 24);
+    expect(hintRow(t)).toContain("Tab completes");
+    fake.setCombat(undefined);
+    expect(await settle(t)).toContain("Tab completes");
+  });
+
+  test("when your hero's turn begins the hint row says so, before the keys", async () => {
+    const fake = fakeView({
+      myName: "Alice",
+      present: [gm, alice],
+      combat: fight([
+        { ...vex, acting: false },
+        { ...brakka, acting: true },
+      ]),
+      map: null,
+    });
+    const t = await mount(fake, 100, 30);
+    expect(hintRow(t)).not.toContain("your turn");
+    fake.setCombat(fight([vex, { ...brakka, acted: true }]));
+    await settle(t);
+    expect(hintRow(t)).toBe(
+      " your turn · /done ends it · Tab completes · ↑↓ history · PgUp/PgDn scroll · /help · Ctrl-C leaves",
+    );
+    // Beside the map's reach, as much as fits.
+    fake.setMap(courtyard);
+    await settle(t);
+    expect(hintRow(t)).toStartWith(" Vex can reach: speed 5 · your turn · /done ends it");
   });
 });
 
@@ -696,13 +832,13 @@ describe("the Draw Steel band", () => {
   });
 });
 
-describe("below the smallest seat, 80x24", () => {
-  for (const [width, height] of [
-    [79, 24],
-    [80, 23],
-    [60, 16],
+describe("below the smallest seat, 72x20", () => {
+  for (const [width, height, said] of [
+    [71, 24, "widen your terminal to 72 columns · it is 71 wide"],
+    [80, 19, "make your terminal 20 rows tall for the band and the map · it is 19 tall"],
+    [60, 16, "make your terminal 72x20 · it is 60x16"],
   ] as const) {
-    test(`at ${width}x${height} one line asks to widen the terminal, and the input still works`, async () => {
+    test(`at ${width}x${height} the hint row names the side that is short, and the input still works`, async () => {
       const fake = fakeView({
         myName: "Alice",
         present: [gm, alice],
@@ -712,7 +848,7 @@ describe("below the smallest seat, 80x24", () => {
       const t = await mount(fake, width, height);
       const frame = t.captureCharFrame();
       const rows = rowsOf(frame);
-      expect(rows.filter((r) => r.includes("widen your terminal to 80x24"))).toHaveLength(1);
+      expect(rows.at(-2)).toBe(` ${said}`);
       expect(frame).not.toContain("round 2");
       expect(frame).not.toContain("▐");
       expect(frame).toContain("Bob: anyone there?");
@@ -722,12 +858,55 @@ describe("below the smallest seat, 80x24", () => {
     });
   }
 
-  test("at 80x24 there is no notice, and the band is back", async () => {
+  test("however few rows are left, a reply open too, the input line stays on screen", async () => {
+    for (const [width, height] of [
+      [40, 8],
+      [30, 5],
+      [30, 4],
+      [20, 3],
+      [20, 1],
+    ] as const) {
+      const fake = fakeView({
+        myName: "Alice",
+        present: [gm, alice],
+        feed: [line(1, "Bob", "anyone there?")],
+        reply: () => "help 1\nhelp 2\nhelp 3\nhelp 4",
+      });
+      const t = await mount(fake, width, height);
+      await enter(t, "/help");
+      await t.mockInput.typeText("abc");
+      await t.renderOnce();
+      expect(t.captureCharFrame().split("\n")[height - 1]).toStartWith(" >");
+      t.renderer.destroy();
+    }
+  });
+
+  // A default terminal under tmux's status line, or beside a scroll bar, is a seat.
+  for (const [width, height] of [
+    [80, 23],
+    [79, 24],
+  ] as const)
+    test(`at ${width}x${height} the band and the map are there, and nothing asks for more`, async () => {
+      const fake = fakeView({
+        myName: "Alice",
+        present: [gm, alice],
+        combat: fight(ford),
+        map: courtyard,
+      });
+      const t = await mount(fake, width, height);
+      const frame = t.captureCharFrame();
+      expect(frame).not.toContain("your terminal");
+      expect(frame).toContain("round 2");
+      expect(frame).toContain("map · Courtyard");
+    });
+
+  test("at 72x20, the smallest seat, every living combatant's row is in the band", async () => {
     const fake = fakeView({ myName: "Alice", present: [gm, alice], combat: fight(ford) });
-    const t = await mount(fake, 80, 24);
+    const t = await mount(fake, 72, 20);
     const frame = t.captureCharFrame();
-    expect(frame).not.toContain("widen your terminal");
-    expect(frame).toContain("round 2");
+    expect(frame).not.toContain("your terminal");
+    for (const c of ford.filter((c) => c.health !== "dead"))
+      expect(frame).toContain(` ${c.stamina}/${c.max}`);
   });
 });
 
@@ -969,6 +1148,21 @@ describe("the map", () => {
     expect(fake.submitted).toEqual([]);
   });
 
+  test("a centred view holds through whatever else changes on the map during the turn", async () => {
+    const fake = seated({ map: hall() });
+    const t = await mount(fake, 100, 30);
+    await enter(t, "/view brakka");
+    // Still Vex's turn: the goblin is pushed a square.
+    const moved = hall();
+    fake.setMap({
+      ...moved,
+      tokens: moved.tokens.map((k) => (k.id === "goblin" ? { ...k, x: k.x + 1 } : k)),
+    });
+    expect(rowsOf(await settle(t)).some((r) => r.includes(" 4 · · B "))).toBe(true);
+    fake.setMap(hall({ acting: "ogre" }));
+    expect(rowsOf(await settle(t)).some((r) => r.includes(" 4 · · B "))).toBe(false);
+  });
+
   test("at 80x24, /view map folds the band to two lines so the map gets the rows", async () => {
     const fake = seated({ map: courtyard });
     const t = await mount(fake, 80, 24);
@@ -994,12 +1188,27 @@ describe("the map", () => {
       x: i % 16,
       y: Math.floor(i / 16),
     })).filter(({ x, y }) => Math.abs(x - 3) + Math.abs(y - 3) <= 5);
-    const crowd = fight([vex, spearmen, brakka, ogre, sera, sniper, ...goblins(40)]);
+    const crowd = fight([
+      { ...vex, acting: false },
+      spearmen,
+      brakka,
+      ogre,
+      sera,
+      sniper,
+      ...goblins(40),
+    ]);
     const fake = seated({ map: { ...courtyard, reach }, combat: crowd });
     const t = await mount(fake, 80, 24);
     expect(rowsOf(t.captureCharFrame()).at(-2)).toBe(
       " Vex can reach: speed 5 · /view map to see all your reach",
     );
+    // On Vex's own turn, that comes first and the pointer is kept short.
+    fake.setCombat(fight([vex, spearmen, brakka, ogre, sera, sniper, ...goblins(40)]));
+    expect(rowsOf(await settle(t)).at(-2)).toBe(
+      " Vex can reach: speed 5 · your turn · /done ends it · /view map",
+    );
+    fake.setCombat(crowd);
+    await settle(t);
     // With the map given the room, the reach shows whole and the keys come back.
     const rows = rowsOf(await enter(t, "/view map"));
     expect(rows.at(-2)).toBe(
@@ -1029,7 +1238,7 @@ describe("the map", () => {
   });
 
   test("below the smallest seat the map gives way like the band", async () => {
-    const t = await mount(seated({ map: courtyard }), 79, 24);
+    const t = await mount(seated({ map: courtyard }), 71, 24);
     const frame = t.captureCharFrame();
     expect(frame).toContain("widen your terminal");
     expect(frame).not.toContain("map · Courtyard");

@@ -31,7 +31,7 @@ import { isFingerprint } from "@supervillain/ssh";
 import { CAMPAIGN_FILE, campaignYaml, readCampaignConfig } from "./content/campaignFile.ts";
 import { DEFAULT_RULESET, RULESETS } from "./game/table.ts";
 import { checkLog } from "./host/check.ts";
-import { relayCommand } from "./relay/cli.ts";
+import { bindProblem, portProblem, relayCommand } from "./relay/cli.ts";
 import {
   joinNote,
   linkAlert,
@@ -164,10 +164,13 @@ const host = Command.make(
       return yield* new HostError({ message: `--relay takes host:port, not ${relayText}` });
     const relayKey = Option.getOrUndefined(o.relayKey);
     const relayPlayerPort = Option.getOrUndefined(o.relayPlayerPort);
-    if (relayPlayerPort !== undefined && (relayPlayerPort < 1 || relayPlayerPort > 65_535))
-      return yield* new HostError({
-        message: `--relay-player-port takes a port from 1 to 65535, not ${relayPlayerPort}`,
-      });
+    const problem =
+      portProblem("--port", o.port) ??
+      bindProblem(o.bind) ??
+      (relayPlayerPort === undefined
+        ? undefined
+        : portProblem("--relay-player-port", relayPlayerPort, 1));
+    if (problem !== undefined) return yield* new HostError({ message: problem });
     if (relayKey !== undefined && !isFingerprint(relayKey))
       return yield* new HostError({
         message: `--relay-key takes a key fingerprint like SHA256:…, not ${relayKey}`,
@@ -575,6 +578,11 @@ const check = Command.make(
     "Read a campaign log without opening it: summary, skipped events, feed and final state",
   ),
 );
+
+// A hang-up (the terminal's window closed, the ssh to this machine dropped) ends the host or the
+// relay as SIGTERM does, through the runtime below: players are told and every finalizer runs.
+// Only at a terminal: under nohup there is none, and the hang-up stays ignored.
+if (process.stdin.isTTY) process.on("SIGHUP", () => process.kill(process.pid, "SIGTERM"));
 
 Command.make("supervillain").pipe(
   Command.withDescription("A terminal-first virtual tabletop for Draw Steel, or set.world's rules"),

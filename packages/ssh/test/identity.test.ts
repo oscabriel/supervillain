@@ -1,6 +1,7 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { Effect } from "effect";
 import type { Identity } from "../src/index.ts";
+import { parseKey } from "../src/keys.ts";
 import { effect } from "./effect.ts";
 import { clientKey, sshExec } from "./openssh.ts";
 import { testServer } from "./server.ts";
@@ -118,4 +119,18 @@ describe("identity", () => {
       );
     }),
   );
+
+  test("a malformed key a stranger sends is no key, not a throw", () => {
+    // An ECDSA blob naming another curve, and a DSA blob with empty numbers: ssh2 throws on both.
+    for (const [algorithm, blob] of [
+      [
+        "ecdsa-sha2-nistp384",
+        "0000001365636473612d736861322d6e69737470333834000000086e6973747032353600000000",
+      ],
+      ["ssh-dss", "000000077373682d647373000000000000000301000100000002ffff0000000193"],
+    ])
+      expect(
+        parseKey(`${algorithm} ${Buffer.from(blob!, "hex").toString("base64")}`),
+      ).toBeUndefined();
+  });
 });

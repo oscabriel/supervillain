@@ -15,16 +15,12 @@ export const prepWidth = (cols: number): number =>
 
 /**
  * What the GM picked in the panel for the next square: a token off the map (any of them, else
- * the first waiting goes), or how many of a monster to add there.
+ * the first waiting goes), or how many of a monster to add there, the monster by its item's line
+ * (`/add bandit`), which names it wherever a list read again puts it.
  */
 export type PrepArmed =
   | { readonly kind: "token"; readonly id: string }
-  | {
-      readonly kind: "count";
-      readonly section: number;
-      readonly index: number;
-      readonly n: number;
-    };
+  | { readonly kind: "count"; readonly line: string; readonly n: number };
 
 /** What the next square clicked does, as the panel shows it. */
 export type PrepNext =
@@ -47,9 +43,7 @@ export type PrepNext =
 export const countLine = (item: PrepItem, n: number): string =>
   n <= 1 ? item.line : `${item.line} x${n}`;
 
-/** The item at `section` and `index`, if the view still has it. */
-const itemAt = (view: PrepView, section: number, index: number): PrepItem | undefined =>
-  view.sections[section]?.items[index];
+const items = (view: PrepView): ReadonlyArray<PrepItem> => view.sections.flatMap((s) => s.items);
 
 /**
  * What the next square clicked does: what `armed` names, if the view still offers it, else place
@@ -57,8 +51,8 @@ const itemAt = (view: PrepView, section: number, index: number): PrepItem | unde
  */
 export function prepNext(view: PrepView, armed: PrepArmed | undefined): PrepNext | undefined {
   if (armed?.kind === "count") {
-    const item = itemAt(view, armed.section, armed.index);
-    if (item?.kind === "count" && item.figure !== undefined)
+    const item = items(view).find((i) => i.kind === "count" && i.line === armed.line);
+    if (item?.figure !== undefined)
       return {
         kind: "add",
         name: item.label,
@@ -70,9 +64,7 @@ export function prepNext(view: PrepView, armed: PrepArmed | undefined): PrepNext
   if (armed?.kind === "token") {
     const waiting = view.place.find((t) => t.id === armed.id);
     if (waiting !== undefined) return { kind: "place", ...waiting };
-    const joining = view.sections
-      .flatMap((s) => s.items)
-      .find((i) => i.kind === "send" && i.figure?.id === armed.id);
+    const joining = items(view).find((i) => i.kind === "send" && i.figure?.id === armed.id);
     if (joining?.figure !== undefined)
       return { kind: "place", id: armed.id, name: joining.label, figure: joining.figure };
   }
@@ -93,17 +85,14 @@ export const armedStands = (view: PrepView, armed: PrepArmed): boolean => {
  * one fewer, none putting it down.
  */
 export function prepCount(
-  view: PrepView,
   armed: PrepArmed | undefined,
-  section: number,
-  index: number,
+  item: PrepItem,
   by: 1 | -1,
 ): PrepArmed | undefined {
-  const item = itemAt(view, section, index);
-  if (item?.kind !== "count") return armed;
-  const same = armed?.kind === "count" && armed.section === section && armed.index === index;
+  if (item.kind !== "count") return armed;
+  const same = armed?.kind === "count" && armed.line === item.line;
   const n = Math.min(item.max ?? Number.POSITIVE_INFINITY, (same ? armed.n : 0) + by);
-  return n <= 0 ? undefined : { kind: "count", section, index, n };
+  return n <= 0 ? undefined : { kind: "count", line: item.line, n };
 }
 
 interface Square {

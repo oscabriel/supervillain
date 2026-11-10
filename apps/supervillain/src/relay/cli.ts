@@ -2,6 +2,7 @@
 //                     [--dir ~/.supervillain-relay]`
 // `supervillain relay forget <room> [--dir …]`
 import { access, mkdir } from "node:fs/promises";
+import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Console, Effect } from "effect";
@@ -17,6 +18,21 @@ const expandHome = (path: string) =>
   path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 
 const relayDir = (dir: string) => resolve(expandHome(dir));
+
+/** What's wrong with a port flag's value, as one sentence, or undefined when it's a port. */
+export const portProblem = (flag: string, port: number, lowest: 0 | 1 = 0) =>
+  port >= lowest && port <= 65_535
+    ? undefined
+    : `${flag} takes a port from ${lowest} to 65535, not ${port}`;
+
+/**
+ * What's wrong with a `--bind` value, or undefined. Only an IP address or localhost: anything else,
+ * `127.0.0.256` or a stray space, would make the listener quietly take every interface.
+ */
+export const bindProblem = (bind: string) =>
+  isIP(bind) !== 0 || bind === "localhost"
+    ? undefined
+    : `--bind takes an IP address, such as 127.0.0.1 or 0.0.0.0, or localhost, not ${JSON.stringify(bind)}`;
 
 /** Prints a failure plainly and sets the exit status, as main.ts does for its own commands. */
 const fail = (e: { readonly message: string }) =>
@@ -60,6 +76,11 @@ const run = relay.pipe(
   Command.withHandler((o) =>
     Effect.gen(function* () {
       const dir = relayDir(o.dir);
+      const problem =
+        portProblem("--player-port", o.playerPort) ??
+        portProblem("--gm-port", o.gmPort) ??
+        bindProblem(o.bind);
+      if (problem !== undefined) return yield* new RelayError({ message: problem });
       if (o.claimDays < 1)
         return yield* new RelayError({
           message: `--claim-days takes a number of days from 1, not ${o.claimDays}`,

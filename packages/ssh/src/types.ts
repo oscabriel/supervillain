@@ -113,6 +113,11 @@ export interface Limits {
    * is closed at once. Unlimited by default: a relay or tunnel brings everyone from one address.
    */
   readonly connectRate?: { readonly burst: number; readonly perSecond: number };
+  /**
+   * How fast one remote address may start sessions; over it, a new session is refused. Default a
+   * burst of 20, then one a second. A trusted relay's connection, which carries everyone, is exempt.
+   */
+  readonly sessionRate?: { readonly burst: number; readonly perSecond: number };
 }
 
 export interface Timeouts {

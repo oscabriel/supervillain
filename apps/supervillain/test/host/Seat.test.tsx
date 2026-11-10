@@ -1,11 +1,16 @@
 import { describe, expect } from "bun:test";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing";
-import { Effect, Exit, Scope, SubscriptionRef } from "effect";
+import { Cause, Effect, Exit, Logger, Scope, SubscriptionRef } from "effect";
+import { CampaignContent } from "../../src/content/index.ts";
 import { mountTable, openSeat } from "../../src/host/Seat.ts";
 import { type TableServices, tableServices } from "../../src/host/services.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
+import { combatant, fight, vex } from "../table/combat.ts";
+import { fakeView } from "../table/fakeView.ts";
 import { sampleCampaign } from "./campaign.ts";
-import { effect } from "./effect.ts";
+import { effect, waitFor } from "./effect.ts";
 
 const alice = "key:SHA256:aliceAAAAkeyfingerprint";
 const bob = "key:SHA256:bobBBBBBkeyfingerprint";
@@ -40,6 +45,28 @@ const seat = (actor: string) =>
     yield* mountTable(t.renderer, view);
     yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
     return { t, view, left: () => left, close: Scope.close(scope, Exit.void) } satisfies Seated;
+  });
+
+/**
+ * A seat for `actor` over the room, but following `state` instead of the room's own state, which
+ * the test sets as the room would send it; and what the seat logged.
+ */
+const overState = (actor: string) =>
+  Effect.gen(function* () {
+    const room = yield* TableRoom;
+    const state = yield* SubscriptionRef.make(yield* room.state.get);
+    const logs: Array<string> = [];
+    const logger = Logger.make(({ message, cause }) =>
+      logs.push(`${message} ${Cause.pretty(cause)}`),
+    );
+    const view = yield* openSeat({ actor, room: "den", leave: () => undefined }).pipe(
+      Effect.provideService(TableRoom, {
+        ...room,
+        state: { get: SubscriptionRef.get(state), changes: SubscriptionRef.changes(state) },
+      }),
+      Effect.provide(Logger.layer([logger])),
+    );
+    return { room, state, logs, view };
   });
 
 /** Draws frames until one satisfies `predicate`. */
@@ -235,24 +262,168 @@ describe("a seat over a real room", () => {
     ),
   );
 
-  effect("a chat line leaves the band and the map as they were, so neither is drawn again", () =>
+  effect(
+    "a chat line leaves the band and the map as they were, and a damage the map, so neither is drawn again",
+    () =>
+      atTable(
+        Effect.gen(function* () {
+          const g = yield* seat("gm");
+          yield* type(g, "/hero brann");
+          yield* type(g, "/map ford-road");
+          yield* type(g, "/place brann b5");
+          yield* frameWhere(g, "Brann's token", () => (g.view.map?.()?.tokens.length ?? 0) > 0);
+          const [band, map] = [g.view.combat?.(), g.view.map?.()];
+          yield* type(g, "just chatting");
+          yield* frameWhere(g, "the chat", (f) => f.includes("GM: just chatting"));
+          expect(g.view.combat?.()).toBe(band);
+          expect(g.view.map?.()).toBe(map);
+          yield* type(g, "/dmg brann 1");
+          yield* frameWhere(g, "the damage", (f) => f.includes("23/24"));
+          expect(g.view.combat?.()).not.toBe(band);
+          expect(g.view.map?.()).toBe(map);
+        }),
+      ),
+  );
+
+  effect("an event keeps every prep item it leaves as it was, so only what changed is drawn", () =>
     atTable(
       Effect.gen(function* () {
         const g = yield* seat("gm");
+        yield* Effect.promise(() => g.view.prep!.reload());
+        yield* waitFor("the prep lists", () => g.view.prep?.view() !== undefined);
+        const before = g.view.prep!.view()!;
         yield* type(g, "/hero brann");
-        yield* type(g, "/map ford-road");
-        yield* type(g, "/place brann b5");
-        yield* frameWhere(g, "Brann's token", () => (g.view.map?.()?.tokens.length ?? 0) > 0);
-        const [band, map] = [g.view.combat?.(), g.view.map?.()];
-        yield* type(g, "just chatting");
-        yield* frameWhere(g, "the chat", (f) => f.includes("GM: just chatting"));
-        expect(g.view.combat?.()).toBe(band);
-        expect(g.view.map?.()).toBe(map);
-        yield* type(g, "/dmg brann 1");
-        yield* frameWhere(g, "the damage", (f) => f.includes("23/24"));
-        expect(g.view.combat?.()).not.toBe(band);
+        yield* waitFor("Brann in the party", () => g.view.prep?.view() !== before);
+        const after = g.view.prep!.view()!;
+        const items = (v: typeof after, title: string) =>
+          v.sections.find((s) => s.title === title)!.items;
+        // Brann leaves the heroes to choose from; the others stay as they were, though they moved.
+        expect(items(after, "heroes").map((i) => i.label)).toEqual(["Ilsa", "Kesh", "Wren"]);
+        for (const item of items(after, "heroes")) expect(items(before, "heroes")).toContain(item);
+        expect(items(after, "monsters")).toBe(items(before, "monsters"));
+        expect(after.maps).toBe(before.maps);
       }),
     ),
+  );
+
+  effect("a loaded map the folder doesn't have is looked for once, not at every event", () =>
+    atTable(
+      Effect.gen(function* () {
+        const content = yield* CampaignContent;
+        let reads = 0;
+        const counted = Effect.suspend(() => {
+          reads++;
+          return content.catalog;
+        });
+        const view = yield* openSeat({ actor: "gm", room: "den", leave: () => undefined }).pipe(
+          Effect.provideService(CampaignContent, { ...content, catalog: counted }),
+        );
+        const send = (line: string) => Effect.promise(() => view.submit(line));
+        yield* send("/map ford-road");
+        yield* waitFor("the map", () => view.map?.() !== undefined);
+        // The map's file goes, and the panel opens: the files are read, without the loaded map.
+        yield* Effect.promise(() => rm(join(content.dir, "maps", "ford-road.txt")));
+        yield* Effect.promise(() => view.prep!.reload());
+        expect(reads).toBe(1);
+        yield* send("/hero brann");
+        yield* send("/add bandit-bruiser");
+        yield* send("/dmg brann 1");
+        yield* waitFor("the damage", () => view.combat?.()?.combatants[0]?.stamina === 23);
+        expect(reads).toBe(1);
+        // A map the files don't have yet is still looked for when it loads.
+        yield* send("/map new keep 7");
+        yield* waitFor("the new map among the files", () => reads === 2);
+        expect(view.prep!.view()?.maps.loaded?.name).toBeDefined();
+      }),
+    ),
+  );
+
+  effect("a throw while following the room is logged with why, and the seat follows on", () =>
+    atTable(
+      Effect.gen(function* () {
+        const { room, state, logs, view } = yield* overState("gm");
+        const good = yield* room.state.get;
+        // A state the seat can't read at all stands in for any bug in drawing one.
+        const unreadable = Object.defineProperty({ ...good }, "ds", {
+          get: () => {
+            throw new Error("no ds here");
+          },
+        });
+        yield* SubscriptionRef.set(state, unreadable);
+        yield* waitFor("the log", () => logs.some((l) => l.includes("no ds here")));
+        yield* SubscriptionRef.set(state, { ...good, seq: 99 });
+        // The state pane reads what the seat follows, which throws until the next state lands.
+        const shows = (text: string) => {
+          try {
+            return view.debug().includes(text);
+          } catch {
+            return false;
+          }
+        };
+        yield* waitFor("the next state", () => shows('"seq": 99'));
+      }),
+    ),
+  );
+
+  effect(
+    "a view that throws on one state is logged, keeps what it showed, and draws the next",
+    () =>
+      atTable(
+        Effect.gen(function* () {
+          const { room, state, logs, view } = yield* overState(alice);
+          const good = yield* room.state.get;
+          const noMap = Object.defineProperty({ ...good.ds }, "map", {
+            get: () => {
+              throw new Error("a map the seat can't read");
+            },
+          });
+          yield* SubscriptionRef.set(state, { ...good, ds: noMap });
+          yield* waitFor("the log", () =>
+            logs.some((l) => l.includes("a map the seat can't read")),
+          );
+          expect(view.map?.()).toBeUndefined();
+          // The room moves on: a map loaded.
+          const gm = yield* openSeat({ actor: "gm", room: "den", leave: () => undefined });
+          expect(yield* Effect.promise(() => gm.submit("/map ford-road"))).toBeUndefined();
+          yield* SubscriptionRef.set(state, yield* room.state.get);
+          yield* waitFor("the map", () => view.map?.()?.name === "The Ford Road");
+        }),
+      ),
+  );
+
+  effect(
+    "a throw while the table lays out is logged with why, said on the seat, and the next draws",
+    () =>
+      Effect.gen(function* () {
+        const logs: Array<string> = [];
+        const logger = Logger.make(({ message, cause }) =>
+          logs.push(`${message} ${Cause.pretty(cause)}`),
+        );
+        const fake = fakeView({ myName: "Alice", combat: fight([vex]) });
+        const t = yield* Effect.acquireRelease(
+          Effect.promise(() => createTestRenderer({ width: 100, height: 30, exitOnCtrlC: false })),
+          (setup) => Effect.sync(() => setup.renderer.destroy()),
+        );
+        yield* mountTable(t.renderer, fake.view).pipe(Effect.provide(Logger.layer([logger])));
+        // A band the layout can't read stands in for any bug in laying the table out.
+        const unreadable = Object.defineProperty(fight([]), "combatants", {
+          get: () => {
+            throw new Error("no combatants here");
+          },
+        });
+        fake.setCombat(unreadable);
+        const seated = { t } as Seated;
+        yield* frameWhere(seated, "the line", (f) =>
+          f.includes("this seat couldn't draw the table"),
+        );
+        yield* waitFor("the log", () => logs.some((l) => l.includes("no combatants here")));
+        fake.setCombat(fight([combatant({ id: "kor", name: "Kor", side: "heroes" })]));
+        yield* frameWhere(
+          seated,
+          "the next band",
+          (f) => f.includes("Kor") && !f.includes("couldn't"),
+        );
+      }),
   );
 
   effect("draws the map from the room, with each seat's own hero and where it can reach", () =>

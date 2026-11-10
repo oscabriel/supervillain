@@ -107,8 +107,6 @@ export interface RelayOptions {
   /** The players' side, as packages/ssh takes them. The relay sees players' real addresses. */
   readonly limits?: Limits;
   readonly timeouts?: Timeouts;
-  /** How fast one address may start sessions, each a channel on a GM's link. */
-  readonly sessionRate?: Rate;
   /**
    * Sessions one room carries at once. Default 32: under a host's own cap on a relay's sessions,
    * so players who come from many addresses still can't take every seat a host has.
@@ -142,7 +140,6 @@ const PLAYER_LIMITS: Limits = {
   sessionsPerAddress: 8,
   connectRate: { burst: 20, perSecond: 1 },
 };
-const SESSION_RATE: Rate = { burst: 20, perSecond: 1 };
 const SESSIONS_PER_ROOM = 32;
 const GM_DEFAULTS = {
   links: 256,
@@ -171,11 +168,14 @@ const SHUTDOWN_NOTICE = "The relay is shutting down.";
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * What a player hears for a room no GM has ever linked. A name that can't be a room isn't echoed:
- * it's most likely the local username a bare `ssh` sent, so they're told how to join instead.
+ * What a player hears for a room no GM has ever linked: that there's no such table, and how to
+ * join one, since the name may be a typo or the local username a bare `ssh` sent. A name that
+ * can't be a room isn't echoed.
  */
 const unknownRoomMessage = (room: string): string =>
-  isRoomName(room) && !isReservedRoom(room) ? `There's no table called ${room} here.` : JOIN_HINT;
+  isRoomName(room) && !isReservedRoom(room)
+    ? `There's no table called ${room} here.\n${JOIN_HINT}`
+    : JOIN_HINT;
 
 /** What a player hears for a room that carries all the sessions it may. */
 const fullRoomMessage = (room: string): string => `The table ${room} is full right now.`;
@@ -228,11 +228,10 @@ const tableLabel = (table: LobbyTable) => `${table.room} (${table.seated} seated
 
 /**
  * The lobby for a session without a terminal: the tables, and how to join one, since there's
- * no prompt to answer. `before` is a line to say first.
+ * no prompt to answer.
  */
-export const lobbyText = (before: string | undefined, tables: ReadonlyArray<LobbyTable>): string =>
+export const lobbyText = (tables: ReadonlyArray<LobbyTable>): string =>
   [
-    ...(before === undefined ? [] : [before]),
     `Your table${tables.length === 1 ? "" : "s"} open now: ${tables.map(tableLabel).join(", ")}.`,
     `Join one with its name before the @, as you came here: ssh ${tables[0]!.room}@…`,
   ].join("\n");
@@ -246,8 +245,10 @@ const CLEAR = "\x1b[H\x1b[2J";
  * The lobby on the player's raw terminal: draws it (`draw`, with what to show), then reads keys
  * until they pick a table. ↑ and ↓ move the pick, digits type a number, backspace takes one back,
  * Enter sits at the number typed or else at the pick; Ctrl-C, Ctrl-D or EOF leave; other escape
- * sequences are dropped. `redraw` is handed a function that draws it again, for a resize. The
- * stream is left paused, with whatever followed Enter put back, for the table to read.
+ * sequences are dropped. It draws once for all the keys that came together, so keys sent faster
+ * than the player reads cost one frame, not one each. `redraw` is handed a function that draws it
+ * again, for a resize. The stream is left paused, with whatever followed Enter put back, for the
+ * table to read.
  */
 const pickTable = (
   session: RawSession,
@@ -255,14 +256,12 @@ const pickTable = (
   idleMs: number,
   draw: (state: { picked: number; typed: string; said?: string }) => void,
   redraw: (again: (() => void) | undefined) => void,
-  /** Said at first, until a key is pressed: `There's no table called alex here.` */
-  first?: string,
 ) =>
   Effect.callback<Picked>((resume) => {
     const { stream } = session;
     let typed = "";
     let picked = 0;
-    let said = first;
+    let said: string | undefined;
     const show = () => draw({ picked, typed, ...(said === undefined ? {} : { said }) });
     /** Inside an escape sequence: just after ESC, or in its body until a final byte. */
     let escape: "no" | "esc" | "body" = "no";
@@ -311,17 +310,13 @@ const pickTable = (
             escape = "no";
             if (sequence === "[A" || sequence === "OA") move(-1);
             if (sequence === "[B" || sequence === "OB") move(1);
-            show();
           }
           continue;
         }
         if (lfOfCrLf) continue;
         if (byte === 0x1b) escape = "esc";
-        else if (byte === 0x7f || byte === 0x08) {
-          if (typed === "") continue;
-          typed = typed.slice(0, -1);
-          show();
-        } else if (byte === 0x0d || byte === 0x0a) {
+        else if (byte === 0x7f || byte === 0x08) typed = typed.slice(0, -1);
+        else if (byte === 0x0d || byte === 0x0a) {
           const n = typed === "" ? picked + 1 : Number(typed);
           if (Number.isInteger(n) && n >= 1 && n <= rooms.length) {
             // A terminal that sends CR LF for Enter: the LF was part of it.
@@ -330,15 +325,14 @@ const pickTable = (
           }
           said = `There's no ${typed} on the list.`;
           typed = "";
-          show();
         } else if (byte >= 0x30 && byte <= 0x39 && typed.length < 3) {
           typed += String.fromCharCode(byte);
           said = undefined;
           const n = Number(typed);
           if (n >= 1 && n <= rooms.length) picked = n - 1;
-          show();
         }
       }
+      show();
     };
     const onEnd = () => finish("left");
     show();
@@ -674,6 +668,8 @@ const make = (
           });
         }).pipe(Effect.timeout(SEAT_TIMEOUT)),
         (opened) => Effect.sync(() => opened.close()),
+        // A player who leaves while a slow host opens the channel gives their place back then.
+        { interruptible: true },
       );
 
     // ---- The lobby: a player with a key and no room is shown the open tables that know the key.
@@ -764,8 +760,6 @@ const make = (
 
     // ---- The players' side: our SSH server, taking each session as bytes to forward.
 
-    const sessionAllowed = rateLimiter(options.sessionRate ?? SESSION_RATE);
-
     const bridge = (session: RawSession) =>
       Effect.gen(function* () {
         const { info } = session;
@@ -784,10 +778,6 @@ const make = (
           size = { cols, rows };
           resize?.(cols, rows);
         });
-        if (!sessionAllowed(addressBucket(info.remoteAddress), yield* Clock.currentTimeMillis)) {
-          say("Too many sessions from your address; wait a moment.");
-          return session.exit(1);
-        }
         const actor = info.identity.actor;
         let room = asked;
         if (!links.get(room)?.alive) {
@@ -810,37 +800,39 @@ const make = (
           yield* Effect.logDebug(
             `lobby: ${actor} from ${info.remoteAddress}: ${tables.length} open tables know the key`,
           );
-          const unknown = unknownRoomMessage(room);
           if (tables.length === 0) {
-            say(unknown);
+            say(unknownRoomMessage(room));
             return session.exit(1);
           }
+          // The list is the answer: the name asked for is most likely the local username a bare
+          // `ssh` sent, not a table anyone meant.
           if (!terminal) {
-            say(lobbyText(named ? unknown : undefined, tables));
+            say(lobbyText(tables));
             return session.exit(1);
           }
           const id = info.identity;
           if (id.kind !== "key") return session.exit(1);
+          /** The frame on the player's screen: a key that changes nothing sends nothing. */
+          let drawn = "";
           const picked = yield* pickTable(
             session,
             tables.map((t) => t.room),
             lobbyIdleMs,
-            (state) =>
-              session.stream.write(
-                lobbyFrame(
-                  {
-                    tables,
-                    ...state,
-                    you: { fingerprint: id.fingerprint, algorithm: id.algorithm, term: info.term },
-                  },
-                  size.cols,
-                  size.rows,
-                ),
-              ),
+            (state) => {
+              const frame = lobbyFrame(
+                {
+                  tables,
+                  ...state,
+                  you: { fingerprint: id.fingerprint, algorithm: id.algorithm, term: info.term },
+                },
+                size.cols,
+                size.rows,
+              );
+              if (frame !== drawn) session.stream.write((drawn = frame));
+            },
             (again) => {
               resize = again === undefined ? undefined : () => again();
             },
-            named ? unknown : undefined,
           );
           // The lobby's frame is put away, whatever comes next.
           session.stream.write(CLEAR);

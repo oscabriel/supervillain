@@ -59,7 +59,7 @@ export const makeRoom = <S, C>(
       return Number.isNaN(t) ? latest : Math.max(latest, t);
     }, Number.NEGATIVE_INFINITY);
     const writer = yield* Semaphore.make(1);
-    // A failed write may have left part of a line on disk, so the room stops writing until it is reopened.
+    // A failed write is cut back, but the cut can fail too, so the room stops writing until it is reopened.
     let halted: string | undefined;
 
     const submit = (actor: string, command: C) =>

@@ -41,13 +41,15 @@ describe("parseLog", () => {
   test("stops at a line that isn't JSON and names it", () => {
     const parsed = parseLog(line(1) + "not json\n" + line(3));
     expect(parsed.envelopes.map((e) => e.seq)).toEqual([1]);
-    expect(parsed.error?.line).toBe(2);
+    expect(parsed.error).toEqual({ line: 2, message: "expected a valid JSON string" });
   });
 
-  test("stops at a line that isn't an envelope", () => {
-    const parsed = parseLog(line(1) + '{"actor":"gm","seq":2}\n');
-    expect(parsed.envelopes.map((e) => e.seq)).toEqual([1]);
-    expect(parsed.error?.line).toBe(2);
+  test("stops at a line that isn't an envelope and names the field that's wrong", () => {
+    const missing = parseLog(line(1) + '{"actor":"gm","seq":2}\n');
+    expect(missing.envelopes.map((e) => e.seq)).toEqual([1]);
+    expect(missing.error).toEqual({ line: 2, message: "timestamp: missing" });
+    const wrong = parseLog(line(1).replace('"seq":1', '"seq":"1"'));
+    expect(wrong.error).toEqual({ line: 1, message: "seq: expected number" });
   });
 
   test("stops where seq is not the line number, so a lost or repeated line shows", () => {

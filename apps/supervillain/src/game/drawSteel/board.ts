@@ -258,28 +258,39 @@ export function measure(
   return decided(event("ds.measured", { from, to, distance: distance(from.at, to.at) }));
 }
 
-/** Who does the moving: as typed, else the acting creature (for the GM) or the player's hero. */
+/**
+ * Who does the moving: as typed, else the living acting creature (for the GM) or the player's
+ * hero. A player force moves only with their own hero, on its turn in a fight, as they /move it;
+ * the GM at any time. The dead force move nobody.
+ */
 function sourceOf(
   slice: DrawSteelState,
   actor: string,
   command: ForcedCommand<"push" | "pull" | "slide">,
   target: Who,
 ): Who | Refused | undefined {
-  if (command.from !== undefined) {
-    const who = resolve(slice, command.from);
-    if ("refusal" in who) return who;
-    return actor === GM || controls(actor, who)
-      ? who
-      : refuse("You can only force move with your own hero.");
-  }
-  if (actor !== GM) {
-    const own = heroOf(slice, actor);
-    if (own === undefined) return refuse("You can only force move with your own hero.");
-    return findWho(slice, own.id);
-  }
-  const acting = slice.combat.acting;
-  if (acting === undefined || acting === target.id) return undefined;
-  return findWho(slice, acting);
+  const { acting } = slice.combat;
+  const actingWho = acting === undefined ? undefined : findWho(slice, acting);
+  if (
+    actor === GM &&
+    command.from === undefined &&
+    (actingWho === undefined || actingWho.id === target.id || isDead(actingWho))
+  )
+    return undefined;
+  const own = actor === GM ? acting : heroOf(slice, actor)?.id;
+  const source =
+    command.from !== undefined
+      ? resolve(slice, command.from)
+      : own === undefined
+        ? undefined
+        : findWho(slice, own);
+  if (source !== undefined && "refusal" in source) return source;
+  if (source === undefined || !controls(actor, source))
+    return refuse("You can only force move with your own hero.");
+  if (isDead(source)) return refuse(`${source.name} is dead.`);
+  if (actor !== GM && acting !== source.id)
+    return refuse(`It isn't ${source.name}'s turn; the GM force moves between turns.`);
+  return source;
 }
 
 /**

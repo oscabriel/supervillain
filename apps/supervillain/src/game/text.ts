@@ -223,9 +223,9 @@ function folded(name: string): string {
   const latin = [...name.normalize("NFKC").replace(INVISIBLE, "")]
     .map((char) => LOOKALIKES[char] ?? char)
     .join("")
-    // A capital I draws like a lowercase l, and lowercasing would lose which it was.
-    .replace(/I/g, "l")
-    .toLowerCase();
+    .toLowerCase()
+    // A capital I draws like a lowercase l, so once case is gone an i is read as one too.
+    .replace(/i/g, "l");
   return [...latin]
     .map((char) => DIGIT_LOOKALIKES[char] ?? char)
     .join("")
@@ -237,11 +237,11 @@ function folded(name: string): string {
 /**
  * What a name looks like, for telling whether two names would be mistaken for each other:
  * compatibility-normalised (NFKC), invisible characters removed, lookalike letters folded to
- * Latin, a capital I read as an l, lowercased, 0 and 1 read as o and l and rn as m, and spaces
- * and punctuation (but brackets) dropped. "Vex", "VEX", "Ｖｅｘ", "V e x." and "Vеx" with a
- * Cyrillic е all look like "vex".
+ * Latin, lowercased, i (so a capital I) read as an l, 0 and 1 as o and l and rn as m, and spaces
+ * and punctuation dropped. "Vex", "VEX", "Ｖｅｘ", "V e x." and "Vеx" with a Cyrillic е all look
+ * like "vex".
  */
-export const nameKey = (name: string): string => folded(name).replace(/(?![()])[\s\p{P}]/gu, "");
+export const nameKey = (name: string): string => folded(name).replace(/[\s\p{P}]/gu, "");
 
 /** Whether a name reads like a guest's default label, "guest-7f3a". */
 export const looksLikeGuestLabel = (name: string): boolean => folded(name).startsWith("guest-");

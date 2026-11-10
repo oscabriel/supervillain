@@ -2,7 +2,7 @@ import type { BoxRenderable } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/solid";
 import { createMemo, For, Show } from "solid-js";
 import { bandLayout, type Segment, type Tone, whoAt } from "./band.ts";
-import { keepLines } from "./keep.ts";
+import { kept } from "./keep.ts";
 import { boxClick } from "./mouse.ts";
 import { marked } from "./panels.ts";
 import { color, people, personColor, personLabel } from "./theme.ts";
@@ -81,16 +81,15 @@ function Combat(
   } & Clicks,
 ) {
   const size = useTerminalDimensions();
-  const keep = keepLines<Segment>();
   let box: BoxRenderable | undefined;
-  const layout = createMemo(() => {
+  const layout = createMemo((was?: ReturnType<typeof bandLayout>) => {
     const laid = bandLayout(
       props.combat,
       size().width - BAND_FRAME.width,
       props.maxHeight - BAND_FRAME.height,
       { heroesWhole: props.heroesWhole },
     );
-    return { ...laid, lines: keep(laid.lines) };
+    return { ...laid, lines: kept(was?.lines, laid.lines) };
   });
   const title = () => marked(layout().title, props.mark);
   const click = boxClick(

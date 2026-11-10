@@ -115,6 +115,21 @@ describe("turns", () => {
     expect(t.submit(BOB, { type: "turn" }, fixedDice(1))).toBeUndefined();
   });
 
+  test("the side that goes first is skipped while it has nobody alive", () => {
+    const t = party();
+    t.run(GM, { type: "add", monster: "goblin-warrior", count: 1, sheet: GOBLIN });
+    t.run(GM, { type: "start" }, fixedDice(3));
+    t.run(GM, { type: "first", side: "director" });
+    t.run(GM, { type: "dmg", who: "goblin-warrior", amount: 15 });
+    t.run(ALICE, { type: "turn" });
+    t.run(ALICE, { type: "done" });
+    t.run(GM, { type: "turn", who: "kor" }, fixedDice(1));
+    t.run(GM, { type: "done" });
+    // A new round, and still nobody on the Director's side.
+    expect(t.submit(ALICE, { type: "turn" })).toBeUndefined();
+    expect(t.ds.combat).toMatchObject({ round: 2, acting: "vex" });
+  });
+
   test("round start: Malice gains the living heroes plus the round number", () => {
     const t = fight();
     expect(t.ds.malice).toBe(5);

@@ -94,6 +94,23 @@ describe("XP and the dead", () => {
       "Vex is dead and earns no Victories.",
     );
   });
+
+  test("the dead don't act: no rolls, resource, surges or Recoveries, and they force move nobody", () => {
+    const t = party();
+    t.run(GM, { type: "add", monster: "goblin-warrior", count: 1, sheet: GOBLIN });
+    t.run(GM, { type: "dmg", who: "vex", amount: 31 });
+    const dead = "Vex is dead.";
+    const pr = { type: "pr", who: "vex", edges: 0, banes: 0 } as const;
+    expect(t.submit(ALICE, { ...pr, ability: "spinning", targets: ["goblin"] })).toBe(dead);
+    expect(t.submit(ALICE, { ...pr, bonus: 2 })).toBe(dead);
+    expect(t.submit(ALICE, { type: "res", who: "vex", by: 5 })).toBe(dead);
+    expect(t.submit(GM, { type: "surge", who: "vex", by: 5 })).toBe(dead);
+    expect(t.submit(ALICE, { type: "recover", who: "vex", ally: false })).toBe(dead);
+    t.run(GM, { type: "map", id: "field", grid: { name: "Field", terrain: [".........."] } });
+    t.run(GM, { type: "place", who: "vex", at: { x: 0, y: 0 } });
+    t.run(GM, { type: "place", who: "goblin", at: { x: 1, y: 0 } });
+    expect(t.submit(GM, { type: "push", who: "goblin", distance: 2, from: "vex" })).toBe(dead);
+  });
 });
 
 describe("Recoveries while dying (Combat, 'Dying and Death')", () => {
@@ -309,6 +326,49 @@ describe("minion squads keep the Stamina they were added with", () => {
     expect(t.lastFeed()).toEqual([
       "Goblin Runner A takes 15 damage → 5/20 · 3 minions die, 1 left",
     ]);
+  });
+});
+
+describe("a turn's end that a new round stood on", () => {
+  const refusal = "A later change depends on it";
+
+  test("can't be undone from under the GM's /round", () => {
+    const t = fight();
+    t.run(ALICE, { type: "turn" });
+    t.run(ALICE, { type: "done" });
+    t.run(GM, { type: "round" });
+    expect(t.submit(ALICE, { type: "undo", now: t.now })).toStartWith(refusal);
+    t.run(GM, { type: "undo" });
+    t.run(ALICE, { type: "undo", now: t.now });
+    expect(t.ds.combat).toMatchObject({ round: 1, acting: "vex" });
+  });
+
+  test("nor from under a /turn that started the round, once everyone had acted", () => {
+    const t = fight();
+    t.run(GM, { type: "dmg", who: "goblin-warrior", amount: 15 });
+    t.run(GM, { type: "turn", who: "kor" }, fixedDice(2));
+    t.run(GM, { type: "done" });
+    t.run(GM, { type: "cond", who: "vex", condition: "slowed", duration: "eot" });
+    t.run(ALICE, { type: "turn" });
+    t.run(ALICE, { type: "done" });
+    t.run(GM, { type: "turn", who: "kor" }, fixedDice(2));
+    expect(t.ds.combat).toMatchObject({ round: 2, acting: "kor" });
+    expect(t.submit(ALICE, { type: "undo", now: t.now })).toStartWith(refusal);
+    expect(t.submit(GM, { type: "undo", who: "alice", whose: ALICE })).toStartWith(refusal);
+    expect(t.hero("vex").conditions).toEqual([]);
+  });
+
+  test("replay halts a round that starts during a turn", () => {
+    const t = fight();
+    t.run(ALICE, { type: "turn" });
+    t.envelopes.push({
+      actor: GM,
+      seq: t.envelopes.length + 1,
+      timestamp: t.now,
+      type: "ds.round-started",
+      payload: { round: 2, heroes: 2, malice: 4 },
+    });
+    expect(() => t.ds).toThrow("ds.round-started at seq 8 starts a round during a turn");
   });
 });
 

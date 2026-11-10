@@ -149,14 +149,14 @@ describe("relay: shutting down", () => {
 });
 
 describe("relay: rooms", () => {
-  effect("an unknown room says so; a claimed room with no GM says it isn't open", () =>
+  effect("an unknown room says so, and how to join; a claimed room with no GM isn't open", () =>
     Effect.gen(function* () {
       const relay = yield* startRelay();
       const key = yield* clientKey(yield* tempDir, "vex");
       const unknown = yield* sshExec(relay.playerPort, ["hi"], { key, user: "nowhere" });
       expect(unknown).toMatchObject({
         stdout: "",
-        stderr: "There's no table called nowhere here.\n",
+        stderr: `There's no table called nowhere here.\n${JOIN_HINT}\n`,
         exitCode: 1,
       });
       // A bare `ssh relay` sends the local username, or a name that can't be a room: teach the form.
@@ -173,7 +173,7 @@ describe("relay: rooms", () => {
         },
       );
       expect(yield* Effect.promise(() => shell.exited)).toBe(1);
-      expect(shell.output()).toContain("There's no table called nowhere here.\r\n");
+      expect(shell.output()).toBe(`There's no table called nowhere here.\r\n${JOIN_HINT}\r\n`);
 
       const table = yield* scoped(openTable(relay));
       yield* table.close;
@@ -399,8 +399,7 @@ describe("relay: limits", () => {
   effect("per-address connection caps and session rates apply to players at the relay", () =>
     Effect.gen(function* () {
       const relay = yield* startRelay({
-        limits: { connectionsPerAddress: 1 },
-        sessionRate: { burst: 2, perSecond: 0.001 },
+        limits: { connectionsPerAddress: 1, sessionRate: { burst: 2, perSecond: 0.001 } },
       });
       yield* openTable(relay);
       const key = yield* clientKey(yield* tempDir, "vex");
@@ -414,11 +413,10 @@ describe("relay: limits", () => {
       held.kill();
       yield* Effect.promise(() => held.exited);
       yield* Effect.sleep("100 millis");
-      // Two sessions started; the third comes too fast.
+      // Two sessions started; the third comes too fast, and is refused before it reaches a table.
       expect((yield* sshExec(relay.playerPort, ["hi"], { key })).exitCode).toBe(0);
       const third = yield* sshExec(relay.playerPort, ["hi"], { key });
-      expect(third).toMatchObject({ exitCode: 1 });
-      expect(third.stderr).toContain("Too many sessions from your address");
+      expect(third).toMatchObject({ exitCode: 255, stdout: "" });
     }),
   );
 
@@ -435,6 +433,26 @@ describe("relay: limits", () => {
       yield* Effect.promise(() => held.exited);
       yield* Effect.sleep("200 millis");
       expect((yield* sshExec(relay.playerPort, ["hi"], { key })).exitCode).toBe(0);
+    }),
+  );
+
+  effect("a player who gives up while a slow host seats them gives their place back at once", () =>
+    Effect.gen(function* () {
+      const relay = yield* startRelay({ sessionsPerRoom: 1 });
+      const { link } = yield* openTable(relay);
+      const key = yield* clientKey(yield* tempDir, "vex");
+      // The host stops reading its link: a channel asked for now isn't opened until it reads again.
+      link.socket.pause();
+      const leaving = yield* sshShell(relay.playerPort, { cols: 80, rows: 24 }, { key });
+      yield* Effect.sleep("500 millis");
+      leaving.kill();
+      yield* Effect.promise(() => leaving.exited);
+      yield* Effect.sleep("200 millis");
+      // The next player isn't told the room is full: they wait, and sit once the host reads again.
+      const next = yield* Effect.forkScoped(sshExec(relay.playerPort, ["hi"], { key }));
+      yield* Effect.sleep("500 millis");
+      link.socket.resume();
+      expect((yield* Fiber.join(next)).exitCode).toBe(0);
     }),
   );
 

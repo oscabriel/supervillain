@@ -17,10 +17,11 @@ import {
   fixedDice,
   GM,
   GOBLIN,
+  ok,
   party,
   RUNNER,
-  table,
   type Table,
+  type,
   VEX,
 } from "./harness.ts";
 
@@ -53,21 +54,6 @@ const grid = (): MapGrid => {
   if ("refusal" in read) throw new Error(read.refusal);
   return read;
 };
-
-/** Runs one typed line through the command registry, as a seat would, and returns any refusal. */
-function type(t: Table, actor: string, line: string, dice = fixedDice()): string | undefined {
-  const [, name = "", args = ""] = /^\/(\S+)\s*(.*)$/.exec(line) ?? [];
-  const spec = table.commands.find((c) => c.name === name);
-  if (spec === undefined) throw new Error(`no command /${name}`);
-  const command = spec.parse(args);
-  if ("refusal" in command) return command.refusal;
-  return t.submit(actor, command, dice);
-}
-
-function ok(t: Table, actor: string, line: string, dice = fixedDice()): void {
-  const refusal = type(t, actor, line, dice);
-  if (refusal !== undefined) throw new Error(`refused: ${refusal}`);
-}
 
 /** Vex (Alice) and Kor with a goblin warrior, the cave loaded and nobody placed. */
 function cave(): Table {
@@ -437,7 +423,7 @@ describe("forced movement (Combat, 'Forced Movement')", () => {
       payload: { id: "goblin-warrior", kind: "push", source: "kor", distance: 3, stability: 0 },
     });
     expect(where(t, "goblin-warrior")).toBe("i5");
-    expect(t.lastFeed()).toEqual(["Goblin Warrior is pushed 3 squares to i5."]);
+    expect(t.lastFeed()).toEqual(["Goblin Warrior is pushed 3 squares by Kor to i5."]);
   });
 
   test("stability reduces the distance ('Stability')", () => {
@@ -446,11 +432,13 @@ describe("forced movement (Combat, 'Forced Movement')", () => {
     ok(t, GM, "/place vex e1");
     ok(t, GM, "/push vex 3 from goblin");
     expect(where(t, "vex")).toBe("g1");
-    expect(t.lastFeed()).toEqual(["Vex is pushed 2 squares to g1 (push 3, stability 1)."]);
+    expect(t.lastFeed()).toEqual([
+      "Vex is pushed 2 squares by Goblin Warrior to g1 (push 3, stability 1).",
+    ]);
     ok(t, GM, "/push vex 1 from goblin");
     expect(where(t, "vex")).toBe("g1");
     expect(t.lastFeed()).toEqual([
-      "Vex is pushed but doesn't move (push 1, stability 1; Goblin Warrior is 3 squares away).",
+      "Vex is pushed by Goblin Warrior but doesn't move (push 1, stability 1; 3 squares away).",
     ]);
   });
 
@@ -465,7 +453,7 @@ describe("forced movement (Combat, 'Forced Movement')", () => {
     ]);
     expect(t.creature("goblin-warrior").stamina).toBe(10);
     expect(t.lastFeed(2)).toEqual([
-      "Goblin Warrior is pushed but doesn't move and slams into a wall with 3 squares to go.",
+      "Goblin Warrior is pushed by Kor but doesn't move and slams into a wall with 3 squares to go.",
       "Goblin Warrior takes 5 damage → 10/15",
     ]);
   });
@@ -475,12 +463,12 @@ describe("forced movement (Combat, 'Forced Movement')", () => {
     ok(t, GM, "/place vex e1");
     ok(t, GM, "/place goblin f1");
     ok(t, GM, "/place kor h1");
-    ok(t, ALICE, "/push goblin 3 from vex");
+    ok(t, GM, "/push goblin 3 from vex");
     expect(where(t, "goblin-warrior")).toBe("g1");
     expect(t.creature("goblin-warrior").stamina).toBe(13);
     expect(t.hero("kor").stamina).toBe(22);
     expect(t.lastFeed(3)).toEqual([
-      "Goblin Warrior is pushed 1 square to g1 and slams into Kor with 2 squares to go.",
+      "Goblin Warrior is pushed 1 square by Vex to g1 and slams into Kor with 2 squares to go.",
       "Goblin Warrior takes 2 damage → 13/15",
       "Kor takes 2 damage → 22/24",
     ]);
@@ -493,7 +481,7 @@ describe("forced movement (Combat, 'Forced Movement')", () => {
     ok(t, GM, "/pull goblin 5 from kor");
     expect(where(t, "goblin-warrior")).toBe("h2");
     expect(t.lastFeed()).toEqual([
-      "Goblin Warrior is pulled 3 squares to h2 (Kor is 4 squares away).",
+      "Goblin Warrior is pulled 3 squares by Kor to h2 (4 squares away).",
     ]);
   });
 
@@ -546,16 +534,28 @@ describe("forced movement (Combat, 'Forced Movement')", () => {
       "You can only force move with your own hero.",
     );
     expect(type(t, GM, "/push goblin 2")).toBe("Push from where? /push goblin 2 from <who>.");
-    // A player's own hero is the source when none is named.
+    // A player force moves only on their own hero's turn in a fight; the GM at any time.
+    const offTurn = "It isn't Vex's turn; the GM force moves between turns.";
+    expect(type(t, ALICE, "/push goblin 1")).toBe(offTurn);
+    expect(type(t, ALICE, "/slide kor 3 to b2")).toBe(offTurn);
+    t.run(GM, { type: "start" }, fixedDice(7));
+    t.run(GM, { type: "first", side: "heroes" });
+    t.run(GM, { type: "turn", who: "kor" }, fixedDice(2));
+    expect(type(t, ALICE, "/push goblin 1")).toBe(offTurn);
+    t.run(GM, { type: "turn", who: "goblin" });
+    expect(type(t, ALICE, "/push goblin 1 from vex")).toBe(offTurn);
+    t.run(GM, { type: "turn", who: "vex" });
+    // Their own hero is the source when none is named, and the feed names it.
     ok(t, ALICE, "/push goblin 1");
     expect(where(t, "goblin-warrior")).toBe("g1");
+    expect(t.lastFeed()).toEqual(["Goblin Warrior is pushed 1 square by Vex to g1."]);
     t.run(GM, { type: "cond", who: "goblin", condition: "restrained" });
     expect(type(t, ALICE, "/push goblin 1")).toBe(
       "Goblin Warrior is restrained and can't be force moved.",
     );
   });
 
-  test("in combat the acting creature is the source when none is named", () => {
+  test("in combat the acting creature is the source when none is named, unless it is dead", () => {
     const t = cave();
     ok(t, GM, "/place kor e5");
     ok(t, GM, "/place goblin f5");
@@ -564,6 +564,10 @@ describe("forced movement (Combat, 'Forced Movement')", () => {
     t.run(GM, { type: "turn", who: "kor" }, fixedDice(2));
     ok(t, GM, "/push goblin 1");
     expect(where(t, "goblin-warrior")).toBe("g5");
+    t.run(GM, { type: "turn", who: "goblin" });
+    t.run(GM, { type: "dmg", who: "goblin", amount: 15 });
+    ok(t, GM, "/slide kor 1 to e4");
+    expect(t.lastFeed()).toEqual(["Kor is slid 1 square to e4."]);
   });
 });
 
@@ -687,7 +691,7 @@ describe("mapView", () => {
     t.run(GM, { type: "add", monster: "goblin-warrior", count: 2, sheet: GOBLIN });
     t.run(GM, { type: "add", monster: "goblin-archer", count: 1, sheet: ARCHER });
     t.run(GM, { type: "add", monster: "goblin-runner", count: 12, sheet: RUNNER });
-    const ids = ["vex", "kor", "kira", "goblin-warrior", "goblin-warrior-1", "goblin-warrior-2"];
+    const ids = ["vex", "kor", "kira", "goblin-warrior", "goblin-warrior-2", "goblin-warrior-3"];
     const squares = ["a1", "b1", "d1", "e1", "f1", "g1", "h1", "i1", "j1", "a2"];
     const all = [...ids, "goblin-archer", "goblin-runner-a", "goblin-runner-b"];
     all.forEach((id, i) => ok(t, GM, `/place ${id} ${squares[i]}`));
@@ -696,8 +700,8 @@ describe("mapView", () => {
       ["kor", "K"],
       ["kira", "Ki"],
       ["goblin-warrior", "w"],
-      ["goblin-warrior-1", "w1"],
       ["goblin-warrior-2", "w2"],
+      ["goblin-warrior-3", "w3"],
       ["goblin-archer", "a"],
       ["goblin-runner-a", "rA"],
       ["goblin-runner-b", "rB"],
@@ -836,6 +840,9 @@ describe("forced movement, the finer points", () => {
   test("nobody force moves themselves: a slide of your own hero is a move", () => {
     const t = cave();
     ok(t, GM, "/place vex a1");
+    t.run(GM, { type: "start" }, fixedDice(7));
+    t.run(GM, { type: "first", side: "heroes" });
+    t.run(ALICE, { type: "turn" });
     expect(type(t, ALICE, "/slide vex 3 to c1")).toBe("Vex can't slide themselves; /move instead.");
     expect(type(t, GM, "/slide vex 3 to c1 from vex")).toBe(
       "Vex can't slide themselves; /move instead.",
@@ -849,7 +856,7 @@ describe("forced movement, the finer points", () => {
     ok(t, GM, "/pull goblin 4 from kor to a1");
     expect(where(t, "goblin-warrior")).toBe("b1");
     expect(t.lastFeed(3)).toEqual([
-      "Goblin Warrior is pulled 1 square to b1 and slams into Kor with 3 squares to go (Kor is 2 squares away).",
+      "Goblin Warrior is pulled 1 square by Kor to b1 and slams into Kor with 3 squares to go (2 squares away).",
       "Goblin Warrior takes 3 damage → 12/15",
       "Kor takes 3 damage → 21/24",
     ]);
@@ -863,7 +870,7 @@ describe("forced movement, the finer points", () => {
     ok(t, GM, "/pull goblin 4 from kor");
     expect(where(t, "goblin-warrior")).toBe("f4");
     expect(t.lastFeed()).toEqual([
-      "Goblin Warrior is pulled 4 squares to f4 (Kor is 5 squares away).",
+      "Goblin Warrior is pulled 4 squares by Kor to f4 (5 squares away).",
     ]);
   });
 
@@ -891,7 +898,7 @@ describe("forced movement, the finer points", () => {
     ok(t, GM, "/push goblin 5 from kor");
     expect(t.envelopes.at(-1)).toMatchObject({ payload: { edge: true } });
     expect(t.lastFeed()).toEqual([
-      "Goblin Warrior is pushed 1 square to j5, stopped by the map's edge.",
+      "Goblin Warrior is pushed 1 square by Kor to j5, stopped by the map's edge.",
     ]);
   });
 
@@ -900,10 +907,13 @@ describe("forced movement, the finer points", () => {
     ok(t, GM, "/place vex a1");
     ok(t, GM, "/place kor e1");
     ok(t, GM, "/place goblin j1");
-    // A player's hero can force move another player's hero, as an ability may.
+    // A player's hero can force move another player's hero on its turn, as an ability may.
+    t.run(GM, { type: "start" }, fixedDice(7));
+    t.run(GM, { type: "first", side: "heroes" });
+    t.run(ALICE, { type: "turn" });
     ok(t, ALICE, "/push kor 1");
     expect(t.envelopes.at(-1)).toMatchObject({ payload: { source: "vex", apart: 4 } });
-    expect(t.lastFeed()).toEqual(["Kor is pushed 1 square to f1 (Vex is 4 squares away)."]);
+    expect(t.lastFeed()).toEqual(["Kor is pushed 1 square by Vex to f1 (4 squares away)."]);
     ok(t, GM, "/fs goblin vex");
     expect(t.envelopes.at(-1)).toMatchObject({ payload: { source: "goblin-warrior", apart: 9 } });
     expect(t.lastFeed()).toEqual([
@@ -930,12 +940,12 @@ describe("marks are names", () => {
     const t = cave();
     t.run(GM, { type: "add", monster: "goblin-warrior", count: 2, sheet: GOBLIN });
     ok(t, GM, "/place vex a1");
-    ok(t, GM, "/place goblin-warrior-1 e3");
-    ok(t, GM, "/dmg w1 3");
-    expect(t.creature("goblin-warrior-1").stamina).toBe(12);
-    ok(t, ALICE, "/dist vex w1");
+    ok(t, GM, "/place goblin-warrior-2 e3");
+    ok(t, GM, "/dmg w2 3");
+    expect(t.creature("goblin-warrior-2").stamina).toBe(12);
+    ok(t, ALICE, "/dist vex w2");
     expect(t.lastFeed()).toEqual([
-      "abcdefgh (Vex) measures Vex (a1) to Goblin Warrior 1 (e3): 4 squares.",
+      "abcdefgh (Vex) measures Vex (a1) to Goblin Warrior 2 (e3): 4 squares.",
     ]);
     // No token is g2, so g2 is the square.
     ok(t, ALICE, "/dist V g2");
@@ -962,6 +972,49 @@ describe("marks are names", () => {
     // And the lone Goblin Warrior from the cave is "w": thirteen marks, all different.
     expect(marks.get("goblin-warrior")).toBe("w");
     expect(new Set(marks.values()).size).toBe(13);
+  });
+});
+
+describe("one living token to a square", () => {
+  test("the dead take up no space, so nobody is raised under whoever stands there now", () => {
+    const t = cave();
+    ok(t, GM, "/place goblin d1");
+    ok(t, GM, "/place vex a1");
+    ok(t, GM, "/dmg goblin 15");
+    ok(t, ALICE, "/move vex d1");
+    expect(type(t, GM, "/heal goblin 5")).toBe(
+      "Vex stands where Goblin Warrior lies, at d1; /move them first.",
+    );
+    ok(t, ALICE, "/move vex e1");
+    ok(t, GM, "/heal goblin 5");
+    expect(t.creature("goblin-warrior").stamina).toBe(5);
+  });
+
+  test("replay halts a token put where another living one stands", () => {
+    const t = cave();
+    ok(t, GM, "/place vex a1");
+    ok(t, GM, "/place kor b1");
+    const next = (type: string, payload: unknown) => ({
+      actor: GM,
+      seq: t.envelopes.length + 1,
+      timestamp: t.now,
+      type,
+      payload,
+    });
+    const b1 = { x: 1, y: 0 };
+    for (const [type, payload] of [
+      ["ds.placed", { id: "vex", at: b1 }],
+      ["ds.moved", { id: "vex", path: [b1], cost: 1, speed: 5 }],
+      ["ds.force-moved", { id: "vex", kind: "slide", distance: 1, stability: 0, path: [b1] }],
+    ] as const) {
+      t.envelopes.push(next(type, payload));
+      expect(() => t.ds).toThrow(`${type} at seq 8 puts 'vex' at b1, where 'kor' stands`);
+      t.envelopes.pop();
+    }
+    // A dead token is no obstacle: Kor may lie under Vex.
+    ok(t, GM, "/dmg kor 40");
+    t.envelopes.push(next("ds.placed", { id: "vex", at: b1 }));
+    expect(where(t, "vex")).toBe("b1");
   });
 });
 
@@ -1066,5 +1119,27 @@ describe("undo at the map", () => {
     t.run(ALICE, { type: "undo", now: t.now });
     expect(where(t, "vex")).toBe("f1");
     expect(t.hero("vex").stamina).toBe(21);
+  });
+
+  test("a move can't be undone back onto a square someone has taken since", () => {
+    const t = cave();
+    ok(t, GM, "/place vex a1");
+    ok(t, GM, "/place kor a3");
+    ok(t, GM, "/place goblin e5");
+    ok(t, ALICE, "/move vex d1");
+    ok(t, GM, "/move kor a1");
+    const refusal =
+      'A later change depends on it: GM\'s "Kor moves to a1 (2 squares of movement)". Undo that first';
+    expect(t.submit(ALICE, { type: "undo", now: t.now })).toBe(`${refusal}, or ask the GM.`);
+    expect(t.submit(GM, { type: "undo", who: "alice", whose: ALICE })).toBe(`${refusal}.`);
+    // A placement into the square she left stands in the way the same.
+    t.run(GM, { type: "undo" });
+    ok(t, GM, "/place goblin a1");
+    expect(t.submit(ALICE, { type: "undo", now: t.now })).toStartWith(
+      "A later change depends on it",
+    );
+    t.run(GM, { type: "undo" });
+    t.run(ALICE, { type: "undo", now: t.now });
+    expect(where(t, "vex")).toBe("a1");
   });
 });

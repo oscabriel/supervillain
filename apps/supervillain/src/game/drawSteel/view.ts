@@ -12,6 +12,7 @@ import {
 import { ADD_MAX } from "./commands.ts";
 import { type Ability, type Characteristics, type DamageModifier, isTrait } from "./sheets.ts";
 import {
+  abilitiesOf,
   capitalized,
   CHARACTERISTICS,
   type Condition,
@@ -58,6 +59,8 @@ export interface Combatant {
   readonly acting: boolean;
   /** Whether this seat's player plays it. */
   readonly mine: boolean;
+  /** A living hero nobody plays, which a player without one may take with /play. */
+  readonly free?: boolean;
   /** Its token's mark while it's on the map ("b1"), which commands also take as its name. */
   readonly mark?: string;
 }
@@ -114,6 +117,7 @@ function combatant(
       recoveries: { left: h.recoveries, max: h.sheet.recoveries },
       surges: h.surges,
       mine: h.player === actor,
+      ...(h.player === undefined && health !== "dead" && { free: true }),
     };
   }
   const c = who.creature;
@@ -310,10 +314,7 @@ export function tokenActions(
 ): ReadonlyArray<TokenAction> | undefined {
   const who = findWho(slice, id);
   if (who === undefined || !controls(actor, who)) return undefined;
-  const abilities =
-    who.kind === "hero"
-      ? who.hero.sheet.abilities
-      : (slice.blocks[who.creature.block]?.abilities ?? []);
+  const abilities = abilitiesOf(slice, who);
   return [
     ...(slice.map === undefined
       ? []

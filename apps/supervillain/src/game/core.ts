@@ -39,6 +39,8 @@ export type CoreCommand =
        * the log). Their labels are held: a guest's name only while they sit, a key's for good.
        */
       readonly seated?: ReadonlyArray<string>;
+      /** The names of the heroes, creatures and fighters in play, filled in by the host. */
+      readonly cast?: ReadonlyArray<string>;
     }
   | { readonly type: "roll"; readonly notation: string };
 
@@ -85,8 +87,11 @@ function chatText(raw: string): string | { refusal: string } {
   return text;
 }
 
-/** The markers the table draws after a label, which a name must not fake. */
-const MARKERS = ["(gm)", "(you)"];
+/**
+ * What the table draws around a label, "Alice (Vex)" or "Oscar (GM)", and the feed's own marks,
+ * "↶ GM undid: …" or "→ 10/24 · winded", which a name must not fake.
+ */
+const MARKS = /[()[\]{}↶↷→·]/;
 
 /**
  * A display name in its stored form (compatibility-normalised, trimmed, whitespace collapsed),
@@ -110,16 +115,19 @@ function normalName(raw: string): string | { refusal: string } {
 const storedText = (text: string, max: number): boolean =>
   text !== "" && lengthOf(text) <= max && !hasTerminalControls(text);
 
+type NameCommand = Extract<CoreCommand, { readonly type: "name" }>;
+
 /**
  * Every label someone other than `actor` answers to, as name keys: "GM", then each key's name and
- * default label (held for good: a key is a person), and the labels of everyone seated. A guest is
- * a new actor each connection, so a guest's name is held only while that guest is seated.
+ * default label (held for good: a key is a person), the labels of everyone seated, and the names
+ * of those in play, so no line reads as a hero's. A guest is a new actor each connection, so a
+ * guest's name is held only while that guest is seated.
  */
 function takenLabels(
   slice: CoreState,
   shared: Shared,
   actor: string,
-  seated: ReadonlyArray<string>,
+  { seated = [], cast = [] }: NameCommand,
 ): Set<string> {
   const others = new Set([
     GM,
@@ -127,7 +135,7 @@ function takenLabels(
     ...seated,
   ]);
   others.delete(actor);
-  const taken = new Set<string>();
+  const taken = new Set(cast.map(nameKey));
   for (const other of others) {
     taken.add(nameKey(defaultLabel(other)));
     const name = slice.names[other];
@@ -140,17 +148,15 @@ function chooseName(
   slice: CoreState,
   shared: Shared,
   actor: string,
-  raw: string,
-  seated: ReadonlyArray<string>,
+  command: NameCommand,
 ): Decision {
-  const name = normalName(raw);
+  const name = normalName(command.name);
   if (typeof name !== "string") return name;
   if (slice.names[actor] === name) return refuse(`You're already ${name}.`);
   const key = nameKey(name);
-  if (takenLabels(slice, shared, actor, seated).has(key))
+  if (takenLabels(slice, shared, actor, command).has(key))
     return refuse(`"${name}" is taken; pick another name.`);
-  if (MARKERS.some((marker) => key.includes(marker)))
-    return refuse(`"${name}" would read like a marker; pick another name.`);
+  if (MARKS.test(name)) return refuse(`"${name}" would read like a marker; pick another name.`);
   if (looksLikeGuestLabel(name) && key !== nameKey(defaultLabel(actor)))
     return refuse(`"${name}" looks like a guest's label; pick another name.`);
   return { events: [{ type: "core.name-set", payload: { name } }] };
@@ -244,7 +250,7 @@ export const core: Module<"core", CoreState, CoreCommand> = {
       case "narrate":
         return post(command.text, "narration");
       case "name":
-        return chooseName(slice, shared, actor, command.name, command.seated ?? []);
+        return chooseName(slice, shared, actor, command);
       case "roll":
         return roll(command.notation, dice);
     }

@@ -146,7 +146,9 @@ describe("supervillain host --relay, through supervillain relay", () => {
         ]);
         yield* waitFor("the link", () => links(host) === 1, 10_000);
         // The host trusted the relay's key on first use, said so, and pinned it.
-        expect(host.output()).toContain(`trusted relay key ${relay.key} on first use`);
+        yield* waitFor("the pin said", () =>
+          host.output().includes(`trusted relay key ${relay.key} on first use`),
+        );
         const known = yield* Effect.promise(() => readFile(join(campaign, "relay_known"), "utf8"));
         expect(known.trim()).toBe(relay.key);
         // The relay claimed the room for this campaign's host key. It writes the claim once the
@@ -238,7 +240,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
         yield* Effect.promise(() => terminal.exited);
         yield* waitFor(
           "the host to notice",
-          () => host.output().includes("connecting (the link dropped)"),
+          () => host.output().includes("connecting (the link dropped"),
           10_000,
         );
         const back = yield* startRelay(relayDir, ports);
@@ -436,7 +438,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
         const turnedAway = yield* sshExec(fakePorts.player, ["help"], { key: vex, user: "den" });
         expect(turnedAway).toMatchObject({
           exitCode: 1,
-          stderr: "There's no table called den here.\n",
+          stderr: expect.stringMatching(/^There's no table called den here\.\n/),
         });
 
         // A --relay-key pin on the command line is held to as well.

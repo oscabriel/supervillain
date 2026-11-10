@@ -94,7 +94,7 @@ describe("the ford road over real ssh", () => {
 
         // Push 3 from Brann, less the bruiser's stability 2: one square straight away, h5 to i5.
         expect(yield* asPlayer(port, alice, "/push bandit-bruiser 3")).toBe(
-          "Bandit Bruiser is pushed 1 square to i5 (push 3, stability 2).\n",
+          "Bandit Bruiser is pushed 1 square by Brann to i5 (push 3, stability 2).\n",
         );
         expect(yield* asPlayer(port, alice, "/dist brann bandit-bruiser")).toBe(
           "Alice (Brann) measures Brann (g5) to Bandit Bruiser (i5): 2 squares.\n",

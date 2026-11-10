@@ -1,4 +1,4 @@
-import { Result, Schema } from "effect";
+import { Result, Schema, SchemaIssue } from "effect";
 import type { Envelope } from "./envelope.ts";
 
 const EnvelopeLine = Schema.fromJsonString(
@@ -11,6 +11,19 @@ const EnvelopeLine = Schema.fromJsonString(
   }),
 );
 const decodeLine = Schema.decodeUnknownResult(EnvelopeLine);
+
+const formatIssue = SchemaIssue.makeFormatterStandardSchemaV1({
+  leafHook: (issue) =>
+    issue._tag === "MissingKey" ? "missing" : SchemaIssue.defaultLeafHook(issue),
+});
+
+/** What's wrong with a line, in words a GM can act on: "timestamp: missing", "seq: expected number". */
+const problem = (issue: SchemaIssue.Issue) => {
+  const [first] = formatIssue(issue).issues;
+  const message = (first?.message ?? "not an envelope").replace(/^\w/, (c) => c.toLowerCase());
+  const field = first?.path?.[0];
+  return field === undefined ? message : `${String(field)}: ${message}`;
+};
 
 export interface ParsedLog {
   /** Every envelope before the first bad line. */
@@ -38,7 +51,7 @@ export function parseLog(text: string): ParsedLog {
       return {
         ...parsed,
         envelopes,
-        error: { line: i + 1, message: String(result.failure.issue) },
+        error: { line: i + 1, message: problem(result.failure.issue) },
       };
     }
     if (result.success.seq !== i + 1) {

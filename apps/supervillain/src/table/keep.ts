@@ -1,34 +1,30 @@
 /**
- * Keeps last time's line and segment objects wherever they read the same. The band and the map
- * render lines with `<For>`, which keys rows by identity: a fresh array of equal lines would tear
- * down and rebuild every text renderable, so one changed token or meter redraws one line.
+ * `next`, with every object and array in it that reads the same as last time's swapped for last
+ * time's: `previous` itself when all of it does. In a list an item is matched wherever it moved,
+ * else by place. The host keeps a seat's views so: an event that leaves the map as it was paints
+ * no picture again, and one that changes a prep item rebuilds that item alone. The band and the
+ * map keep their lines so too, since `<For>` keys rows by identity and would rebuild every row of
+ * a fresh array.
  */
-export function keepLines<S extends object>(): (
-  lines: ReadonlyArray<ReadonlyArray<S>>,
-) => ReadonlyArray<ReadonlyArray<S>> {
-  let previous: ReadonlyArray<ReadonlyArray<S>> = [];
-  let byText = new Map<string, ReadonlyArray<S>>();
-  return (lines) => {
-    const next = new Map<string, ReadonlyArray<S>>();
-    let same = lines.length === previous.length;
-    const kept = lines.map((line, i) => {
-      const key = JSON.stringify(line);
-      const old = byText.get(key) ?? next.get(key);
-      const row =
-        old ??
-        line.map((segment, j) => {
-          const was = previous[i]?.[j];
-          return was !== undefined && JSON.stringify(was) === JSON.stringify(segment)
-            ? was
-            : segment;
-        });
-      next.set(key, row);
-      if (row !== previous[i]) same = false;
-      return row;
-    });
-    byText = next;
-    if (same) return previous;
-    previous = kept;
-    return kept;
-  };
+export function kept<A>(previous: A | undefined, next: A): A {
+  if (previous === next) return next;
+  if (
+    typeof previous !== "object" ||
+    typeof next !== "object" ||
+    previous === null ||
+    next === null ||
+    Array.isArray(previous) !== Array.isArray(next)
+  )
+    return next;
+  const was = previous as Record<string, unknown>;
+  const now = next as Record<string, unknown>;
+  const keys = Object.keys(now);
+  const moved = Array.isArray(was) ? new Map(was.map((v) => [JSON.stringify(v), v])) : undefined;
+  const out = (Array.isArray(now) ? [] : {}) as Record<string, unknown>;
+  let same = keys.length === Object.keys(was).length;
+  for (const key of keys) {
+    out[key] = moved?.get(JSON.stringify(now[key])) ?? kept(was[key], now[key]);
+    if (out[key] !== was[key] || !Object.hasOwn(was, key)) same = false;
+  }
+  return same ? previous : (out as A);
 }

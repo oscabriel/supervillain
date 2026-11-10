@@ -69,6 +69,8 @@ export const sshExec = (port: number, command: string, key?: ClientKey) =>
 export interface Terminal {
   /** Everything the client has printed so far, escape sequences removed. */
   readonly text: () => string;
+  /** The same, as it came: escape sequences and all. */
+  readonly output: () => string;
   readonly write: (text: string) => void;
   /** Kills the client, as a dropped connection would. */
   readonly kill: () => void;
@@ -93,6 +95,7 @@ export const sshShell = (port: number, key?: ClientKey) =>
       });
       const terminal: Terminal = {
         text: () => Bun.stripANSI(output),
+        output: () => output,
         write: (text) => void proc.terminal?.write(text),
         kill: () => proc.kill("SIGKILL"),
         exited: proc.exited,

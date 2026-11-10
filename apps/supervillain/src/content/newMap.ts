@@ -2,7 +2,7 @@
 // table's `/map new` do it. Generation is seeded (mapgen.ts), so the seed, in the default id
 // `<kind>-<seed>`, is the record; the table then loads the file as a typed `/map <id>`, so the
 // event carries the grid and replay never generates or reads a file.
-import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { MAP_SEED_MAX, MAP_WORDS, type MapKind } from "../game/drawSteel/map.ts";
@@ -36,8 +36,8 @@ const sameId = async (folder: string, id: string): Promise<string | undefined> =
  * Generates a `kind` of map from `seed` (0 to MAP_SEED_MAX, as `/map new` takes it) and writes it
  * to `<campaignDir>/maps/<id>.txt`, `id` being `<kind>-<seed>` unless given. It never overwrites a
  * file, nor writes one beside a file that would load by the same id (`Keep-42.txt`), nor takes an
- * id `/map` reads as a word (`off`, `new`). It makes maps/ if the campaign has none, but never the
- * campaign folder itself.
+ * id `/map` reads as a word (`off`, `new`), nor leaves a file it couldn't write whole. It makes
+ * maps/ if the campaign has none, but never the campaign folder itself.
  */
 export const writeGeneratedMap = (
   campaignDir: string,
@@ -70,7 +70,17 @@ export const writeGeneratedMap = (
         const folder = join(campaignDir, "maps");
         if ((await sameId(folder, mapId)) !== undefined) return false;
         await mkdir(folder, { recursive: true });
-        await writeFile(join(campaignDir, file), mapFileText(map), { flag: "wx" });
+        const path = join(campaignDir, file);
+        const handle = await open(path, "wx");
+        try {
+          await handle.writeFile(mapFileText(map));
+        } catch (e) {
+          // Half a map would hold its id: it wouldn't load, and no /map new could write it again.
+          await unlink(path).catch(() => undefined);
+          throw e;
+        } finally {
+          await handle.close();
+        }
         return true;
       },
       catch: (e) => {

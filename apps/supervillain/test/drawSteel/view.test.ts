@@ -48,9 +48,25 @@ describe("combatView", () => {
           acted: false,
           acting: false,
           mine: false,
+          free: true,
         },
       ],
     });
+  });
+
+  test("a living hero nobody plays is free to take, for a player without one", () => {
+    const t = party();
+    const free = () => combatView(t.ds, BOB)?.combatants.map((c) => [c.id, c.free ?? false]);
+    expect(free()).toEqual([
+      ["vex", false],
+      ["kor", true],
+    ]);
+    t.run(GM, { type: "dmg", who: "kor", amount: 60 });
+    expect(combatView(t.ds, BOB)?.combatants[1]?.health).toBe("dead");
+    expect(free()).toEqual([
+      ["vex", false],
+      ["kor", false],
+    ]);
   });
 
   test("a dying hero is bleeding and shows where death is (Combat, 'Dying and Death')", () => {
@@ -198,12 +214,13 @@ describe("parsing", () => {
     table.commands.find((c) => c.name === name)?.parse(args);
 
   test("each command reads its arguments, or refuses with its usage", () => {
+    // An ability's words are the rules' to split, once they know its sheet.
     expect(parse("pr", "vex spinning strike edge bane2")).toEqual({
       type: "pr",
       who: "vex",
-      ability: "spinning strike",
-      edges: 1,
-      banes: 2,
+      ability: "spinning strike edge bane2",
+      edges: 0,
+      banes: 0,
     });
     expect(parse("pr", "vex +3 edge2")).toEqual({
       type: "pr",

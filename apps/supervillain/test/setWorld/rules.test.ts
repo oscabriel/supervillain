@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { MapGrid } from "../../src/game/drawSteel/map.ts";
-import { feedLines, plainText, type SetCharacter, tableLabel } from "../../src/game/index.ts";
+import {
+  bandOf,
+  feedLines,
+  plainText,
+  type SetCharacter,
+  tableLabel,
+} from "../../src/game/index.ts";
 import { landedDamage, reachOf, speedOf } from "../../src/game/setWorld/index.ts";
-import { ALICE, BOB, fixedDice, GM, noDice, Table } from "../game/table.ts";
+import { ALICE, BOB, fixedDice, GM, GUEST, noDice, Table } from "../game/table.ts";
 import { character, recorded } from "./harness.ts";
 
 /** Twelve squares by three, all floor but a wall at f2. */
@@ -81,6 +87,35 @@ describe("rolling fighters", () => {
     expect(reachOf("sling")).toEqual({ delivery: "projectile", squares: 10, magic: false });
     expect(reachOf("wand")).toEqual({ delivery: "wave", squares: 5, magic: true });
     expect(reachOf("tome")).toEqual({ delivery: "aura", squares: 3, magic: true });
+  });
+});
+
+describe("a fighter called Constructor", () => {
+  test("its id is a word every object answers to: only its own stamina, turn and weapon count", () => {
+    const table = tableWith(
+      [["Ada", character({ initiative: 2, physicalDamage: 500 })]],
+      [
+        ["Constructor", character({ initiative: 0.5 })],
+        ["Grub", character({ initiative: 0.5 })],
+        ["Rat", character({ initiative: 0.5 })],
+      ],
+    );
+    table.run(GM, { type: "set-start" });
+    table.run(GM, { type: "set-attack", who: "ada", target: "constructor" }, plainHit());
+    // Down, it recovers nothing when the next turn begins.
+    table.run(GM, { type: "set-done" });
+    expect(fighter(table, "constructor").stamina).toBe(100);
+    // Down when the next fight starts, it has no turn coming: it comes after Grub, who had one.
+    table.run(GM, { type: "set-end" });
+    table.run(GM, { type: "set-start" });
+    table.run(GM, { type: "set-attack", who: "ada", target: "grub" }, plainHit());
+    expect(bandOf(table.state, GM, "set-world")!.combatants.map((c) => c.name)).toEqual([
+      "Ada",
+      "Rat",
+      "Grub",
+      "Constructor",
+    ]);
+    expect(reachOf("constructor")).toEqual(reachOf("sword"));
   });
 });
 
@@ -196,6 +231,25 @@ describe("turn order", () => {
     expect(table.submit(GM, { type: "set-done" })).toBe(
       "No fight is on; the GM starts one with /start.",
     );
+  });
+});
+
+describe("a fight an undo left one-sided", () => {
+  test("ends at the next /done, with its winner, rather than beginning another turn", () => {
+    const table = tableWith(
+      [["Ada", character({ physicalDamage: 500 })]],
+      [["Grub", character({ initiative: 0.5 })]],
+    );
+    table.run(ALICE, { type: "set-play", who: "ada" });
+    table.run(GM, { type: "set-start" });
+    // A second foe comes mid-turn, so felling Grub doesn't end the fight; then the GM takes it back.
+    table.run(GM, { type: "set-foe", name: "Rat", character: character({ initiative: 0.5 }) });
+    table.run(ALICE, { type: "set-attack", who: "ada", target: "grub" }, plainHit());
+    table.run(GM, { type: "undo", who: "GM", whose: GM });
+    expect(table.state.sw.fight).toBeDefined();
+    table.run(ALICE, { type: "set-done" });
+    expect(last(table, 2)).toEqual(["Ada's turn ends.", "The fight is over: the party wins."]);
+    expect(table.state.sw.fight).toBeUndefined();
   });
 });
 
@@ -389,6 +443,32 @@ describe("the grid", () => {
     );
     table.run(GM, { type: "set-move", who: "ada", to: { x: 6, y: 2 } });
     expect(table.state.sw.fight?.turn?.moved).toBe(6);
+    expect(table.submit(ALICE, { type: "set-move", who: "ada", to: { x: 7, y: 2 } })).toBe(
+      "h3 is 1 square away; Ada has 0 left.",
+    );
+  });
+
+  test("a /done can't be taken back from under the next fighter's move, for a second turn's worth", () => {
+    const table = onField();
+    table.run(BOB, { type: "set-play", who: "sky" });
+    // Ada's turns at 1 s and 2 s, then Sky's.
+    table.run(ALICE, { type: "set-done" });
+    table.run(ALICE, { type: "set-done" });
+    table.run(BOB, { type: "set-move", who: "sky", to: { x: 5, y: 2 } });
+    expect(table.submit(ALICE, { type: "undo", now: table.now })).toStartWith(
+      "A later change depends on it",
+    );
+    expect(table.state.sw.fight?.turn).toEqual({ id: "sky", moved: 5, attacked: false });
+  });
+
+  test("a move can't be taken back from under the attack it brought into reach", () => {
+    const table = onField();
+    table.run(ALICE, { type: "set-move", who: "ada", to: { x: 2, y: 0 } });
+    table.run(GM, { type: "set-attack", who: "ada", target: "grub" }, plainHit());
+    expect(table.submit(ALICE, { type: "undo", now: table.now })).toStartWith(
+      "A later change depends on it",
+    );
+    expect(fighter(table, "ada").at).toEqual({ x: 2, y: 0 });
   });
 
   test("off its turn a player moves nobody, and places only before the fight", () => {
@@ -440,6 +520,28 @@ describe("players", () => {
     expect(table.submit(ALICE, { type: "set-done" })).toBe("It's Sky's turn, not yours to end.");
     table.run(ALICE, { type: "set-unplay" });
     expect(last(table)).toEqual(["abcdefgh stops playing Ada."]);
+  });
+
+  test("a fighter whose guest has left is free to take; a key's, or a seated guest's, is not", () => {
+    const table = tableWith(
+      [
+        ["Ada", character()],
+        ["Sky", character()],
+      ],
+      [],
+    );
+    table.run(GUEST, { type: "set-play", who: "ada" });
+    table.run(ALICE, { type: "set-play", who: "sky" });
+    expect(table.submit(BOB, { type: "set-play", who: "ada", seated: [GUEST, BOB] })).toBe(
+      "Someone else plays Ada.",
+    );
+    expect(table.submit(BOB, { type: "set-play", who: "sky", seated: [BOB] })).toBe(
+      "Someone else plays Sky.",
+    );
+    // The host didn't say who is seated: nobody is taken for gone.
+    expect(table.submit(BOB, { type: "set-play", who: "ada" })).toBe("Someone else plays Ada.");
+    table.run(BOB, { type: "set-play", who: "ada", seated: [BOB] });
+    expect(fighter(table, "ada").player).toBe(BOB);
   });
 
   test("a player can't take back an attack, which rolled; the GM can", () => {

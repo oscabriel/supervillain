@@ -73,9 +73,9 @@ export function useCellPixels(): () => CellPixels | undefined {
 /**
  * The picture map (picture.ts), `height` rows border to border: column letters over the squares,
  * row numbers beside them, and the painted squares as one image at the seat's cell size in pixels
- * (`useCellPixels`), which the renderer sends zlib-compressed (a move is tens of KB, a few hundred
- * on a dense map at HiDPI, not megabytes). The view centres as the text map's does; tokens out of
- * view are named in the bottom border.
+ * (`useCellPixels`), sent as a PNG (a move is 5 to 20 KB on the sample maps, at HiDPI too) and not
+ * again for an event that leaves the map as it was. The view centres as the text map's does;
+ * tokens out of view are named in the bottom border.
  */
 export function PictureMap(props: {
   map: MapView;
@@ -96,20 +96,23 @@ export function PictureMap(props: {
   let box: BoxRenderable | undefined;
   renderer.kittyImageTransport = "zlib";
 
-  const win = createMemo(() =>
-    pictureWindow(
-      props.map,
-      Math.floor((size().width - MAP_FRAME.width - GUTTER) / SQUARE.cols),
-      Math.floor((props.height - MAP_FRAME.height - LABEL_ROWS) / SQUARE.rows),
-      props.focus,
-    ),
+  const win = createMemo(
+    () =>
+      pictureWindow(
+        props.map,
+        Math.floor((size().width - MAP_FRAME.width - GUTTER) / SQUARE.cols),
+        Math.floor((props.height - MAP_FRAME.height - LABEL_ROWS) / SQUARE.rows),
+        props.focus,
+      ),
+    undefined,
+    // The same squares are not painted again, however the pane came to be laid out anew.
+    { equals: (a, b) => a.x0 === b.x0 && a.y0 === b.y0 && a.cols === b.cols && a.rows === b.rows },
   );
   const cell = useCellPixels();
   const tile = createMemo(() => tileFor(cell(), win().cols * win().rows));
   const image = createMemo((previous: NativeImage | undefined) => {
     previous?.dispose();
-    const canvas = paintPicture(props.map, win(), tile());
-    return NativeImage.fromRgba(canvas.pixels, canvas.width, canvas.height);
+    return NativeImage.decode(paintPicture(props.map, win(), tile()).png());
   });
   onCleanup(() => image().dispose());
 

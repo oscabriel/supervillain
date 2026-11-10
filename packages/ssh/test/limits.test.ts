@@ -1,12 +1,12 @@
 import { describe, expect } from "bun:test";
 import { connect } from "node:net";
 import { TextRenderable } from "@opentui/core";
-import { Effect, Exit, Fiber, Scope } from "effect";
+import { Effect, Exit, Fiber, Logger, Scope } from "effect";
 import type ssh2 from "ssh2";
 import { effect } from "./effect.ts";
 import { clientKey, opensshKex, sshExec, sshShell, waitFor } from "./openssh.ts";
 import { testServer } from "./server.ts";
-import { ssh2Client, ssh2Exec } from "./ssh2client.ts";
+import { ssh2Client, ssh2Exec, ssh2Shell } from "./ssh2client.ts";
 import { tempDir } from "./tempDir.ts";
 
 /** An exec handler that answers after a pause, so sessions stay open for a while. */
@@ -104,6 +104,28 @@ describe("handshake", () => {
     }),
   );
 
+  effect("a client that rekeys again and again is cut", () =>
+    Effect.gen(function* () {
+      const key = yield* clientKey(yield* tempDir, "alice");
+      const server = yield* testServer({
+        // Output a few kilobytes at a time for a second, as a table's comes.
+        onExec: (session) =>
+          Effect.gen(function* () {
+            for (let i = 0; i < 200; i++) {
+              session.write("x".repeat(4096));
+              yield* Effect.sleep("5 millis");
+            }
+            return 0;
+          }),
+      });
+      // OpenSSH told to rekey every kilobyte asks for a key exchange after each piece.
+      const flood = yield* sshExec(server.port, ["x"], { key, flags: ["-o", "RekeyLimit=1K"] });
+      expect(flood.exitCode).toBe(255);
+      // Left to its defaults it rekeys after a gigabyte or more, and gets it all.
+      expect((yield* sshExec(server.port, ["x"], { key })).stdout).toHaveLength(200 * 4096);
+    }),
+  );
+
   effect("a connection that never authenticates is cut after the login grace", () =>
     Effect.gen(function* () {
       yield* testServer({ timeouts: { loginMs: 200 } }).pipe(
@@ -185,6 +207,27 @@ describe("connection limits", () => {
     }),
   );
 
+  effect("an address that starts sessions faster than its rate is refused; others are not", () =>
+    Effect.gen(function* () {
+      const server = yield* testServer({
+        allowGuests: true,
+        limits: { sessionRate: { burst: 2, perSecond: 0.001 } },
+        onExec: slowEcho("0 millis"),
+      });
+      const client = yield* ssh2Client({ port: server.port, keyboard: true });
+      expect((yield* ssh2Exec(client, "x")).stdout).toBe("ok");
+      expect((yield* ssh2Exec(client, "x")).stdout).toBe("ok");
+      expect(yield* Effect.flip(ssh2Exec(client, "x"))).toBeInstanceOf(Error);
+      // Another machine has its own allowance.
+      const elsewhere = yield* ssh2Client({
+        port: server.port,
+        keyboard: true,
+        localAddress: "127.0.0.2",
+      });
+      expect((yield* ssh2Exec(elsewhere, "x")).stdout).toBe("ok");
+    }),
+  );
+
   effect("an authenticated connection that opens no session is cut after the start grace", () =>
     Effect.gen(function* () {
       const server = yield* testServer({ allowGuests: true, timeouts: { sessionStartMs: 200 } });
@@ -226,6 +269,31 @@ describe("connection limits", () => {
       yield* closeOf(client).pipe(Effect.timeout("3 seconds"));
       expect(Date.now() - ended).toBeLessThan(2000);
     }),
+  );
+
+  effect(
+    "a session the server ended gives its place back, though its client never answers the close",
+    () =>
+      Effect.gen(function* () {
+        const server = yield* testServer({
+          allowGuests: true,
+          limits: { sessionsPerAddress: 1 },
+          timeouts: { sessionStartMs: 200 },
+          onExec: slowEcho("0 millis"),
+        });
+        const guest = { port: server.port, keyboard: true };
+        const client = yield* ssh2Client(guest);
+        let cut = false;
+        client.once("close", () => (cut = true));
+        // This client never sends a channel close, its own or in answer to the server's.
+        const protocol = (client as unknown as { _protocol: { channelClose: () => void } })
+          ._protocol;
+        protocol.channelClose = () => undefined;
+        expect((yield* ssh2Exec(client, "x")).stdout).toBe("ok");
+        // The address's one session is free for someone else, and the idle connection is cut.
+        expect((yield* ssh2Exec(yield* ssh2Client(guest), "y")).stdout).toBe("ok");
+        yield* waitFor("the connection with nothing open to be cut", () => cut);
+      }),
   );
 
   effect("a channel that never starts is closed alone; the session beside it carries on", () =>
@@ -289,6 +357,43 @@ describe("dead peers", () => {
         yield* waitFor("the frozen session to end", () => ended.length > 0, 5000);
       }),
     10_000,
+  );
+
+  effect(
+    "a client that stops reading is cut once what waits for it passes the bound",
+    () =>
+      Effect.gen(function* () {
+        const key = yield* clientKey(yield* tempDir, "alice");
+        const logged: string[] = [];
+        const collect = Logger.layer([Logger.make(({ message }) => logged.push(String(message)))]);
+        const server = yield* testServer({
+          // A megabyte every few milliseconds, never waiting for the client to take it.
+          onRaw: (session) =>
+            Effect.gen(function* () {
+              const flood = setInterval(() => session.stream.write(Buffer.alloc(1 << 20)), 5);
+              yield* Effect.addFinalizer(() => Effect.sync(() => clearInterval(flood)));
+              yield* Effect.never;
+            }),
+        }).pipe(Effect.provide(collect));
+        const cuts = () => logged.filter((line) => line.includes("it stopped reading")).length;
+        // One reads nothing from its channel, so what's sent waits on the server's channel.
+        const still = yield* ssh2Client({ port: server.port, key });
+        let stillClosed = false;
+        still.once("close", () => (stillClosed = true));
+        yield* ssh2Shell(still, { cols: 80, rows: 24 });
+        yield* waitFor("the channel's reader to be cut", () => cuts() === 1 && stillClosed);
+        // One offers SSH's largest window and stops reading its socket, so it waits on the socket.
+        const sock = connect(server.port, "127.0.0.1");
+        const stalled = yield* ssh2Client({ sock, key });
+        const protocol = (stalled as unknown as { _protocol: Record<string, Function> })._protocol;
+        const session = protocol.session!;
+        protocol.session = (id: number, _window: number, packet: number) =>
+          session.call(protocol, id, 0xffffffff, packet);
+        yield* ssh2Shell(stalled, { cols: 80, rows: 24 });
+        sock.pause();
+        yield* waitFor("the socket's reader to be cut", () => cuts() === 2, 10_000);
+      }),
+    15_000,
   );
 });
 

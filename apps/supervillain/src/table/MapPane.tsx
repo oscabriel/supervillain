@@ -1,7 +1,7 @@
 import type { BoxRenderable } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/solid";
 import { createMemo, For } from "solid-js";
-import { keepLines } from "./keep.ts";
+import { kept } from "./keep.ts";
 import { fittedTitle } from "./panels.ts";
 import {
   type Focus,
@@ -63,16 +63,15 @@ export function MapPane(props: {
 }) {
   const terminal = useTerminalDimensions();
   const size = () => ({ width: props.width ?? terminal().width });
-  const keep = keepLines<MapSegment>();
   let box: BoxRenderable | undefined;
-  const layout = createMemo(() => {
+  const layout = createMemo((was?: ReturnType<typeof mapLayout>) => {
     const laid = mapLayout(
       props.map,
       size().width - MAP_FRAME.width,
       props.height - MAP_FRAME.height,
       props.focus,
     );
-    return { ...laid, lines: keep(laid.lines) };
+    return { ...laid, lines: kept(was?.lines, laid.lines) };
   });
   const title = () =>
     fittedTitle(
