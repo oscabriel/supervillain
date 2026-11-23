@@ -11,25 +11,30 @@ import {
 	terrainAt,
 } from "./Encounter.ts";
 import type { Fighter, Square } from "./Encounter.ts";
-import { Message } from "./Model.ts";
-import type { Key } from "./Model.ts";
 import {
-	bodyOf,
-	isDead,
-	lineOf,
-	movesLeft,
-	reachable,
-	statusOf,
-} from "./Rules.ts";
+	dressingAt,
+	figureOfFighter,
+	MEK_REACH_BG,
+	MEK_SIDES,
+	mekSvg,
+	swatchOf,
+} from "./Mekmode.ts";
+import { Message } from "./Model.ts";
+import type { Key, MapMode } from "./Model.ts";
+import { bodyOf, isDead, movesLeft, reachable, statusOf } from "./Rules.ts";
 import type { FeedLine, TableState } from "./Rules.ts";
-import { hintOf, projectionOf, suggestionsOf } from "./Table.ts";
+import { isStrikable, projectionOf, suggestionsOf } from "./Table.ts";
 import type { Demo, Reply } from "./Table.ts";
 
 const FEED_LINES = 12;
 
-const LOG_LINES = 8;
+const METER = 6;
 
-const METER = 10;
+const REACH_FG = "#8ed1c8";
+
+const LETTERS = "abcdefghijklmnopqrstuvwxyz";
+
+const ALWAYS: ReadonlyArray<string> = ["/roll 2d10+2", "/help"];
 
 const KEYS: ReadonlyArray<Key> = ["ArrowUp", "ArrowDown", "Escape"];
 
@@ -44,28 +49,16 @@ const keyOf = (key: string): Option.Option<Message> => {
 const classes = (names: ReadonlyArray<string>): string =>
 	names.filter((name) => name !== "").join(" ");
 
-const titleView = (
-	h: HtmlBuilder<Message>,
-	number: string,
-	text: string,
-	more: string
-): Html => {
-	const parts = [
-		h.span([h.Class("panel-key")], [number]),
-		h.span([h.Class("panel-name")], [text]),
-	];
-
-	if (more !== "") {
-		parts.push(h.span([h.Class("panel-more")], [more]));
-	}
-
-	return h.p([h.Class("panel-title")], parts);
-};
-
 const meterOf = (stamina: number, max: number): string => {
 	const filled = Math.round((METER * Math.max(0, stamina)) / max);
 
 	return `${"█".repeat(filled)}${"░".repeat(METER - filled)}`;
+};
+
+const healthOf = (state: TableState, id: string): string => {
+	const status = statusOf(state, id);
+
+	return status === "" ? "healthy" : status;
 };
 
 const turnText = (state: TableState): string => {
@@ -78,121 +71,138 @@ const turnText = (state: TableState): string => {
 		: `${FIGHTERS.find((f) => f.id === state.turn)?.name ?? ""}'s turn`;
 };
 
+const titleView = (h: HtmlBuilder<Message>, key: string, text: string): Html =>
+	h.div([h.Class("tui-box-title")], [h.span([h.Class("k")], [key]), text]);
+
+const headerView = (h: HtmlBuilder<Message>): Html =>
+	h.div(
+		[h.Class("tui-header")],
+		[
+			h.span([h.Class("tui-brand")], ["supervillain"]),
+			h.span([h.Class("tui-dim")], [" · "]),
+			h.span([h.Class("tui-room")], ["first-fight"]),
+			h.span([h.Class("tui-dim")], ["   here: "]),
+			h.span([h.Class("tui-gm")], ["GM"]),
+			h.span([h.Class("tui-dim")], [", "]),
+			h.span([h.Class("tui-you")], ["Brann (you)"]),
+		]
+	);
+
 const bandRowView = (
 	h: HtmlBuilder<Message>,
 	state: TableState,
 	fighter: Fighter
 ): Html => {
 	const stamina = bodyOf(state, fighter.id)?.stamina ?? fighter.stamina;
-	const status = statusOf(state, fighter.id);
+	const status = healthOf(state, fighter.id);
 	const hero = fighter.id === HERO;
 
-	const extra = hero
-		? `wrath ${state.wrath} · rec ${state.recoveries}`
-		: `stability ${fighter.stability}`;
+	const meta = hero
+		? `${status} · wrath ${state.wrath} · rec ${state.recoveries}`
+		: `${status} · stab ${fighter.stability}`;
 
-	return h.li(
+	return h.button(
 		[
-			h.Class(
-				classes([
-					"band-row",
-					hero ? "is-you" : "is-foe",
-					state.turn === fighter.id ? "is-acting" : "",
-					status === "dead" ? "is-dead" : "",
-				])
-			),
+			h.Type("button"),
+			h.Class(classes(["tui-band-row", status === "dead" ? "dead" : ""])),
+			h.Title(`Inspect ${fighter.name}`),
+			h.OnClick(Message.ClickedSuggestion({ line: `/sheet ${fighter.id}` })),
 		],
 		[
-			h.span([h.Class("band-mark")], [fighter.mark]),
+			hero
+				? h.span(
+						[h.Class("tui-mine-pill")],
+						[`${fighter.mark} ${fighter.name} (you)`]
+					)
+				: h.span(
+						[h.Class("tui-foe-name")],
+						[`${fighter.mark} ${fighter.name}`]
+					),
 			h.span(
-				[h.Class("band-name")],
-				[hero ? `${fighter.name} · you` : fighter.name]
-			),
-			h.span(
-				[h.Class("band-meter"), h.AriaHidden(true)],
+				[h.Class(`tui-meter ${status}`), h.AriaHidden(true)],
 				[meterOf(stamina, fighter.stamina)]
 			),
-			h.span([h.Class("band-stamina")], [`${stamina}/${fighter.stamina}`]),
-			h.span([h.Class("band-status")], [status]),
-			h.span([h.Class("band-extra")], [extra]),
+			h.span([], [`${stamina}/${fighter.stamina}`]),
+			h.span([h.Class("tui-band-meta")], [meta]),
 		]
 	);
 };
 
 const bandView = (h: HtmlBuilder<Message>, state: TableState): Html =>
 	h.section(
-		[h.Class("panel lineup"), h.AriaLabel("The band")],
 		[
-			titleView(h, "¹", "fight", `round ${state.round} · ${turnText(state)}`),
-			h.ol(
-				[h.Class("band-rows")],
-				FIGHTERS.map((fighter) => bandRowView(h, state, fighter))
+			h.Class(classes(["tui-box", state.winner === "" ? "active-combat" : ""])),
+			h.AriaLabel("The band"),
+		],
+		[
+			titleView(h, "¹", `fight · round ${state.round} · ${turnText(state)}`),
+			h.div(
+				[h.Class("tui-band-grid")],
+				[
+					h.div(
+						[h.Class("tui-band-col")],
+						FIGHTERS.filter((fighter) => fighter.id === HERO).map((fighter) =>
+							bandRowView(h, state, fighter)
+						)
+					),
+					h.div(
+						[h.Class("tui-band-col")],
+						FIGHTERS.filter((fighter) => fighter.id !== HERO).map((fighter) =>
+							bandRowView(h, state, fighter)
+						)
+					),
+				]
 			),
 		]
 	);
 
-const glyphOf = (terrain: string, isReach: boolean): string => {
-	if (terrain === "#") {
-		return "█";
-	}
-
+const floorGlyphOf = (terrain: string, isReach: boolean): string => {
 	if (terrain === "~") {
-		return isReach ? "≈" : "~";
+		return "~";
 	}
 
 	return isReach ? "•" : "·";
 };
 
-const squareView = (
+const sideColorOf = (id: string, dead: boolean): string => {
+	if (dead) {
+		return MEK_SIDES.dead;
+	}
+
+	return id === HERO ? MEK_SIDES.you : MEK_SIDES.foe;
+};
+
+interface SquareInput {
+	readonly name: string;
+	readonly terrain: string;
+	readonly dressed: string;
+	readonly fg: string;
+	readonly bg: string;
+	readonly picture: boolean;
+}
+
+const wallView = (h: HtmlBuilder<Message>, input: SquareInput): Html =>
+	h.span(
+		[
+			h.Class(classes(["tui-cell wall", input.picture ? "" : "text-mode"])),
+			h.Style({ "--cell-bg": input.bg, "--cell-fg": input.fg }),
+			h.AriaHidden(true),
+		],
+		[input.picture ? mekSvg(h, input.dressed, input.fg, "tui-tile-svg") : "█"]
+	);
+
+const tokenView = (
 	h: HtmlBuilder<Message>,
 	state: TableState,
-	open: ReadonlySet<string>,
-	square: Square
+	input: SquareInput,
+	id: string,
+	dead: boolean
 ): Html => {
-	const name = nameOfSquare(square);
-	const terrain = terrainAt(state.terrain, square);
-
-	const living = state.bodies.find(
-		(body) =>
-			body.at.x === square.x &&
-			body.at.y === square.y &&
-			!isDead(state, body.id)
-	);
-
-	const fallen = state.bodies.find(
-		(body) => body.at.x === square.x && body.at.y === square.y
-	);
-
-	const token = living ?? fallen;
-	const isReach = open.has(name);
-
-	if (terrain === "#") {
-		return h.span([h.Class("sq is-wall"), h.AriaHidden(true)], ["█"]);
-	}
-
-	if (token !== undefined) {
-		const fighter = FIGHTERS.find((f) => f.id === token.id);
-		const dead = living === undefined;
-
-		return h.button(
-			[
-				h.Type("button"),
-				h.Tabindex(-1),
-				h.Class(
-					classes([
-						"sq token",
-						token.id === HERO ? "is-you" : "is-foe",
-						state.turn === token.id ? "is-acting" : "",
-						dead ? "is-dead" : "",
-						terrain === "~" ? "is-rough" : "",
-					])
-				),
-				h.AriaLabel(`${name}, ${fighter?.name ?? ""}${dead ? ", dead" : ""}`),
-				h.OnClick(Message.ClickedToken({ id: token.id })),
-			],
-			[dead ? "x" : (fighter?.mark ?? "?")]
-		);
-	}
+	const fighter = FIGHTERS.find((f) => f.id === id);
+	const name = fighter?.name ?? "";
+	const mark = dead ? "x" : (fighter?.mark ?? "?");
+	const color = sideColorOf(id, dead);
+	const label = `${input.name}, ${name}${dead ? ", dead" : ""}`;
 
 	return h.button(
 		[
@@ -200,76 +210,155 @@ const squareView = (
 			h.Tabindex(-1),
 			h.Class(
 				classes([
-					"sq",
-					terrain === "~" ? "is-rough" : "",
-					isReach ? "is-reach" : "",
+					"tui-cell",
+					input.picture ? "" : "text-mode",
+					id === HERO ? "you" : "",
+					isStrikable(state, id) ? "attack" : "",
+					dead ? "dead" : "",
 				])
 			),
-			h.AriaLabel(name),
-			h.OnClick(Message.ClickedSquare({ square: name })),
+			h.Style({ "--cell-bg": input.bg, "--cell-fg": color }),
+			h.AriaLabel(label),
+			h.Title(label),
+			h.OnClick(Message.ClickedToken({ id })),
 		],
-		[glyphOf(terrain, isReach)]
+		[
+			input.picture
+				? mekSvg(h, figureOfFighter(id), color, "tui-tile-svg")
+				: mark,
+		]
 	);
 };
 
-const LETTERS = "abcdefghijklmnopqrstuvwxyz";
+const floorView = (
+	h: HtmlBuilder<Message>,
+	input: SquareInput,
+	isReach: boolean
+): Html => {
+	const fg = isReach ? REACH_FG : input.fg;
 
-const mapView = (h: HtmlBuilder<Message>, state: TableState): Html => {
+	return h.button(
+		[
+			h.Type("button"),
+			h.Tabindex(-1),
+			h.Class(
+				classes([
+					"tui-cell",
+					input.picture ? "" : "text-mode",
+					isReach ? "reach" : "",
+				])
+			),
+			h.Style({
+				"--cell-bg": isReach ? MEK_REACH_BG : input.bg,
+				"--cell-fg": fg,
+			}),
+			h.AriaLabel(input.name),
+			h.Title(isReach ? `Move Brann to ${input.name}` : input.name),
+			h.OnClick(Message.ClickedSquare({ square: input.name })),
+		],
+		[
+			input.picture
+				? mekSvg(h, input.dressed, fg, "tui-tile-svg")
+				: floorGlyphOf(input.terrain, isReach),
+		]
+	);
+};
+
+const squareView = (
+	h: HtmlBuilder<Message>,
+	state: TableState,
+	open: ReadonlySet<string>,
+	square: Square,
+	mapMode: MapMode
+): Html => {
+	const name = nameOfSquare(square);
+	const terrain = terrainAt(state.terrain, square);
+	const dressed = dressingAt(square, terrain);
+	const swatch = swatchOf(dressed);
+
+	const input: SquareInput = {
+		name,
+		terrain,
+		dressed,
+		fg: swatch.fg,
+		bg: swatch.bg,
+		picture: mapMode === "pictures",
+	};
+
+	if (terrain === "#") {
+		return wallView(h, input);
+	}
+
+	const here = state.bodies.filter(
+		(body) => body.at.x === square.x && body.at.y === square.y
+	);
+
+	const living = here.find((body) => !isDead(state, body.id));
+	const token = living ?? here[0];
+
+	return token === undefined
+		? floorView(h, input, open.has(name))
+		: tokenView(h, state, input, token.id, living === undefined);
+};
+
+const mapHintOf = (state: TableState): string => {
+	if (state.winner !== "") {
+		return "click reset to play again";
+	}
+
+	const strike = FIGHTERS.some((fighter) => isStrikable(state, fighter.id));
+
+	return `click a tinted square to move${strike ? " · click adjacent bandit to strike" : ""}`;
+};
+
+const mapView = (
+	h: HtmlBuilder<Message>,
+	state: TableState,
+	mapMode: MapMode
+): Html => {
 	const open = new Set(reachable(state).map(nameOfSquare));
 	const columns = Array.from({ length: COLUMNS }, (_unused, x) => x);
 	const rows = Array.from({ length: ROWS }, (_unused, y) => y);
 
+	const title =
+		state.turn === HERO && state.winner === ""
+			? `${MAP_NAME} · ${movesLeft(state)} move`
+			: MAP_NAME;
+
 	return h.section(
-		[h.Class("panel map"), h.AriaLabel("The map")],
+		[h.Class("tui-box tui-map-box"), h.AriaLabel("The map")],
 		[
-			titleView(
-				h,
-				"²",
-				MAP_NAME,
-				state.turn === HERO ? `${movesLeft(state)} movement left` : ""
+			titleView(h, "²", title),
+			h.div(
+				[h.Class("tui-grid-center")],
+				[
+					h.div(
+						[h.Class("tui-grid")],
+						[
+							h.div([h.Class("tui-col-hdr")], []),
+							...columns.map((x) =>
+								h.div([h.Class("tui-col-hdr")], [LETTERS[x] ?? ""])
+							),
+							...rows.flatMap((y) => [
+								h.div([h.Class("tui-row-hdr")], [String(y + 1)]),
+								...columns.map((x) =>
+									squareView(h, state, open, { x, y }, mapMode)
+								),
+							]),
+						]
+					),
+				]
 			),
 			h.div(
-				[h.Class("grid"), h.Style({ "--columns": String(COLUMNS) })],
+				[h.Class("tui-map-foot")],
 				[
-					h.span([h.Class("edge corner"), h.AriaHidden(true)], [""]),
-					...columns.map((x) =>
-						h.span([h.Class("edge"), h.AriaHidden(true)], [LETTERS[x] ?? ""])
-					),
-					...rows.flatMap((y) => [
-						h.span([h.Class("edge"), h.AriaHidden(true)], [String(y + 1)]),
-						...columns.map((x) => squareView(h, state, open, { x, y })),
-					]),
+					h.span([], ["B Brann · b Bruiser · s Slinger"]),
+					h.span([], [mapHintOf(state)]),
 				]
 			),
 		]
 	);
 };
-
-const replyView = (h: HtmlBuilder<Message>, reply: Reply): Html =>
-	h.section(
-		[h.Class("panel reply"), h.AriaLabel("Reply")],
-		[
-			h.div(
-				[h.Class("reply-head")],
-				[
-					titleView(h, "⁴", reply.title, "just for you"),
-					h.button(
-						[
-							h.Type("button"),
-							h.Class("reply-close"),
-							h.AriaLabel("Close"),
-							h.OnClick(Message.ClickedCloseReply()),
-						],
-						["esc ×"]
-					),
-				]
-			),
-			h.div(
-				[h.Class("reply-lines")],
-				reply.lines.map((line) => h.p([], [line]))
-			),
-		]
-	);
 
 const feedLineView = (h: HtmlBuilder<Message>, line: FeedLine): Html => {
 	const parts: Array<Html | string> = [];
@@ -277,7 +366,7 @@ const feedLineView = (h: HtmlBuilder<Message>, line: FeedLine): Html => {
 	if (line.who !== "") {
 		parts.push(
 			h.span(
-				[h.Class("feed-who")],
+				[h.Class("who")],
 				[`${line.who}${line.kind === "chat" ? ":" : ""} `]
 			)
 		);
@@ -285,9 +374,9 @@ const feedLineView = (h: HtmlBuilder<Message>, line: FeedLine): Html => {
 
 	parts.push(line.text);
 
-	return h.p(
+	return h.div(
 		[
-			h.Class(classes(["feed-line", line.taken ? "is-taken" : ""])),
+			h.Class(classes(["tui-fline", line.taken ? "is-taken" : ""])),
 			h.DataAttribute("kind", line.kind),
 		],
 		parts
@@ -299,27 +388,106 @@ const feedView = (
 	feed: ReadonlyArray<FeedLine>
 ): Html =>
 	h.section(
-		[h.Class("panel feed"), h.AriaLabel("The feed"), h.AriaLive("polite")],
 		[
-			titleView(h, "³", "feed", ""),
+			h.Class("tui-box tui-feed-box"),
+			h.AriaLabel("The feed"),
+			h.AriaLive("polite"),
+		],
+		[
+			titleView(h, "³", "feed"),
 			h.div(
-				[h.Class("feed-lines")],
-				feed.slice(-FEED_LINES).map((line) => feedLineView(h, line))
+				[h.Class("tui-feed-scroll")],
+				feed
+					.slice(-FEED_LINES)
+					.toReversed()
+					.map((line) => feedLineView(h, line))
 			),
 		]
 	);
 
-const logView = (h: HtmlBuilder<Message>, demo: Demo): Html =>
+const replyView = (h: HtmlBuilder<Message>, reply: Reply): Html =>
 	h.section(
-		[h.Class("panel log"), h.AriaLabel("events.jsonl")],
+		[h.Class("tui-reply-box"), h.AriaLabel("Reply")],
 		[
-			titleView(h, "$", "tail events.jsonl", `${demo.log.length} lines`),
-			h.pre(
-				[h.Class("log-lines")],
+			h.div([h.Class("tui-reply-title")], [`just for you · ${reply.title}`]),
+			h.button(
 				[
-					h.code(
-						[],
-						demo.log.slice(-LOG_LINES).map((entry) => `${lineOf(entry)}\n`)
+					h.Type("button"),
+					h.Class("tui-reply-close"),
+					h.AriaLabel("Close"),
+					h.OnClick(Message.ClickedCloseReply()),
+				],
+				["Esc"]
+			),
+			h.div(
+				[h.Class("tui-reply-lines")],
+				reply.lines.map((line) => h.div([], [line]))
+			),
+		]
+	);
+
+const leadView = (
+	h: HtmlBuilder<Message>,
+	demo: Demo,
+	state: TableState
+): Html => {
+	if (demo.refusal !== "") {
+		return h.span(
+			[h.Class("tui-lead-badge is-refusal"), h.AriaLive("polite")],
+			[demo.refusal]
+		);
+	}
+
+	const lead =
+		state.winner === ""
+			? `${movesLeft(state)} move · ${state.acted ? "main spent" : "main ready"}`
+			: "combat over";
+
+	return h.span([h.Class("tui-lead-badge"), h.AriaLive("polite")], [lead]);
+};
+
+const quickLinesOf = (demo: Demo, state: TableState): ReadonlyArray<string> => {
+	if (state.winner !== "") {
+		return ["/reset", "gg, all", "/roll 2d10+2", "/help"];
+	}
+
+	const base = suggestionsOf(demo);
+	const hasRoll = base.some((line) => line.startsWith("/roll "));
+
+	const extra = hasRoll
+		? ALWAYS.filter((line) => !line.startsWith("/roll "))
+		: ALWAYS;
+
+	return [...new Set([...base, ...extra])];
+};
+
+const hintRowView = (
+	h: HtmlBuilder<Message>,
+	demo: Demo,
+	state: TableState
+): Html =>
+	h.div(
+		[h.Class("tui-hint-row")],
+		[
+			h.div(
+				[h.Class("tui-hint-left")],
+				[
+					leadView(h, demo, state),
+					h.span([h.Class("tui-dim")], ["·"]),
+					h.div(
+						[h.Class("tui-quick-links")],
+						quickLinesOf(demo, state).map((line, index) =>
+							h.button(
+								[
+									h.Type("button"),
+									h.Class(
+										classes(["tui-qcmd", index === 0 ? "suggested" : ""])
+									),
+									h.OnClick(Message.ClickedSuggestion({ line })),
+								],
+								[line]
+							)
+						)
 					),
 				]
 			),
@@ -328,137 +496,91 @@ const logView = (h: HtmlBuilder<Message>, demo: Demo): Html =>
 
 const inputView = (h: HtmlBuilder<Message>, demo: Demo): Html =>
 	h.form(
-		[h.Class("input"), h.OnSubmit(Message.SubmittedLine())],
+		[h.Class("tui-input-form"), h.OnSubmit(Message.SubmittedLine())],
 		[
-			h.label([h.For("demo-line"), h.Class("input-prompt")], [">"]),
+			h.label([h.For("demo-line"), h.Class("tui-prompt")], [">"]),
 			h.input([
 				h.Id("demo-line"),
+				h.Class("tui-input"),
 				h.Type("text"),
 				h.Value(demo.line),
-				h.Placeholder("type here: chat, or a /command"),
+				h.Placeholder("say something, or /help"),
 				h.Autocomplete("off"),
 				h.Spellcheck(false),
 				h.AriaLabel("The input line"),
 				h.OnInput((line) => Message.TypedLine({ line })),
 				h.OnKeyDownPreventDefault(keyOf),
 			]),
+			h.span([h.Class("tui-enter-hint"), h.AriaHidden(true)], ["Enter"]),
 		]
 	);
 
-const chipsView = (h: HtmlBuilder<Message>, demo: Demo): Html =>
-	h.div(
-		[h.Class("chips")],
+const chromeButtonView = (
+	h: HtmlBuilder<Message>,
+	mode: MapMode,
+	mapMode: MapMode
+): Html =>
+	h.button(
 		[
-			h.span([h.Class("chips-label")], ["try"]),
-			...suggestionsOf(demo).map((line) =>
-				h.button(
-					[
-						h.Type("button"),
-						h.Class("chip"),
-						h.OnClick(Message.ClickedSuggestion({ line })),
-					],
-					[line]
-				)
-			),
-		]
-	);
-
-const toolsView = (h: HtmlBuilder<Message>, demo: Demo): Html =>
-	h.div(
-		[h.Class("tools")],
-		[
-			h.button(
-				[
-					h.Type("button"),
-					h.Class("tool"),
-					h.AriaPressed(demo.showLog ? "true" : "false"),
-					h.OnClick(Message.ClickedLogToggle()),
-				],
-				[demo.showLog ? "hide events.jsonl" : "show events.jsonl"]
-			),
-			h.button(
-				[
-					h.Type("button"),
-					h.Class("tool"),
-					h.OnClick(Message.ClickedSuggestion({ line: "/help" })),
-				],
-				["/help"]
-			),
-			h.button(
-				[
-					h.Type("button"),
-					h.Class("tool"),
-					h.OnClick(Message.ClickedRestart()),
-				],
-				["start over"]
-			),
-		]
-	);
-
-const barView = (h: HtmlBuilder<Message>): Html =>
-	h.div(
-		[h.Class("term-bar")],
-		[
-			h.span(
-				[h.Class("term-dots"), h.AriaHidden(true)],
-				[h.i([], []), h.i([], []), h.i([], [])]
-			),
-			h.span([h.Class("term-command")], ["ssh -p 2222 ford@table.example.com"]),
-		]
-	);
-
-const headView = (h: HtmlBuilder<Message>): Html =>
-	h.p(
-		[h.Class("term-head")],
-		[
-			h.span([h.Class("term-brand")], ["supervillain"]),
-			h.span([], ["ford · draw-steel"]),
-			h.span([h.Class("term-seat")], ["you are Brann"]),
-		]
-	);
-
-const hintView = (h: HtmlBuilder<Message>, demo: Demo): Html =>
-	h.p(
-		[
-			h.Class(classes(["hint", demo.refusal === "" ? "" : "is-refusal"])),
-			h.AriaLive("polite"),
+			h.Type("button"),
+			h.Class(classes(["term-chrome-btn", mode === mapMode ? "on" : ""])),
+			h.AriaPressed(mode === mapMode ? "true" : "false"),
+			h.OnClick(Message.ClickedMapMode({ mode })),
 		],
-		[demo.refusal === "" ? hintOf(demo) : demo.refusal]
+		[`/view ${mode}`]
 	);
 
-export const terminalView = (demo: Demo, h: HtmlBuilder<Message>): Html => {
-	const { state, feed } = projectionOf(demo);
-
-	const shown =
-		demo.reply === null ? mapView(h, state) : replyView(h, demo.reply);
-
-	const screen = [
-		barView(h),
-		headView(h),
-		bandView(h, state),
-		h.div([h.Class("term-body")], [shown, feedView(h, feed)]),
-	];
-
-	if (demo.showLog) {
-		screen.push(logView(h, demo));
-	}
-
-	screen.push(hintView(h, demo), inputView(h, demo));
-
-	return h.figure(
-		[h.Class("demo"), h.Id("table")],
+const chromeView = (h: HtmlBuilder<Message>, mapMode: MapMode): Html =>
+	h.div(
+		[h.Class("term-chrome")],
 		[
-			h.div([h.Class("term")], screen),
+			h.span([h.Class("term-chrome-cmd")], ["ssh first-fight@supervillain.sh"]),
 			h.div(
-				[h.Class("demo-controls")],
-				[chipsView(h, demo), toolsView(h, demo)]
-			),
-			h.figcaption(
-				[],
+				[h.Class("term-chrome-right")],
 				[
-					"A model of the table, running in your browser: one hero against two bandits from the sample campaign, the real commands, and the log lines the table would write. Nothing here talks to a server. At a real table everyone sees the same fight, and the GM's machine runs it.",
+					chromeButtonView(h, "pictures", mapMode),
+					chromeButtonView(h, "text", mapMode),
+					h.button(
+						[
+							h.Type("button"),
+							h.Class("term-chrome-btn"),
+							h.OnClick(Message.ClickedRestart()),
+						],
+						["reset"]
+					),
 				]
 			),
 		]
+	);
+
+export const terminalView = (
+	demo: Demo,
+	h: HtmlBuilder<Message>,
+	mapMode: MapMode = "pictures"
+): Html => {
+	const { state, feed } = projectionOf(demo);
+
+	const screen: Array<Html> = [
+		headerView(h),
+		bandView(h, state),
+		h.div(
+			[h.Class("tui-mid")],
+			[mapView(h, state, mapMode), feedView(h, feed)]
+		),
+	];
+
+	if (demo.reply !== null) {
+		screen.push(replyView(h, demo.reply));
+	}
+
+	screen.push(hintRowView(h, demo, state), inputView(h, demo));
+
+	return h.section(
+		[
+			h.Class("term-bleed"),
+			h.Id("table"),
+			h.AriaLabel("Interactive supervillain terminal"),
+		],
+		[chromeView(h, mapMode), h.div([h.Class("tui")], screen)]
 	);
 };

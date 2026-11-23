@@ -25,7 +25,7 @@ import {
 	reachFrom,
 	whoOf,
 } from "./Rules.ts";
-import type { Folded } from "./Rules.ts";
+import type { Folded, TableState } from "./Rules.ts";
 
 export const SEED = 20_261_122;
 
@@ -72,7 +72,10 @@ export const HELP: Reply = {
 		"/undo                         take back your latest move",
 		"/sheet <who>                  a sheet, shown to you alone",
 		"/done                         end Brann's turn; the GM runs the bandits",
-		"Click a square or a token to type its name. Esc closes this.",
+		"/view pictures|text           draw the map as pictures or as text",
+		"/reset                        start the fight over",
+		"Click a tinted square to move, or a bandit beside you to strike.",
+		"Click anything else to type its name. Esc closes this.",
 	],
 };
 
@@ -134,6 +137,8 @@ const replyTo = (demo: Demo, text: string): Demo | undefined => {
 			...demo,
 			line: "",
 			refusal: `Refused: ${refusal}`,
+			sent: [...demo.sent, text],
+			recall: 0,
 		}),
 		onSuccess: (found) => answered(demo, sheetOf(demo, found.id), text),
 	});
@@ -182,44 +187,52 @@ export const typed = (demo: Demo, line: string): Demo => ({
 const appended = (line: string, word: string): string =>
 	line === "" || line.endsWith(" ") ? `${line}${word}` : `${line} ${word}`;
 
-export const clickedSquare = (demo: Demo, square: string): Demo => {
+const isOpen = (demo: Demo, square: string): boolean => {
 	const at = squareOfName(square);
 	const { state } = fold(demo.log);
 
-	const open = reachable(state).some(
+	return reachable(state).some(
 		(spot) => at !== undefined && nameOfSquare(spot) === nameOfSquare(at)
 	);
-
-	if (demo.line === "" && open) {
-		return { ...demo, line: `/move brann ${square}`, refusal: "" };
-	}
-
-	return { ...demo, line: appended(demo.line, square), refusal: "" };
 };
 
-export const clickedToken = (demo: Demo, id: string): Demo => {
+export const isStrikable = (state: TableState, id: string): boolean => {
 	const fighter = fighterOf(id);
-	const { state } = fold(demo.log);
 	const hero = bodyOf(state, HERO)?.at ?? BRANN.start;
 	const there = bodyOf(state, id)?.at ?? fighter.start;
 
-	const close =
+	return (
 		fighter.side === "director" &&
 		!isDead(state, id) &&
 		state.turn === HERO &&
 		!state.acted &&
-		apart(hero, there) <= 1;
-
-	if (demo.line === "" && close) {
-		return {
-			...demo,
-			line: `/pr brann driving on ${fighter.mark}`,
-			refusal: "",
-		};
-	}
-
-	return { ...demo, line: appended(demo.line, fighter.mark), refusal: "" };
+		state.winner === "" &&
+		apart(hero, there) <= 1
+	);
 };
+
+export const clickedSquare = (demo: Demo, square: string): Demo =>
+	demo.line === "" && isOpen(demo, square)
+		? { ...demo, line: `/move brann ${square}`, refusal: "" }
+		: { ...demo, line: appended(demo.line, square), refusal: "" };
+
+export const clickedToken = (demo: Demo, id: string): Demo => {
+	const { mark } = fighterOf(id);
+
+	return demo.line === "" && isStrikable(fold(demo.log).state, id)
+		? { ...demo, line: `/pr brann driving on ${mark}`, refusal: "" }
+		: { ...demo, line: appended(demo.line, mark), refusal: "" };
+};
+
+export const actedSquare = (demo: Demo, square: string): Demo =>
+	demo.line === "" && isOpen(demo, square)
+		? sent(demo, `/move brann ${square}`)
+		: clickedSquare(demo, square);
+
+export const actedToken = (demo: Demo, id: string): Demo =>
+	demo.line === "" && isStrikable(fold(demo.log).state, id)
+		? sent(demo, `/pr brann driving on ${fighterOf(id).mark}`)
+		: clickedToken(demo, id);
 
 export const recalled = (demo: Demo, step: number): Demo => {
 	const recall = Math.min(demo.sent.length, Math.max(0, demo.recall + step));

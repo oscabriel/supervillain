@@ -7,14 +7,20 @@ import { init, routeOf, view } from "./Main.ts";
 import { AppRoute, blogRouter, docsRouter, homeRouter } from "./Route.ts";
 
 const ABOUT =
-	"supervillain is a terminal-first virtual tabletop. Players type ssh room@host and sit at a live table, with nothing to install and no account to make. The GM's machine runs the rules and keeps the campaign as a plain append-only log.";
+	"supervillain is a terminal-first virtual tabletop. Players type one ssh command and sit at a live tactical board, with nothing to install and no account to make.";
+
+const FONTS =
+	"https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap";
 
 const HEAD = [
 	`<meta name="description" content="${ABOUT}" />`,
 	`<meta property="og:site_name" content="supervillain" />`,
 	`<meta property="og:description" content="${ABOUT}" />`,
 	`<meta name="color-scheme" content="dark" />`,
-	`<meta name="theme-color" content="#0c0e12" />`,
+	`<meta name="theme-color" content="#09090b" />`,
+	`<link rel="preconnect" href="https://fonts.googleapis.com" />`,
+	`<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />`,
+	`<link rel="stylesheet" href="${FONTS}" />`,
 	`<link rel="icon" href="/icon.svg" type="image/svg+xml" />`,
 ].join("");
 

@@ -15,7 +15,14 @@ export const htmlOf = async (
 		Server.renderToString<Model, Message>(
 			{
 				init: () => ({
-					model: { route: AppRoute.Home(), demo, copied: false },
+					model: {
+						route: AppRoute.Home(),
+						demo,
+						copied: false,
+						copiedBlock: "",
+						copyToken: 0,
+						mapMode: "pictures",
+					},
 				}),
 				view: (model, h) => ({ title: "test", body: body(model, h) }),
 			},

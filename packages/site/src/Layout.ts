@@ -1,9 +1,17 @@
 import type { Html, HtmlBuilder } from "foldkit/html";
 
 import type { Message } from "./Model.ts";
-import { AppRoute, blogRouter, docsRouter, homeRouter } from "./Route.ts";
+import {
+	AppRoute,
+	blogRouter,
+	docRouter,
+	docsRouter,
+	homeRouter,
+} from "./Route.ts";
 
 export const SOURCE = "https://github.com/oscabriel/supervillain";
+
+const HOSTING = docRouter({ slug: "hosting" });
 
 const isDocs = (route: AppRoute): boolean =>
 	AppRoute.guards.Docs(route) || AppRoute.guards.Doc(route);
@@ -20,26 +28,24 @@ const linkView = (
 	h.a([h.Href(href), h.AriaCurrent(isHere ? "page" : "false")], [text]);
 
 const headView = (route: AppRoute, h: HtmlBuilder<Message>): Html =>
-	h.header(
-		[h.Class("head")],
+	h.div(
+		[h.Class("g-nav-bar")],
 		[
-			h.div(
-				[h.Class("head-inner")],
+			h.header(
+				[h.Class("g-nav")],
 				[
-					h.a(
-						[h.Href(homeRouter()), h.Class("wordmark")],
+					h.a([h.Href(homeRouter()), h.Class("g-brand")], ["supervillain"]),
+					h.nav(
+						[h.Class("g-links"), h.AriaLabel("Site")],
 						[
-							h.span([h.Class("prompt"), h.AriaHidden(true)], ["$"]),
-							"supervillain",
+							linkView(h, docsRouter(), "Docs", isDocs(route)),
+							linkView(h, blogRouter(), "Blog", isBlog(route)),
+							h.a([h.Href(SOURCE)], ["GitHub"]),
 						]
 					),
-					h.nav(
-						[h.Class("nav"), h.AriaLabel("Site")],
-						[
-							linkView(h, docsRouter(), "docs", isDocs(route)),
-							linkView(h, blogRouter(), "blog", isBlog(route)),
-							h.a([h.Href(SOURCE)], ["source"]),
-						]
+					h.div(
+						[h.Class("g-nav-right")],
+						[h.a([h.Href(HOSTING), h.Class("g-pill")], ["Host a table"])]
 					),
 				]
 			),
@@ -48,20 +54,18 @@ const headView = (route: AppRoute, h: HtmlBuilder<Message>): Html =>
 
 const footView = (h: HtmlBuilder<Message>): Html =>
 	h.footer(
-		[h.Class("foot")],
+		[h.Class("g-foot-bar")],
 		[
-			h.p(
-				[],
+			h.div(
+				[h.Class("g-foot")],
 				[
-					"supervillain is open-source software under the MIT licence. Independent product published under the DRAW STEEL Creator License, not affiliated with MCDM Productions, LLC (DRAW STEEL © 2024 MCDM Productions, LLC). The pf2e ruleset implements open mechanics under the ORC License.",
-				]
-			),
-			h.nav(
-				[h.Class("nav"), h.AriaLabel("More")],
-				[
-					h.a([h.Href(docsRouter())], ["docs"]),
-					h.a([h.Href(blogRouter())], ["blog"]),
-					h.a([h.Href(SOURCE)], ["source"]),
+					h.span([], ["supervillain · MIT License"]),
+					h.span(
+						[h.Class("g-foot-legal")],
+						[
+							"Independent product published under the DRAW STEEL Creator License, not affiliated with MCDM Productions, LLC (DRAW STEEL © 2024 MCDM Productions, LLC). pf2e uses the ORC License.",
+						]
+					),
 				]
 			),
 		]
@@ -74,8 +78,5 @@ export const pageView = (
 ): Html =>
 	h.div(
 		[h.Class("shell-page")],
-		[
-			headView(route, h),
-			h.div([h.Class("site")], [h.main([], content), footView(h)]),
-		]
+		[headView(route, h), h.main([h.Class("page-main")], content), footView(h)]
 	);

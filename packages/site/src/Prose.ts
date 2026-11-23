@@ -1,9 +1,9 @@
 import * as Markdown from "@foldkit/markdown";
 import type { Inline, MarkdownDocument } from "@foldkit/markdown";
-import { Predicate } from "effect";
+import { Option, Predicate } from "effect";
 import type { Html, HtmlBuilder } from "foldkit/html";
 
-import type { Message } from "./Model.ts";
+import { Message } from "./Model.ts";
 
 export interface Anchor {
 	readonly id: string;
@@ -39,7 +39,8 @@ export const anchorsOf = (document: MarkdownDocument): Array<Anchor> =>
 
 export const proseView = (
 	document: MarkdownDocument,
-	h: HtmlBuilder<Message>
+	h: HtmlBuilder<Message>,
+	copiedBlock = ""
 ): Html =>
 	h.div(
 		[h.Class("prose")],
@@ -49,6 +50,56 @@ export const proseView = (
 					level <= 2
 						? h.h2([h.Id(anchorOf(content).id)], children)
 						: h.h3([h.Id(anchorOf(content).id)], children),
+				CodeBlock: (block, index) => {
+					const id = `code-${index}`;
+					const isCopied = copiedBlock === id;
+					const language = Option.getOrElse(block.maybeLanguage, () => "");
+
+					return h.div(
+						[h.Class("code-block")],
+						[
+							h.div(
+								[h.Class("code-block-bar")],
+								[
+									h.span(
+										[h.Class("code-block-lang")],
+										[language === "" ? "snippet" : language]
+									),
+									h.button(
+										[
+											h.Type("button"),
+											h.Class("code-copy"),
+											h.DataAttribute("copied", isCopied ? "true" : "false"),
+											h.AriaLabel(
+												isCopied ? "Copied code block" : "Copy code block"
+											),
+											h.OnClick(
+												Message.ClickedCopyCode({ id, text: block.value })
+											),
+										],
+										[
+											h.span(
+												[
+													h.Class("copy-label copy-idle"),
+													h.AriaHidden(isCopied),
+												],
+												["Copy"]
+											),
+											h.span(
+												[
+													h.Class("copy-label copy-done"),
+													h.AriaHidden(!isCopied),
+												],
+												["Copied"]
+											),
+										]
+									),
+								]
+							),
+							h.pre([], [h.code([], [block.value])]),
+						]
+					);
+				},
 				Table: (_table, headerRow, bodyRows) =>
 					h.div(
 						[h.Class("table")],

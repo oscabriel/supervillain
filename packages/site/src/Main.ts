@@ -11,20 +11,18 @@ import { docOf, postOf } from "./Content.ts";
 import { docsHubView, docView } from "./Docs.ts";
 import { homeView, JOIN_COMMAND } from "./Home.ts";
 import { pageView } from "./Layout.ts";
-import { Message } from "./Model.ts";
+import { Message, ranLine } from "./Model.ts";
 import type { Key, Model } from "./Model.ts";
 import { AppRoute, homeRouter, urlToAppRoute } from "./Route.ts";
 import type { Demo } from "./Table.ts";
 import {
-	clickedSquare,
-	clickedToken,
+	actedSquare,
+	actedToken,
 	closedReply,
 	DEMO,
 	escaped,
 	recalled,
 	restarted,
-	sent,
-	submitted,
 	toggledLog,
 	typed,
 } from "./Table.ts";
@@ -42,7 +40,14 @@ export const routeOf = (url: Url): AppRoute => {
 };
 
 export const init = (url: Url): Return => ({
-	model: { route: routeOf(url), demo: DEMO, copied: false },
+	model: {
+		route: routeOf(url),
+		demo: DEMO,
+		copied: false,
+		copiedBlock: "",
+		copyToken: 0,
+		mapMode: "pictures",
+	},
 });
 
 const Navigate = Command.define("Navigate", {
@@ -83,7 +88,7 @@ const FocusLine = Command.define("FocusLine", {
 			const input = document.querySelector(selector);
 
 			if (input instanceof HTMLInputElement) {
-				input.focus();
+				input.focus({ preventScroll: true });
 				input.setSelectionRange(input.value.length, input.value.length);
 			}
 		}).pipe(Effect.as(Message.CompletedNavigate())),
@@ -93,19 +98,31 @@ class ClipboardUnavailable extends Data.TaggedError("ClipboardUnavailable")<{
 	readonly cause: unknown;
 }> {}
 
+const writeClipboard = (text: string) =>
+	Effect.tryPromise({
+		try: async () => {
+			await navigator.clipboard.writeText(text);
+		},
+		catch: (cause) => new ClipboardUnavailable({ cause }),
+	}).pipe(Effect.ignore);
+
 const CopyCommand = Command.define("CopyCommand", {
-	args: { text: Schema.String },
+	args: { text: Schema.String, token: Schema.Int },
 	messages: [Message.ResetCopyCommand],
-	execute: ({ text }) =>
-		Effect.tryPromise({
-			try: async () => {
-				await navigator.clipboard.writeText(text);
-			},
-			catch: (cause) => new ClipboardUnavailable({ cause }),
-		}).pipe(
-			Effect.ignore,
+	execute: ({ text, token }) =>
+		writeClipboard(text).pipe(
 			Effect.andThen(Effect.sleep("1800 millis")),
-			Effect.as(Message.ResetCopyCommand())
+			Effect.as(Message.ResetCopyCommand({ token }))
+		),
+});
+
+const CopyCode = Command.define("CopyCode", {
+	args: { id: Schema.String, text: Schema.String, token: Schema.Int },
+	messages: [Message.ResetCopyCode],
+	execute: ({ id, text, token }) =>
+		writeClipboard(text).pipe(
+			Effect.andThen(Effect.sleep("1800 millis")),
+			Effect.as(Message.ResetCopyCode({ id, token }))
 		),
 });
 
@@ -113,10 +130,13 @@ const playing = (model: Model, demo: Demo): Return => ({
 	model: { ...model, demo },
 });
 
-const playingFocused = (model: Model, demo: Demo): Return => ({
-	model: { ...model, demo },
-	commands: [FocusLine({ selector: "#demo-line" })],
-});
+const playingClick = (model: Model, demo: Demo): Return =>
+	demo.line === ""
+		? { model: { ...model, demo } }
+		: {
+				model: { ...model, demo },
+				commands: [FocusLine({ selector: "#demo-line" })],
+			};
 
 const pressed = (demo: Demo, key: Key): Demo =>
 	Match.value(key).pipe(
@@ -140,42 +160,78 @@ export const update = (model: Model, message: Message): Return =>
 			],
 		}),
 		ChangedUrl: ({ url }) => ({
-			model: { ...model, route: routeOf(url), copied: false },
+			model: {
+				...model,
+				route: routeOf(url),
+				copied: false,
+				copiedBlock: "",
+				copyToken: model.copyToken + 1,
+			},
 			commands: [Settle({ anchor: Option.getOrElse(url.hash, () => "") })],
 		}),
 		CompletedNavigate: () => ({ model }),
 		TypedLine: ({ line }) => playing(model, typed(model.demo, line)),
-		SubmittedLine: () => playing(model, submitted(model.demo)),
-		ClickedSuggestion: ({ line }) =>
-			playingFocused(model, sent(model.demo, line)),
+		SubmittedLine: () => ({ model: ranLine(model, model.demo.line) }),
+		ClickedSuggestion: ({ line }) => ({ model: ranLine(model, line) }),
 		ClickedSquare: ({ square }) =>
-			playingFocused(model, clickedSquare(model.demo, square)),
-		ClickedToken: ({ id }) =>
-			playingFocused(model, clickedToken(model.demo, id)),
+			playingClick(model, actedSquare(model.demo, square)),
+		ClickedToken: ({ id }) => playingClick(model, actedToken(model.demo, id)),
 		PressedKey: ({ key }) => playing(model, pressed(model.demo, key)),
 		ClickedCloseReply: () => playing(model, closedReply(model.demo)),
 		ClickedLogToggle: () => playing(model, toggledLog(model.demo)),
 		ClickedRestart: () => playing(model, restarted(model.demo)),
-		ClickedCopyCommand: () => ({
-			model: { ...model, copied: true },
-			commands: [CopyCommand({ text: JOIN_COMMAND })],
+		ClickedMapMode: ({ mode }) => ({
+			model: {
+				...model,
+				mapMode: mode,
+				demo: { ...model.demo, refusal: "" },
+			},
 		}),
-		ResetCopyCommand: () => ({
-			model: { ...model, copied: false },
+		ClickedCopyCommand: () => {
+			const token = model.copyToken + 1;
+
+			return {
+				model: { ...model, copied: true, copyToken: token },
+				commands: [CopyCommand({ text: JOIN_COMMAND, token })],
+			};
+		},
+		ResetCopyCommand: ({ token }) => ({
+			model: model.copyToken === token ? { ...model, copied: false } : model,
+		}),
+		ClickedCopyCode: ({ id, text }) => {
+			const token = model.copyToken + 1;
+
+			return {
+				model: { ...model, copiedBlock: id, copyToken: token },
+				commands: [CopyCode({ id, text, token })],
+			};
+		},
+		ResetCopyCode: ({ id, token }) => ({
+			model:
+				model.copyToken === token && model.copiedBlock === id
+					? { ...model, copiedBlock: "" }
+					: model,
 		}),
 	});
 
 const notFoundView = (h: HtmlBuilder<Message>) => [
 	h.div(
-		[h.Class("column")],
+		[h.Class("container")],
 		[
-			h.p([h.Class("label")], ["404"]),
-			h.h1([], ["There's no table called that here"]),
-			h.p(
-				[h.Class("lede")],
+			h.div(
+				[h.Class("column")],
 				[
-					"This page doesn't exist. ",
-					h.a([h.Href(homeRouter())], ["Back to the front page →"]),
+					h.h1([], ["There's no table called that here"]),
+					h.p(
+						[h.Class("lede")],
+						[
+							"This page doesn't exist. ",
+							h.a(
+								[h.Href(homeRouter()), h.Class("call-link")],
+								["Back to the front page →"]
+							),
+						]
+					),
 				]
 			),
 		]
@@ -190,14 +246,14 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 	if (doc !== undefined) {
 		return {
 			title: `${doc.title} · supervillain`,
-			body: pageView(route, h, docView(doc, h)),
+			body: pageView(route, h, docView(doc, h, model.copiedBlock)),
 		};
 	}
 
 	if (post !== undefined) {
 		return {
 			title: `${post.title} · supervillain`,
-			body: pageView(route, h, postView(post, h)),
+			body: pageView(route, h, postView(post, h, model.copiedBlock)),
 		};
 	}
 

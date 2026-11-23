@@ -37,34 +37,43 @@ export const dayOf = (date: string): string => {
 
 export const blogView = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
 	h.div(
-		[h.Class("column")],
+		[h.Class("container")],
 		[
-			h.p([h.Class("label")], ["blog"]),
-			h.h1([], ["Notes from the build"]),
-			h.p(
-				[h.Class("lede")],
+			h.div(
+				[h.Class("column wide")],
 				[
-					"How supervillain is made, what it costs to run, and what each choice traded away.",
-				]
-			),
-			h.ol(
-				[h.Class("posts")],
-				POSTS.map((post) =>
-					h.li(
-						[],
+					h.h1([], ["Notes from the build"]),
+					h.p(
+						[h.Class("lede")],
 						[
-							h.a(
-								[h.Href(postHref(post)), h.Class("post-card")],
-								[
-									h.span([h.Class("label post-date")], [dayOf(post.date)]),
-									h.h2([h.Class("post-title")], [post.title]),
-									h.p([h.Class("post-summary")], [post.summary]),
-									h.span([h.Class("post-read")], ["read note →"]),
-								]
-							),
+							"How supervillain is made, what it costs to run, and what each choice traded away.",
 						]
-					)
-				)
+					),
+					h.ol(
+						[h.Class("posts")],
+						POSTS.map((post) =>
+							h.li(
+								[],
+								[
+									h.a(
+										[h.Href(postHref(post)), h.Class("post-row")],
+										[
+											h.span([h.Class("post-date")], [dayOf(post.date)]),
+											h.div(
+												[h.Class("post-body")],
+												[
+													h.h2([h.Class("post-title")], [post.title]),
+													h.p([h.Class("post-summary")], [post.summary]),
+												]
+											),
+											h.span([h.Class("post-read")], ["Read note →"]),
+										]
+									),
+								]
+							)
+						)
+					),
+				]
 			),
 		]
 	),
@@ -72,29 +81,35 @@ export const blogView = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
 
 export const postView = (
 	post: Page,
-	h: HtmlBuilder<Message>
+	h: HtmlBuilder<Message>,
+	copiedBlock = ""
 ): ReadonlyArray<Html> => [
-	h.article(
-		[h.Class("column")],
+	h.div(
+		[h.Class("container")],
 		[
-			h.a([h.Href(blogRouter()), h.Class("back-link")], ["← all posts"]),
-			h.header(
-				[h.Class("doc-head")],
+			h.article(
+				[h.Class("column post-article")],
 				[
-					h.p([h.Class("label post-date")], [dayOf(post.date)]),
-					h.h1([], [post.title]),
-					h.p([h.Class("lede")], [post.summary]),
-				]
-			),
-			proseView(post.document, h),
-			h.div(
-				[h.Class("turns")],
-				[
-					h.a(
-						[h.Href(blogRouter()), h.Class("turn-card back")],
+					h.a([h.Href(blogRouter()), h.Class("back-link")], ["← All notes"]),
+					h.header(
+						[h.Class("doc-head")],
 						[
-							h.span([h.Class("label")], ["← blog"]),
-							h.span([h.Class("turn-title")], ["All notes from the build"]),
+							h.h1([], [post.title]),
+							h.p([h.Class("post-meta-date")], [dayOf(post.date)]),
+							h.p([h.Class("lede")], [post.summary]),
+						]
+					),
+					proseView(post.document, h, copiedBlock),
+					h.div(
+						[h.Class("turns")],
+						[
+							h.a(
+								[h.Href(blogRouter()), h.Class("turn-card back")],
+								[
+									h.span([h.Class("turn-label")], ["← Blog"]),
+									h.span([h.Class("turn-title")], ["All notes from the build"]),
+								]
+							),
 						]
 					),
 				]
