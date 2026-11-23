@@ -9,16 +9,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
-      # The smoke's terminal seat needs tmux, and SMOKE_REQUIRE_TTY makes it fail rather than skip.
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
-      - run: bun run build
-      - run: bun test
       - run: bun run check
-      # The compiled binary, smoke-run from an empty folder, so a file it reads from the repo shows up here, not at a tag.
+      - run: bun test
+      - run: bun --filter @supervillain/site build
       - run: bun run release:build
       - run: bun run release:smoke dist/supervillain-linux-x64
         env:

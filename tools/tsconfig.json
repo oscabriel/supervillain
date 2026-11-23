@@ -1,0 +1,13 @@
+{
+	"extends": "../tsconfig.base.json",
+	"compilerOptions": {
+		"emitDeclarationOnly": true,
+		"outDir": "dist",
+		"rootDir": ".."
+	},
+	"include": [
+		"../oxlint.config.ts",
+		"../oxfmt.config.ts",
+		"oxlint/supervillain"
+	]
+}

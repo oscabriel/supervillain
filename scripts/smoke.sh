@@ -1,13 +1,3 @@
-#!/usr/bin/env bash
-# Smoke-runs a compiled supervillain from an empty folder, the way a GM would:
-#   scripts/smoke.sh dist/supervillain-linux-x64
-# It makes the sample campaign, hosts it headless on a free port, talks to it with OpenSSH (one
-# command at a time, and a real terminal through tmux when tmux is there), checks that the host key
-# OpenSSH saw is the one the host printed, stops the host and reads the log back with `check`.
-# Then it runs a relay, hosts the campaign through it, and plays one command through the relay.
-# Needs ssh and ssh-keygen. Exits non-zero, with the host's output, on the first thing that's wrong.
-# With SMOKE_REQUIRE_TTY=1 (as CI sets it), a missing tmux is a failure, not a skipped step: the
-# terminal seat is the only step that loads OpenTUI's native library.
 set -euo pipefail
 
 if [ $# -ne 1 ] || [ ! -f "$1" ]; then
@@ -81,7 +71,6 @@ Host table
   LogLevel ERROR
 EOF
 
-# One exec, its stdout checked for a piece of text.
 expect_exec() {
   local line="$1" want="$2" out
   out="$(ssh -F "$work/ssh_config" table "$line" 2>/dev/null)" || fail "ssh '$line' exited $?: $out"
@@ -141,7 +130,6 @@ esac
 step "check read the log back:"
 echo "$check_out" | head -n 12
 
-# The relay: the host dials out to it, and players reach the campaign through it.
 ./supervillain relay --dir ./relay --bind 127.0.0.1 --player-port 0 --gm-port 0 >relay.out 2>&1 &
 relay_pid=$!
 player_port=""

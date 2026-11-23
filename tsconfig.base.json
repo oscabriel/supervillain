@@ -1,16 +1,42 @@
 {
-  "compilerOptions": {
-    "allowImportingTsExtensions": true,
-    "composite": true,
-    "declaration": true,
-    "forceConsistentCasingInFileNames": true,
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "noEmitOnError": true,
-    "noUncheckedIndexedAccess": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "target": "ES2024",
-    "types": ["bun"]
-  }
+	"compilerOptions": {
+		"allowImportingTsExtensions": true,
+		"composite": true,
+		"declaration": true,
+		"exactOptionalPropertyTypes": true,
+		"forceConsistentCasingInFileNames": true,
+		"lib": ["ESNext"],
+		"module": "NodeNext",
+		"moduleDetection": "force",
+		"moduleResolution": "NodeNext",
+		"noEmitOnError": true,
+		"noFallthroughCasesInSwitch": true,
+		"noImplicitOverride": true,
+		"noUncheckedIndexedAccess": true,
+		"skipLibCheck": true,
+		"strict": true,
+		"target": "ES2024",
+		"types": ["bun"],
+		"verbatimModuleSyntax": true,
+		"plugins": [
+			{
+				"name": "@effect/language-service",
+				"diagnostics": false,
+				"barrelImportPackages": ["effect"],
+				"allowedUnstableApis": [
+					"@effect/platform-bun",
+					"effect/FileSystem",
+					"effect/Logger#toFile",
+					"effect/Path",
+					"effect/PlatformError",
+					"effect/cli",
+					"effect/crypto",
+					"effect/http",
+					"effect/process",
+					"effect/rpc",
+					"effect/testing"
+				]
+			}
+		]
+	}
 }

@@ -1,29 +1,75 @@
 {
-  "name": "supervillain",
-  "private": true,
-  "license": "MIT",
-  "workspaces": [
-    "packages/*",
-    "apps/*"
-  ],
-  "type": "module",
-  "scripts": {
-    "supervillain": "bun apps/supervillain/src/main.ts",
-    "build": "tsc -b",
-    "clean": "tsc -b --clean",
-    "check": "oxlint --disable-nested-config && oxfmt --check",
-    "fix": "oxlint --disable-nested-config --fix && oxfmt",
-    "release:build": "bun scripts/build.ts",
-    "release:smoke": "bash scripts/smoke.sh"
-  },
-  "devDependencies": {
-    "@types/bun": "1.4.0",
-    "oxfmt": "0.58.0",
-    "oxlint": "1.78.0",
-    "typescript": "7.0.2"
-  },
-  "packageManager": "bun@1.4.2",
-  "patchedDependencies": {
-    "ssh2@1.16.0": "patches/ssh2@1.16.0.patch"
-  }
+	"name": "supervillain",
+	"private": true,
+	"license": "MIT",
+	"workspaces": {
+		"packages": [
+			"packages/*",
+			"apps/*"
+		],
+		"catalog": {
+			"effect": "4.1.5",
+			"@effect/platform-bun": "4.1.5",
+			"@alchemy.run/domain": "2.0.0-beta.87",
+			"@alchemy.run/cloudflare": "2.0.0-beta.87",
+			"@alchemy.run/frontend-frameworks": "2.0.0-beta.87",
+			"alchemy": "2.0.0-beta.87",
+			"foldkit": "0.171.0",
+			"@foldkit/markdown": "0.15.1",
+			"@foldkit/vite-plugin": "0.29.1",
+			"vite": "8.3.8",
+			"@opentui/core": "0.9.7",
+			"@opentui/solid": "0.9.7",
+			"solid-js": "1.9.16",
+			"ssh2": "1.17.0",
+			"@types/ssh2": "1.15.6",
+			"@noble/post-quantum": "0.7.1",
+			"@effect/tsgo": "0.73.2",
+			"typescript": "7.1.0-beta",
+			"tsrs": "7.1.0-beta.tsrs3",
+			"oxlint": "1.94.0",
+			"@oxlint/plugins": "1.94.0",
+			"oxlint-tsgolint": "7.0.2007",
+			"oxfmt": "0.78.0",
+			"ultracite": "8.2.1",
+			"@types/bun": "1.4.5"
+		}
+	},
+	"type": "module",
+	"scripts": {
+		"prepare": "effect-tsgo patch --oxlint --tsrs",
+		"supervillain": "bun apps/supervillain/src/main.ts",
+		"build": "tsc -b",
+		"clean": "tsc -b --clean",
+		"fmt": "oxfmt",
+		"lint": "oxlint --disable-nested-config && node tools/oxlint/supervillain/comments.ts check",
+		"comments": "node tools/oxlint/supervillain/comments.ts check",
+		"fix": "oxlint --disable-nested-config --fix && oxfmt",
+		"typecheck": "tsc -b",
+		"test": "bun test",
+		"check": "oxfmt --check && bun run lint && bun run typecheck",
+		"release:build": "bun scripts/build.ts",
+		"release:smoke": "bash scripts/smoke.sh"
+	},
+	"devDependencies": {
+		"@effect/tsgo": "catalog:",
+		"@oxlint/plugins": "catalog:",
+		"@types/bun": "catalog:",
+		"oxfmt": "catalog:",
+		"oxlint": "catalog:",
+		"oxlint-tsgolint": "catalog:",
+		"tsrs": "catalog:",
+		"typescript": "catalog:",
+		"ultracite": "catalog:"
+	},
+	"overrides": {
+		"effect": "4.1.5"
+	},
+	"engines": {
+		"node": ">=26.0.0"
+	},
+	"packageManager": "bun@1.4.5",
+	"patchedDependencies": {
+		"ssh2@1.17.0": "patches/ssh2@1.17.0.patch"
+	}
 }

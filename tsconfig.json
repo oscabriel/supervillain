@@ -1,9 +1,26 @@
 {
-  "files": [],
-  "references": [
-    { "path": "packages/engine" },
-    { "path": "packages/ssh" },
-    { "path": "apps/supervillain" },
-    { "path": "scripts" }
-  ]
+	"files": [],
+	"references": [
+		{
+			"path": "packages/domain"
+		},
+		{
+			"path": "packages/platform-jsonl"
+		},
+		{
+			"path": "packages/ssh"
+		},
+		{
+			"path": "packages/site"
+		},
+		{
+			"path": "apps/supervillain"
+		},
+		{
+			"path": "scripts"
+		},
+		{
+			"path": "tools"
+		}
+	]
 }

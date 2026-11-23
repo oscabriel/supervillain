@@ -1,8 +1,5 @@
 name: Release
 
-# Pushing a tag v* builds every binary on one runner (Bun cross-compiles, and the install below
-# fetches every platform's OpenTUI native library), smoke-runs the Linux and macOS arm64 ones from
-# an empty folder, and attaches them with SHA256SUMS to a GitHub release for the tag.
 on:
   push:
     tags: ["v*"]
@@ -19,16 +16,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
-      # --os/--cpu "*" installs every platform's optional @opentui/core-<os>-<arch> package, so each
-      # target's native library is there to embed. The lockfile already lists them all.
       - run: bun install --frozen-lockfile --os="*" --cpu="*"
-      # A tag on a commit with red tests or lint doesn't ship.
-      - run: bun run build
-      - run: bun test
       - run: bun run check
+      - run: bun test
       - run: bun scripts/build.ts --all --version "$GITHUB_REF_NAME"
       - uses: actions/upload-artifact@v4
         with:
@@ -54,7 +50,6 @@ jobs:
         with:
           name: binaries
           path: dist
-      # The terminal seat is the only step that loads OpenTUI's native library, so it must run on both.
       - name: Install tmux for the terminal seat (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
