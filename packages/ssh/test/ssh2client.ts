@@ -1,108 +1,178 @@
 import { readFile } from "node:fs/promises";
 import type { Duplex } from "node:stream";
+
 import { Effect } from "effect";
-import ssh2, { type ClientChannel } from "ssh2";
+import ssh2 from "ssh2";
+import type { AnyAuthMethod, ClientChannel, ConnectConfig } from "ssh2";
+
+import { SshError } from "../src/index.ts";
 import type { ClientKey } from "./openssh.ts";
 
-/** An ssh2 Client: it can send env requests and pick its auth method, which OpenSSH won't do on demand. */
-
 export interface Ssh2Options {
-  readonly port?: number;
-  /** Speak SSH over this stream instead of dialing `port`. */
-  readonly sock?: Duplex;
-  readonly key?: ClientKey;
-  /** Try keyboard-interactive whatever the server advertises. */
-  readonly keyboard?: boolean;
-  readonly user?: string;
-  /** Connect from this local address, e.g. `127.0.0.2`, to look like another machine. */
-  readonly localAddress?: string;
-  /** Offer only these key exchanges. */
-  readonly kex?: Array<ssh2.KexAlgorithm>;
+	readonly port?: number;
+	readonly sock?: Duplex;
+	readonly key?: ClientKey;
+	readonly keyboard?: boolean;
+	readonly user?: string;
+	readonly localAddress?: string;
+	readonly kex?: Array<ssh2.KexAlgorithm>;
 }
 
-/** A connected, authenticated client for the life of the scope. Fails with the client's error. */
+export interface Ssh2ExecResult {
+	readonly stdout: string;
+	readonly stderr: string;
+	readonly code: number | null;
+}
+
+const failure = (cause: unknown) =>
+	new SshError({
+		message: cause instanceof Error ? cause.message : String(cause),
+		cause,
+	});
+
+const readKey = (
+	key: ClientKey | undefined
+): Effect.Effect<string | undefined, SshError> =>
+	key === undefined
+		? Effect.undefined
+		: Effect.tryPromise({
+				try: async () => await readFile(key.path, "utf-8"),
+				catch: failure,
+			});
+
+const authMethod = (
+	options: Ssh2Options,
+	privateKey: string | undefined
+): AnyAuthMethod => {
+	const username = options.user ?? "den";
+
+	if (privateKey !== undefined) {
+		return { type: "publickey", username, key: privateKey };
+	}
+
+	if (options.keyboard === true) {
+		return {
+			type: "keyboard-interactive",
+			username,
+			prompt: (_name, _instructions, _lang, _prompts, answer) => {
+				answer([]);
+			},
+		};
+	}
+
+	return { type: "none", username };
+};
+
+const connectConfig = (
+	options: Ssh2Options,
+	privateKey: string | undefined
+): ConnectConfig => {
+	const config: ConnectConfig = {
+		host: "127.0.0.1",
+		username: options.user ?? "den",
+		hostVerifier: () => true,
+		readyTimeout: 5000,
+		authHandler: [authMethod(options, privateKey)],
+	};
+
+	if (options.port !== undefined) {
+		config.port = options.port;
+	}
+
+	if (options.localAddress !== undefined) {
+		config.localAddress = options.localAddress;
+	}
+
+	if (options.kex !== undefined) {
+		config.algorithms = { kex: options.kex };
+	}
+
+	if (options.sock !== undefined) {
+		config.sock = options.sock;
+	}
+
+	return config;
+};
+
+const connected = (config: ConnectConfig) =>
+	Effect.callback<InstanceType<typeof ssh2.Client>, SshError>((resume) => {
+		const client = new ssh2.Client();
+		client
+			.once("ready", () => {
+				resume(Effect.succeed(client));
+			})
+			.once("error", (error) => {
+				resume(Effect.fail(failure(error)));
+			});
+		client.connect(config);
+	});
+
 export const ssh2Client = (options: Ssh2Options) =>
-  Effect.acquireRelease(
-    Effect.tryPromise({
-      try: async () => {
-        const privateKey = options.key ? await readFile(options.key.path, "utf8") : undefined;
-        const client = new ssh2.Client();
-        await new Promise<void>((resolve, reject) => {
-          client.once("ready", resolve).once("error", reject);
-          let tried = false;
-          client.connect({
-            host: "127.0.0.1",
-            port: options.port,
-            localAddress: options.localAddress,
-            ...(options.kex ? { algorithms: { kex: options.kex } } : {}),
-            sock: options.sock as never,
-            username: options.user ?? "den",
-            hostVerifier: () => true,
-            readyTimeout: 5000,
-            authHandler: (_methodsLeft, _partial, next) => {
-              if (tried) return next(false as never);
-              tried = true;
-              if (privateKey)
-                return next({
-                  type: "publickey",
-                  username: options.user ?? "den",
-                  key: privateKey,
-                });
-              if (options.keyboard)
-                return next({
-                  type: "keyboard-interactive",
-                  username: options.user ?? "den",
-                  prompt: (_name, _instructions, _lang, _prompts, answer) => answer([]),
-                });
-              return next({ type: "none", username: options.user ?? "den" });
-            },
-          });
-        });
-        return client;
-      },
-      catch: (e) => (e instanceof Error ? e : new Error(String(e))),
-    }),
-    (client) => Effect.sync(() => client.end()),
-  );
+	Effect.acquireRelease(
+		readKey(options.key).pipe(
+			Effect.flatMap((privateKey) =>
+				connected(connectConfig(options, privateKey))
+			)
+		),
+		(client) =>
+			Effect.sync(() => {
+				client.end();
+			})
+	);
 
-/** Runs one command, with a pty if asked; resolves with its output and exit status. */
 export const ssh2Exec = (
-  client: InstanceType<typeof ssh2.Client>,
-  command: string,
-  env: Record<string, string> = {},
-  pty = false,
+	client: InstanceType<typeof ssh2.Client>,
+	command: string,
+	env: Record<string, string> = {},
+	pty = false
 ) =>
-  Effect.tryPromise({
-    try: () =>
-      new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve, reject) => {
-        client.exec(command, { env, pty }, (err, channel) => {
-          if (err) return reject(err);
-          let stdout = "";
-          let stderr = "";
-          let code: number | null = null;
-          channel.on("data", (d: Buffer) => (stdout += d.toString()));
-          channel.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
-          channel.on("exit", (c: number | null) => (code = c));
-          channel.on("close", () => resolve({ stdout, stderr, code }));
-        });
-      }),
-    catch: (e) => (e instanceof Error ? e : new Error(String(e))),
-  });
+	Effect.callback<Ssh2ExecResult, SshError>((resume) => {
+		client.exec(command, { env, pty }, (refused, channel) => {
+			if (refused !== undefined) {
+				resume(Effect.fail(failure(refused)));
 
-/** Opens a shell with a pty of the given size. */
+				return;
+			}
+
+			let stdout = "";
+			let stderr = "";
+			let code: number | null = null;
+			channel.on("data", (data: Buffer) => {
+				stdout += data.toString();
+			});
+			channel.stderr.on("data", (data: Buffer) => {
+				stderr += data.toString();
+			});
+			channel.on("exit", (exitCode: number | null) => {
+				code = exitCode;
+			});
+			channel.on("close", () => {
+				resume(Effect.succeed({ stdout, stderr, code }));
+			});
+		});
+	});
+
 export const ssh2Shell = (
-  client: InstanceType<typeof ssh2.Client>,
-  size: { cols: number; rows: number },
-  env: Record<string, string> = {},
+	client: InstanceType<typeof ssh2.Client>,
+	size: { cols: number; rows: number },
+	env: Record<string, string> = {}
 ) =>
-  Effect.tryPromise({
-    try: () =>
-      new Promise<ClientChannel>((resolve, reject) => {
-        client.shell(
-          { term: "xterm-256color", cols: size.cols, rows: size.rows, width: 0, height: 0 },
-          { env },
-          (err, channel) => (err ? reject(err) : resolve(channel)),
-        );
-      }),
-    catch: (e) => (e instanceof Error ? e : new Error(String(e))),
-  });
+	Effect.callback<ClientChannel, SshError>((resume) => {
+		client.shell(
+			{
+				term: "xterm-256color",
+				cols: size.cols,
+				rows: size.rows,
+				width: 0,
+				height: 0,
+			},
+			{ env },
+			(refused, channel) => {
+				resume(
+					refused === undefined
+						? Effect.succeed(channel)
+						: Effect.fail(failure(refused))
+				);
+			}
+		);
+	});

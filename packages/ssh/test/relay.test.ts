@@ -1,6 +1,9 @@
 import { describe, expect } from "bun:test";
-import { connect, type Socket } from "node:net";
-import { Deferred, Effect, Fiber } from "effect";
+import { connect } from "node:net";
+import type { Socket } from "node:net";
+
+import { Deferred, Effect, Fiber, Result } from "effect";
+
 import { effect } from "./effect.ts";
 import { clientKey } from "./openssh.ts";
 import { testServer } from "./server.ts";
@@ -10,156 +13,208 @@ import { tempDir } from "./tempDir.ts";
 
 const PLAYER = `key:SHA256:${"A1b2+/".repeat(7)}C`;
 
-/** A server whose exec prints the relayed actor, or `-`, after an optional pause. */
 const relayServer = (
-  trustedRelayKeys: ReadonlyArray<string>,
-  pause: `${number} millis` = "0 millis",
+	trustedRelayKeys: ReadonlyArray<string>,
+	pause: `${number} millis` = "0 millis"
 ) =>
-  testServer({
-    trustedRelayKeys,
-    onExec: (session) =>
-      Effect.gen(function* () {
-        yield* Effect.sleep(pause);
-        session.write(session.info.relayedActor ?? "-");
-        return 0;
-      }),
-  });
+	testServer({
+		trustedRelayKeys,
+		onExec: (session) =>
+			Effect.gen(function* () {
+				yield* Effect.sleep(pause);
+				session.write(session.info.relayedActor ?? "-");
+
+				return 0;
+			}),
+	});
 
 describe("relay trust", () => {
-  effect("SV_ACTOR from a trusted relay key seats a well-formed player; nothing else starts", () =>
-    Effect.gen(function* () {
-      const dir = yield* tempDir;
-      const relayKey = yield* clientKey(dir, "relay");
-      const server = yield* relayServer([relayKey.fingerprint]);
-      const client = yield* ssh2Client({ port: server.port, key: relayKey });
-      // A relay channel without a believable player is refused, never seated as the relay's own key.
-      const relayed = (actor: string) =>
-        ssh2Exec(client, "who", { SV_ACTOR: actor }).pipe(
-          Effect.map((r) => r.stdout),
-          Effect.catch(() => Effect.succeed("refused")),
-        );
-      expect(PLAYER).toHaveLength(54);
-      expect(yield* relayed(PLAYER)).toBe(PLAYER);
-      expect(yield* relayed("guest:Zx_9-q")).toBe("guest:Zx_9-q");
-      for (const ignored of [
-        "gm",
-        "GM",
-        "",
-        "key:SHA256:tooShort",
-        `${PLAYER}A`,
-        `${PLAYER}\n`,
-        "guest:",
-        "guest:has space",
-        `guest:${"x".repeat(65)}`,
-        `key:${PLAYER}`,
-      ]) {
-        expect(yield* relayed(ignored)).toBe("refused");
-      }
-      expect(yield* Effect.flip(ssh2Exec(client, "who"))).toBeInstanceOf(Error);
-    }),
-  );
+	effect(
+		"SV_ACTOR from a trusted relay key seats a well-formed player; nothing else starts",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				const relayKey = yield* clientKey(dir, "relay");
+				const server = yield* relayServer([relayKey.fingerprint]);
+				const client = yield* ssh2Client({ port: server.port, key: relayKey });
 
-  effect(
-    "SV_CLIENT from a trusted relay names the player's software, cleaned; from others, refused",
-    () =>
-      Effect.gen(function* () {
-        const dir = yield* tempDir;
-        const relayKey = yield* clientKey(dir, "relay");
-        const mallory = yield* clientKey(dir, "mallory");
-        const server = yield* testServer({
-          trustedRelayKeys: [relayKey.fingerprint],
-          onExec: (session) =>
-            Effect.sync(() => session.write(session.info.client)).pipe(Effect.as(0)),
-        });
-        const relay = yield* ssh2Client({ port: server.port, key: relayKey });
-        const said = (env: Record<string, string>) =>
-          ssh2Exec(relay, "who", { SV_ACTOR: PLAYER, ...env }).pipe(Effect.map((r) => r.stdout));
-        expect(yield* said({ SV_CLIENT: "OpenSSH_10.0p2 Debian-5" })).toBe(
-          "OpenSSH_10.0p2 Debian-5",
-        );
-        expect(yield* said({ SV_CLIENT: `PuTTY\x1b[31m${"x".repeat(80)}` })).toBe(
-          `PuTTY?[31m${"x".repeat(54)}`,
-        );
-        // Without it, the connection's own software: here the test's stock ssh2 client.
-        expect(yield* said({})).toBe("ssh2js1.16.0");
-        const direct = yield* ssh2Client({ port: server.port, key: mallory });
-        const refused = yield* ssh2Exec(direct, "who", { SV_CLIENT: "Forged" }).pipe(
-          Effect.map((r) => r.stdout),
-        );
-        expect(refused).toBe("ssh2js1.16.0");
-      }),
-  );
+				const relayed = (actor: string) =>
+					ssh2Exec(client, "who", { SV_ACTOR: actor }).pipe(
+						Effect.map((r) => r.stdout),
+						Effect.orElseSucceed(() => "refused")
+					);
 
-  effect("SV_ACTOR from any other key is ignored", () =>
-    Effect.gen(function* () {
-      const dir = yield* tempDir;
-      const relayKey = yield* clientKey(dir, "relay");
-      const mallory = yield* clientKey(dir, "mallory");
-      const server = yield* relayServer([relayKey.fingerprint]);
-      const client = yield* ssh2Client({ port: server.port, key: mallory });
-      expect((yield* ssh2Exec(client, "who", { SV_ACTOR: PLAYER })).stdout).toBe("-");
-    }),
-  );
+				expect(PLAYER).toHaveLength(54);
+				expect(yield* relayed(PLAYER)).toBe(PLAYER);
+				expect(yield* relayed("guest:Zx_9-q")).toBe("guest:Zx_9-q");
 
-  effect("attach can trust a relay key on that one connection", () =>
-    Effect.gen(function* () {
-      const relayKey = yield* clientKey(yield* tempDir, "relay");
-      const server = yield* relayServer([]);
-      const farEnd = yield* Deferred.make<Socket>();
-      const relay = yield* tcpListener((socket) =>
-        Deferred.doneUnsafe(farEnd, Effect.succeed(socket)),
-      );
-      server.attach(connect(relay.port, "127.0.0.1"), { trustedRelayKeys: [relayKey.fingerprint] });
-      const linked = yield* ssh2Client({ sock: yield* Deferred.await(farEnd), key: relayKey });
-      expect((yield* ssh2Exec(linked, "who", { SV_ACTOR: PLAYER })).stdout).toBe(PLAYER);
-      // The same key straight to the port is just a player.
-      const direct = yield* ssh2Client({ port: server.port, key: relayKey });
-      expect((yield* ssh2Exec(direct, "who", { SV_ACTOR: PLAYER })).stdout).toBe("-");
-    }),
-  );
+				for (const ignored of [
+					"gm",
+					"GM",
+					"",
+					"key:SHA256:tooShort",
+					`${PLAYER}A`,
+					`${PLAYER}\n`,
+					"guest:",
+					"guest:has space",
+					`guest:${"x".repeat(65)}`,
+					`key:${PLAYER}`,
+				]) {
+					expect(yield* relayed(ignored)).toBe("refused");
+				}
 
-  effect("a relayed channel that never starts is closed alone; the relay's players stay", () =>
-    Effect.gen(function* () {
-      const relayKey = yield* clientKey(yield* tempDir, "relay");
-      const server = yield* testServer({
-        trustedRelayKeys: [relayKey.fingerprint],
-        timeouts: { sessionStartMs: 200 },
-        onExec: (session) =>
-          Effect.sleep("1200 millis").pipe(
-            Effect.andThen(Effect.sync(() => session.write(session.info.relayedActor ?? "-"))),
-            Effect.as(0),
-          ),
-      });
-      const relay = yield* ssh2Client({ port: server.port, key: relayKey });
-      const player = yield* Effect.forkScoped(ssh2Exec(relay, "who", { SV_ACTOR: PLAYER }));
-      yield* Effect.sleep("50 millis");
-      // A player whose client stalls before its shell: the channel opens and never starts.
-      relay.subsys("nothing", () => undefined);
-      expect((yield* Fiber.join(player)).stdout).toBe(PLAYER);
-    }),
-  );
+				expect(yield* Effect.flip(ssh2Exec(client, "who"))).toBeInstanceOf(
+					Error
+				);
+			})
+	);
 
-  effect("a relay connection carries many sessions; an ordinary one only a few", () =>
-    Effect.gen(function* () {
-      const dir = yield* tempDir;
-      const relayKey = yield* clientKey(dir, "relay");
-      const alice = yield* clientKey(dir, "alice");
-      const server = yield* relayServer([relayKey.fingerprint], "300 millis");
-      const relay = yield* ssh2Client({ port: server.port, key: relayKey });
-      const many = yield* Effect.all(
-        Array.from({ length: 8 }, () => ssh2Exec(relay, "who", { SV_ACTOR: PLAYER })),
-        { concurrency: "unbounded" },
-      );
-      expect(many.map((r) => r.stdout)).toEqual(Array(8).fill(PLAYER));
+	effect(
+		"SV_CLIENT from a trusted relay names the player's software, cleaned; from others, refused",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				const relayKey = yield* clientKey(dir, "relay");
+				const mallory = yield* clientKey(dir, "mallory");
 
-      const player = yield* ssh2Client({ port: server.port, key: alice });
-      const few = yield* Effect.all(
-        Array.from({ length: 3 }, () => Effect.result(ssh2Exec(player, "who"))),
-        { concurrency: "unbounded" },
-      );
-      expect(few.filter((r) => r._tag === "Success")).toHaveLength(2);
-      // Finished sessions give their places back.
-      expect((yield* ssh2Exec(player, "who")).stdout).toBe("-");
-    }),
-  );
+				const server = yield* testServer({
+					trustedRelayKeys: [relayKey.fingerprint],
+					onExec: (session) =>
+						Effect.sync(() => {
+							session.write(session.info.client);
+						}).pipe(Effect.as(0)),
+				});
+
+				const relay = yield* ssh2Client({ port: server.port, key: relayKey });
+
+				const said = (env: Record<string, string>) =>
+					ssh2Exec(relay, "who", { SV_ACTOR: PLAYER, ...env }).pipe(
+						Effect.map((r) => r.stdout)
+					);
+
+				expect(yield* said({ SV_CLIENT: "OpenSSH_10.0p2 Debian-5" })).toBe(
+					"OpenSSH_10.0p2 Debian-5"
+				);
+				expect(
+					yield* said({ SV_CLIENT: `PuTTY\u001B[31m${"x".repeat(80)}` })
+				).toBe(`PuTTY?[31m${"x".repeat(54)}`);
+				expect(yield* said({})).toBe("ssh2js1.17.0");
+				const direct = yield* ssh2Client({ port: server.port, key: mallory });
+
+				const refused = yield* ssh2Exec(direct, "who", {
+					SV_CLIENT: "Forged",
+				}).pipe(Effect.map((r) => r.stdout));
+
+				expect(refused).toBe("ssh2js1.17.0");
+			})
+	);
+
+	effect("SV_ACTOR from any other key is ignored", () =>
+		Effect.gen(function* () {
+			const dir = yield* tempDir;
+			const relayKey = yield* clientKey(dir, "relay");
+			const mallory = yield* clientKey(dir, "mallory");
+			const server = yield* relayServer([relayKey.fingerprint]);
+			const client = yield* ssh2Client({ port: server.port, key: mallory });
+			expect(
+				(yield* ssh2Exec(client, "who", { SV_ACTOR: PLAYER })).stdout
+			).toBe("-");
+		})
+	);
+
+	effect("attach can trust a relay key on that one connection", () =>
+		Effect.gen(function* () {
+			const relayKey = yield* clientKey(yield* tempDir, "relay");
+			const server = yield* relayServer([]);
+			const farEnd = yield* Deferred.make<Socket>();
+
+			const relay = yield* tcpListener((socket) => {
+				Deferred.doneUnsafe(farEnd, Effect.succeed(socket));
+			});
+
+			server.attach(connect(relay.port, "127.0.0.1"), {
+				trustedRelayKeys: [relayKey.fingerprint],
+			});
+
+			const linked = yield* ssh2Client({
+				sock: yield* Deferred.await(farEnd),
+				key: relayKey,
+			});
+
+			expect(
+				(yield* ssh2Exec(linked, "who", { SV_ACTOR: PLAYER })).stdout
+			).toBe(PLAYER);
+			const direct = yield* ssh2Client({ port: server.port, key: relayKey });
+			expect(
+				(yield* ssh2Exec(direct, "who", { SV_ACTOR: PLAYER })).stdout
+			).toBe("-");
+		})
+	);
+
+	effect(
+		"a relayed channel that never starts is closed alone; the relay's players stay",
+		() =>
+			Effect.gen(function* () {
+				const relayKey = yield* clientKey(yield* tempDir, "relay");
+
+				const server = yield* testServer({
+					trustedRelayKeys: [relayKey.fingerprint],
+					timeouts: { sessionStartMs: 200 },
+					onExec: (session) =>
+						Effect.sleep("1200 millis").pipe(
+							Effect.andThen(
+								Effect.sync(() => {
+									session.write(session.info.relayedActor ?? "-");
+								})
+							),
+							Effect.as(0)
+						),
+				});
+
+				const relay = yield* ssh2Client({ port: server.port, key: relayKey });
+
+				const player = yield* Effect.forkScoped(
+					ssh2Exec(relay, "who", { SV_ACTOR: PLAYER })
+				);
+
+				yield* Effect.sleep("50 millis");
+				relay.subsys("nothing", () => {});
+				expect((yield* Fiber.join(player)).stdout).toBe(PLAYER);
+			})
+	);
+
+	effect(
+		"a relay connection carries many sessions; an ordinary one only a few",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				const relayKey = yield* clientKey(dir, "relay");
+				const alice = yield* clientKey(dir, "alice");
+				const server = yield* relayServer([relayKey.fingerprint], "300 millis");
+				const relay = yield* ssh2Client({ port: server.port, key: relayKey });
+
+				const many = yield* Effect.all(
+					Array.from({ length: 8 }, () =>
+						ssh2Exec(relay, "who", { SV_ACTOR: PLAYER })
+					),
+					{ concurrency: "unbounded" }
+				);
+
+				expect(many.map((r) => r.stdout)).toEqual(
+					Array.from({ length: 8 }, () => PLAYER)
+				);
+
+				const player = yield* ssh2Client({ port: server.port, key: alice });
+
+				const few = yield* Effect.all(
+					Array.from({ length: 3 }, () =>
+						Effect.result(ssh2Exec(player, "who"))
+					),
+					{ concurrency: "unbounded" }
+				);
+
+				expect(few.filter(Result.isSuccess)).toHaveLength(2);
+				expect((yield* ssh2Exec(player, "who")).stdout).toBe("-");
+			})
+	);
 });

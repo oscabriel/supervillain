@@ -1,10 +1,13 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
+
 import { Effect } from "effect";
 
-/** A fresh folder that lives as long as the test's scope. */
 export const tempDir = Effect.acquireRelease(
-  Effect.promise(() => mkdtemp(join(tmpdir(), "sv-ssh-"))),
-  (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+	Effect.promise(async () => await mkdtemp(path.join(tmpdir(), "sv-ssh-"))),
+	(dir) =>
+		Effect.promise(async () => {
+			await rm(dir, { recursive: true, force: true });
+		})
 );

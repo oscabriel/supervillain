@@ -1,15 +1,42 @@
 import { test } from "bun:test";
-import { Effect, type Scope } from "effect";
 
-/** A `bun test` case whose body is an Effect. It runs scoped, so finalizers run before the test ends. */
+import { Effect } from "effect";
+import type { Scope } from "effect";
+
 export const effect = <E>(
-  name: string,
-  body: () => Effect.Effect<unknown, E, Scope.Scope>,
-  timeout?: number,
-) => test(name, () => Effect.runPromise(Effect.scoped(Effect.suspend(body))), timeout);
+	name: string,
+	body: () => Effect.Effect<unknown, E, Scope.Scope>,
+	timeout?: number
+) => {
+	test(
+		name,
+		async () => {
+			await Effect.runPromise(Effect.scoped(Effect.suspend(body)));
+		},
+		timeout
+	);
+};
 
-/** `effect`, skipped when `skip` holds, e.g. when this machine's OpenSSH is too old for the case. */
 effect.skipIf =
-  (skip: boolean) =>
-  <E>(name: string, body: () => Effect.Effect<unknown, E, Scope.Scope>, timeout?: number) =>
-    test.skipIf(skip)(name, () => Effect.runPromise(Effect.scoped(Effect.suspend(body))), timeout);
+	(skip: boolean) =>
+	<E>(
+		name: string,
+		body: () => Effect.Effect<unknown, E, Scope.Scope>,
+		timeout?: number
+	) => {
+		test.skipIf(skip)(
+			name,
+			async () => {
+				await Effect.runPromise(Effect.scoped(Effect.suspend(body)));
+			},
+			timeout
+		);
+	};
+
+export const must = <A>(value: A | undefined, why: string): A => {
+	if (value === undefined) {
+		throw new Error(why);
+	}
+
+	return value;
+};
