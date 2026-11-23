@@ -1,0 +1,26 @@
+# Third-Party Notices and Permissions
+
+## MEKMODE (Dings Mode and Text Mode)
+
+The 1-bit 8×12 bitmap atlases in `apps/supervillain/src/table/atlas/dings.ts` and `apps/supervillain/src/table/atlas/text.ts` are derived from MEKMODE (Version `1.000;hotconv 1.0.109;makeotfexe 2.5.65596`) by MEK.txt, used with the author's permission granted to Oscar Gabriel (recorded 2026-10-22 in `ASSESSMENT.md` §9 Q7).
+
+- Source: <https://www.mek.gallery/mekmode-otf> (accessed 2026-07-30)
+- `MEKMODE-Dings.otf` SHA-256: `1d7e274c5e08835703c0d7e935c208ae91079e4cd47e5297b7b32d2ee2ecd590`
+- `MEKMODE-Text.otf` SHA-256: `97470fbc65e698a13b057260b0df468bf9db391b5c4b38dcdbdb41bbcb516caa`
+- Bake parameters: `packages/atlas/bake/bake.py` (tag `archive/2026-09-exploration`), FreeType 10 ppem, monochrome render, no hinting, frame `x = 0`, baseline at top of row 9, encoded as 12 row bytes (MSB = leftmost pixel) in 24 hex characters.
+
+## @opentui/ssh
+
+The Ed25519 host-key retry helper (`packages/ssh/src/keys.ts`) and SSH channel-to-renderer stream adapter (`packages/ssh/src/terminal.ts`) were adapted from `@opentui/ssh` 0.6.6, licensed under the MIT License.
+
+## anti-slop Oxlint Plugin
+
+The lint plugin vendored in `tools/oxlint/anti-slop/` is derived from `K-Mistele/anti-slop` (MIT License; provenance and license text are retained in `tools/oxlint/anti-slop/UPSTREAM.md` and `tools/oxlint/anti-slop/LICENSE`).
+
+## Draw Steel Creator License
+
+supervillain is an independent product published under the DRAW STEEL Creator License and is not affiliated with MCDM Productions, LLC. DRAW STEEL © 2024 MCDM Productions, LLC.
+
+## Open RPG Creative (ORC) License
+
+The `pf2e` ruleset implements open tactical game mechanics licensed under the Open RPG Creative (ORC) License. See `docs/ORC-NOTICE.md` for full ORC attribution and Reserved Material declarations.

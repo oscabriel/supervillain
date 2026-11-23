@@ -148,6 +148,25 @@ Some campaigns play set.world's rules instead of Draw Steel; `/help` shows which
 
 There are no rounds: each fighter's turns come as often as its initiative says, so a quick fighter may act twice before a slow one acts once. The feed shows the clock with each turn. An attack costs 20 stamina, hit or miss, and stamina comes back with time, so a tired fighter rests. A sword reaches the next square, a long blade two, a bow or sling 10 squares, and a wand or staff 5 as magic.
 
+### At a `pf2e` (ORC) table
+
+Campaigns with `rules: pf2e` run open Remaster tactical combat under the ORC License (`docs/ORC-NOTICE.md`). You get three actions (`◆◆◇`) and one reaction (`↺`) per turn, four degrees of success (`crit` / `hit` / `miss` / `fumble`), and alternating 5/10/5/10 diagonal movement.
+
+| Command | What it does |
+| --- | --- |
+| `/play ari` | Play a PC the GM brought in; `/unplay` lets it go |
+| `/sheet ari` | Show a character or creature sheet: HP, AC, saves, Perception, skills, attacks and shield |
+| `/move ari f5` | Stride (1 action) along the cheapest path, tracking 5/10/5/10 diagonal parity across Strides |
+| `/strike ari gob [weapon]` | Strike (1 action) with automatic MAP (`0 / -5 / -10`, or `-4 / -8` agile), flanking, and crit doubling |
+| `/check ari <skill\|perception\|save> [dc N]` | Roll a skill, Perception, or saving throw against an optional DC |
+| `/shield ari` | Raise your shield (1 action, +2 circumstance bonus to AC until your next turn) |
+| `/block ari` | Spend your reaction (`↺`) to Shield Block the hit you just took |
+| `/delay`, `/join` | Defer your turn before acting, then re-enter initiative after another turn ends |
+| `/reroll` | Spend a Hero Point to reroll your last d20 check |
+| `/done` | End your turn (rolls persistent damage and DC 15 flat checks) |
+
+See [docs/rulesets/pf2e.md](rulesets/pf2e.md) for the full command list.
+
 ## The map
 
 Squares are written as a column letter and a row number, like `c5`. Columns run `a` to `z` from the left, then `aa`, `ab` and so on. Row 1 is the top row. The letters are along the top of the map and the numbers down its side.

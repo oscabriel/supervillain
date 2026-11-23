@@ -45,7 +45,7 @@ supervillain host ~/campaigns/first-fight
 
 ### What the campaign plays
 
-A campaign plays one ruleset, named in `campaign.yaml` at its root: `rules: draw-steel` or `rules: set-world`. `new` writes it (`draw-steel` unless you pass `--rules set-world`), and a campaign without one plays Draw Steel. The host reads it when it starts and refuses a ruleset it doesn't know, or any other setting, naming the file: `…/campaign.yaml: says rules: pathfinder, but a campaign plays draw-steel or set-world`. The ruleset decides which commands the table offers (`/help` and Tab show only those) and what the band, the map and `/sheet` show. Chat, names, dice and `/undo` are the same at either table. `--example` makes only a Draw Steel campaign, since that's what the sample is.
+A campaign plays one ruleset, named in `campaign.yaml` at its root: `rules: draw-steel`, `rules: set-world`, or `rules: pf2e`. `new` writes it (`draw-steel` unless you pass `--rules set-world` or `--rules pf2e`), and a campaign without one plays Draw Steel. The host reads it when it starts and refuses a ruleset it doesn't know, or any other setting, naming the file. The ruleset decides which commands the table offers (`/help` and Tab show only those) and what the band, the map and `/sheet` show. Chat, names, dice and `/undo` are the same at every table. `--example` makes only a Draw Steel campaign, since that's what the sample is.
 
 **set.world** ([set.world](https://set.world)) rolls characters from a seed over its free API: a class with its flavor, a weapon, nine stats, the attributes the fight reads and named gear. A set.world campaign has no sheets to write, only `maps/`:
 
@@ -62,9 +62,20 @@ At the table you name each fighter and roll it, and the host fetches the roll fr
 | `/map ford-road`, `/place ada b5` | Load a map from `maps/` and put fighters on it; the map is optional |
 | `/start`, `/end` | Start the fight, or end it early |
 | `/move grub n6`, `/attack grub ada`, `/done` | Act for any fighter on its turn; `/done` ends the turn, a rest if it didn't attack |
+| `/auto foes [on\|off]` | Let the host drive foes automatically on their turns (pauses on `/undo`) |
 | `/unplay ada` | Free a party member a player holds |
 
 The fight follows Set's turn-based rules (stamp `set-world-0-15-0-dungeon-initiative-2`): each fighter acts every `1000 / initiative` milliseconds of a logical clock, so there are no rounds, and an exact tie goes to the party first; everyone recovers 10 stamina a second of that clock; an attack costs 20 stamina, hit or miss; a hit is a dodge draw against `dodgeRate × (1 − clarity)`, a critical draw against `criticalHitChance` that doubles it, and `max(1, floor(raw × (1 − reduction) × (1 − globalResistance)))`. Set's own fights have no positions, so the grid's rules are the table's: speed is `round(5 × walkSpeed)` squares a turn; a weapon reaches by how it delivers (melee 1 square, 2 past 40 inches of reach; projectiles 10; waves 5 and auras 3, which hit as magic, with `magicalDamage` against `magicalDamageReduction`), checked only when both fighters are on the map. When the last of one side falls the fight is over; stamina then refills and health stays as it is. Expect long fights: hits of 7 to 19 against 150 to 230 health.
+
+**`pf2e` (ORC Remaster)** runs open Remaster tactical rules under the ORC License (`docs/ORC-NOTICE.md`), with PCs in `heroes/` and creatures in `monsters/`:
+
+```sh
+supervillain new ~/campaigns/delve --rules pf2e
+supervillain import pathbuilder ~/Downloads/ari.json ~/campaigns/delve
+supervillain host ~/campaigns/delve
+```
+
+At the table, bring PCs in with `/pc <id>`, add creatures with `/add <id> [xN] [elite|weak]`, load a map and place tokens, then `/start` to roll initiative (Perception by default, or an alternate skill). See [docs/rulesets/pf2e.md](rulesets/pf2e.md) for the complete command reference.
 
 `host` prints what to send your players:
 
