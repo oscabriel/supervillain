@@ -35,8 +35,11 @@ const turnView = (
 		? []
 		: [
 				h.a(
-					[h.Href(docHref(other)), h.Class(side)],
-					[h.span([h.Class("label")], [label]), h.span([], [other.title])]
+					[h.Href(docHref(other)), h.Class(`turn-card ${side}`)],
+					[
+						h.span([h.Class("label")], [label]),
+						h.span([h.Class("turn-title")], [other.title]),
+					]
 				),
 			];
 
@@ -67,6 +70,7 @@ export const docsHubView = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
 									),
 									h.span([h.Class("hub-title")], [page.title]),
 									h.span([h.Class("hub-summary")], [page.summary]),
+									h.span([h.Class("hub-arrow"), h.AriaHidden(true)], ["→"]),
 								]
 							),
 						]
@@ -95,21 +99,33 @@ export const docView = (
 		h.details(
 			[h.Class("docs-list narrow")],
 			[
-				h.summary([h.Class("label")], ["all of the docs"]),
+				h.summary(
+					[h.Class("label")],
+					[
+						h.span([h.Class("summary-chevron"), h.AriaHidden(true)], ["▸"]),
+						"all of the docs",
+					]
+				),
 				listView(page.slug, h),
 			]
 		),
 		h.article(
 			[],
 			[
-				h.h1([], [page.title]),
-				h.p([h.Class("lede")], [page.summary]),
+				h.header(
+					[h.Class("doc-head")],
+					[
+						h.p([h.Class("label")], ["docs"]),
+						h.h1([], [page.title]),
+						h.p([h.Class("lede")], [page.summary]),
+					]
+				),
 				proseView(page.document, h),
 				h.nav(
 					[h.Class("turns"), h.AriaLabel("Next and previous")],
 					[
-						...turnView(h, DOCS[at - 1], "before", "back"),
-						...turnView(h, DOCS[at + 1], "next", "on"),
+						...turnView(h, DOCS[at - 1], "← previous", "back"),
+						...turnView(h, DOCS[at + 1], "next →", "on"),
 					]
 				),
 			]

@@ -449,8 +449,10 @@ export const terminalView = (demo: Demo, h: HtmlBuilder<Message>): Html => {
 		[h.Class("demo"), h.Id("table")],
 		[
 			h.div([h.Class("term")], screen),
-			chipsView(h, demo),
-			toolsView(h, demo),
+			h.div(
+				[h.Class("demo-controls")],
+				[chipsView(h, demo), toolsView(h, demo)]
+			),
 			h.figcaption(
 				[],
 				[

@@ -9,6 +9,7 @@ import { Demo } from "./Table.ts";
 export const Model = Schema.Struct({
 	route: AppRoute,
 	demo: Demo,
+	copied: Schema.Boolean,
 });
 
 export type Model = typeof Model.Type;
@@ -30,6 +31,8 @@ export const Message = defineMessageUnion({
 	ClickedCloseReply: {},
 	ClickedLogToggle: {},
 	ClickedRestart: {},
+	ClickedCopyCommand: {},
+	ResetCopyCommand: {},
 });
 
 export type Message = typeof Message.Type;

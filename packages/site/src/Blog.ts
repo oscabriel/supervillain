@@ -53,9 +53,15 @@ export const blogView = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
 					h.li(
 						[],
 						[
-							h.p([h.Class("label")], [dayOf(post.date)]),
-							h.h2([], [h.a([h.Href(postHref(post))], [post.title])]),
-							h.p([], [post.summary]),
+							h.a(
+								[h.Href(postHref(post)), h.Class("post-card")],
+								[
+									h.span([h.Class("label post-date")], [dayOf(post.date)]),
+									h.h2([h.Class("post-title")], [post.title]),
+									h.p([h.Class("post-summary")], [post.summary]),
+									h.span([h.Class("post-read")], ["read note →"]),
+								]
+							),
 						]
 					)
 				)
@@ -71,11 +77,28 @@ export const postView = (
 	h.article(
 		[h.Class("column")],
 		[
-			h.p([h.Class("label")], [dayOf(post.date)]),
-			h.h1([], [post.title]),
-			h.p([h.Class("lede")], [post.summary]),
+			h.a([h.Href(blogRouter()), h.Class("back-link")], ["← all posts"]),
+			h.header(
+				[h.Class("doc-head")],
+				[
+					h.p([h.Class("label post-date")], [dayOf(post.date)]),
+					h.h1([], [post.title]),
+					h.p([h.Class("lede")], [post.summary]),
+				]
+			),
 			proseView(post.document, h),
-			h.p([h.Class("turns")], [h.a([h.Href(blogRouter())], ["← all posts"])]),
+			h.div(
+				[h.Class("turns")],
+				[
+					h.a(
+						[h.Href(blogRouter()), h.Class("turn-card back")],
+						[
+							h.span([h.Class("label")], ["← blog"]),
+							h.span([h.Class("turn-title")], ["All notes from the build"]),
+						]
+					),
+				]
+			),
 		]
 	),
 ];

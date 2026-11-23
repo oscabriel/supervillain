@@ -1,8 +1,11 @@
 import type { Html, HtmlBuilder } from "foldkit/html";
 
-import type { Message, Model } from "./Model.ts";
+import { Message } from "./Model.ts";
+import type { Model } from "./Model.ts";
 import { blogRouter, docRouter, docsRouter } from "./Route.ts";
 import { terminalView } from "./Terminal.ts";
+
+export const JOIN_COMMAND = "ssh first-fight@table.example.com";
 
 const HOSTING = docRouter({ slug: "hosting" });
 
@@ -41,6 +44,7 @@ const TABLE: ReadonlyArray<readonly [string, string]> = [
 
 interface Ruleset {
 	readonly name: string;
+	readonly key: string;
 	readonly state: string;
 	readonly tone: string;
 	readonly about: string;
@@ -49,20 +53,23 @@ interface Ruleset {
 const RULES: ReadonlyArray<Ruleset> = [
 	{
 		name: "Draw Steel",
+		key: "rules: draw-steel",
 		state: "playable",
 		tone: "ready",
 		about:
-			"MCDM's tactical fantasy game: heroes from sheets, monsters from stat blocks, power rolls with tiers, Stamina, conditions, heroic resources, Malice, forced movement and a grid. The default for a new campaign.",
+			"MCDM's tactical fantasy game: heroes from sheets, monsters from stat blocks, power rolls with tiers, turn action budgets, Stamina, conditions, heroic resources, Malice, forced movement and multi-square footprints. The default for a new campaign.",
 	},
 	{
 		name: "set.world",
+		key: "rules: set-world",
 		state: "playable",
 		tone: "ready",
 		about:
-			"Fighters rolled from a seed at set.world, turns by initiative on a logical clock instead of rounds, and Set's stamina, dodge and critical hits, on the same grid and movement.",
+			"Fighters rolled from a seed at set.world, turns by initiative on a logical clock instead of rounds, Set's stamina, dodge and critical hits, and optional /auto foes on the same grid.",
 	},
 	{
 		name: "PF2e Remaster (ORC)",
+		key: "rules: pf2e",
 		state: "playable",
 		tone: "ready",
 		about:
@@ -113,29 +120,24 @@ const rulesView = (h: HtmlBuilder<Message>): Html =>
 			h.li(
 				[h.DataAttribute("tone", ruleset.tone)],
 				[
-					h.p([h.Class("rules-state")], [ruleset.state]),
-					h.h3([], [ruleset.name]),
-					h.p([], [ruleset.about]),
+					h.div(
+						[h.Class("rules-head")],
+						[
+							h.h3([], [ruleset.name]),
+							h.span([h.Class("rules-state")], [ruleset.state]),
+						]
+					),
+					h.p([h.Class("rules-key")], [ruleset.key]),
+					h.p([h.Class("rules-about")], [ruleset.about]),
 				]
 			)
 		)
 	);
 
-export const homeView = (
-	model: Model,
-	h: HtmlBuilder<Message>
-): ReadonlyArray<Html> => [
-	h.section(
-		[h.Class("hero")],
+const copyCommandView = (copied: boolean, h: HtmlBuilder<Message>): Html =>
+	h.div(
+		[h.Class("shell-bar")],
 		[
-			h.p([h.Class("label")], ["terminal-first · open source · MIT"]),
-			h.h1([], ["A virtual tabletop you join with ssh."]),
-			h.p(
-				[h.Class("lede")],
-				[
-					"Players type one command and are sitting at a live table, with nothing to install and no account to make. The GM's machine runs the rules, draws every screen and keeps the campaign as a plain append-only log on the GM's disk.",
-				]
-			),
 			h.pre(
 				[h.Class("shell")],
 				[
@@ -151,12 +153,64 @@ export const homeView = (
 					),
 				]
 			),
-			h.p(
-				[h.Class("calls")],
+			h.button(
 				[
-					h.a([h.Href(HOSTING), h.Class("call")], ["Host a table"]),
-					h.a([h.Href("#table")], ["Try the table below ↓"]),
-					h.a([h.Href(PLAYING)], ["Send this to players →"]),
+					h.Type("button"),
+					h.Class("copy-btn"),
+					h.DataAttribute("copied", copied ? "true" : "false"),
+					h.AriaLabel(copied ? "Copied command" : "Copy ssh command"),
+					h.OnClick(Message.ClickedCopyCommand()),
+				],
+				[
+					h.span(
+						[h.Class("copy-label copy-idle"), h.AriaHidden(copied)],
+						["copy"]
+					),
+					h.span(
+						[h.Class("copy-label copy-done"), h.AriaHidden(!copied)],
+						["copied ✓"]
+					),
+				]
+			),
+		]
+	);
+
+export const homeView = (
+	model: Model,
+	h: HtmlBuilder<Message>
+): ReadonlyArray<Html> => [
+	h.section(
+		[h.Class("hero")],
+		[
+			h.p(
+				[h.Class("label hero-eyebrow")],
+				["terminal-first · open source · MIT"]
+			),
+			h.h1([h.Class("hero-title")], ["A virtual tabletop you join with ssh."]),
+			h.p(
+				[h.Class("lede hero-lede")],
+				[
+					"Players type one command and are sitting at a live table, with nothing to install and no account to make. The GM's machine runs the rules, draws every screen and keeps the campaign as a plain append-only log on the GM's disk.",
+				]
+			),
+			h.div(
+				[h.Class("hero-actions")],
+				[
+					copyCommandView(model.copied, h),
+					h.p(
+						[h.Class("calls")],
+						[
+							h.a([h.Href(HOSTING), h.Class("call")], ["Host a table"]),
+							h.a(
+								[h.Href("#table"), h.Class("call-link")],
+								["Try the table below ", h.span([h.Class("arrow")], ["↓"])]
+							),
+							h.a(
+								[h.Href(PLAYING), h.Class("call-link")],
+								["Send this to players ", h.span([h.Class("arrow")], ["→"])]
+							),
+						]
+					),
 				]
 			),
 		]
@@ -177,7 +231,15 @@ export const homeView = (
 				]
 			),
 			rulesView(h),
-			h.p([], [h.a([h.Href(RULESETS)], ["Read about the rulesets →"])]),
+			h.p(
+				[],
+				[
+					h.a(
+						[h.Href(RULESETS), h.Class("call-link")],
+						["Read about the rulesets ", h.span([h.Class("arrow")], ["→"])]
+					),
+				]
+			),
 		]
 	),
 	h.section(
@@ -194,9 +256,18 @@ export const homeView = (
 			h.p(
 				[h.Class("calls")],
 				[
-					h.a([h.Href(ARCHITECTURE)], ["How it fits together →"]),
-					h.a([h.Href(docsRouter())], ["All the docs →"]),
-					h.a([h.Href(blogRouter())], ["The blog →"]),
+					h.a(
+						[h.Href(ARCHITECTURE), h.Class("call-link")],
+						["How it fits together ", h.span([h.Class("arrow")], ["→"])]
+					),
+					h.a(
+						[h.Href(docsRouter()), h.Class("call-link")],
+						["All the docs ", h.span([h.Class("arrow")], ["→"])]
+					),
+					h.a(
+						[h.Href(blogRouter()), h.Class("call-link")],
+						["The blog ", h.span([h.Class("arrow")], ["→"])]
+					),
 				]
 			),
 		]

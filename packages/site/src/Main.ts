@@ -1,4 +1,4 @@
-import { Effect, Match, Option, Schema } from "effect";
+import { Data, Effect, Match, Option, Schema } from "effect";
 import { Command } from "foldkit";
 import type { Update } from "foldkit";
 import type { Document, HtmlBuilder } from "foldkit/html";
@@ -9,7 +9,7 @@ import { toString as urlToString } from "foldkit/url";
 import { blogView, postView } from "./Blog.ts";
 import { docOf, postOf } from "./Content.ts";
 import { docsHubView, docView } from "./Docs.ts";
-import { homeView } from "./Home.ts";
+import { homeView, JOIN_COMMAND } from "./Home.ts";
 import { pageView } from "./Layout.ts";
 import { Message } from "./Model.ts";
 import type { Key, Model } from "./Model.ts";
@@ -42,7 +42,7 @@ export const routeOf = (url: Url): AppRoute => {
 };
 
 export const init = (url: Url): Return => ({
-	model: { route: routeOf(url), demo: DEMO },
+	model: { route: routeOf(url), demo: DEMO, copied: false },
 });
 
 const Navigate = Command.define("Navigate", {
@@ -89,6 +89,26 @@ const FocusLine = Command.define("FocusLine", {
 		}).pipe(Effect.as(Message.CompletedNavigate())),
 });
 
+class ClipboardUnavailable extends Data.TaggedError("ClipboardUnavailable")<{
+	readonly cause: unknown;
+}> {}
+
+const CopyCommand = Command.define("CopyCommand", {
+	args: { text: Schema.String },
+	messages: [Message.ResetCopyCommand],
+	execute: ({ text }) =>
+		Effect.tryPromise({
+			try: async () => {
+				await navigator.clipboard.writeText(text);
+			},
+			catch: (cause) => new ClipboardUnavailable({ cause }),
+		}).pipe(
+			Effect.ignore,
+			Effect.andThen(Effect.sleep("1800 millis")),
+			Effect.as(Message.ResetCopyCommand())
+		),
+});
+
 const playing = (model: Model, demo: Demo): Return => ({
 	model: { ...model, demo },
 });
@@ -120,7 +140,7 @@ export const update = (model: Model, message: Message): Return =>
 			],
 		}),
 		ChangedUrl: ({ url }) => ({
-			model: { ...model, route: routeOf(url) },
+			model: { ...model, route: routeOf(url), copied: false },
 			commands: [Settle({ anchor: Option.getOrElse(url.hash, () => "") })],
 		}),
 		CompletedNavigate: () => ({ model }),
@@ -136,6 +156,13 @@ export const update = (model: Model, message: Message): Return =>
 		ClickedCloseReply: () => playing(model, closedReply(model.demo)),
 		ClickedLogToggle: () => playing(model, toggledLog(model.demo)),
 		ClickedRestart: () => playing(model, restarted(model.demo)),
+		ClickedCopyCommand: () => ({
+			model: { ...model, copied: true },
+			commands: [CopyCommand({ text: JOIN_COMMAND })],
+		}),
+		ResetCopyCommand: () => ({
+			model: { ...model, copied: false },
+		}),
 	});
 
 const notFoundView = (h: HtmlBuilder<Message>) => [

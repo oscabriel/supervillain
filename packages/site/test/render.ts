@@ -14,7 +14,9 @@ export const htmlOf = async (
 	const rendered = await Effect.runPromise(
 		Server.renderToString<Model, Message>(
 			{
-				init: () => ({ model: { route: AppRoute.Home(), demo } }),
+				init: () => ({
+					model: { route: AppRoute.Home(), demo, copied: false },
+				}),
 				view: (model, h) => ({ title: "test", body: body(model, h) }),
 			},
 			{ isHydratable: false }

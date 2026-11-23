@@ -23,16 +23,24 @@ const headView = (route: AppRoute, h: HtmlBuilder<Message>): Html =>
 	h.header(
 		[h.Class("head")],
 		[
-			h.a(
-				[h.Href(homeRouter()), h.Class("wordmark")],
-				[h.span([h.Class("prompt"), h.AriaHidden(true)], ["$"]), "supervillain"]
-			),
-			h.nav(
-				[h.Class("nav"), h.AriaLabel("Site")],
+			h.div(
+				[h.Class("head-inner")],
 				[
-					linkView(h, docsRouter(), "docs", isDocs(route)),
-					linkView(h, blogRouter(), "blog", isBlog(route)),
-					h.a([h.Href(SOURCE)], ["source"]),
+					h.a(
+						[h.Href(homeRouter()), h.Class("wordmark")],
+						[
+							h.span([h.Class("prompt"), h.AriaHidden(true)], ["$"]),
+							"supervillain",
+						]
+					),
+					h.nav(
+						[h.Class("nav"), h.AriaLabel("Site")],
+						[
+							linkView(h, docsRouter(), "docs", isDocs(route)),
+							linkView(h, blogRouter(), "blog", isBlog(route)),
+							h.a([h.Href(SOURCE)], ["source"]),
+						]
+					),
 				]
 			),
 		]
@@ -65,6 +73,9 @@ export const pageView = (
 	content: ReadonlyArray<Html>
 ): Html =>
 	h.div(
-		[h.Class("site")],
-		[headView(route, h), h.main([], content), footView(h)]
+		[h.Class("shell-page")],
+		[
+			headView(route, h),
+			h.div([h.Class("site")], [h.main([], content), footView(h)]),
+		]
 	);

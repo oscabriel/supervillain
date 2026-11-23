@@ -55,8 +55,12 @@ describe("the terminal on the front page", () => {
 
 		expect(html).toContain("A virtual tabletop you join with ssh.");
 		expect(html).toContain("Draw Steel");
+		expect(html).toContain("rules: draw-steel");
 		expect(html).toContain("set.world");
+		expect(html).toContain("rules: set-world");
 		expect(html).toContain("PF2e Remaster (ORC)");
+		expect(html).toContain("rules: pf2e");
+		expect(html).toContain('aria-label="Copy ssh command"');
 		expect(html).toContain('href="/docs/hosting"');
 	});
 });
