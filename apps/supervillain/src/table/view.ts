@@ -1,123 +1,78 @@
+import type {
+	CombatView,
+	FeedLine,
+	PrepView,
+	TokenAction,
+} from "@supervillain/domain";
 import type { Accessor } from "solid-js";
-import type { CombatView, FeedLine, PrepView, TokenAction } from "../game/index.ts";
 
-/** Someone with a seat open right now. */
 export interface Present {
-  readonly actor: string;
-  readonly label: string;
-  readonly gm: boolean;
+	readonly actor: string;
+	readonly label: string;
+	readonly gm: boolean;
 }
 
-// The band's view and the feed's lines are built by the rules (game/), which never import the table.
 export type {
-  ActionPick,
-  Combatant,
-  CombatView,
-  FeedLine,
-  PrepFigure,
-  PrepItem,
-  PrepKind,
-  PrepSection,
-  PrepStep,
-  PrepToken,
-  PrepView,
-  TokenAction,
-} from "../game/index.ts";
+	ActionPick,
+	Combatant,
+	CombatView,
+	FeedLine,
+	PrepFigure,
+	PrepItem,
+	PrepKind,
+	PrepSection,
+	PrepStep,
+	PrepToken,
+	PrepView,
+	TokenAction,
+} from "@supervillain/domain";
 
-/**
- * The GM's prep panel (Alt+5, `/prep`): the campaign's heroes, monsters and maps and what the table
- * holds, each item with the command line a click sends. The GM's seat alone has it.
- */
 export interface PrepSource {
-  /** What the panel lists, kept up with the table; undefined until the files have been read. */
-  readonly view: Accessor<PrepView | undefined>;
-  /**
-   * Reads the campaign's heroes, monsters and maps again, since files change between sessions: the
-   * App calls it each time the panel opens. Resolves to why they couldn't be read, or undefined.
-   */
-  readonly reload: () => Promise<string | undefined>;
+	readonly view: Accessor<PrepView | undefined>;
+	readonly reload: () => Promise<string | undefined>;
 }
 
-/** One token on the map. */
 export interface MapToken {
-  /** The combatant id it stands for (`vex`, `goblins-a`). */
-  readonly id: string;
-  /** One or two characters drawn in the cell, e.g. "V" or "g2"; commands take it as a name. */
-  readonly mark: string;
-  /** The hero's or creature's name, for `/view <who>`. */
-  readonly name: string;
-  readonly x: number;
-  readonly y: number;
-  readonly side: "heroes" | "director";
-  /** What its picture is picked by, when not its id: a creature's stat block, so all look alike. */
-  readonly figure?: string;
-  readonly mine: boolean;
-  readonly acting: boolean;
-  readonly dead: boolean;
+	readonly id: string;
+	readonly mark: string;
+	readonly name: string;
+	readonly x: number;
+	readonly y: number;
+	readonly side: "heroes" | "director";
+	readonly figure?: string;
+	readonly footprint?: 1 | 2 | 3 | 4;
+	readonly tiny?: boolean;
+	readonly mine: boolean;
+	readonly acting: boolean;
+	readonly dead: boolean;
 }
 
-/** The text map (ASSESSMENT Q7): terrain, tokens, and the squares the acting or chosen token can reach. */
 export interface MapView {
-  readonly name: string;
-  readonly width: number;
-  readonly height: number;
-  /** One string per row, one terrain character per square ("." floor, "#" wall, "~" difficult…). */
-  readonly terrain: ReadonlyArray<string>;
-  /** A mekmode map's letters, one per square, for the picture map; absent on a plain map. */
-  readonly dressing?: ReadonlyArray<string>;
-  readonly tokens: ReadonlyArray<MapToken>;
-  /** Squares to highlight, e.g. where the acting creature can move this turn. */
-  readonly reach: ReadonlyArray<{ readonly x: number; readonly y: number }>;
-  /** What the highlight means, for the hint row ("Vex can reach: speed 5"). */
-  readonly reachLabel?: string;
+	readonly name: string;
+	readonly width: number;
+	readonly height: number;
+	readonly terrain: ReadonlyArray<string>;
+	readonly dressing?: ReadonlyArray<string>;
+	readonly tokens: ReadonlyArray<MapToken>;
+	readonly reach: ReadonlyArray<{ readonly x: number; readonly y: number }>;
+	readonly reachLabel?: string;
 }
 
-/**
- * Everything the table needs from the host, for one seat. The App never sees the room,
- * the log or Effect: the host builds a TableView per seat and the App only reads and submits.
- */
 export interface TableView {
-  /** This seat's actor id (`gm`, `key:SHA256:…` or `guest:…`). */
-  readonly me: string;
-  /** The room's name, shown in the header. */
-  readonly room: string;
-  readonly feed: Accessor<ReadonlyArray<FeedLine>>;
-  readonly present: Accessor<ReadonlyArray<Present>>;
-  /** This seat's display name, or undefined until it has one (the table then asks for it). */
-  readonly myName: Accessor<string | undefined>;
-  /** Runs one input line. Resolves to a message for this seat only (a refusal or help), or undefined. */
-  readonly submit: (line: string) => Promise<string | undefined>;
-  /** Completions for the whole input line; each is a full replacement line. */
-  readonly complete: (line: string) => ReadonlyArray<string>;
-  /** The state pane's text (`/state`, the GM's seat only): the full state as JSON plus the last few envelopes. */
-  readonly debug: () => string;
-  /** Leaves the table: closes this seat. */
-  readonly leave: () => void;
-  /** How players join (`ssh -p 2222 den@host`), shown on the GM's seat while nobody else is here. */
-  readonly joinHint?: string;
-  /**
-   * Said instead of `players join with: <joinHint>`, when set: how the way in is doing, e.g.
-   * `relay: connecting…` while the table goes through a relay.
-   */
-  readonly joinNote?: Accessor<string>;
-  /**
-   * Trouble with the way in, in the header whatever else is on screen, e.g. `relay: down,
-   * redialing` (for the GM). Undefined while all is well.
-   */
-  readonly alert?: Accessor<string | undefined>;
-  /**
-   * The band, Draw Steel's or set.world's as the campaign plays; undefined while there is no party
-   * or fight. Every seat has it; a fake may not.
-   */
-  readonly combat?: Accessor<CombatView | undefined>;
-  /** The text map; undefined while no map is loaded. Every seat has it; a fake may not. */
-  readonly map?: Accessor<MapView | undefined>;
-  /**
-   * What this seat may do with a token or band row (by its id), for the mouse's menu: each choice
-   * with the command line it sends. Undefined for one this seat may not act for. Reactive, like
-   * the band. Every seat has it; a fake may not.
-   */
-  readonly actions?: (id: string) => ReadonlyArray<TokenAction> | undefined;
-  /** The prep panel's lists, on the GM's seat only; a player's seat has none. */
-  readonly prep?: PrepSource;
+	readonly me: string;
+	readonly room: string;
+	readonly feed: Accessor<ReadonlyArray<FeedLine>>;
+	readonly present: Accessor<ReadonlyArray<Present>>;
+	readonly myName: Accessor<string | undefined>;
+	readonly submit: (line: string) => Promise<string | undefined>;
+	readonly complete: (line: string) => ReadonlyArray<string>;
+	readonly debug: () => string;
+	readonly leave: () => void;
+	readonly joinHint?: string;
+	readonly joinNote?: Accessor<string>;
+	readonly alert?: Accessor<string | undefined>;
+	readonly combat?: Accessor<CombatView | undefined>;
+	readonly map?: Accessor<MapView | undefined>;
+	readonly actions?: (id: string) => ReadonlyArray<TokenAction> | undefined;
+	readonly prep?: PrepSource;
 }

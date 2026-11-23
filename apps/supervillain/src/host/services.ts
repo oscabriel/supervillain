@@ -1,36 +1,80 @@
-import type { LogError } from "@supervillain/engine";
+import type { ExternalSystemKey } from "@alchemy.run/domain/ExternalSystem";
+import type { ContentReadError } from "@supervillain/domain";
+import type { LogError } from "@supervillain/platform-jsonl";
 import { Layer } from "effect";
-import {
-  type CampaignConfigInvalid,
-  CampaignContent,
-  type ContentReadError,
-} from "../content/index.ts";
-import { Presence } from "./Presence.ts";
-import { SetWorld } from "./SetWorld.ts";
-import { TableRoom, type TableRoomOptions } from "./TableRoom.ts";
+import type { FileSystem, Path } from "effect";
+import type { SecureRandom } from "effect/crypto";
+import type { HttpClient } from "effect/http";
 
-/**
- * What a seat and a one-off command need: the room, who is here, the campaign (its ruleset and
- * sheets), and set.world, where a set.world table rolls its fighters.
- */
-export type TableServices = TableRoom | Presence | CampaignContent | SetWorld;
+import {
+	CampaignContent,
+	CatalogLive,
+	MapForgeLive,
+	SheetsLive,
+} from "../content/index.ts";
+import type { CampaignConfigInvalid } from "../content/index.ts";
+import { AutoFoes } from "./AutoFoes.ts";
+import type { AutoFoesOptions } from "./AutoFoes.ts";
+import { Presence, SeatingLive } from "./Presence.ts";
+import { SetWorldLive } from "./SetWorld.ts";
+import { TableRoom } from "./TableRoom.ts";
+import type { TableRoomOptions } from "./TableRoom.ts";
+
+export type Ports =
+	| ExternalSystemKey<"Sheets">
+	| ExternalSystemKey<"Catalog">
+	| ExternalSystemKey<"MapForge">
+	| ExternalSystemKey<"SetWorld">
+	| ExternalSystemKey<"Seating">;
+
+export type SetWorldPort = ExternalSystemKey<"SetWorld">;
+
+export type TableServices =
+	| TableRoom
+	| Presence
+	| CampaignContent
+	| AutoFoes
+	| Ports;
+
+export type Platform =
+	| FileSystem.FileSystem
+	| Path.Path
+	| HttpClient.HttpClient
+	| SecureRandom.SecureRandom;
 
 export interface TableServicesOptions extends TableRoomOptions {
-  /** Where fighters are rolled: the live API unless a test says otherwise. */
-  readonly setWorld?: Layer.Layer<SetWorld>;
+	readonly setWorld?: Layer.Layer<SetWorldPort>;
+	readonly autoFoes?: AutoFoesOptions;
 }
 
-/**
- * The table's services over one campaign folder. The log is opened (and locked) here, and
- * `campaign.yaml` read: a ruleset the table doesn't know stops it opening.
- */
 export const tableServices = (
-  campaignDir: string,
-  options: TableServicesOptions = {},
-): Layer.Layer<TableServices, LogError | CampaignConfigInvalid | ContentReadError> =>
-  Layer.mergeAll(
-    Presence.layer,
-    TableRoom.layer(campaignDir, options),
-    CampaignContent.layer(campaignDir),
-    options.setWorld ?? SetWorld.layer,
-  );
+	campaignDir: string,
+	options: TableServicesOptions = {}
+): Layer.Layer<
+	TableServices,
+	LogError | CampaignConfigInvalid | ContentReadError,
+	Platform
+> => {
+	const content = CampaignContent.layer(campaignDir);
+	const presence = Presence.layer;
+
+	const ports = Layer.mergeAll(
+		SheetsLive,
+		CatalogLive,
+		MapForgeLive,
+		SeatingLive,
+		options.setWorld ?? SetWorldLive
+	);
+
+	const room = TableRoom.layer(campaignDir, options);
+
+	return ports.pipe(
+		Layer.provideMerge(
+			Layer.mergeAll(
+				content,
+				presence,
+				AutoFoes.layer(options.autoFoes).pipe(Layer.provideMerge(room))
+			)
+		)
+	);
+};

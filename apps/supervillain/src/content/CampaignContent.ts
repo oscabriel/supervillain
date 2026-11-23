@@ -1,299 +1,424 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
-import { Context, Effect, Layer } from "effect";
-import { type MapGrid, MAP_WORDS } from "../game/drawSteel/map.ts";
-import { ID } from "../game/drawSteel/schema.ts";
-import type { HeroSheet, StatBlock } from "../game/drawSteel/sheets.ts";
-import type { PrepCatalog, PrepEntry } from "../game/prep.ts";
-import type { Ruleset } from "../game/table.ts";
-import { readCampaignConfig } from "./campaignFile.ts";
 import {
-  type CampaignConfigInvalid,
-  ContentReadError,
-  MapInvalid,
-  MapNotFound,
-  SheetAmbiguous,
-  SheetInvalid,
-  type SheetKind,
-  SheetNotFound,
-} from "./errors.ts";
+	Catalog,
+	ContentReadError,
+	ID,
+	MAP_WORDS,
+	MapNotFound,
+	SheetAmbiguous,
+	SheetNotFound,
+	Sheets,
+} from "@supervillain/domain";
+import type {
+	HeroSheet,
+	MapGrid,
+	MapInvalid,
+	PfSheet,
+	PrepCatalog,
+	PrepEntry,
+	RulesetName,
+	SheetInvalid,
+	SheetKind,
+	StatBlock,
+} from "@supervillain/domain";
+import { Context, Effect, FileSystem, Layer, Option, Path } from "effect";
+import type { PlatformError } from "effect";
+
+import { readCampaignConfig } from "./campaignFile.ts";
+import type { CampaignConfigInvalid } from "./errors.ts";
 import { decodeMap, MAP_BYTES, tooBig } from "./mapFiles.ts";
+import { decodePfSheetFile } from "./pfSheetFiles.ts";
 import { decodeHero, decodeMonster, idOf } from "./sheetFiles.ts";
 
-/** Why a load by id can fail. */
-export type LoadError = SheetNotFound | SheetAmbiguous | SheetInvalid | ContentReadError;
+export type LoadError =
+	| SheetNotFound
+	| SheetAmbiguous
+	| SheetInvalid
+	| ContentReadError;
 
-/** Why a map load can fail. */
 export type MapLoadError = MapNotFound | MapInvalid | ContentReadError;
 
-/** A map file as the host read it: its id (the file name) and its grid, for the /map command. */
 export interface LoadedMap {
-  readonly id: string;
-  readonly grid: MapGrid;
+	readonly id: string;
+	readonly grid: MapGrid;
 }
 
 type Kind = SheetKind | "map";
 
-const FOLDER: Record<Kind, string> = { hero: "heroes", monster: "monsters", map: "maps" };
-/** The files a folder's ids come from; the first pattern wins when two files name one id. */
-const EXTENSIONS: Record<Kind, ReadonlyArray<RegExp>> = {
-  hero: [/\.yaml$/i, /\.yml$/i],
-  monster: [/\.yaml$/i, /\.yml$/i],
-  map: [/\.txt$/i],
+const FOLDER: Readonly<Record<Kind, string>> = {
+	hero: "heroes",
+	monster: "monsters",
+	map: "maps",
 };
 
-const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const EXTENSIONS: Readonly<Record<Kind, ReadonlyArray<RegExp>>> = {
+	hero: [/\.yaml$/iu, /\.yml$/iu],
+	monster: [/\.yaml$/iu, /\.yml$/iu],
+	map: [/\.txt$/iu],
+};
 
-/** One sheet file: its id and its path in the campaign ("heroes/vex.yaml"). */
 interface Entry {
-  readonly id: string;
-  readonly file: string;
+	readonly id: string;
+	readonly file: string;
 }
 
-/**
- * The sheet or map files in one folder of the campaign, by id. A missing folder has none. `.yaml`
- * wins over `.yml` if both name one id; hidden files and anything else are ignored.
- */
-const entries = (dir: string, kind: Kind): Effect.Effect<ReadonlyArray<Entry>, ContentReadError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const folder = FOLDER[kind];
-      try {
-        return (await readdir(join(dir, folder), { withFileTypes: true }))
-          .filter(
-            (d) =>
-              !d.isDirectory() &&
-              !d.name.startsWith(".") &&
-              EXTENSIONS[kind].some((x) => x.test(d.name)),
-          )
-          .map((d) => d.name);
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
-        throw e;
-      }
-    },
-    catch: (e) => new ContentReadError({ message: `can't list ${FOLDER[kind]}/: ${messageOf(e)}` }),
-  }).pipe(
-    Effect.map((names) => {
-      const byId = new Map<string, Entry>();
-      const inOrder = EXTENSIONS[kind].flatMap((x) => names.filter((n) => x.test(n)));
-      for (const name of inOrder)
-        if (!byId.has(idOf(name)))
-          byId.set(idOf(name), { id: idOf(name), file: `${FOLDER[kind]}/${name}` });
-      return [...byId.values()].toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    }),
-  );
+interface Several {
+	readonly several: ReadonlyArray<string>;
+}
 
-/** The exact id, ignoring case, else the only id the query starts; else every id it starts. */
-const match = (
-  all: ReadonlyArray<Entry>,
-  query: string,
-): Entry | { readonly several: ReadonlyArray<string> } => {
-  const q = query.trim().toLowerCase();
-  const exact = all.find((e) => e.id.toLowerCase() === q);
-  if (exact !== undefined) return exact;
-  const matches = q === "" ? [] : all.filter((e) => e.id.toLowerCase().startsWith(q));
-  return matches.length === 1 ? matches[0]! : { several: matches.map((e) => e.id) };
+const byId = (a: Entry, b: Entry) => {
+	if (a.id === b.id) {
+		return 0;
+	}
+
+	return a.id < b.id ? -1 : 1;
 };
 
-/** What a folder has, for a message that a query fit none of it. */
+const readError =
+	(what: string) =>
+	(cause: PlatformError.PlatformError): ContentReadError =>
+		new ContentReadError({ message: `${what}: ${cause.message}`, cause });
+
+const match = (all: ReadonlyArray<Entry>, query: string): Entry | Several => {
+	const wanted = query.trim().toLowerCase();
+	const exact = all.find((e) => e.id.toLowerCase() === wanted);
+
+	if (exact !== undefined) {
+		return exact;
+	}
+
+	const matches =
+		wanted === ""
+			? []
+			: all.filter((e) => e.id.toLowerCase().startsWith(wanted));
+
+	const [only] = matches;
+
+	return matches.length === 1 && only !== undefined
+		? only
+		: { several: matches.map((e) => e.id) };
+};
+
+const isSeveral = (found: Entry | Several): found is Several =>
+	"several" in found;
+
 const have = (kind: Kind, all: ReadonlyArray<Entry>) =>
-  all.length === 0
-    ? `it has no ${kind === "map" ? ".txt" : ".yaml"} files`
-    : `there are: ${all.map((e) => e.id).join(", ")}`;
+	all.length === 0
+		? `it has no ${kind === "map" ? ".txt" : ".yaml"} files`
+		: `there are: ${all.map((e) => e.id).join(", ")}`;
 
 const find = (
-  kind: SheetKind,
-  all: ReadonlyArray<Entry>,
-  query: string,
+	kind: SheetKind,
+	all: ReadonlyArray<Entry>,
+	query: string
 ): Effect.Effect<Entry, SheetNotFound | SheetAmbiguous> => {
-  const found = match(all, query);
-  if (!("several" in found)) return Effect.succeed(found);
-  if (found.several.length > 1)
-    return Effect.fail(
-      new SheetAmbiguous({
-        kind,
-        query,
-        matches: found.several,
-        message: `"${query}" could be any of these ${FOLDER[kind]}: ${found.several.join(", ")}`,
-      }),
-    );
-  return Effect.fail(
-    new SheetNotFound({
-      kind,
-      query,
-      message: `no ${kind} "${query}" in ${FOLDER[kind]}/ (${have(kind, all)})`,
-    }),
-  );
+	const found = match(all, query);
+
+	if (!isSeveral(found)) {
+		return Effect.succeed(found);
+	}
+
+	if (found.several.length > 1) {
+		return Effect.fail(
+			new SheetAmbiguous({
+				kind,
+				query,
+				matches: found.several,
+				message: `"${query}" could be any of these ${FOLDER[kind]}: ${found.several.join(", ")}`,
+			})
+		);
+	}
+
+	return Effect.fail(
+		new SheetNotFound({
+			kind,
+			query,
+			message: `no ${kind} "${query}" in ${FOLDER[kind]}/ (${have(kind, all)})`,
+		})
+	);
 };
 
-/**
- * The map files in a campaign: those whose file name, lower case, is an id (`usable`, by that id),
- * and those that can't be maps for their name (`unnamed`, as file names).
- */
-const mapEntries = (dir: string) =>
-  Effect.map(entries(dir, "map"), (all) => {
-    const usable: Entry[] = [];
-    const unnamed: string[] = [];
-    for (const e of all)
-      if (ID.test(e.id.toLowerCase())) usable.push({ ...e, id: e.id.toLowerCase() });
-      else unnamed.push(e.file.slice("maps/".length));
-    usable.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    return { usable, unnamed };
-  });
+const textOf = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
-/**
- * The map file `query` names, found the way sheets are, read whole (its size is checked first)
- * and decoded. Its id is the file name, lower case; a file whose name can't be an id is no map,
- * and is named when nothing fits.
- */
-const loadMap = (dir: string) =>
-  Effect.fn(function* (query: string) {
-    const { usable, unnamed } = yield* mapEntries(dir);
-    const found = match(usable, query);
-    if ("several" in found) {
-      const skipped =
-        unnamed.length === 0
-          ? ""
-          : `; not maps, since a map's file name is its id (lower-case letters, digits and hyphens, at most 40): ${unnamed.join(", ")}`;
-      return yield* new MapNotFound({
-        query,
-        message:
-          found.several.length > 1
-            ? `"${query}" could be any of these maps: ${found.several.join(", ")}`
-            : `no map "${query}" in maps/ (${have("map", usable)})${skipped}`,
-      });
-    }
-    const { id, file } = found;
-    const path = join(dir, file);
-    const readError = (e: unknown) =>
-      new ContentReadError({ message: `can't read ${file}: ${messageOf(e)}` });
-    // Too big to be a map: say so without reading it.
-    const big = tooBig(
-      file,
-      (yield* Effect.tryPromise({ try: () => stat(path), catch: readError })).size,
-    );
-    if (big !== undefined) return yield* big;
-    const bytes = yield* Effect.tryPromise({ try: () => readFile(path), catch: readError });
-    const grid = yield* decodeMap(file, id, bytes);
-    return { id, grid } satisfies LoadedMap;
-  });
+const pfName = (e: Entry, bytes: Uint8Array) =>
+	Effect.map(decodePfSheetFile(e.file, textOf(bytes)), (h) => h.name);
 
-const load = <A>(
-  dir: string,
-  kind: SheetKind,
-  decode: (file: string, text: string) => Effect.Effect<A, SheetInvalid>,
-) =>
-  Effect.fn(function* (query: string) {
-    const entry = yield* find(kind, yield* entries(dir, kind), query);
-    const text = yield* Effect.tryPromise({
-      try: () => readFile(join(dir, entry.file), "utf8"),
-      catch: (e) => new ContentReadError({ message: `can't read ${entry.file}: ${messageOf(e)}` }),
-    });
-    return yield* decode(entry.file, text);
-  });
+const ids = (all: ReadonlyArray<Entry>) => all.map((e) => e.id);
 
-/**
- * Each file in a folder by its id and the name inside it, for the GM's prep panel: the name is the
- * id's when the file doesn't read or decode, since loading it says why. With `maxBytes`, a bigger
- * file is listed by its id without being read, as loading a map refuses it unread.
- */
-const named = (
-  dir: string,
-  all: ReadonlyArray<Entry>,
-  nameIn: (entry: Entry, bytes: Uint8Array) => Effect.Effect<string, unknown>,
-  maxBytes?: number,
-): Effect.Effect<ReadonlyArray<PrepEntry>> =>
-  Effect.forEach(
-    all,
-    (e) =>
-      Effect.tryPromise(async () => {
-        const path = join(dir, e.file);
-        if (maxBytes !== undefined && (await stat(path)).size > maxBytes)
-          throw new Error(`${e.file} is too big`);
-        return readFile(path);
-      }).pipe(
-        Effect.flatMap((bytes) => nameIn(e, bytes)),
-        Effect.match({
-          onFailure: () => ({ id: e.id, name: e.id }),
-          onSuccess: (name) => ({ id: e.id, name }),
-        }),
-      ),
-    { concurrency: 8 },
-  );
-
-const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
-
-/**
- * What the GM's prep panel lists: every hero, monster and map, read now, with their names; not a
- * map whose id `/map` reads as a word (`off`, `new`), since its line would do that instead.
- */
-const catalogOf = (dir: string): Effect.Effect<PrepCatalog, ContentReadError> =>
-  Effect.gen(function* () {
-    const heroes = yield* entries(dir, "hero");
-    const monsters = yield* entries(dir, "monster");
-    const { usable: maps } = yield* mapEntries(dir);
-    return {
-      heroes: yield* named(dir, heroes, (e, b) =>
-        Effect.map(decodeHero(e.file, text(b)), (h) => h.name),
-      ),
-      monsters: yield* named(dir, monsters, (e, b) =>
-        Effect.map(decodeMonster(e.file, text(b)), (m) => m.name),
-      ),
-      maps: yield* named(
-        dir,
-        maps.filter((e) => !MAP_WORDS.includes(e.id)),
-        (e, b) => Effect.map(decodeMap(e.file, e.id, b), (g) => g.name),
-        MAP_BYTES,
-      ),
-    };
-  });
-
-/**
- * A campaign folder: the ruleset its `campaign.yaml` names, read once when the table opens, and
- * the heroes, monsters and maps in it: `heroes/<id>.yaml`, `monsters/<id>.yaml` and `maps/<id>.txt`.
- * Those are never cached, so a file the GM edits mid-session counts the next time it's loaded.
- */
 export class CampaignContent extends Context.Service<
-  CampaignContent,
-  {
-    readonly dir: string;
-    /** What the campaign plays: draw-steel unless its `campaign.yaml` says otherwise. */
-    readonly ruleset: Ruleset;
-    /** Hero ids, sorted. */
-    readonly heroes: Effect.Effect<ReadonlyArray<string>, ContentReadError>;
-    /** Monster ids, sorted. */
-    readonly monsters: Effect.Effect<ReadonlyArray<string>, ContentReadError>;
-    /** The hero whose id is `query` (ignoring case), or else the only one whose id starts with it. */
-    readonly hero: (query: string) => Effect.Effect<HeroSheet, LoadError>;
-    /** The same, for a monster. */
-    readonly monster: (query: string) => Effect.Effect<StatBlock, LoadError>;
-    /** Map ids (`maps/<id>.txt`), sorted. */
-    readonly maps: Effect.Effect<ReadonlyArray<string>, ContentReadError>;
-    /** The map whose id is `query`, or else the only one whose id starts with it. */
-    readonly map: (query: string) => Effect.Effect<LoadedMap, MapLoadError>;
-    /** Every hero, monster and map with the name inside it, for the GM's prep panel. */
-    readonly catalog: Effect.Effect<PrepCatalog, ContentReadError>;
-  }
+	CampaignContent,
+	{
+		readonly dir: string;
+		readonly ruleset: RulesetName;
+		readonly heroes: Effect.Effect<ReadonlyArray<string>, ContentReadError>;
+		readonly monsters: Effect.Effect<ReadonlyArray<string>, ContentReadError>;
+		readonly hero: (query: string) => Effect.Effect<HeroSheet, LoadError>;
+		readonly monster: (query: string) => Effect.Effect<StatBlock, LoadError>;
+		readonly pfHero: (query: string) => Effect.Effect<PfSheet, LoadError>;
+		readonly pfMonster: (query: string) => Effect.Effect<PfSheet, LoadError>;
+		readonly maps: Effect.Effect<ReadonlyArray<string>, ContentReadError>;
+		readonly map: (query: string) => Effect.Effect<LoadedMap, MapLoadError>;
+		readonly catalog: Effect.Effect<PrepCatalog, ContentReadError>;
+	}
 >()("supervillain/content/CampaignContent") {
-  /** Fails when `campaign.yaml` can't be read or names a ruleset the table doesn't know. */
-  static readonly layer = (
-    campaignDir: string,
-  ): Layer.Layer<CampaignContent, CampaignConfigInvalid | ContentReadError> =>
-    Layer.effect(
-      CampaignContent,
-      Effect.map(readCampaignConfig(campaignDir), (config) =>
-        CampaignContent.of({
-          dir: campaignDir,
-          ruleset: config.rules,
-          heroes: Effect.map(entries(campaignDir, "hero"), (all) => all.map((e) => e.id)),
-          monsters: Effect.map(entries(campaignDir, "monster"), (all) => all.map((e) => e.id)),
-          hero: load(campaignDir, "hero", decodeHero),
-          monster: load(campaignDir, "monster", decodeMonster),
-          maps: Effect.map(mapEntries(campaignDir), ({ usable }) => usable.map((e) => e.id)),
-          map: loadMap(campaignDir),
-          catalog: catalogOf(campaignDir),
-        }),
-      ),
-    );
+	static readonly make = Effect.fn("CampaignContent.make")(function* (
+		dir: string
+	) {
+		const fs = yield* FileSystem.FileSystem;
+		const path = yield* Path.Path;
+		const config = yield* readCampaignConfig(dir);
+
+		const names = (kind: Kind) =>
+			fs.readDirectoryEntries(path.join(dir, FOLDER[kind])).pipe(
+				Effect.map((found) =>
+					found
+						.filter(
+							(entry) =>
+								entry.type !== "Directory" &&
+								!entry.name.startsWith(".") &&
+								EXTENSIONS[kind].some((x) => x.test(entry.name))
+						)
+						.map((entry) => entry.name)
+				),
+				Effect.catchReason("PlatformError", "NotFound", () =>
+					Effect.succeed([])
+				),
+				Effect.mapError(readError(`can't list ${FOLDER[kind]}/`))
+			);
+
+		const entries = Effect.fn("CampaignContent.entries")(function* (
+			kind: Kind
+		) {
+			const listed = yield* names(kind);
+			const seen = new Map<string, Entry>();
+
+			const inOrder = EXTENSIONS[kind].flatMap((x) =>
+				listed.filter((name) => x.test(name))
+			);
+
+			for (const name of inOrder) {
+				const id = idOf(name);
+
+				if (!seen.has(id)) {
+					seen.set(id, { id, file: `${FOLDER[kind]}/${name}` });
+				}
+			}
+
+			return [...seen.values()].toSorted(byId);
+		});
+
+		const mapEntries = Effect.fn("CampaignContent.mapEntries")(function* () {
+			const all = yield* entries("map");
+
+			const usable = all
+				.filter((e) => ID.test(e.id.toLowerCase()))
+				.map((e) => ({ ...e, id: e.id.toLowerCase() }))
+				.toSorted(byId);
+
+			const unnamed = all
+				.filter((e) => !ID.test(e.id.toLowerCase()))
+				.map((e) => e.file.slice("maps/".length));
+
+			return { usable, unnamed };
+		});
+
+		const map = Effect.fn("CampaignContent.map")(function* (query: string) {
+			const { usable, unnamed } = yield* mapEntries();
+			const found = match(usable, query);
+
+			if (isSeveral(found)) {
+				const skipped =
+					unnamed.length === 0
+						? ""
+						: `; not maps, since a map's file name is its id (lower-case letters, digits and hyphens, at most 40): ${unnamed.join(", ")}`;
+
+				return yield* new MapNotFound({
+					query,
+					message:
+						found.several.length > 1
+							? `"${query}" could be any of these maps: ${found.several.join(", ")}`
+							: `no map "${query}" in maps/ (${have("map", usable)})${skipped}`,
+				});
+			}
+
+			const { id, file } = found;
+			const full = path.join(dir, file);
+			const unreadable = readError(`can't read ${file}`);
+			const info = yield* fs.stat(full).pipe(Effect.mapError(unreadable));
+			const big = tooBig(file, Number(info.size));
+
+			if (big !== undefined) {
+				return yield* big;
+			}
+
+			const bytes = yield* fs.readFile(full).pipe(Effect.mapError(unreadable));
+			const grid = yield* decodeMap(file, id, bytes);
+			const loaded: LoadedMap = { id, grid };
+
+			return loaded;
+		});
+
+		const load =
+			<A>(
+				kind: SheetKind,
+				decode: (file: string, text: string) => Effect.Effect<A, SheetInvalid>
+			) =>
+			(query: string) =>
+				Effect.gen(function* () {
+					const entry = yield* find(kind, yield* entries(kind), query);
+
+					const text = yield* fs
+						.readFileString(path.join(dir, entry.file))
+						.pipe(Effect.mapError(readError(`can't read ${entry.file}`)));
+
+					return yield* decode(entry.file, text);
+				}).pipe(Effect.withSpan(`CampaignContent.${kind}`));
+
+		const bytesOf = (entry: Entry, maxBytes: number | undefined) =>
+			Effect.gen(function* () {
+				const full = path.join(dir, entry.file);
+
+				if (maxBytes !== undefined) {
+					const info = yield* fs.stat(full);
+
+					if (Number(info.size) > maxBytes) {
+						return Option.none<Uint8Array>();
+					}
+				}
+
+				return Option.some(yield* fs.readFile(full));
+			});
+
+		const named = (
+			all: ReadonlyArray<Entry>,
+			nameIn: (
+				entry: Entry,
+				bytes: Uint8Array
+			) => Effect.Effect<string, SheetInvalid | MapInvalid>,
+			maxBytes?: number
+		) =>
+			Effect.forEach(
+				all,
+				(entry) =>
+					bytesOf(entry, maxBytes).pipe(
+						Effect.flatMap(
+							Option.match({
+								onNone: () => Effect.succeed(entry.id),
+								onSome: (bytes) => nameIn(entry, bytes),
+							})
+						),
+						Effect.match({
+							onFailure: (): PrepEntry => ({ id: entry.id, name: entry.id }),
+							onSuccess: (name): PrepEntry => ({ id: entry.id, name }),
+						})
+					),
+				{ concurrency: 8 }
+			);
+
+		const pf = config.rules === "pf2e";
+
+		const catalog = Effect.gen(function* () {
+			const heroes = yield* entries("hero");
+			const monsters = yield* entries("monster");
+			const { usable: maps } = yield* mapEntries();
+
+			const listed: PrepCatalog = {
+				heroes: yield* named(heroes, (e, bytes) =>
+					pf
+						? pfName(e, bytes)
+						: Effect.map(decodeHero(e.file, textOf(bytes)), (h) => h.name)
+				),
+				monsters: yield* named(monsters, (e, bytes) =>
+					pf
+						? pfName(e, bytes)
+						: Effect.map(decodeMonster(e.file, textOf(bytes)), (m) => m.name)
+				),
+				maps: yield* named(
+					maps.filter((e) => !MAP_WORDS.includes(e.id)),
+					(e, bytes) =>
+						Effect.map(decodeMap(e.file, e.id, bytes), (g) => g.name),
+					MAP_BYTES
+				),
+			};
+
+			return listed;
+		}).pipe(Effect.withSpan("CampaignContent.catalog"));
+
+		return CampaignContent.of({
+			dir,
+			ruleset: config.rules,
+			heroes: Effect.map(entries("hero"), ids),
+			monsters: Effect.map(entries("monster"), ids),
+			hero: load("hero", decodeHero),
+			monster: load("monster", decodeMonster),
+			pfHero: load("hero", decodePfSheetFile),
+			pfMonster: load("monster", decodePfSheetFile),
+			maps: Effect.map(mapEntries(), ({ usable }) => ids(usable)),
+			map,
+			catalog,
+		});
+	});
+
+	static readonly layer = (
+		campaignDir: string
+	): Layer.Layer<
+		CampaignContent,
+		CampaignConfigInvalid | ContentReadError,
+		FileSystem.FileSystem | Path.Path
+	> => Layer.effect(CampaignContent, CampaignContent.make(campaignDir));
 }
+
+export const SheetsLive = Sheets.toLayer(
+	Effect.gen(function* () {
+		const content = yield* CampaignContent;
+
+		return {
+			hero: Effect.fn("Sheets.hero")(function* ({
+				query,
+			}: {
+				readonly query: string;
+			}) {
+				return yield* content.hero(query);
+			}),
+			monster: Effect.fn("Sheets.monster")(function* ({
+				query,
+			}: {
+				readonly query: string;
+			}) {
+				return yield* content.monster(query);
+			}),
+			pfHero: Effect.fn("Sheets.pfHero")(function* ({
+				query,
+			}: {
+				readonly query: string;
+			}) {
+				return yield* content.pfHero(query);
+			}),
+			pfMonster: Effect.fn("Sheets.pfMonster")(function* ({
+				query,
+			}: {
+				readonly query: string;
+			}) {
+				return yield* content.pfMonster(query);
+			}),
+			map: Effect.fn("Sheets.map")(function* ({
+				query,
+			}: {
+				readonly query: string;
+			}) {
+				return yield* content.map(query);
+			}),
+		};
+	})
+);
+
+export const CatalogLive = Catalog.toLayer(
+	Effect.gen(function* () {
+		const content = yield* CampaignContent;
+
+		return {
+			list: Effect.fn("Catalog.list")(function* () {
+				return yield* content.catalog;
+			}),
+		};
+	})
+);

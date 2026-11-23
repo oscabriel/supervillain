@@ -1,472 +1,698 @@
 import { describe, expect } from "bun:test";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing";
-import { Cause, Effect, Exit, Logger, Scope, SubscriptionRef } from "effect";
+import path from "node:path";
+
+import { createTestRenderer } from "@opentui/core/testing";
+import type { TestRendererSetup } from "@opentui/core/testing";
+import {
+	Cause,
+	Effect,
+	Exit,
+	Layer,
+	Logger,
+	Scope,
+	SubscriptionRef,
+} from "effect";
+
 import { CampaignContent } from "../../src/content/index.ts";
 import { mountTable, openSeat } from "../../src/host/Seat.ts";
-import { type TableServices, tableServices } from "../../src/host/services.ts";
+import { tableServices } from "../../src/host/services.ts";
+import type { TableServices } from "../../src/host/services.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
+import type { TableView } from "../../src/table/view.ts";
 import { combatant, fight, vex } from "../table/combat.ts";
 import { fakeView } from "../table/fakeView.ts";
 import { sampleCampaign } from "./campaign.ts";
-import { effect, waitFor } from "./effect.ts";
+import { effect, must, waitFor } from "./effect.ts";
+import type { Platform } from "./effect.ts";
 
 const alice = "key:SHA256:aliceAAAAkeyfingerprint";
+
 const bob = "key:SHA256:bobBBBBBkeyfingerprint";
 
-/** A copy of the sample campaign with the table's services, for the length of `body`. */
-const atTable = <A, E>(body: Effect.Effect<A, E, TableServices | Scope.Scope>) =>
-  Effect.gen(function* () {
-    const dir = yield* sampleCampaign;
-    return yield* body.pipe(Effect.provide(tableServices(dir)));
-  });
+const using = <ROut, E1, RIn, A, E2, R2>(
+	layer: Layer.Layer<ROut, E1, RIn>,
+	body: Effect.Effect<A, E2, R2>
+) =>
+	Effect.scoped(
+		Effect.flatMap(Layer.build(layer), (context) =>
+			Effect.provideContext(body, context)
+		)
+	);
+
+const atTable = <A, E>(body: Effect.Effect<A, E, TableServices | Platform>) =>
+	Effect.gen(function* () {
+		const dir = yield* sampleCampaign;
+
+		return yield* using(tableServices(dir), body);
+	});
+
+const capturing = (logs: Array<string>) =>
+	Logger.make(({ message, cause }) => {
+		logs.push(`${String(message)} ${Cause.pretty(cause)}`);
+	});
+
+const reload = (view: TableView) =>
+	Effect.promise(
+		async () => await must(view.prep, "the GM has a prep panel").reload()
+	);
+
+const prepNow = (view: TableView) =>
+	must(view.prep?.view(), "the prep lists are loaded");
 
 interface Seated {
-  readonly t: TestRendererSetup;
-  readonly view: Effect.Success<ReturnType<typeof openSeat>>;
-  readonly left: () => number;
-  /** Closes this seat's scope, as a dropped SSH session would. */
-  readonly close: Effect.Effect<void>;
+	readonly t: TestRendererSetup;
+	readonly view: Effect.Success<ReturnType<typeof openSeat>>;
+	readonly left: () => number;
+	readonly close: Effect.Effect<void>;
 }
 
-/** Opens a seat for `actor` in its own scope and mounts the App on a 100x30 test renderer. */
 const seat = (actor: string) =>
-  Effect.gen(function* () {
-    const scope = yield* Scope.make();
-    let left = 0;
-    const t = yield* Effect.acquireRelease(
-      Effect.promise(() => createTestRenderer({ width: 100, height: 30, exitOnCtrlC: false })),
-      (setup) => Effect.sync(() => setup.renderer.destroy()),
-    ).pipe(Scope.provide(scope));
-    const view = yield* openSeat({ actor, room: "den", leave: () => void left++ }).pipe(
-      Scope.provide(scope),
-    );
-    yield* mountTable(t.renderer, view);
-    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-    return { t, view, left: () => left, close: Scope.close(scope, Exit.void) } satisfies Seated;
-  });
+	Effect.gen(function* () {
+		const scope = yield* Scope.make();
+		let left = 0;
 
-/**
- * A seat for `actor` over the room, but following `state` instead of the room's own state, which
- * the test sets as the room would send it; and what the seat logged.
- */
+		const t = yield* Effect.acquireRelease(
+			Effect.promise(
+				async () =>
+					await createTestRenderer({
+						width: 100,
+						height: 30,
+						exitOnCtrlC: false,
+					})
+			),
+			(setup) =>
+				Effect.sync(() => {
+					setup.renderer.destroy();
+				})
+		).pipe(Scope.provide(scope));
+
+		const view = yield* openSeat({
+			actor,
+			room: "den",
+			leave: () => {
+				left += 1;
+			},
+		}).pipe(Scope.provide(scope));
+
+		yield* mountTable(t.renderer, view);
+		yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+
+		return {
+			t,
+			view,
+			left: () => left,
+			close: Scope.close(scope, Exit.void),
+		} satisfies Seated;
+	});
+
 const overState = (actor: string) =>
-  Effect.gen(function* () {
-    const room = yield* TableRoom;
-    const state = yield* SubscriptionRef.make(yield* room.state.get);
-    const logs: Array<string> = [];
-    const logger = Logger.make(({ message, cause }) =>
-      logs.push(`${message} ${Cause.pretty(cause)}`),
-    );
-    const view = yield* openSeat({ actor, room: "den", leave: () => undefined }).pipe(
-      Effect.provideService(TableRoom, {
-        ...room,
-        state: { get: SubscriptionRef.get(state), changes: SubscriptionRef.changes(state) },
-      }),
-      Effect.provide(Logger.layer([logger])),
-    );
-    return { room, state, logs, view };
-  });
+	Effect.gen(function* () {
+		const room = yield* TableRoom;
+		const state = yield* SubscriptionRef.make(yield* room.state);
+		const logs: Array<string> = [];
 
-/** Draws frames until one satisfies `predicate`. */
-const frameWhere = (s: Seated, what: string, predicate: (frame: string) => boolean) =>
-  Effect.promise(async () => {
-    const start = Date.now();
-    for (;;) {
-      await s.t.renderOnce();
-      const frame = s.t.captureCharFrame();
-      if (predicate(frame)) return frame;
-      if (Date.now() - start > 3000) throw new Error(`timed out waiting for ${what}:\n${frame}`);
-      await Bun.sleep(10);
-    }
-  });
+		const view = yield* openSeat({
+			actor,
+			room: "den",
+			leave: () => {},
+		}).pipe(
+			Effect.provideService(TableRoom, {
+				...room,
+				state: SubscriptionRef.get(state),
+				changes: SubscriptionRef.changes(state),
+			}),
+			Effect.provideService(Logger.CurrentLoggers, new Set([capturing(logs)]))
+		);
+
+		return { room, state, logs, view };
+	});
+
+const frameAfter = async (
+	t: TestRendererSetup,
+	what: string,
+	predicate: (frame: string) => boolean,
+	deadline: number
+): Promise<string> => {
+	await t.renderOnce();
+	const frame = t.captureCharFrame();
+
+	if (predicate(frame)) {
+		return frame;
+	}
+
+	if (performance.now() > deadline) {
+		throw new Error(`timed out waiting for ${what}:\n${frame}`);
+	}
+
+	await Bun.sleep(10);
+
+	return await frameAfter(t, what, predicate, deadline);
+};
+
+const frameWhere = (
+	s: Pick<Seated, "t">,
+	what: string,
+	predicate: (frame: string) => boolean
+) =>
+	Effect.promise(
+		async () => await frameAfter(s.t, what, predicate, performance.now() + 3000)
+	);
 
 const type = (s: Seated, text: string) =>
-  Effect.promise(async () => {
-    await s.t.mockInput.typeText(text);
-    s.t.mockInput.pressEnter();
-  });
+	Effect.promise(async () => {
+		await s.t.mockInput.typeText(text);
+		s.t.mockInput.pressEnter();
+	});
 
 describe("a seat over a real room", () => {
-  effect(
-    "follows a view to undefined and back: the GM's relay alert clears once the link is up",
-    () =>
-      atTable(
-        Effect.gen(function* () {
-          const alert = yield* SubscriptionRef.make<string | undefined>("relay: connecting…");
-          const view = yield* openSeat({
-            actor: "gm",
-            room: "den",
-            leave: () => undefined,
-            alert: { get: SubscriptionRef.get(alert), changes: SubscriptionRef.changes(alert) },
-          });
-          const settled = (want: string | undefined) =>
-            Effect.promise(async () => {
-              const start = Date.now();
-              while (view.alert?.() !== want) {
-                if (Date.now() - start > 2000) throw new Error(`alert stayed ${view.alert?.()}`);
-                await Bun.sleep(10);
-              }
-            });
-          yield* settled("relay: connecting…");
-          yield* SubscriptionRef.set(alert, undefined);
-          yield* settled(undefined);
-          yield* SubscriptionRef.set(alert, "relay: down, redialing");
-          yield* settled("relay: down, redialing");
-        }),
-      ),
-  );
+	effect(
+		"follows a view to undefined and back: the GM's relay alert clears once the link is up",
+		() =>
+			atTable(
+				Effect.gen(function* () {
+					const alert = yield* SubscriptionRef.make<string | undefined>(
+						"relay: connecting…"
+					);
 
-  effect("asks a new player's name, then chat reaches every seat's feed", () =>
-    atTable(
-      Effect.gen(function* () {
-        const a = yield* seat(alice);
-        const b = yield* seat(bob);
-        yield* frameWhere(a, "the name prompt", (f) =>
-          f.includes("what should the table call you?"),
-        );
-        yield* type(a, "Alice");
-        yield* frameWhere(a, "chat mode", (f) => !f.includes("what should the table call you?"));
-        yield* type(a, "hello all");
-        yield* frameWhere(a, "the line in Alice's feed", (f) => f.includes("Alice: hello all"));
-        yield* frameWhere(b, "the line in Bob's feed", (f) => f.includes("Alice: hello all"));
-        expect(b.view.myName()).toBeUndefined();
-        expect(a.view.myName()).toBe("Alice");
-      }),
-    ),
-  );
+					const view = yield* openSeat({
+						actor: "gm",
+						room: "den",
+						leave: () => {},
+						alert: {
+							get: SubscriptionRef.get(alert),
+							changes: SubscriptionRef.changes(alert),
+						},
+					});
 
-  effect("labels every line by the speaker's current name", () =>
-    atTable(
-      Effect.gen(function* () {
-        const a = yield* seat(alice);
-        const b = yield* seat(bob);
-        yield* type(a, "/say hi before my name");
-        yield* frameWhere(b, "the default label", (f) => f.includes("aliceAAA: hi before my name"));
-        yield* type(a, "Alice");
-        yield* frameWhere(b, "the relabelled line", (f) => f.includes("Alice: hi before my name"));
-        expect(b.view.feed().map((l) => l.who)).toEqual(["Alice", "Alice"]);
-      }),
-    ),
-  );
+					const settled = (want: string | undefined) =>
+						waitFor(
+							`the alert to read ${want ?? "nothing"}`,
+							() => view.alert?.() === want,
+							2000
+						);
 
-  effect("shows who is here until each seat's scope closes", () =>
-    atTable(
-      Effect.gen(function* () {
-        const a = yield* seat(alice);
-        const b = yield* seat(bob);
-        yield* frameWhere(a, "Bob's seat", (f) => f.includes("bobBBBBB"));
-        expect(a.view.present()).toEqual([
-          { actor: alice, label: "aliceAAA", gm: false },
-          { actor: bob, label: "bobBBBBB", gm: false },
-        ]);
-        yield* b.close;
-        yield* frameWhere(a, "Bob gone", (f) => !f.includes("bobBBBBB"));
-        expect(a.view.present().map((p) => p.actor)).toEqual([alice]);
-      }),
-    ),
-  );
+					yield* settled("relay: connecting…");
+					yield* SubscriptionRef.set(alert, undefined);
+					yield* settled(undefined);
+					yield* SubscriptionRef.set(alert, "relay: down, redialing");
+					yield* settled("relay: down, redialing");
+				})
+			)
+	);
 
-  effect("answers /help to this seat only, and Ctrl-C leaves without writing", () =>
-    atTable(
-      Effect.gen(function* () {
-        const g = yield* seat("gm");
-        const b = yield* seat(bob);
-        yield* type(g, "/help");
-        yield* frameWhere(g, "the help pane", (f) => f.includes("/narrate <text>"));
-        // Anything broadcast after the help would reach Bob before the GM's next line does.
-        yield* type(b, "Bob");
-        yield* type(g, "/narrate after the help");
-        const bobs = yield* frameWhere(b, "the GM's next line", (f) =>
-          f.includes("after the help"),
-        );
-        expect(bobs).not.toContain("/narrate <text>");
-        b.t.mockInput.pressCtrlC();
-        expect(b.left()).toBe(1);
-        expect((yield* Effect.flatMap(TableRoom, (r) => r.state.get)).seq).toBe(2);
-      }),
-    ),
-  );
+	effect("asks a new player's name, then chat reaches every seat's feed", () =>
+		atTable(
+			Effect.gen(function* () {
+				const a = yield* seat(alice);
+				const b = yield* seat(bob);
+				yield* frameWhere(a, "the name prompt", (f) =>
+					f.includes("what should the table call you?")
+				);
+				yield* type(a, "Alice");
+				yield* frameWhere(
+					a,
+					"chat mode",
+					(f) => !f.includes("what should the table call you?")
+				);
+				yield* type(a, "hello all");
+				yield* frameWhere(a, "the line in Alice's feed", (f) =>
+					f.includes("Alice: hello all")
+				);
+				yield* frameWhere(b, "the line in Bob's feed", (f) =>
+					f.includes("Alice: hello all")
+				);
+				expect(b.view.myName()).toBeUndefined();
+				expect(a.view.myName()).toBe("Alice");
+			})
+		)
+	);
 
-  effect("keeps each feed row's object across unrelated appends, and relabels on a rename", () =>
-    atTable(
-      Effect.gen(function* () {
-        const a = yield* seat(alice);
-        yield* type(a, "Alice");
-        yield* frameWhere(a, "chat mode", (f) => f.includes("say something, or /help"));
-        yield* type(a, "first");
-        yield* frameWhere(a, "the first line", (f) => f.includes("Alice: first"));
-        const before = a.view.feed();
-        yield* type(a, "second");
-        yield* frameWhere(a, "the second line", (f) => f.includes("Alice: second"));
-        const after = a.view.feed();
-        expect(after).toHaveLength(3);
-        expect(after[0]).toBe(before[0]!);
-        expect(after[1]).toBe(before[1]!);
-        yield* type(a, "/name Vex");
-        yield* frameWhere(a, "the rename", (f) => f.includes("Vex: first"));
-        expect(a.view.feed()[1]).not.toBe(before[1]!);
-        expect(a.view.feed()[1]).toMatchObject({ who: "Vex", text: "first" });
-      }),
-    ),
-  );
+	effect("labels every line by the speaker's current name", () =>
+		atTable(
+			Effect.gen(function* () {
+				const a = yield* seat(alice);
+				const b = yield* seat(bob);
+				yield* type(a, "/say hi before my name");
+				yield* frameWhere(b, "the default label", (f) =>
+					f.includes("aliceAAA: hi before my name")
+				);
+				yield* type(a, "Alice");
+				yield* frameWhere(b, "the relabelled line", (f) =>
+					f.includes("Alice: hi before my name")
+				);
+				expect(b.view.feed().map((l) => l.who)).toEqual(["Alice", "Alice"]);
+			})
+		)
+	);
 
-  effect("refusals show on the seat that sent them", () =>
-    atTable(
-      Effect.gen(function* () {
-        const b = yield* seat(bob);
-        yield* type(b, "Bob");
-        yield* type(b, "/narrate The sky falls.");
-        yield* frameWhere(b, "the refusal", (f) => f.includes("Only the GM can use /narrate."));
-        expect(b.view.complete("/ro")).toEqual(["/roll "]);
-      }),
-    ),
-  );
+	effect("shows who is here until each seat's scope closes", () =>
+		atTable(
+			Effect.gen(function* () {
+				const a = yield* seat(alice);
+				const b = yield* seat(bob);
+				yield* frameWhere(a, "Bob's seat", (f) => f.includes("bobBBBBB"));
+				expect(a.view.present()).toEqual([
+					{ actor: alice, label: "aliceAAA", gm: false },
+					{ actor: bob, label: "bobBBBBB", gm: false },
+				]);
+				yield* b.close;
+				yield* frameWhere(a, "Bob gone", (f) => !f.includes("bobBBBBB"));
+				expect(a.view.present().map((p) => p.actor)).toEqual([alice]);
+			})
+		)
+	);
 
-  effect("draws the band from the room: the party, each seat's own hero, then the fight", () =>
-    atTable(
-      Effect.gen(function* () {
-        const g = yield* seat("gm");
-        const a = yield* seat(alice);
-        expect(g.view.combat?.()).toBeUndefined();
-        yield* type(a, "Alice");
-        yield* type(g, "/hero brann");
-        yield* type(g, "/hero kesh");
-        yield* frameWhere(g, "the party", (f) => f.includes("party · hero tokens 0"));
-        yield* type(a, "/play brann");
-        yield* frameWhere(g, "Brann's player", (f) => f.includes("Brann (Alice)"));
-        expect(g.view.combat?.()?.combatants.map((c) => [c.name, c.mine])).toEqual([
-          ["Brann (Alice)", false],
-          ["Kesh", false],
-        ]);
-        expect(a.view.combat?.()?.combatants.map((c) => [c.name, c.mine])).toEqual([
-          ["Brann", true],
-          ["Kesh", false],
-        ]);
-        expect(g.view.present().map((p) => p.label)).toEqual(["GM", "Alice (Brann)"]);
+	effect(
+		"answers /help to this seat only, and Ctrl-C leaves without writing",
+		() =>
+			atTable(
+				Effect.gen(function* () {
+					const g = yield* seat("gm");
+					const b = yield* seat(bob);
+					yield* type(g, "/help");
+					yield* frameWhere(g, "the help pane", (f) =>
+						f.includes("/narrate <text>")
+					);
+					yield* type(b, "Bob");
+					yield* type(g, "/narrate after the help");
 
-        // Each seat sends in order, but two seats race: wait for one line to land before the next.
-        yield* type(g, "/add bandit-chief");
-        yield* frameWhere(g, "the chief", (f) => f.includes("Bandit Chief joins the fight"));
-        yield* type(g, "/start");
-        yield* frameWhere(a, "the fight", (f) => f.includes("round 1"));
-        const band = a.view.combat?.();
-        expect(band).toMatchObject({ active: true, round: 1 });
-        expect(band?.combatants.map((c) => [c.id, c.side, c.stamina, c.max])).toEqual([
-          ["brann", "heroes", 24, 24],
-          ["kesh", "heroes", 24, 24],
-          ["bandit-chief", "director", 80, 80],
-        ]);
-      }),
-    ),
-  );
+					const bobs = yield* frameWhere(b, "the GM's next line", (f) =>
+						f.includes("after the help")
+					);
 
-  effect(
-    "a chat line leaves the band and the map as they were, and a damage the map, so neither is drawn again",
-    () =>
-      atTable(
-        Effect.gen(function* () {
-          const g = yield* seat("gm");
-          yield* type(g, "/hero brann");
-          yield* type(g, "/map ford-road");
-          yield* type(g, "/place brann b5");
-          yield* frameWhere(g, "Brann's token", () => (g.view.map?.()?.tokens.length ?? 0) > 0);
-          const [band, map] = [g.view.combat?.(), g.view.map?.()];
-          yield* type(g, "just chatting");
-          yield* frameWhere(g, "the chat", (f) => f.includes("GM: just chatting"));
-          expect(g.view.combat?.()).toBe(band);
-          expect(g.view.map?.()).toBe(map);
-          yield* type(g, "/dmg brann 1");
-          yield* frameWhere(g, "the damage", (f) => f.includes("23/24"));
-          expect(g.view.combat?.()).not.toBe(band);
-          expect(g.view.map?.()).toBe(map);
-        }),
-      ),
-  );
+					expect(bobs).not.toContain("/narrate <text>");
+					b.t.mockInput.pressCtrlC();
+					expect(b.left()).toBe(1);
+					expect((yield* Effect.flatMap(TableRoom, (r) => r.state)).seq).toBe(
+						2
+					);
+				})
+			)
+	);
 
-  effect("an event keeps every prep item it leaves as it was, so only what changed is drawn", () =>
-    atTable(
-      Effect.gen(function* () {
-        const g = yield* seat("gm");
-        yield* Effect.promise(() => g.view.prep!.reload());
-        yield* waitFor("the prep lists", () => g.view.prep?.view() !== undefined);
-        const before = g.view.prep!.view()!;
-        yield* type(g, "/hero brann");
-        yield* waitFor("Brann in the party", () => g.view.prep?.view() !== before);
-        const after = g.view.prep!.view()!;
-        const items = (v: typeof after, title: string) =>
-          v.sections.find((s) => s.title === title)!.items;
-        // Brann leaves the heroes to choose from; the others stay as they were, though they moved.
-        expect(items(after, "heroes").map((i) => i.label)).toEqual(["Ilsa", "Kesh", "Wren"]);
-        for (const item of items(after, "heroes")) expect(items(before, "heroes")).toContain(item);
-        expect(items(after, "monsters")).toBe(items(before, "monsters"));
-        expect(after.maps).toBe(before.maps);
-      }),
-    ),
-  );
+	effect(
+		"keeps each feed row's object across unrelated appends, and relabels on a rename",
+		() =>
+			atTable(
+				Effect.gen(function* () {
+					const a = yield* seat(alice);
+					yield* type(a, "Alice");
+					yield* frameWhere(a, "chat mode", (f) =>
+						f.includes("say something, or /help")
+					);
+					yield* type(a, "first");
+					yield* frameWhere(a, "the first line", (f) =>
+						f.includes("Alice: first")
+					);
+					const before = a.view.feed();
+					yield* type(a, "second");
+					yield* frameWhere(a, "the second line", (f) =>
+						f.includes("Alice: second")
+					);
+					const after = a.view.feed();
+					expect(after).toHaveLength(3);
+					expect(after[0]).toBe(before[0]);
+					expect(after[1]).toBe(before[1]);
+					yield* type(a, "/name Vex");
+					yield* frameWhere(a, "the rename", (f) => f.includes("Vex: first"));
+					expect(a.view.feed()[1]).not.toBe(before[1]);
+					expect(a.view.feed()[1]).toMatchObject({ who: "Vex", text: "first" });
+				})
+			)
+	);
 
-  effect("a loaded map the folder doesn't have is looked for once, not at every event", () =>
-    atTable(
-      Effect.gen(function* () {
-        const content = yield* CampaignContent;
-        let reads = 0;
-        const counted = Effect.suspend(() => {
-          reads++;
-          return content.catalog;
-        });
-        const view = yield* openSeat({ actor: "gm", room: "den", leave: () => undefined }).pipe(
-          Effect.provideService(CampaignContent, { ...content, catalog: counted }),
-        );
-        const send = (line: string) => Effect.promise(() => view.submit(line));
-        yield* send("/map ford-road");
-        yield* waitFor("the map", () => view.map?.() !== undefined);
-        // The map's file goes, and the panel opens: the files are read, without the loaded map.
-        yield* Effect.promise(() => rm(join(content.dir, "maps", "ford-road.txt")));
-        yield* Effect.promise(() => view.prep!.reload());
-        expect(reads).toBe(1);
-        yield* send("/hero brann");
-        yield* send("/add bandit-bruiser");
-        yield* send("/dmg brann 1");
-        yield* waitFor("the damage", () => view.combat?.()?.combatants[0]?.stamina === 23);
-        expect(reads).toBe(1);
-        // A map the files don't have yet is still looked for when it loads.
-        yield* send("/map new keep 7");
-        yield* waitFor("the new map among the files", () => reads === 2);
-        expect(view.prep!.view()?.maps.loaded?.name).toBeDefined();
-      }),
-    ),
-  );
+	effect("refusals show on the seat that sent them", () =>
+		atTable(
+			Effect.gen(function* () {
+				const b = yield* seat(bob);
+				yield* type(b, "Bob");
+				yield* type(b, "/narrate The sky falls.");
+				yield* frameWhere(b, "the refusal", (f) =>
+					f.includes("Only the GM can use /narrate.")
+				);
+				expect(b.view.complete("/ro")).toEqual(["/roll "]);
+			})
+		)
+	);
 
-  effect("a throw while following the room is logged with why, and the seat follows on", () =>
-    atTable(
-      Effect.gen(function* () {
-        const { room, state, logs, view } = yield* overState("gm");
-        const good = yield* room.state.get;
-        // A state the seat can't read at all stands in for any bug in drawing one.
-        const unreadable = Object.defineProperty({ ...good }, "ds", {
-          get: () => {
-            throw new Error("no ds here");
-          },
-        });
-        yield* SubscriptionRef.set(state, unreadable);
-        yield* waitFor("the log", () => logs.some((l) => l.includes("no ds here")));
-        yield* SubscriptionRef.set(state, { ...good, seq: 99 });
-        // The state pane reads what the seat follows, which throws until the next state lands.
-        const shows = (text: string) => {
-          try {
-            return view.debug().includes(text);
-          } catch {
-            return false;
-          }
-        };
-        yield* waitFor("the next state", () => shows('"seq": 99'));
-      }),
-    ),
-  );
+	effect(
+		"draws the band from the room: the party, each seat's own hero, then the fight",
+		() =>
+			atTable(
+				Effect.gen(function* () {
+					const g = yield* seat("gm");
+					const a = yield* seat(alice);
+					expect(g.view.combat?.()).toBeUndefined();
+					yield* type(a, "Alice");
+					yield* type(g, "/hero brann");
+					yield* type(g, "/hero kesh");
+					yield* frameWhere(g, "the party", (f) =>
+						f.includes("party · hero tokens 0")
+					);
+					yield* type(a, "/play brann");
+					yield* frameWhere(g, "Brann's player", (f) =>
+						f.includes("Brann (Alice)")
+					);
+					expect(
+						g.view.combat?.()?.combatants.map((c) => [c.name, c.mine])
+					).toEqual([
+						["Brann (Alice)", false],
+						["Kesh", false],
+					]);
+					expect(
+						a.view.combat?.()?.combatants.map((c) => [c.name, c.mine])
+					).toEqual([
+						["Brann", true],
+						["Kesh", false],
+					]);
+					expect(g.view.present().map((p) => p.label)).toEqual([
+						"GM",
+						"Alice (Brann)",
+					]);
 
-  effect(
-    "a view that throws on one state is logged, keeps what it showed, and draws the next",
-    () =>
-      atTable(
-        Effect.gen(function* () {
-          const { room, state, logs, view } = yield* overState(alice);
-          const good = yield* room.state.get;
-          const noMap = Object.defineProperty({ ...good.ds }, "map", {
-            get: () => {
-              throw new Error("a map the seat can't read");
-            },
-          });
-          yield* SubscriptionRef.set(state, { ...good, ds: noMap });
-          yield* waitFor("the log", () =>
-            logs.some((l) => l.includes("a map the seat can't read")),
-          );
-          expect(view.map?.()).toBeUndefined();
-          // The room moves on: a map loaded.
-          const gm = yield* openSeat({ actor: "gm", room: "den", leave: () => undefined });
-          expect(yield* Effect.promise(() => gm.submit("/map ford-road"))).toBeUndefined();
-          yield* SubscriptionRef.set(state, yield* room.state.get);
-          yield* waitFor("the map", () => view.map?.()?.name === "The Ford Road");
-        }),
-      ),
-  );
+					yield* type(g, "/add bandit-chief");
+					yield* frameWhere(g, "the chief", (f) =>
+						f.includes("Bandit Chief joins the fight")
+					);
+					yield* type(g, "/start");
+					yield* frameWhere(a, "the fight", (f) => f.includes("round 1"));
+					const band = a.view.combat?.();
+					expect(band).toMatchObject({ active: true, round: 1 });
+					expect(
+						band?.combatants.map((c) => [c.id, c.side, c.stamina, c.max])
+					).toEqual([
+						["brann", "heroes", 24, 24],
+						["kesh", "heroes", 24, 24],
+						["bandit-chief", "director", 80, 80],
+					]);
+				})
+			)
+	);
 
-  effect(
-    "a throw while the table lays out is logged with why, said on the seat, and the next draws",
-    () =>
-      Effect.gen(function* () {
-        const logs: Array<string> = [];
-        const logger = Logger.make(({ message, cause }) =>
-          logs.push(`${message} ${Cause.pretty(cause)}`),
-        );
-        const fake = fakeView({ myName: "Alice", combat: fight([vex]) });
-        const t = yield* Effect.acquireRelease(
-          Effect.promise(() => createTestRenderer({ width: 100, height: 30, exitOnCtrlC: false })),
-          (setup) => Effect.sync(() => setup.renderer.destroy()),
-        );
-        yield* mountTable(t.renderer, fake.view).pipe(Effect.provide(Logger.layer([logger])));
-        // A band the layout can't read stands in for any bug in laying the table out.
-        const unreadable = Object.defineProperty(fight([]), "combatants", {
-          get: () => {
-            throw new Error("no combatants here");
-          },
-        });
-        fake.setCombat(unreadable);
-        const seated = { t } as Seated;
-        yield* frameWhere(seated, "the line", (f) =>
-          f.includes("this seat couldn't draw the table"),
-        );
-        yield* waitFor("the log", () => logs.some((l) => l.includes("no combatants here")));
-        fake.setCombat(fight([combatant({ id: "kor", name: "Kor", side: "heroes" })]));
-        yield* frameWhere(
-          seated,
-          "the next band",
-          (f) => f.includes("Kor") && !f.includes("couldn't"),
-        );
-      }),
-  );
+	effect(
+		"a chat line leaves the band and the map as they were, and a damage the map, so neither is drawn again",
+		() =>
+			atTable(
+				Effect.gen(function* () {
+					const g = yield* seat("gm");
+					yield* type(g, "/hero brann");
+					yield* type(g, "/map ford-road");
+					yield* type(g, "/place brann b5");
+					yield* frameWhere(
+						g,
+						"Brann's token",
+						() => (g.view.map?.()?.tokens.length ?? 0) > 0
+					);
+					const [band, map] = [g.view.combat?.(), g.view.map?.()];
+					yield* type(g, "just chatting");
+					yield* frameWhere(g, "the chat", (f) =>
+						f.includes("GM: just chatting")
+					);
+					expect(g.view.combat?.()).toBe(band);
+					expect(g.view.map?.()).toBe(map);
+					yield* type(g, "/dmg brann 1");
+					yield* frameWhere(g, "the damage", (f) => f.includes("23/24"));
+					expect(g.view.combat?.()).not.toBe(band);
+					expect(g.view.map?.()).toBe(map);
+				})
+			)
+	);
 
-  effect("draws the map from the room, with each seat's own hero and where it can reach", () =>
-    atTable(
-      Effect.gen(function* () {
-        const g = yield* seat("gm");
-        const a = yield* seat(alice);
-        expect(g.view.map?.()).toBeUndefined();
-        yield* type(a, "Alice");
-        yield* type(g, "/hero brann");
-        // /hero reads a file first, so Alice's /play would overtake it from another seat.
-        yield* frameWhere(a, "Brann", (f) => f.includes("Brann joins the party"));
-        yield* type(a, "/play brann");
-        yield* frameWhere(a, "Alice's hero", (f) => f.includes("Alice takes Brann"));
-        yield* type(g, "/map ford-road");
-        yield* frameWhere(a, "the map's column letters", (f) => f.includes("The Ford Road"));
-        yield* type(a, "/place brann b5");
-        yield* frameWhere(g, "Brann's token", () => (g.view.map?.()?.tokens.length ?? 0) > 0);
-        const mine = a.view.map?.();
-        expect(mine).toMatchObject({ name: "The Ford Road", width: 20, height: 10 });
-        expect(mine?.tokens).toEqual([
-          {
-            id: "brann",
-            mark: "B",
-            name: "Brann",
-            x: 1,
-            y: 4,
-            side: "heroes",
-            mine: true,
-            acting: false,
-            dead: false,
-          },
-        ]);
-        // Brann's speed is 5: from b5 he reaches a5 to g5 along his row, and no wall square.
-        expect(mine?.reachLabel).toBe("Brann can reach: speed 5");
-        const reach = new Set(mine?.reach.map((r) => `${r.x},${r.y}`));
-        for (const x of [0, 2, 3, 4, 5, 6]) expect(reach.has(`${x},4`)).toBe(true);
-        expect(reach.has("7,4")).toBe(false);
-        expect(reach.has("1,1")).toBe(false);
-        // The GM has no hero, so sees the token but no reach until a creature acts.
-        expect(g.view.map?.()?.tokens.map((t) => [t.mark, t.mine])).toEqual([["B", false]]);
-        expect(g.view.map?.()?.reach).toEqual([]);
-      }),
-    ),
-  );
+	effect(
+		"an event keeps every prep item it leaves as it was, so only what changed is drawn",
+		() =>
+			atTable(
+				Effect.gen(function* () {
+					const g = yield* seat("gm");
+					yield* reload(g.view);
+					yield* waitFor(
+						"the prep lists",
+						() => g.view.prep?.view() !== undefined
+					);
+					const before = prepNow(g.view);
+					yield* type(g, "/hero brann");
+					yield* waitFor(
+						"Brann in the party",
+						() => g.view.prep?.view() !== before
+					);
+					const after = prepNow(g.view);
+
+					const items = (v: typeof after, title: string) =>
+						v.sections.find((s) => s.title === title)?.items ?? [];
+
+					expect(items(after, "heroes").map((i) => i.label)).toEqual([
+						"Ilsa",
+						"Kesh",
+						"Wren",
+					]);
+
+					for (const item of items(after, "heroes")) {
+						expect(items(before, "heroes")).toContain(item);
+					}
+
+					expect(items(after, "monsters")).toBe(items(before, "monsters"));
+					expect(after.maps).toBe(before.maps);
+				})
+			)
+	);
+
+	effect(
+		"a loaded map the folder doesn't have is looked for once, not at every event",
+		() =>
+			atTable(
+				Effect.gen(function* () {
+					const content = yield* CampaignContent;
+					let reads = 0;
+
+					const counted = Effect.suspend(() => {
+						reads += 1;
+
+						return content.catalog;
+					});
+
+					const view = yield* openSeat({
+						actor: "gm",
+						room: "den",
+						leave: () => {},
+					}).pipe(
+						Effect.provideService(CampaignContent, {
+							...content,
+							catalog: counted,
+						})
+					);
+
+					const send = (line: string) =>
+						Effect.promise(async () => await view.submit(line));
+
+					yield* send("/map ford-road");
+					yield* waitFor("the map", () => view.map?.() !== undefined);
+					yield* Effect.promise(async () => {
+						await rm(path.join(content.dir, "maps", "ford-road.txt"));
+					});
+					yield* reload(view);
+					expect(reads).toBe(1);
+					yield* send("/hero brann");
+					yield* send("/add bandit-bruiser");
+					yield* send("/dmg brann 1");
+					yield* waitFor(
+						"the damage",
+						() => view.combat?.()?.combatants[0]?.stamina === 23
+					);
+					expect(reads).toBe(1);
+					yield* send("/map new keep 7");
+					yield* waitFor("the new map among the files", () => reads === 2);
+					expect(view.prep?.view()?.maps.loaded?.name).toBeDefined();
+				})
+			)
+	);
+
+	effect(
+		"a throw while following the room is logged with why, and the seat follows on",
+		() =>
+			atTable(
+				Effect.gen(function* () {
+					const { room, state, logs, view } = yield* overState("gm");
+					const good = yield* room.state;
+
+					const unreadable = Object.defineProperty({ ...good }, "ds", {
+						get: () => {
+							throw new Error("no ds here");
+						},
+					});
+
+					yield* SubscriptionRef.set(state, unreadable);
+					yield* waitFor("the log", () =>
+						logs.some((l) => l.includes("no ds here"))
+					);
+					yield* SubscriptionRef.set(state, { ...good, seq: 99 });
+
+					const shows = (text: string) => {
+						try {
+							return view.debug().includes(text);
+						} catch {
+							return false;
+						}
+					};
+
+					yield* waitFor("the next state", () => shows('"seq": 99'));
+				})
+			)
+	);
+
+	effect(
+		"a view that throws on one state is logged, keeps what it showed, and draws the next",
+		() =>
+			atTable(
+				Effect.gen(function* () {
+					const { room, state, logs, view } = yield* overState(alice);
+					const good = yield* room.state;
+
+					const noMap = Object.defineProperty({ ...good.ds }, "map", {
+						get: () => {
+							throw new Error("a map the seat can't read");
+						},
+					});
+
+					yield* SubscriptionRef.set(state, { ...good, ds: noMap });
+					yield* waitFor("the log", () =>
+						logs.some((l) => l.includes("a map the seat can't read"))
+					);
+					expect(view.map?.()).toBeUndefined();
+
+					const gm = yield* openSeat({
+						actor: "gm",
+						room: "den",
+						leave: () => {},
+					});
+
+					expect(
+						yield* Effect.promise(async () => await gm.submit("/map ford-road"))
+					).toBeUndefined();
+					yield* SubscriptionRef.set(state, yield* room.state);
+					yield* waitFor(
+						"the map",
+						() => view.map?.()?.name === "The Ford Road"
+					);
+				})
+			)
+	);
+
+	effect(
+		"a throw while the table lays out is logged with why, said on the seat, and the next draws",
+		() =>
+			Effect.gen(function* () {
+				const logs: Array<string> = [];
+
+				const fake = fakeView({ myName: "Alice", combat: fight([vex]) });
+
+				const t = yield* Effect.acquireRelease(
+					Effect.promise(
+						async () =>
+							await createTestRenderer({
+								width: 100,
+								height: 30,
+								exitOnCtrlC: false,
+							})
+					),
+					(setup) =>
+						Effect.sync(() => {
+							setup.renderer.destroy();
+						})
+				);
+
+				yield* mountTable(t.renderer, fake.view).pipe(
+					Effect.provideService(
+						Logger.CurrentLoggers,
+						new Set([capturing(logs)])
+					)
+				);
+
+				const unreadable = Object.defineProperty(fight([]), "combatants", {
+					get: () => {
+						throw new Error("no combatants here");
+					},
+				});
+
+				fake.setCombat(unreadable);
+				const seated = { t };
+				yield* frameWhere(seated, "the line", (f) =>
+					f.includes("this seat couldn't draw the table")
+				);
+				yield* waitFor("the log", () =>
+					logs.some((l) => l.includes("no combatants here"))
+				);
+				fake.setCombat(
+					fight([combatant({ id: "kor", name: "Kor", side: "heroes" })])
+				);
+				yield* frameWhere(
+					seated,
+					"the next band",
+					(f) => f.includes("Kor") && !f.includes("couldn't")
+				);
+			})
+	);
+
+	effect(
+		"draws the map from the room, with each seat's own hero and where it can reach",
+		() =>
+			atTable(
+				Effect.gen(function* () {
+					const g = yield* seat("gm");
+					const a = yield* seat(alice);
+					expect(g.view.map?.()).toBeUndefined();
+					yield* type(a, "Alice");
+					yield* type(g, "/hero brann");
+					yield* frameWhere(a, "Brann", (f) =>
+						f.includes("Brann joins the party")
+					);
+					yield* type(a, "/play brann");
+					yield* frameWhere(a, "Alice's hero", (f) =>
+						f.includes("Alice takes Brann")
+					);
+					yield* type(g, "/map ford-road");
+					yield* frameWhere(a, "the map's column letters", (f) =>
+						f.includes("The Ford Road")
+					);
+					yield* type(a, "/place brann b5");
+					yield* frameWhere(
+						g,
+						"Brann's token",
+						() => (g.view.map?.()?.tokens.length ?? 0) > 0
+					);
+					const mine = a.view.map?.();
+					expect(mine).toMatchObject({
+						name: "The Ford Road",
+						width: 20,
+						height: 10,
+					});
+					expect(mine?.tokens).toEqual([
+						{
+							id: "brann",
+							mark: "B",
+							name: "Brann",
+							x: 1,
+							y: 4,
+							side: "heroes",
+							mine: true,
+							acting: false,
+							dead: false,
+						},
+					]);
+					expect(mine?.reachLabel).toBe("Brann can reach: speed 5");
+					const reach = new Set(mine?.reach.map((r) => `${r.x},${r.y}`));
+
+					for (const x of [0, 2, 3, 4, 5, 6]) {
+						expect(reach.has(`${x},4`)).toBe(true);
+					}
+
+					expect(reach.has("7,4")).toBe(false);
+					expect(reach.has("1,1")).toBe(false);
+					expect(g.view.map?.()?.tokens.map((t) => [t.mark, t.mine])).toEqual([
+						["B", false],
+					]);
+					expect(g.view.map?.()?.reach).toEqual([]);
+				})
+			)
+	);
 });

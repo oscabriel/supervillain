@@ -1,256 +1,470 @@
-// The relay's one durable fact: which GM host key holds each room, and when a GM last linked it.
-// rooms.json maps each room to `{ key, linked }`: the fingerprint that claimed it and an ISO time
-// by the relay's clock. A claim no GM has linked for the expiry lapses, and a full registry makes
-// way by dropping its stalest claim with no GM linked now. The file is read fresh at every use, so
-// `supervillain relay forget` takes effect on a running relay; writes go to a temporary file and
-// are renamed into place, under a lock file, so a `forget` from another process can't drop a claim
-// the relay makes meanwhile.
-import { chmod, mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { isFingerprint } from "@supervillain/ssh";
-import { Clock, Effect, Schema } from "effect";
+import {
+	Clock,
+	DateTime,
+	Effect,
+	FileSystem,
+	Option,
+	Path,
+	Predicate,
+	Schema,
+} from "effect";
+import type { PlatformError } from "effect";
+
 import { isRoomName } from "./protocol.ts";
 
 export class RoomsError extends Schema.TaggedError<RoomsError>()("RoomsError", {
-  message: Schema.String,
+	message: Schema.String,
+	cause: Schema.optionalKey(Schema.Defect()),
 }) {}
 
 interface RoomClaim {
-  /** The GM host key that holds the room. */
-  readonly key: string;
-  /** When a GM was last linked to it, by the relay's clock, in milliseconds since the epoch. */
-  readonly linked: number;
+	readonly key: string;
+	readonly linked: number;
 }
 
 export type Rooms = Readonly<Record<string, RoomClaim>>;
 
-const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const StoredClaim = Schema.Union([
+	Schema.String,
+	Schema.Struct({
+		key: Schema.String,
+		linked: Schema.Union([Schema.String, Schema.Finite]),
+	}),
+]);
 
-/**
- * Reads the registry. A claim written before claims had times (a bare fingerprint) reads as linked
- * `now`, so its clock starts with the first write.
- */
-const load = async (path: string, now: number): Promise<Record<string, RoomClaim>> => {
-  const text = await readFile(path, "utf8").catch((e: NodeJS.ErrnoException) => {
-    if (e.code === "ENOENT") return undefined;
-    throw e;
-  });
-  if (text === undefined) return {};
-  const parsed: unknown = JSON.parse(text);
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-    throw new Error("expected an object of room names to claims");
-  const rooms: Record<string, RoomClaim> = {};
-  for (const [room, value] of Object.entries(parsed)) {
-    if (!isRoomName(room)) throw new Error(`${JSON.stringify(room)} is not a room name`);
-    const claim: unknown = typeof value === "string" ? { key: value, linked: now } : value;
-    const { key, linked } = (typeof claim === "object" && claim !== null ? claim : {}) as {
-      key?: unknown;
-      linked?: unknown;
-    };
-    if (typeof key !== "string" || !isFingerprint(key))
-      throw new Error(`room ${room} holds ${JSON.stringify(value)}, not a SHA256 fingerprint`);
-    const at = typeof linked === "string" ? Date.parse(linked) : linked;
-    if (typeof at !== "number" || !Number.isFinite(at))
-      throw new Error(`room ${room} was last linked ${JSON.stringify(linked)}, not an ISO time`);
-    rooms[room] = { key, linked: at };
-  }
-  return rooms;
-};
+type StoredClaim = typeof StoredClaim.Type;
+
+const decodeRoomsFile = Schema.decodeUnknownEffect(
+	Schema.fromJsonString(Schema.Record(Schema.String, StoredClaim))
+);
+
+const LOCK_WAIT_MS = 5000;
+
+const LOCK_STALE_MS = 10_000;
+
+const LOCK_FIRST_WAIT_MS = 2;
+
+const LOCK_LONGEST_WAIT_MS = 50;
+
+const PRIVATE_DIR = 0o700;
+
+const PRIVATE_FILE = 0o600;
+
+const PERMISSION_BITS = 0o1000;
+
+const GROUP_WRITE = 0o20;
+
+const OTHERS_WRITE = 0o2;
 
 let saves = 0;
 
-const save = async (path: string, rooms: Record<string, RoomClaim>) => {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const sorted = Object.fromEntries(
-    Object.entries(rooms)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([room, { key, linked }]) => [room, { key, linked: new Date(linked).toISOString() }]),
-  );
-  const temporary = `${path}.${process.pid}.${Date.now()}.${saves++}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(sorted, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-  await chmod(temporary, 0o600);
-  await rename(temporary, path);
+const failed =
+	(path: string) =>
+	(cause: PlatformError.PlatformError): RoomsError =>
+		new RoomsError({ message: `${path}: ${cause.message}`, cause });
+
+const damaged = (path: string, why: string) =>
+	new RoomsError({ message: `${path}: ${why}` });
+
+const linkedAt = (linked: string | number): number | undefined =>
+	Option.getOrUndefined(
+		DateTime.make(linked).pipe(Option.map(DateTime.toEpochMillis))
+	);
+
+const claimOf = (
+	path: string,
+	room: string,
+	stored: StoredClaim,
+	now: number
+): Effect.Effect<RoomClaim, RoomsError> => {
+	if (!isRoomName(room)) {
+		return Effect.fail(damaged(path, `${room} is not a room name`));
+	}
+
+	const { key, linked } = Predicate.isString(stored)
+		? { key: stored, linked: now }
+		: stored;
+
+	if (!isFingerprint(key)) {
+		return Effect.fail(
+			damaged(path, `room ${room} holds ${key}, not a SHA256 fingerprint`)
+		);
+	}
+
+	const at = linkedAt(linked);
+
+	return at === undefined
+		? Effect.fail(
+				damaged(path, `room ${room} was last linked ${linked}, not an ISO time`)
+			)
+		: Effect.succeed({ key, linked: at });
 };
 
-/** How long a change waits for another's lock before giving up. */
-const LOCK_WAIT_MS = 5000;
-/** A lock older than this was left by a process that died holding it. A change takes milliseconds. */
-const LOCK_STALE_MS = 10_000;
+const load = Effect.fn("rooms.load")(function* (
+	path: string,
+	now: number
+): Effect.fn.Return<Rooms, RoomsError, FileSystem.FileSystem> {
+	const fs = yield* FileSystem.FileSystem;
 
-/** Runs `change` holding `<path>.lock`, made with O_EXCL, so changes from any process take turns. */
-const locked = async <A>(path: string, change: () => Promise<A>): Promise<A> => {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const lock = `${path}.lock`;
-  const start = Date.now();
-  for (let wait = 2; ; wait = Math.min(wait * 2, 50)) {
-    try {
-      await (await open(lock, "wx", 0o600)).close();
-      break;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      const age = await stat(lock).then(
-        (s) => Date.now() - s.mtimeMs,
-        () => 0,
-      );
-      if (age > LOCK_STALE_MS) await unlink(lock).catch(() => undefined);
-      else if (Date.now() - start > LOCK_WAIT_MS)
-        throw new Error(`${lock} has been held for over ${LOCK_WAIT_MS / 1000} s`, { cause: e });
-      else await Bun.sleep(wait);
-    }
-  }
-  try {
-    return await change();
-  } finally {
-    await unlink(lock).catch(() => undefined);
-  }
+	const text = yield* fs.readFileString(path).pipe(
+		Effect.asSome,
+		Effect.catchReason("PlatformError", "NotFound", () =>
+			Effect.succeed(Option.none<string>())
+		),
+		Effect.mapError(failed(path))
+	);
+
+	if (Option.isNone(text)) {
+		const none: Rooms = {};
+
+		return none;
+	}
+
+	const stored = yield* decodeRoomsFile(text.value).pipe(
+		Effect.mapError(
+			(cause) =>
+				new RoomsError({
+					message: `${path}: expected an object of room names to claims: ${cause.message}`,
+					cause,
+				})
+		)
+	);
+
+	const claims = yield* Effect.forEach(
+		Object.entries(stored),
+		([room, claim]) =>
+			claimOf(path, room, claim, now).pipe(
+				Effect.map((held): readonly [string, RoomClaim] => [room, held])
+			),
+		{ concurrency: 1 }
+	);
+
+	const rooms: Rooms = Object.fromEntries(claims);
+
+	return rooms;
+});
+
+const fileText = (rooms: Rooms): string => {
+	const sorted = Object.fromEntries(
+		Object.entries(rooms)
+			.toSorted(([a], [b]) => a.localeCompare(b))
+			.map(([room, { key, linked }]) => [
+				room,
+				{ key, linked: DateTime.formatIso(DateTime.makeUnsafe(linked)) },
+			])
+	);
+
+	return `${JSON.stringify(sorted, null, 2)}\n`;
 };
 
-const attempt = <A>(path: string, run: () => Promise<A>) =>
-  Effect.tryPromise({
-    try: run,
-    catch: (e) => new RoomsError({ message: `${path}: ${messageOf(e)}` }),
-  });
+const save = Effect.fn("rooms.save")(function* (path: string, rooms: Rooms) {
+	const fs = yield* FileSystem.FileSystem;
+	const paths = yield* Path.Path;
+	const now = yield* Clock.currentTimeMillis;
+	saves += 1;
+	const temporary = `${path}.${process.pid}.${now}.${saves}.tmp`;
 
-/** Every claim. A file that's missing is no claims; one that's damaged is an error. */
-export const readRooms = (path: string): Effect.Effect<Rooms, RoomsError> =>
-  Effect.flatMap(Clock.currentTimeMillis, (now) => attempt(path, () => load(path, now)));
+	yield* fs
+		.makeDirectory(paths.dirname(path), { recursive: true, mode: PRIVATE_DIR })
+		.pipe(
+			Effect.andThen(
+				fs.writeFileString(temporary, fileText(rooms), {
+					mode: PRIVATE_FILE,
+					flag: "wx",
+				})
+			),
+			Effect.andThen(fs.chmod(temporary, PRIVATE_FILE)),
+			Effect.andThen(fs.rename(temporary, path)),
+			Effect.mapError(failed(path))
+		);
+});
+
+const ageOf = (info: FileSystem.File.Info, now: number): number =>
+	Option.match(info.mtime, {
+		onNone: () => 0,
+		onSome: (mtime) => now - mtime.getTime(),
+	});
+
+const contend = (
+	lock: string,
+	start: number,
+	wait: number
+): Effect.Effect<void, RoomsError, FileSystem.FileSystem> =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const now = yield* Clock.currentTimeMillis;
+
+		const age = yield* fs.stat(lock).pipe(
+			Effect.map((info) => ageOf(info, now)),
+			Effect.orElseSucceed(() => 0)
+		);
+
+		const stale = age > LOCK_STALE_MS;
+
+		if (!stale && now - start > LOCK_WAIT_MS) {
+			return yield* new RoomsError({
+				message: `${lock} has been held for over ${LOCK_WAIT_MS / 1000} s`,
+			});
+		}
+
+		yield* stale ? fs.remove(lock).pipe(Effect.ignore) : Effect.sleep(wait);
+
+		return yield* takeLock(
+			lock,
+			start,
+			Math.min(wait * 2, LOCK_LONGEST_WAIT_MS)
+		);
+	});
+
+const takeLock = (
+	lock: string,
+	start: number,
+	wait: number
+): Effect.Effect<void, RoomsError, FileSystem.FileSystem> =>
+	Effect.flatMap(FileSystem.FileSystem, (fs) =>
+		fs.open(lock, { flag: "wx", mode: PRIVATE_FILE }).pipe(
+			Effect.scoped,
+			Effect.as(true),
+			Effect.catchReason("PlatformError", "AlreadyExists", () =>
+				Effect.succeed(false)
+			),
+			Effect.mapError(failed(lock)),
+			Effect.flatMap((taken) =>
+				taken ? Effect.void : contend(lock, start, wait)
+			)
+		)
+	);
+
+const locked = <A, R>(
+	path: string,
+	change: Effect.Effect<A, RoomsError, R>
+): Effect.Effect<A, RoomsError, R | FileSystem.FileSystem | Path.Path> =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const paths = yield* Path.Path;
+		const lock = `${path}.lock`;
+
+		yield* fs
+			.makeDirectory(paths.dirname(path), {
+				recursive: true,
+				mode: PRIVATE_DIR,
+			})
+			.pipe(Effect.mapError(failed(path)));
+
+		const start = yield* Clock.currentTimeMillis;
+
+		return yield* Effect.acquireUseRelease(
+			takeLock(lock, start, LOCK_FIRST_WAIT_MS),
+			() => change,
+			() => fs.remove(lock).pipe(Effect.ignore)
+		);
+	});
+
+export const readRooms = (
+	path: string
+): Effect.Effect<Rooms, RoomsError, FileSystem.FileSystem> =>
+	Effect.flatMap(Clock.currentTimeMillis, (now) => load(path, now));
 
 export interface ClaimPolicy {
-  /** Claims the registry may hold. A claim past it makes way, or is refused. */
-  readonly maxRooms?: number;
-  /** A claim no GM has linked for longer than this lapses. */
-  readonly expireMs?: number;
-  /** Rooms with a GM linked now: their claims never lapse or make way. */
-  readonly linked?: ReadonlySet<string>;
+	readonly maxRooms?: number;
+	readonly expireMs?: number;
+	readonly linked?: ReadonlySet<string>;
 }
 
-/** What a claim on a room would do now. */
 type Verdict =
-  /** The key holds the room already. */
-  | { readonly kind: "holds" }
-  /** Another key holds it. */
-  | { readonly kind: "held"; readonly holder: string }
-  /** The key may claim it, once these rooms' claims are dropped: lapsed, or making way. */
-  | { readonly kind: "free"; readonly drop: ReadonlyArray<string> }
-  /** The registry is full, and every claim in it has a GM linked now. */
-  | { readonly kind: "full" };
+	| { readonly kind: "holds" }
+	| { readonly kind: "held"; readonly holder: string }
+	| { readonly kind: "free"; readonly drop: ReadonlyArray<string> }
+	| { readonly kind: "full" };
 
-/** Judges a claim on `room` by `fingerprint` at `now`, without writing anything. */
 export const judgeClaim = (
-  rooms: Rooms,
-  room: string,
-  fingerprint: string,
-  now: number,
-  policy: ClaimPolicy,
+	rooms: Rooms,
+	room: string,
+	fingerprint: string,
+	now: number,
+	policy: ClaimPolicy
 ): Verdict => {
-  const linked = (name: string) => policy.linked?.has(name) === true;
-  const lapsed = (name: string) =>
-    policy.expireMs !== undefined && !linked(name) && now - rooms[name]!.linked > policy.expireMs;
-  const holder = rooms[room];
-  if (holder?.key === fingerprint) return { kind: "holds" };
-  if (holder !== undefined && !lapsed(room)) return { kind: "held", holder: holder.key };
-  const drop = Object.keys(rooms).filter(lapsed);
-  const left = Object.keys(rooms).filter((name) => !lapsed(name));
-  if (policy.maxRooms !== undefined && left.length >= policy.maxRooms) {
-    const stalest = left
-      .filter((name) => !linked(name))
-      .sort((a, b) => rooms[a]!.linked - rooms[b]!.linked)
-      .slice(0, left.length - policy.maxRooms + 1);
-    if (left.length - stalest.length >= policy.maxRooms) return { kind: "full" };
-    drop.push(...stalest);
-  }
-  return { kind: "free", drop };
+	const linked = (name: string) => policy.linked?.has(name) === true;
+
+	const lapsed = ([name, claim]: readonly [string, RoomClaim]) =>
+		policy.expireMs !== undefined &&
+		!linked(name) &&
+		now - claim.linked > policy.expireMs;
+
+	const holder = rooms[room];
+
+	if (holder?.key === fingerprint) {
+		return { kind: "holds" };
+	}
+
+	if (holder !== undefined && !lapsed([room, holder])) {
+		return { kind: "held", holder: holder.key };
+	}
+
+	const entries = Object.entries(rooms);
+	const drop = entries.filter((entry) => lapsed(entry)).map(([name]) => name);
+	const left = entries.filter((entry) => !lapsed(entry));
+
+	if (policy.maxRooms === undefined || left.length < policy.maxRooms) {
+		return { kind: "free", drop };
+	}
+
+	const stalest = left
+		.filter(([name]) => !linked(name))
+		.toSorted(([, a], [, b]) => a.linked - b.linked)
+		.slice(0, left.length - policy.maxRooms + 1)
+		.map(([name]) => name);
+
+	if (left.length - stalest.length >= policy.maxRooms) {
+		return { kind: "full" };
+	}
+
+	return { kind: "free", drop: [...drop, ...stalest] };
 };
 
-/** A claim dropped to make a new one: it lapsed, or it was the stalest in a full registry. */
 interface Dropped extends RoomClaim {
-  readonly room: string;
+	readonly room: string;
 }
 
-type Claim =
-  | {
-      readonly holder: string;
-      readonly claimed: boolean;
-      /** Claims dropped to make this one. */
-      readonly dropped: ReadonlyArray<Dropped>;
-    }
-  /** The registry is full, and every claim in it has a GM linked now. */
-  | { readonly full: true };
+export type Claim =
+	| {
+			readonly holder: string;
+			readonly claimed: boolean;
+			readonly dropped: ReadonlyArray<Dropped>;
+	  }
+	| { readonly full: true };
 
-/**
- * Claims `room` for the host key `fingerprint` unless another holds it, as `judgeClaim` says, and
- * marks it linked now; the key that holds it already renews its time. Returns who holds it after,
- * whether this call claimed it and what claims it dropped; or that the registry is full.
- */
+const droppedFrom = (
+	rooms: Rooms,
+	names: ReadonlyArray<string>
+): ReadonlyArray<Dropped> =>
+	names.flatMap((name) => {
+		const claim = rooms[name];
+
+		return claim === undefined ? [] : [{ room: name, ...claim }];
+	});
+
+const without = (rooms: Rooms, names: ReadonlyArray<string>): Rooms => {
+	const gone = new Set(names);
+
+	return Object.fromEntries(
+		Object.entries(rooms).filter(([name]) => !gone.has(name))
+	);
+};
+
 export const claimRoom = (
-  path: string,
-  room: string,
-  fingerprint: string,
-  policy: ClaimPolicy = {},
-): Effect.Effect<Claim, RoomsError> =>
-  Effect.flatMap(Clock.currentTimeMillis, (now) =>
-    attempt(path, () =>
-      locked(path, async (): Promise<Claim> => {
-        const rooms = await load(path, now);
-        const verdict = judgeClaim(rooms, room, fingerprint, now, policy);
-        if (verdict.kind === "full") return { full: true };
-        if (verdict.kind === "held") return { holder: verdict.holder, claimed: false, dropped: [] };
-        const dropped =
-          verdict.kind === "free"
-            ? verdict.drop.map((name) => ({ room: name, ...rooms[name]! }))
-            : [];
-        for (const { room: name } of dropped) delete rooms[name];
-        rooms[room] = { key: fingerprint, linked: now };
-        await save(path, rooms);
-        return { holder: fingerprint, claimed: verdict.kind === "free", dropped };
-      }),
-    ),
-  );
+	path: string,
+	room: string,
+	fingerprint: string,
+	policy: ClaimPolicy = {}
+): Effect.Effect<Claim, RoomsError, FileSystem.FileSystem | Path.Path> =>
+	Effect.flatMap(Clock.currentTimeMillis, (now) =>
+		locked(
+			path,
+			Effect.gen(function* () {
+				const rooms = yield* load(path, now);
+				const verdict = judgeClaim(rooms, room, fingerprint, now, policy);
 
-/** Marks `room` linked now, if `fingerprint` still holds it: as when that GM's link ends. */
+				if (verdict.kind === "full") {
+					const full: Claim = { full: true };
+
+					return full;
+				}
+
+				if (verdict.kind === "held") {
+					const held: Claim = {
+						holder: verdict.holder,
+						claimed: false,
+						dropped: [],
+					};
+
+					return held;
+				}
+
+				const names = verdict.kind === "free" ? verdict.drop : [];
+				const dropped = droppedFrom(rooms, names);
+
+				yield* save(path, {
+					...without(rooms, names),
+					[room]: { key: fingerprint, linked: now },
+				});
+
+				const made: Claim = {
+					holder: fingerprint,
+					claimed: verdict.kind === "free",
+					dropped,
+				};
+
+				return made;
+			})
+		)
+	);
+
 export const touchRoom = (
-  path: string,
-  room: string,
-  fingerprint: string,
-): Effect.Effect<void, RoomsError> =>
-  Effect.flatMap(Clock.currentTimeMillis, (now) =>
-    attempt(path, () =>
-      locked(path, async () => {
-        const rooms = await load(path, now);
-        if (rooms[room]?.key !== fingerprint) return;
-        rooms[room] = { key: fingerprint, linked: now };
-        await save(path, rooms);
-      }),
-    ),
-  );
+	path: string,
+	room: string,
+	fingerprint: string
+): Effect.Effect<void, RoomsError, FileSystem.FileSystem | Path.Path> =>
+	Effect.flatMap(Clock.currentTimeMillis, (now) =>
+		locked(
+			path,
+			Effect.gen(function* () {
+				const rooms = yield* load(path, now);
 
-/** Releases `room`; returns the host key that held it, if one did. */
+				if (rooms[room]?.key === fingerprint) {
+					yield* save(path, {
+						...rooms,
+						[room]: { key: fingerprint, linked: now },
+					});
+				}
+			})
+		)
+	);
+
 export const forgetRoom = (
-  path: string,
-  room: string,
-): Effect.Effect<string | undefined, RoomsError> =>
-  Effect.flatMap(Clock.currentTimeMillis, (now) =>
-    attempt(path, () =>
-      locked(path, async () => {
-        const rooms = await load(path, now);
-        const holder = rooms[room];
-        if (holder === undefined) return undefined;
-        delete rooms[room];
-        await save(path, rooms);
-        return holder.key;
-      }),
-    ),
-  );
+	path: string,
+	room: string
+): Effect.Effect<
+	string | undefined,
+	RoomsError,
+	FileSystem.FileSystem | Path.Path
+> =>
+	Effect.flatMap(Clock.currentTimeMillis, (now) =>
+		locked(
+			path,
+			Effect.gen(function* () {
+				const rooms = yield* load(path, now);
+				const holder = Option.fromNullishOr(rooms[room]);
 
-/**
- * Refuses a relay folder that group or others can write to: whoever can swap rooms.json there can
- * take any room. The keys in it are checked on their own when they're loaded.
- */
-export const checkRelayDir = (dir: string): Effect.Effect<void, RoomsError> =>
-  attempt(dir, async () => {
-    const mode = (await stat(dir)).mode & 0o777;
-    if ((mode & 0o022) !== 0)
-      throw new Error(
-        `group or others can write to it (mode ${mode.toString(8)}), so anyone there could take its rooms; chmod 700 ${dir}`,
-      );
-  });
+				if (Option.isSome(holder)) {
+					yield* save(path, without(rooms, [room]));
+				}
+
+				return Option.getOrUndefined(Option.map(holder, (claim) => claim.key));
+			})
+		)
+	);
+
+const writableBy = (mode: number, bit: number): boolean =>
+	Math.floor((mode % PERMISSION_BITS) / bit) % 2 === 1;
+
+export const checkRelayDir = (
+	dir: string
+): Effect.Effect<void, RoomsError, FileSystem.FileSystem> =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const { mode } = yield* fs.stat(dir).pipe(Effect.mapError(failed(dir)));
+
+		const shared =
+			writableBy(mode, GROUP_WRITE) || writableBy(mode, OTHERS_WRITE);
+
+		return yield* shared
+			? Effect.fail(
+					damaged(
+						dir,
+						`group or others can write to it (mode ${(mode % PERMISSION_BITS).toString(8)}), so anyone there could take its rooms; chmod 700 ${dir}`
+					)
+				)
+			: Effect.void;
+	});

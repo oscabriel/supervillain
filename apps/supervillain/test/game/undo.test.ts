@@ -1,701 +1,708 @@
 import { describe, expect, test } from "bun:test";
-import { fold } from "@supervillain/engine";
-import { core, labelOf } from "../../src/game/core.ts";
-import { compose, type Module } from "../../src/game/module.ts";
-import { feedLines, plainText, tableLabel } from "../../src/game/index.ts";
+
+import {
+	feedLines,
+	parseInputLine,
+	plainText,
+	rules,
+	tableLabel,
+	withHostFact,
+} from "@supervillain/domain";
+import type { Command, Envelope } from "@supervillain/domain";
+
 import { KOR, VEX } from "../drawSteel/harness.ts";
+import { fold, throughJson } from "./fold.ts";
+import { must } from "./must.ts";
 import { ALICE, BOB, env, GM, START, Table } from "./table.ts";
 
-type CounterCommand =
-  | { readonly type: "bump"; readonly by: ReadonlyArray<number> }
-  | { readonly type: "pin"; readonly at: number }
-  | { readonly type: "spin" }
-  | { readonly type: "look" }
-  | { readonly type: "set"; readonly from: number; readonly to: number }
-  | { readonly type: "tag"; readonly tag: string }
-  | { readonly type: "cap"; readonly at: number };
-
-type Counter = {
-  readonly n: number;
-  readonly pin?: number;
-  readonly tag?: string;
-  readonly cap?: number;
-};
-
-/**
- * A stand-in game module: `counter.bumped` is retractable, `counter.pinned` lives in the same
- * slice but isn't, the way a hero claim sits beside damage in Draw Steel. `counter.spun` rolls a
- * die; `counter.looked` changes nothing, like a measurement, and can't be applied while the
- * counter is 0; `counter.set` holds only where the counter is what it was decided against.
- * `counter.tagged` is retractable and touches only the tag, so it never depends on a bump;
- * `counter.capped` isn't retractable, and a later bump stops at the cap.
- */
-const counter: Module<"counter", Counter, CounterCommand> = {
-  key: "counter",
-  initial: { n: 0 },
-  events: [
-    "counter.bumped",
-    "counter.pinned",
-    "counter.spun",
-    "counter.looked",
-    "counter.set",
-    "counter.tagged",
-    "counter.capped",
-  ],
-  retractable: ["counter.bumped", "counter.spun", "counter.set", "counter.tagged"],
-  rolled: (envelope) => envelope.type === "counter.spun",
-  commands: {
-    bump: {
-      usage: "/bump <n>",
-      summary: "Bump the counter.",
-      gmOnly: false,
-      parse: (args) => ({ type: "bump", by: [Number(args)] }),
-    },
-    pin: {
-      usage: "/pin <n>",
-      summary: "Pin the counter.",
-      gmOnly: false,
-      parse: (args) => ({ type: "pin", at: Number(args) }),
-    },
-    spin: { usage: "/spin", summary: "Add a d6.", gmOnly: false, parse: () => ({ type: "spin" }) },
-    look: { usage: "/look", summary: "Look.", gmOnly: false, parse: () => ({ type: "look" }) },
-    set: {
-      usage: "/set <n>",
-      summary: "Set the counter.",
-      gmOnly: false,
-      parse: (args) => ({ type: "set", from: 0, to: Number(args) }),
-    },
-    tag: {
-      usage: "/tag <t>",
-      summary: "Tag.",
-      gmOnly: false,
-      parse: (tag) => ({ type: "tag", tag }),
-    },
-    cap: {
-      usage: "/cap <n>",
-      summary: "Cap.",
-      gmOnly: false,
-      parse: (args) => ({ type: "cap", at: Number(args) }),
-    },
-  },
-  decide: (slice, _shared, _actor, command, dice) => {
-    switch (command.type) {
-      case "bump":
-        return { events: command.by.map((by) => ({ type: "counter.bumped", payload: { by } })) };
-      case "pin":
-        return { events: [{ type: "counter.pinned", payload: { at: command.at } }] };
-      case "spin":
-        return { events: [{ type: "counter.spun", payload: { face: dice(6) } }] };
-      case "look":
-        return { events: [{ type: "counter.looked", payload: {} }] };
-      case "set":
-        return { events: [{ type: "counter.set", payload: { from: slice.n, to: command.to } }] };
-      case "tag":
-        return { events: [{ type: "counter.tagged", payload: { tag: command.tag } }] };
-      case "cap":
-        return { events: [{ type: "counter.capped", payload: { at: command.at } }] };
-    }
-  },
-  apply: (slice, envelope) => {
-    switch (envelope.type) {
-      case "counter.bumped": {
-        const { by } = envelope.payload as { by: number };
-        const n = Math.min(slice.n + by, slice.cap ?? Number.POSITIVE_INFINITY);
-        return { slice: { ...slice, n }, feed: { kind: "counter", text: `+${by} → ${n}` } };
-      }
-      case "counter.spun": {
-        const { face } = envelope.payload as { face: number };
-        const n = slice.n + face;
-        return { slice: { ...slice, n }, feed: { kind: "counter", text: `spun ${face} → ${n}.` } };
-      }
-      case "counter.looked":
-        if (slice.n === 0) throw new Error("nothing to look at");
-        return { slice, feed: { kind: "counter", text: `looked at ${slice.n}` } };
-      case "counter.set": {
-        const { from, to } = envelope.payload as { from: number; to: number };
-        if (slice.n !== from) throw new Error(`set from ${from}, but it's ${slice.n}`);
-        return { slice: { ...slice, n: to }, feed: { kind: "counter", text: `set to ${to}.` } };
-      }
-      case "counter.tagged": {
-        const { tag } = envelope.payload as { tag: string };
-        return { slice: { ...slice, tag }, feed: { kind: "counter", text: `tagged ${tag}` } };
-      }
-      case "counter.capped": {
-        const { at } = envelope.payload as { at: number };
-        return { slice: { ...slice, cap: at }, feed: { kind: "counter", text: `capped at ${at}` } };
-      }
-      default: {
-        const { at } = envelope.payload as { at: number };
-        return { slice: { ...slice, pin: at }, feed: { kind: "counter", text: `pinned at ${at}` } };
-      }
-    }
-  },
-};
-
-const toy = compose([core, counter], { label: (state, actor) => labelOf(state)(actor) });
 const undo = { type: "undo" } as const;
+
 const redo = { type: "redo" } as const;
-const at = (seconds: number) => new Date(Date.parse(START) + seconds * 1000).toISOString();
 
-describe("undo, in compose and the fold", () => {
-  test("takes back the latest batch whole, restoring the slice from before it, newest first", () => {
-    const t = new Table(toy.rules);
-    t.run(GM, { type: "bump", by: [5] });
-    t.run(ALICE, { type: "bump", by: [2, 3] });
-    expect(t.state.counter).toEqual({ n: 10 });
+const at = (seconds: number) =>
+	new Date(Date.parse(START) + seconds * 1000).toISOString();
 
-    t.run(GM, undo);
-    expect(t.last).toMatchObject({
-      seq: 4,
-      actor: GM,
-      type: "core.retracted",
-      payload: { seqs: [2, 3], undone: ["+2 → 7", "+3 → 10"] },
-    });
-    expect(t.state.counter).toEqual({ n: 5 });
+const line = (typed: string): Command => {
+	const parsed = parseInputLine(typed, "chat", "draw-steel");
 
-    t.run(GM, undo);
-    expect(t.state.counter).toEqual({ n: 0 });
-    expect(t.submit(GM, undo)).toBe("Nothing to undo.");
-    // Append-only: every event is still in the log.
-    expect(t.envelopes.map((e) => e.type)).toEqual([
-      "counter.bumped",
-      "counter.bumped",
-      "counter.bumped",
-      "core.retracted",
-      "core.retracted",
-    ]);
-  });
+	if (parsed.kind !== "command") {
+		throw new Error(`${typed} isn't a command: ${JSON.stringify(parsed)}`);
+	}
 
-  test("a log with a retraction in it replays to the same state, without decide", () => {
-    const log = [
-      env(1, "counter.bumped", { by: 5 }, GM, at(0)),
-      env(2, "counter.bumped", { by: 2 }, ALICE, at(1)),
-      env(3, "counter.bumped", { by: 3 }, ALICE, at(1)),
-      env(4, "core.chat-posted", { text: "oops" }, ALICE, at(2)),
-      env(5, "core.retracted", { seqs: [2, 3], undone: ["+2 → 7", "+3 → 10"] }, GM, at(3)),
-    ];
-    const folded = fold(toy.rules, log, { strict: true });
-    expect(folded.error).toBeUndefined();
-    expect(folded.state.counter).toEqual({ n: 5 });
-    expect(folded.state.feed).toEqual([
-      { seq: 1, actor: GM, kind: "counter", text: "+5 → 5" },
-      { seq: 2, actor: ALICE, kind: "counter", text: "+2 → 7" },
-      { seq: 3, actor: ALICE, kind: "counter", text: "+3 → 10" },
-      { seq: 4, actor: ALICE, kind: "chat", text: "oops" },
-      { seq: 5, actor: GM, kind: "undo", text: "undid: +2 → 7; +3 → 10" },
-    ]);
-    expect(folded.state.undo.map((b) => b.seqs)).toEqual([[1]]);
-    // What the live table decided is what replay rebuilds, the stack included.
-    const t = new Table(toy.rules);
-    t.run(GM, { type: "bump", by: [5] });
-    t.run(ALICE, { type: "bump", by: [2, 3] });
-    t.run(ALICE, { type: "say", text: "oops" });
-    t.run(GM, undo);
-    expect(t.envelopes).toEqual(log);
-    let live = toy.rules.initial;
-    for (const e of t.envelopes) live = toy.rules.apply(live, e);
-    expect(folded.state).toEqual(live);
-  });
+	return parsed.command;
+};
 
-  test("the stack holds 20 batches; the oldest falls off", () => {
-    const t = new Table(toy.rules);
-    for (let i = 0; i < 21; i++) t.run(GM, { type: "bump", by: [1] });
-    expect(t.state.undo).toHaveLength(20);
-    for (let i = 0; i < 20; i++) t.run(GM, undo);
-    expect(t.state.counter).toEqual({ n: 1 });
-    expect(t.submit(GM, undo)).toBe("Nothing to undo.");
-  });
+const party = () => {
+	const t = new Table();
+	t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+	t.run(GM, { type: "hero", hero: "kor", sheet: KOR });
+	t.run(ALICE, line("/play vex"));
+	t.run(BOB, line("/play kor"));
+	t.run(ALICE, line("/name Alice"));
+	t.run(BOB, line("/name Bob"));
 
-  test("events that aren't retractable stay put, in any slice, and the feed keeps every line", () => {
-    const t = new Table(toy.rules);
-    t.run(GM, { type: "bump", by: [5] });
-    t.run(ALICE, { type: "say", text: "nice" });
-    t.run(ALICE, { type: "name", name: "Wren" });
-    t.run(ALICE, { type: "roll", notation: "1d6" }, () => 4);
-    t.run(GM, { type: "pin", at: 3 });
-    t.run(GM, undo);
-    expect(t.state.counter).toEqual({ n: 0, pin: 3 });
-    expect(t.state.core).toEqual({ names: { [ALICE]: "Wren" } });
-    expect(t.state.feed.map((e) => e.text)).toEqual([
-      "+5 → 5",
-      "nice",
-      "Wren joins the table.",
-      "rolled 1d6: [4] = 4",
-      "pinned at 3",
-      "undid: +5 → 5",
-    ]);
-  });
+	return t;
+};
 
-  test("a batch is the retractable events of one submission: one actor, one timestamp, unbroken", () => {
-    const batches = (...log: ReturnType<typeof env>[]) =>
-      fold(toy.rules, log, { strict: true }).state.undo.map((b) => b.seqs);
-    // Two actors in the same millisecond are two batches.
-    expect(
-      batches(env(1, "counter.bumped", { by: 1 }, GM), env(2, "counter.bumped", { by: 1 }, ALICE)),
-    ).toEqual([[1], [2]]);
-    // An event that isn't retractable splits a submission's batch in two.
-    expect(
-      batches(
-        env(1, "counter.bumped", { by: 1 }),
-        env(2, "counter.pinned", { at: 1 }),
-        env(3, "counter.bumped", { by: 1 }),
-      ),
-    ).toEqual([[1], [3]]);
-    // Two submissions by one actor with one timestamp can't be told apart, so they are one batch.
-    // The room never stamps two submissions alike (packages/engine Room), so only a log written
-    // by hand has this.
-    expect(
-      batches(env(1, "counter.bumped", { by: 1 }), env(2, "counter.bumped", { by: 1 })),
-    ).toEqual([[1, 2]]);
-  });
+const vex = (t: Table) => t.state.ds.heroes.find((h) => h.id === "vex");
 
-  test("a retraction of no batch on the stack, or of one a later batch depends on, halts replay", () => {
-    const halted = (...log: ReturnType<typeof env>[]) =>
-      fold(toy.rules, log, { strict: true }).error;
-    expect(
-      halted(
-        env(1, "counter.bumped", { by: 1 }, GM, at(0)),
-        env(2, "counter.bumped", { by: 1 }, GM, at(1)),
-        env(3, "core.retracted", { seqs: [1, 2], undone: [] }, GM, at(2)),
-      ),
-    ).toEqual({
-      seq: 3,
-      message: "the retraction at seq 3 names no batch that can be undone (seq 1, 2)",
-    });
-    expect(
-      halted(
-        env(1, "counter.bumped", { by: 1 }, GM, at(0)),
-        env(2, "counter.set", { from: 1, to: 5 }, GM, at(1)),
-        env(3, "core.retracted", { seqs: [1], undone: [] }, GM, at(2)),
-      ),
-    ).toEqual({
-      seq: 3,
-      message: "the retraction at seq 3 would break a later change: set from 1, but it's 0",
-    });
-    // A later change that would come out differently: replay never disagrees with the feed.
-    expect(
-      halted(
-        env(1, "counter.bumped", { by: 1 }, GM, at(0)),
-        env(2, "counter.bumped", { by: 1 }, ALICE, at(1)),
-        env(3, "core.retracted", { seqs: [1], undone: ["+1 → 1"] }, GM, at(2)),
-      ),
-    ).toEqual({
-      seq: 3,
-      message:
-        'the retraction at seq 3 would change a later change at seq 2: "+1 → 2" would read "+1 → 1"',
-    });
-    expect(halted(env(1, "core.retracted", { seqs: [1], undone: [] }))).toEqual({
-      seq: 1,
-      message: "the retraction at seq 1 has nothing to take back",
-    });
-  });
-});
+const kor = (t: Table) => t.state.ds.heroes.find((h) => h.id === "kor");
 
-describe("what compose checks", () => {
-  test("a module's retractable events are its own; /undo and its event belong to compose", () => {
-    const stray = { ...counter, retractable: ["counter.reset"] } as unknown as typeof counter;
-    expect(() => compose([stray])).toThrow(
-      '"counter.reset" is retractable but not one of "counter"\'s events.',
-    );
-    const undoing = { ...counter, commands: { ...counter.commands, undo: counter.commands.pin } };
-    expect(() => compose([undoing])).toThrow("/undo belongs to compose.");
-    const retracting = { ...core, events: [...core.events, "core.retracted"] } as typeof core;
-    expect(() => compose([retracting])).toThrow('"core.retracted" belongs to compose, for /undo.');
-  });
+const submission = (
+	t: Table,
+	actor: string,
+	events: ReadonlyArray<readonly [string, object]>
+) => {
+	const timestamp = t.now;
+
+	for (const [type, payload] of events) {
+		t.envelopes.push(
+			env(t.envelopes.length + 1, type, payload, actor, timestamp)
+		);
+	}
+
+	t.wait(1);
+};
+
+const batches = (...log: ReadonlyArray<Envelope>) =>
+	fold(rules, log, { strict: true }).state.undo.map((b) => b.seqs);
+
+const halted = (...log: ReadonlyArray<Envelope>) =>
+	fold(rules, log, { strict: true }).error;
+
+describe("undo, in the rules and the fold", () => {
+	test("takes back the latest batch whole, restoring the slice from before it, newest first", () => {
+		const t = party();
+		t.run(GM, line("/malice +5"));
+		submission(t, ALICE, [
+			["ds.resource-changed", { id: "vex", by: 2 }],
+			["ds.resource-changed", { id: "vex", by: 3 }],
+		]);
+		expect(vex(t)?.resource).toBe(5);
+		const seqs = [t.envelopes.length - 1, t.envelopes.length];
+
+		t.run(GM, undo);
+		expect(t.last).toMatchObject({
+			actor: GM,
+			type: "core.retracted",
+			payload: {
+				seqs,
+				undone: ["Vex gains 2 Wrath → 2.", "Vex gains 3 Wrath → 5."],
+			},
+		});
+		expect(vex(t)?.resource).toBe(0);
+		expect(t.state.ds.malice).toBe(5);
+
+		t.run(GM, undo);
+		expect(t.state.ds.malice).toBe(0);
+		t.run(GM, undo);
+		t.run(GM, undo);
+		expect(t.state.ds.heroes).toEqual([]);
+		expect(t.submit(GM, undo)).toBe("Nothing to undo.");
+		expect(t.envelopes.map((e) => e.type).slice(-7)).toEqual([
+			"ds.malice-changed",
+			"ds.resource-changed",
+			"ds.resource-changed",
+			"core.retracted",
+			"core.retracted",
+			"core.retracted",
+			"core.retracted",
+		]);
+	});
+
+	test("a log with a retraction in it replays to the same state, without decide", () => {
+		const t = party();
+		t.run(GM, line("/malice +5"));
+		t.run(ALICE, line("/res vex +2"));
+		t.run(ALICE, line("oops"));
+		t.run(GM, undo);
+
+		const log = throughJson(t.envelopes);
+
+		const folded = fold(rules, log, { strict: true });
+		expect(folded.error).toBeUndefined();
+		expect(folded.state.ds.malice).toBe(5);
+		expect(folded.state.ds.heroes.map((h) => h.resource)).toEqual([0, 0]);
+		expect(folded.state.feed.slice(-4).map((e) => [e.kind, e.text])).toEqual([
+			["ds", "Malice +5 → 5."],
+			["ds", "Vex gains 2 Wrath → 2."],
+			["chat", "oops"],
+			["undo", "undid: Vex gains 2 Wrath → 2."],
+		]);
+		let live = rules.initial;
+
+		for (const e of t.envelopes) {
+			live = rules.apply(live, e);
+		}
+
+		expect(folded.state).toEqual(live);
+		expect(folded.state.undo.at(-1)?.seqs).toEqual([
+			t.envelopes.findIndex((e) => e.type === "ds.malice-changed") + 1,
+		]);
+	});
+
+	test("the stack holds 20 batches; the oldest falls off", () => {
+		const t = new Table();
+
+		for (let i = 0; i < 21; i += 1) {
+			t.run(GM, line("/malice +1"));
+		}
+
+		expect(t.state.undo).toHaveLength(20);
+
+		for (let i = 0; i < 20; i += 1) {
+			t.run(GM, undo);
+		}
+
+		expect(t.state.ds.malice).toBe(1);
+		expect(t.submit(GM, undo)).toBe("Nothing to undo.");
+	});
+
+	test("events that aren't retractable stay put, in any slice, and the feed keeps every line", () => {
+		const t = new Table();
+		t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+		t.run(GM, line("/malice +5"));
+		t.run(ALICE, line("nice"));
+		t.run(ALICE, line("/name Wren"));
+		t.run(ALICE, line("/roll 1d6"), () => 4);
+		t.run(ALICE, line("/play vex"));
+		t.run(GM, undo);
+		expect(t.state.ds.malice).toBe(0);
+		expect(vex(t)?.player).toBe(ALICE);
+		expect(t.state.core).toEqual({ names: { [ALICE]: "Wren" } });
+		const texts = t.state.feed.map((e) => e.text);
+		expect(texts.slice(1, 5)).toEqual([
+			"Malice +5 → 5.",
+			"nice",
+			"Wren joins the table.",
+			"rolled 1d6: [4] = 4",
+		]);
+		expect(texts).toHaveLength(7);
+		expect(texts.at(-1)).toBe("undid: Malice +5 → 5.");
+	});
+
+	test("a batch is the retractable events of one submission: one actor, one timestamp, unbroken", () => {
+		expect(
+			batches(
+				env(1, "ds.malice-changed", { by: 1 }, GM),
+				env(2, "ds.tokens-changed", { by: 1 }, ALICE)
+			)
+		).toEqual([[1], [2]]);
+		expect(
+			batches(
+				env(1, "ds.hero-joined", { sheet: VEX }),
+				env(2, "ds.hero-claimed", { hero: "vex", player: ALICE }),
+				env(3, "ds.malice-changed", { by: 1 })
+			)
+		).toEqual([[1], [3]]);
+		expect(
+			batches(
+				env(1, "ds.malice-changed", { by: 1 }),
+				env(2, "ds.malice-changed", { by: 1 })
+			)
+		).toEqual([[1, 2]]);
+	});
+
+	test("a retraction of no batch on the stack, or of one a later batch depends on, halts replay", () => {
+		expect(
+			halted(
+				env(1, "ds.malice-changed", { by: 1 }, GM, at(0)),
+				env(2, "ds.malice-changed", { by: 1 }, GM, at(1)),
+				env(3, "core.retracted", { seqs: [1, 2], undone: [] }, GM, at(2))
+			)
+		).toEqual({
+			seq: 3,
+			message:
+				"the retraction at seq 3 names no batch that can be undone (seq 1, 2)",
+		});
+
+		const broken = halted(
+			env(1, "ds.hero-joined", { sheet: VEX }, GM, at(0)),
+			env(2, "ds.damaged", { id: "vex", amount: 3, dealt: 3 }, GM, at(1)),
+			env(3, "core.retracted", { seqs: [1], undone: [] }, GM, at(2))
+		);
+
+		expect(broken?.seq).toBe(3);
+		expect(broken?.message).toStartWith(
+			"the retraction at seq 3 would break a later change: "
+		);
+		expect(
+			halted(
+				env(1, "ds.malice-changed", { by: 1 }, GM, at(0)),
+				env(2, "ds.malice-changed", { by: 1 }, ALICE, at(1)),
+				env(
+					3,
+					"core.retracted",
+					{ seqs: [1], undone: ["Malice +1 → 1."] },
+					GM,
+					at(2)
+				)
+			)
+		).toEqual({
+			seq: 3,
+			message:
+				'the retraction at seq 3 would change a later change at seq 2: "Malice +1 → 2." would read "Malice +1 → 1."',
+		});
+		expect(halted(env(1, "core.retracted", { seqs: [1], undone: [] }))).toEqual(
+			{
+				seq: 1,
+				message: "the retraction at seq 1 has nothing to take back",
+			}
+		);
+	});
 });
 
 describe("a player's undo", () => {
-  const withNow = (t: { readonly now: string }) => ({ type: "undo", now: t.now }) as const;
+	test("takes back their own latest batch within 30 seconds", () => {
+		const t = party();
+		t.run(ALICE, line("/res vex +2"));
+		t.run(BOB, line("chat doesn't count"));
+		t.wait(28);
+		t.run(ALICE, undo);
+		expect(vex(t)?.resource).toBe(0);
+	});
 
-  test("takes back their own latest batch within 30 seconds", () => {
-    const t = new Table(toy.rules);
-    t.run(ALICE, { type: "bump", by: [2] });
-    t.run(BOB, { type: "say", text: "chat doesn't count" });
-    t.wait(28); // 30 seconds after Alice's bump
-    t.run(ALICE, withNow(t));
-    expect(t.state.counter).toEqual({ n: 0 });
-  });
+	test("not after 30 seconds, though the GM still can", () => {
+		const t = party();
+		t.run(ALICE, line("/res vex +2"));
+		t.wait(30);
+		expect(t.submit(ALICE, undo)).toBe(
+			"Too late: you can take back your own change for 30 seconds. Ask the GM."
+		);
+		t.run(GM, undo);
+		expect(vex(t)?.resource).toBe(0);
+	});
 
-  test("not after 30 seconds, though the GM still can", () => {
-    const t = new Table(toy.rules);
-    t.run(ALICE, { type: "bump", by: [2] });
-    t.wait(30); // 31 seconds after
-    expect(t.submit(ALICE, withNow(t))).toBe(
-      "Too late: you can take back your own change for 30 seconds. Ask the GM.",
-    );
-    t.run(GM, undo);
-    expect(t.state.counter).toEqual({ n: 0 });
-  });
+	test("only their own: their latest batch, even with someone else's after it", () => {
+		const t = new Table();
+		expect(t.submit(ALICE, undo)).toBe("Nothing to undo.");
+		t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+		t.run(GM, { type: "hero", hero: "kor", sheet: KOR });
+		expect(t.submit(ALICE, undo)).toBe(
+			"Only the GM can take back someone else's change."
+		);
+		t.run(ALICE, line("/play vex"));
+		t.run(BOB, line("/play kor"));
+		t.run(ALICE, line("/res vex +2"));
+		t.run(BOB, line("/res kor +1"));
+		t.run(ALICE, undo);
+		expect([vex(t)?.resource, kor(t)?.resource]).toEqual([0, 1]);
+		expect(t.state.feed.at(-1)?.text).toBe("undid: Vex gains 2 Wrath → 2.");
+		expect(t.state.undo.map((b) => b.actor)).toEqual([GM, GM, BOB]);
+		t.run(GM, undo);
+		expect(kor(t)?.resource).toBe(0);
+	});
 
-  test("only their own: their latest batch, even with someone else's after it", () => {
-    const t = new Table(toy.rules);
-    expect(t.submit(ALICE, withNow(t))).toBe("Nothing to undo.");
-    t.run(GM, { type: "bump", by: [5] });
-    expect(t.submit(ALICE, withNow(t))).toBe("Only the GM can take back someone else's change.");
-    t.run(ALICE, { type: "bump", by: [2] });
-    t.run(BOB, { type: "tag", tag: "red" });
-    t.run(ALICE, withNow(t));
-    // Bob's tag stays: it is folded again onto the counter as it was before Alice's.
-    expect(t.state.counter).toEqual({ n: 5, tag: "red" });
-    expect(t.state.feed.at(-1)?.text).toBe("undid: +2 → 7");
-    expect(t.state.undo.map((b) => b.actor)).toEqual([GM, BOB]);
-    t.run(GM, undo);
-    expect(t.state.counter).toEqual({ n: 5 });
-  });
+	test("naming nobody at the table is refused, as the GM's is, not taken as their own", () => {
+		const t = party();
+		t.run(ALICE, line("/res vex +2"));
+		expect(t.submit(ALICE, { type: "undo", who: "Zed" })).toBe(
+			"Nobody at the table is called 'Zed'."
+		);
+		expect(vex(t)?.resource).toBe(2);
+	});
 
-  test("naming nobody at the table is refused, as the GM's is, not taken as their own", () => {
-    const t = new Table(toy.rules);
-    t.run(ALICE, { type: "bump", by: [2] });
-    expect(t.submit(ALICE, { type: "undo", now: t.now, who: "Zed" })).toBe(
-      "Nobody at the table is called 'Zed'.",
-    );
-    expect(t.state.counter).toEqual({ n: 2 });
-  });
+	test("not when a later change depends on it; the GM takes that back first", () => {
+		const t = party();
+		t.run(ALICE, line("/temp vex 5"));
+		t.run(GM, line("/dmg vex 6"));
+		const hit = t.state.feed.at(-1)?.text;
+		expect(t.submit(ALICE, undo)).toBe(
+			`A later change depends on it: GM's "${hit}". Undo that first, or ask the GM.`
+		);
+		expect(t.submit(GM, { type: "undo", who: "Alice", whose: ALICE })).toBe(
+			`A later change depends on it: GM's "${hit}". Undo that first.`
+		);
+		t.run(GM, undo);
+		t.run(ALICE, undo);
+		expect(vex(t)).toMatchObject({ stamina: 21, temp: 0 });
+	});
 
-  test("not when a later change depends on it; the GM takes that back first", () => {
-    const t = new Table(toy.rules);
-    t.run(BOB, { type: "name", name: "Bob" });
-    t.run(ALICE, { type: "bump", by: [2] });
-    t.run(BOB, { type: "set", from: 0, to: 7 });
-    expect(t.submit(ALICE, withNow(t))).toBe(
-      'A later change depends on it: Bob\'s "set to 7". Undo that first, or ask the GM.',
-    );
-    expect(t.submit(GM, { type: "undo", who: "Alice", whose: ALICE })).toBe(
-      'A later change depends on it: Bob\'s "set to 7". Undo that first.',
-    );
-    t.run(GM, undo);
-    t.run(ALICE, withNow(t));
-    expect(t.state.counter).toEqual({ n: 0 });
-  });
+	test("not when a later change would come out differently: its feed line would be wrong", () => {
+		const t = party();
+		t.run(ALICE, line("/res vex +2"));
+		t.run(GM, line("/res vex +1"));
+		t.run(BOB, line("/res kor +1"));
+		t.run(GM, line("/res vex +4"));
+		const later = `GM's "Vex gains 1 Wrath → 3"; GM's "Vex gains 4 Wrath → 7"`;
+		expect(t.submit(ALICE, undo)).toBe(
+			`Later changes depend on it: ${later}. Undo those first, or ask the GM.`
+		);
+		expect(t.submit(GM, { type: "undo", who: "Alice", whose: ALICE })).toBe(
+			`Later changes depend on it: ${later}. Undo those first.`
+		);
+		expect(t.envelopes.at(-1)?.type).toBe("ds.resource-changed");
+		expect([vex(t)?.resource, kor(t)?.resource]).toEqual([7, 1]);
+		t.run(GM, undo);
+		t.run(GM, { type: "undo", who: "GM", whose: GM });
+		t.run(ALICE, undo);
+		expect([vex(t)?.resource, kor(t)?.resource]).toEqual([0, 1]);
+	});
 
-  test("not when a later change would come out differently: its feed line would be wrong", () => {
-    const t = new Table(toy.rules);
-    t.run(BOB, { type: "name", name: "Bob" });
-    t.run(ALICE, { type: "bump", by: [2] });
-    t.run(BOB, { type: "bump", by: [1] });
-    t.run(GM, { type: "tag", tag: "red" });
-    t.run(GM, { type: "bump", by: [4] });
-    // Bob's "+1 → 3" would read "+1 → 1", and the GM's "+4 → 7" "+4 → 5": both are named, the
-    // tag isn't, and nothing is written.
-    const refusal =
-      'Later changes depend on it: Bob\'s "+1 → 3"; GM\'s "+4 → 7". Undo those first, or ask the GM.';
-    expect(t.submit(ALICE, withNow(t))).toBe(refusal);
-    expect(t.submit(GM, { type: "undo", who: "Alice", whose: ALICE })).toBe(
-      'Later changes depend on it: Bob\'s "+1 → 3"; GM\'s "+4 → 7". Undo those first.',
-    );
-    expect(t.envelopes.at(-1)?.type).toBe("counter.bumped");
-    expect(t.state.counter).toEqual({ n: 7, tag: "red" });
-    // Once those are taken back, newest first, Alice's is hers to take back again.
-    t.run(GM, undo);
-    t.run(GM, { type: "undo", who: "Bob", whose: BOB });
-    t.run(ALICE, withNow(t));
-    expect(t.state.counter).toEqual({ n: 0, tag: "red" });
-  });
+	test("never a batch that rolled dice: the GM's alone, so nobody rolls again by undoing", () => {
+		const t = party();
+		t.run(ALICE, line("/pr vex Spinning Strike"), () => 4);
+		expect(t.submit(ALICE, undo)).toBe(
+			"That change rolled dice, so only the GM can take it back."
+		);
+		t.run(GM, undo);
+		expect(t.state.feed.at(-1)?.text).toStartWith(
+			"undid: Vex uses Spinning Strike"
+		);
+	});
 
-  test("never a batch that rolled dice: the GM's alone, so nobody rolls again by undoing", () => {
-    const t = new Table(toy.rules);
-    t.run(ALICE, { type: "spin" }, () => 1);
-    expect(t.submit(ALICE, withNow(t))).toBe(
-      "That change rolled dice, so only the GM can take it back.",
-    );
-    t.run(GM, undo);
-    expect(t.state.counter).toEqual({ n: 0 });
-  });
+	test("a measurement or anything else that changes nothing never stands in the way", () => {
+		const t = party();
+		t.run(
+			GM,
+			withHostFact(line("/map field"), {
+				kind: "map",
+				id: "field",
+				grid: { name: "Field", terrain: ["........", "........"] },
+			})
+		);
+		t.run(GM, line("/place vex a1"));
+		t.run(GM, line("/place kor c1"));
+		t.run(ALICE, line("/res vex +2"));
+		t.run(BOB, line("/dist vex kor"));
+		t.run(ALICE, undo);
+		expect(vex(t)?.resource).toBe(0);
+		t.run(BOB, line("/dist vex kor"));
 
-  test("a measurement or anything else that changes nothing never stands in the way", () => {
-    const t = new Table(toy.rules);
-    t.run(GM, { type: "bump", by: [5] });
-    t.run(ALICE, { type: "bump", by: [2] });
-    t.run(BOB, { type: "look" });
-    t.run(ALICE, withNow(t));
-    expect(t.state.counter).toEqual({ n: 5 });
-    t.run(BOB, { type: "look" });
-    t.run(GM, undo);
-    // The look changes nothing, so no undo folds it again: it couldn't be, where n is 0.
-    expect(t.state.counter).toEqual({ n: 0 });
-    expect(t.state.undo).toEqual([]);
-  });
+		const measured = t.envelopes
+			.filter((e) => e.type === "ds.measured")
+			.map((e) => e.seq);
 
-  test("needs the time from the host", () => {
-    const t = new Table(toy.rules);
-    t.run(ALICE, { type: "bump", by: [2] });
-    expect(t.submit(ALICE, undo)).toBe(
-      "The host didn't say what time it is, so only the GM can undo.",
-    );
-  });
+		expect(measured).toHaveLength(2);
+		expect(
+			t.state.undo.flatMap((b) => b.seqs).filter((s) => measured.includes(s))
+		).toEqual([]);
+		t.run(GM, undo);
+		expect(t.state.ds.map?.tokens.kor).toBeUndefined();
+	});
 });
 
 describe("undo at the Draw Steel table", () => {
-  test("a player can't change the result of a later change by taking back their own", () => {
-    const t = new Table();
-    t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
-    t.run(GM, { type: "hero", hero: "kor", sheet: KOR });
-    t.run(ALICE, { type: "play", hero: "vex" });
-    t.run(GM, { type: "dmg", who: "vex", amount: 10 });
-    t.run(ALICE, { type: "temp", who: "vex", amount: 5 });
-    t.run(GM, { type: "dmg", who: "vex", amount: 6 });
-    const hit = t.state.feed.at(-1)!.text;
-    expect(hit).toBe("Vex takes 6 damage (5 to temporary Stamina) → 10/21 · winded");
-    // Without the temporary Stamina, the GM's hit would read "→ 5/21 · winded" now.
-    expect(t.submit(ALICE, { type: "undo", now: t.now })).toBe(
-      `A later change depends on it: GM's "${hit}". Undo that first, or ask the GM.`,
-    );
-    expect(t.state.ds.heroes[0]).toMatchObject({ stamina: 10, temp: 0 });
-    // Damage to someone else doesn't depend on it, so it doesn't stand in the way.
-    t.run(GM, undo);
-    t.run(GM, { type: "dmg", who: "kor", amount: 3 });
-    t.run(ALICE, { type: "undo", now: t.now });
-    expect(t.state.ds.heroes.map((h) => [h.stamina, h.temp])).toEqual([
-      [11, 0],
-      [21, 0],
-    ]);
-  });
+	test("a player can't change the result of a later change by taking back their own", () => {
+		const t = new Table();
+		t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+		t.run(GM, { type: "hero", hero: "kor", sheet: KOR });
+		t.run(ALICE, { type: "play", hero: "vex" });
+		t.run(GM, { type: "dmg", who: "vex", amount: 10 });
+		t.run(ALICE, { type: "temp", who: "vex", amount: 5 });
+		t.run(GM, { type: "dmg", who: "vex", amount: 6 });
+		const hit = must(t.state.feed.at(-1)).text;
+		expect(hit).toBe(
+			"Vex takes 6 damage (5 to temporary Stamina) → 10/21 · winded"
+		);
+		expect(t.submit(ALICE, { type: "undo" })).toBe(
+			`A later change depends on it: GM's "${hit}". Undo that first, or ask the GM.`
+		);
+		expect(t.state.ds.heroes[0]).toMatchObject({ stamina: 10, temp: 0 });
+		t.run(GM, undo);
+		t.run(GM, { type: "dmg", who: "kor", amount: 3 });
+		t.run(ALICE, { type: "undo" });
+		expect(t.state.ds.heroes.map((h) => [h.stamina, h.temp])).toEqual([
+			[11, 0],
+			[21, 0],
+		]);
+	});
 
-  test("the feed says who undid what, in the undone lines' own words", () => {
-    const t = new Table();
-    t.run(GM, { type: "name", name: "Oscar" });
-    t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
-    t.run(GM, { type: "dmg", who: "vex", amount: 14 });
-    t.run(GM, undo);
-    const state = t.state;
-    expect(feedLines(state, tableLabel(state, "draw-steel")).map(plainText).slice(-2)).toEqual([
-      "Vex takes 14 damage → 7/21 · winded",
-      "↶ Oscar undid: Vex takes 14 damage → 7/21 · winded",
-    ]);
-    expect(state.ds.heroes[0]?.stamina).toBe(21);
-  });
+	test("the feed says who undid what, in the undone lines' own words", () => {
+		const t = new Table();
+		t.run(GM, { type: "name", name: "Oscar" });
+		t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+		t.run(GM, { type: "dmg", who: "vex", amount: 14 });
+		t.run(GM, undo);
+		const { state } = t;
+		expect(
+			feedLines(state, tableLabel(state, "draw-steel")).map(plainText).slice(-2)
+		).toEqual([
+			"Vex takes 14 damage → 7/21 · winded",
+			"↶ Oscar undid: Vex takes 14 damage → 7/21 · winded",
+		]);
+		expect(state.ds.heroes[0]?.stamina).toBe(21);
+	});
 
-  test("a claim is never undone, and undo can still go back past the hero's arrival", () => {
-    const t = new Table();
-    t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
-    t.run(GM, { type: "hero", hero: "kor", sheet: { ...VEX, id: "kor", name: "Kor" } });
-    t.run(GM, { type: "dmg", who: "vex", amount: 5 });
-    t.run(ALICE, { type: "play", hero: "vex" });
-    // The claim follows the latest batch, and each undo folds it again while Vex is there to
-    // claim. So the GM keeps every batch.
-    expect(t.state.undo).toHaveLength(3);
-    t.run(GM, undo);
-    expect(t.state.ds.heroes[0]).toMatchObject({ stamina: 21, player: ALICE });
-    t.run(GM, undo);
-    t.run(GM, undo);
-    expect(t.state.ds.heroes).toEqual([]);
-    expect(t.submit(GM, undo)).toBe("Nothing to undo.");
-  });
+	test("a claim is never undone, and undo can still go back past the hero's arrival", () => {
+		const t = new Table();
+		t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+		t.run(GM, {
+			type: "hero",
+			hero: "kor",
+			sheet: { ...VEX, id: "kor", name: "Kor" },
+		});
+		t.run(GM, { type: "dmg", who: "vex", amount: 5 });
+		t.run(ALICE, { type: "play", hero: "vex" });
+		expect(t.state.undo).toHaveLength(3);
+		t.run(GM, undo);
+		expect(t.state.ds.heroes[0]).toMatchObject({ stamina: 21, player: ALICE });
+		t.run(GM, undo);
+		t.run(GM, undo);
+		expect(t.state.ds.heroes).toEqual([]);
+		expect(t.submit(GM, undo)).toBe("Nothing to undo.");
+	});
 
-  test("a claim stands when an older change is taken back, though its hero came later", () => {
-    const t = new Table();
-    t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
-    t.run(ALICE, { type: "play", hero: "vex" });
-    t.run(ALICE, { type: "res", who: "vex", by: 1 });
-    t.run(GM, { type: "hero", hero: "kor", sheet: KOR });
-    t.run(BOB, { type: "play", hero: "kor" });
-    t.run(ALICE, { type: "undo", now: t.now });
-    expect(t.state.ds.heroes.map((h) => [h.id, h.resource, h.player])).toEqual([
-      ["vex", 0, ALICE],
-      ["kor", 0, BOB],
-    ]);
-    // Undone back past Kor's arrival, the claim has nothing to stand on; redone, it stands again.
-    t.run(GM, undo);
-    expect(t.state.ds.heroes.map((h) => h.id)).toEqual(["vex"]);
-    t.run(GM, redo);
-    expect(t.state.ds.heroes.map((h) => [h.id, h.player])).toEqual([
-      ["vex", ALICE],
-      ["kor", BOB],
-    ]);
-    t.run(GM, undo);
-    t.run(GM, undo);
-    expect(t.state.ds.heroes).toEqual([]);
-  });
+	test("a claim stands when an older change is taken back, though its hero came later", () => {
+		const t = new Table();
+		t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+		t.run(ALICE, { type: "play", hero: "vex" });
+		t.run(ALICE, { type: "res", who: "vex", by: 1 });
+		t.run(GM, { type: "hero", hero: "kor", sheet: KOR });
+		t.run(BOB, { type: "play", hero: "kor" });
+		t.run(ALICE, { type: "undo" });
+		expect(t.state.ds.heroes.map((h) => [h.id, h.resource, h.player])).toEqual([
+			["vex", 0, ALICE],
+			["kor", 0, BOB],
+		]);
+		t.run(GM, undo);
+		expect(t.state.ds.heroes.map((h) => h.id)).toEqual(["vex"]);
+		t.run(GM, redo);
+		expect(t.state.ds.heroes.map((h) => [h.id, h.player])).toEqual([
+			["vex", ALICE],
+			["kor", BOB],
+		]);
+		t.run(GM, undo);
+		t.run(GM, undo);
+		expect(t.state.ds.heroes).toEqual([]);
+	});
 
-  test("the undone lines are joined without doubled stops", () => {
-    const t = new Table(toy.rules);
-    t.run(GM, { type: "spin" }, () => 3);
-    t.run(GM, { type: "set", from: 3, to: 9 });
-    t.run(GM, undo);
-    expect(t.state.feed.at(-1)?.text).toBe("undid: set to 9.");
-    const two = new Table(toy.rules);
-    two.envelopes.push(
-      env(1, "counter.spun", { face: 3 }, GM, at(0)),
-      env(2, "counter.set", { from: 3, to: 9 }, GM, at(0)),
-    );
-    two.run(GM, undo);
-    expect(two.state.feed.at(-1)?.text).toBe("undid: spun 3 → 3; set to 9.");
-  });
+	test("the undone lines are joined without doubled stops", () => {
+		const t = party();
+		submission(t, ALICE, [
+			["ds.resource-changed", { id: "vex", by: 2 }],
+			["ds.resource-changed", { id: "vex", by: 3 }],
+		]);
+		t.run(GM, undo);
+		expect(t.state.feed.at(-1)?.text).toBe(
+			"undid: Vex gains 2 Wrath → 2; Vex gains 3 Wrath → 5."
+		);
+		t.run(GM, line("/malice +1"));
+		t.run(GM, undo);
+		expect(t.state.feed.at(-1)?.text).toBe("undid: Malice +1 → 1.");
+	});
 });
 
 describe("redo", () => {
-  test("puts back what the latest undo took, from the log, so its dice aren't rolled again", () => {
-    const t = new Table(toy.rules);
-    t.run(GM, { type: "spin" }, () => 4);
-    t.run(GM, undo);
-    expect(t.state.counter).toEqual({ n: 0 });
-    t.run(GM, redo);
-    expect(t.last).toMatchObject({ type: "core.redone", payload: { seqs: [1] } });
-    expect(t.state.counter).toEqual({ n: 4 });
-    expect(t.state.feed.at(-1)?.text).toBe("redid: spun 4 → 4.");
-    // What was redone can be undone again, and redone again.
-    t.run(GM, undo);
-    t.run(GM, redo);
-    expect(t.state.counter).toEqual({ n: 4 });
-    expect(t.submit(GM, redo)).toBe("Nothing to redo.");
-  });
+	test("puts back what the latest undo took, from the log, so its dice aren't rolled again", () => {
+		const t = party();
+		t.run(GM, line("/pr vex Spinning Strike"), () => 4);
+		const rolled = t.envelopes.length;
+		const said = t.state.feed.at(-1)?.text;
+		t.run(GM, undo);
+		t.run(GM, redo);
+		expect(t.last).toMatchObject({
+			type: "core.redone",
+			payload: { seqs: [rolled] },
+		});
+		expect(t.state.feed.at(-1)?.text).toBe(`redid: ${said}`);
+		t.run(GM, undo);
+		t.run(GM, redo);
+		expect(t.state.feed.at(-1)?.text).toBe(`redid: ${said}`);
+		expect(t.submit(GM, redo)).toBe("Nothing to redo.");
+	});
 
-  test("walks forward through several undos, newest undo first", () => {
-    const t = new Table(toy.rules);
-    t.run(GM, { type: "bump", by: [5] });
-    t.run(BOB, { type: "bump", by: [1] });
-    t.run(GM, undo);
-    t.run(GM, undo);
-    t.run(GM, redo);
-    expect(t.state.counter).toEqual({ n: 5 });
-    t.run(GM, redo);
-    expect(t.state.counter).toEqual({ n: 6 });
-  });
+	test("walks forward through several undos, newest undo first", () => {
+		const t = party();
+		t.run(GM, line("/malice +5"));
+		t.run(BOB, line("/res kor +1"));
+		t.run(GM, undo);
+		t.run(GM, undo);
+		t.run(GM, redo);
+		expect([t.state.ds.malice, kor(t)?.resource]).toEqual([5, 0]);
+		t.run(GM, redo);
+		expect([t.state.ds.malice, kor(t)?.resource]).toEqual([5, 1]);
+	});
 
-  test("a player redoes only an undo they did; any new change ends the redo", () => {
-    const t = new Table(toy.rules);
-    t.run(ALICE, { type: "bump", by: [2] });
-    t.run(GM, undo);
-    expect(t.submit(ALICE, redo)).toBe("Only the GM can redo someone else's undo.");
-    t.run(GM, redo);
-    t.run(ALICE, { type: "undo", now: t.now });
-    t.run(ALICE, redo);
-    expect(t.state.counter).toEqual({ n: 2 });
-    t.run(ALICE, { type: "undo", now: t.now });
-    t.run(BOB, { type: "bump", by: [1] });
-    expect(t.submit(ALICE, redo)).toBe("Nothing to redo.");
-  });
+	test("a player redoes only an undo they did; any new change ends the redo", () => {
+		const t = party();
+		t.run(ALICE, line("/res vex +2"));
+		t.run(GM, undo);
+		expect(t.submit(ALICE, redo)).toBe(
+			"Only the GM can redo someone else's undo."
+		);
+		t.run(GM, redo);
+		t.run(ALICE, undo);
+		t.run(ALICE, redo);
+		expect(vex(t)?.resource).toBe(2);
+		t.run(ALICE, undo);
+		t.run(BOB, line("/res kor +1"));
+		expect(t.submit(ALICE, redo)).toBe("Nothing to redo.");
+	});
 
-  test("not when it would come out differently now; replay halts on such a redo", () => {
-    const t = new Table(toy.rules);
-    t.run(GM, { type: "bump", by: [5] });
-    t.run(GM, undo);
-    t.run(GM, { type: "cap", at: 3 });
-    // "+5 → 5" would read "+5 → 3".
-    expect(t.submit(GM, redo)).toBe("That can't be put back now: the game has changed under it.");
-    const folded = fold(
-      toy.rules,
-      [...t.envelopes, env(4, "core.redone", { seqs: [1] }, GM, at(9))],
-      { strict: true },
-    );
-    expect(folded.error).toEqual({
-      seq: 4,
-      message: 'the redo at seq 4 would come out differently: "+5 → 5" would read "+5 → 3"',
-    });
-  });
+	const changed = "That can't be put back now: the game has changed under it.";
 
-  const changed = "That can't be put back now: the game has changed under it.";
+	test("a redo that isn't of the latest undo halts replay", () => {
+		expect(
+			halted(
+				env(1, "ds.malice-changed", { by: 5 }, GM, at(0)),
+				env(
+					2,
+					"core.retracted",
+					{ seqs: [1], undone: ["Malice +5 → 5."] },
+					GM,
+					at(1)
+				),
+				env(3, "ds.malice-changed", { by: 1 }, GM, at(2)),
+				env(4, "core.redone", { seqs: [1] }, GM, at(3))
+			)
+		).toEqual({
+			seq: 4,
+			message: "the redo at seq 4 isn't of the latest undo",
+		});
+	});
 
-  test("not once anything has changed since the undo; a log with such a redo still replays", () => {
-    const t = new Table(toy.rules);
-    t.run(GM, { type: "set", from: 0, to: 3 });
-    t.run(GM, undo);
-    // Not retractable, so it doesn't end the redo, but the counter isn't as the undo left it.
-    t.run(GM, { type: "pin", at: 1 });
-    expect(t.submit(GM, redo)).toBe(changed);
-    // Only decide holds it back: a log written before it did replays as it always has.
-    const replayed = fold(
-      toy.rules,
-      [...t.envelopes, env(4, "core.redone", { seqs: [1] }, GM, at(9))],
-      { strict: true },
-    );
-    expect(replayed.error).toBeUndefined();
-    expect(replayed.state.counter).toEqual({ n: 3, pin: 1 });
-  });
+	test("not once anything has changed since the undo; a log with such a redo still replays", () => {
+		const t = party();
+		t.run(ALICE, line("/res vex +2"));
+		const changedAt = t.envelopes.length;
+		t.run(ALICE, undo);
+		t.run(ALICE, line("/unplay"));
+		t.run(BOB, line("/unplay"));
+		t.run(BOB, line("/play vex"));
+		expect(t.submit(ALICE, redo)).toBe(changed);
 
-  test("not of an older batch's undo: it would land on top of what came after it", () => {
-    const t = new Table(toy.rules);
-    t.run(ALICE, { type: "tag", tag: "red" });
-    t.run(GM, { type: "tag", tag: "blue" });
-    t.run(GM, { type: "undo", who: "Alice", whose: ALICE });
-    expect(t.submit(GM, redo)).toBe(changed);
-    expect(t.state.counter).toEqual({ n: 0, tag: "blue" });
-  });
+		const replayed = fold(
+			rules,
+			[
+				...t.envelopes,
+				env(
+					t.envelopes.length + 1,
+					"core.redone",
+					{ seqs: [changedAt] },
+					ALICE,
+					at(99)
+				),
+			],
+			{ strict: true }
+		);
 
-  test("at the Draw Steel table: undo, undo, redo, redo ends where it began", () => {
-    const t = new Table();
-    t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
-    t.run(ALICE, { type: "play", hero: "vex" });
-    t.run(ALICE, { type: "res", who: "vex", by: 1 });
-    t.run(GM, { type: "dmg", who: "vex", amount: 5 });
-    const before = t.state.ds;
-    t.run(GM, undo);
-    t.run(GM, undo);
-    expect(t.state.ds.heroes[0]).toMatchObject({ stamina: 21, resource: 0, player: ALICE });
-    t.run(GM, redo);
-    t.run(GM, redo);
-    expect(t.state.ds).toEqual(before);
-    expect(t.submit(GM, redo)).toBe("Nothing to redo.");
-  });
+		expect(replayed.error).toBeUndefined();
+		expect(replayed.state.ds.heroes[0]).toMatchObject({
+			resource: 2,
+			player: BOB,
+		});
+	});
 
-  test("a player can't redo onto a hero that has changed hands since", () => {
-    const t = new Table();
-    t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
-    t.run(ALICE, { type: "play", hero: "vex" });
-    t.run(ALICE, { type: "res", who: "vex", by: 1 });
-    t.run(ALICE, { type: "undo", now: t.now });
-    t.run(ALICE, { type: "unplay" });
-    t.run(BOB, { type: "play", hero: "vex" });
-    expect(t.submit(ALICE, redo)).toBe(changed);
-    expect(t.state.ds.heroes[0]).toMatchObject({ resource: 0, player: BOB });
-  });
+	test("not of an older batch's undo: it would land on top of what came after it", () => {
+		const t = party();
+		t.run(ALICE, line("/res vex +2"));
+		t.run(GM, line("/malice +1"));
+		t.run(GM, { type: "undo", who: "Alice", whose: ALICE });
+		expect(t.submit(GM, redo)).toBe(changed);
+		expect([vex(t)?.resource, t.state.ds.malice]).toEqual([0, 1]);
+	});
 
-  test("an older change the GM took back isn't put back past decide: no condition on the dead", () => {
-    const t = new Table();
-    t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
-    t.run(ALICE, { type: "play", hero: "vex" });
-    t.run(ALICE, { type: "cond", who: "vex", condition: "slowed", duration: "end" });
-    t.run(GM, { type: "dmg", who: "vex", amount: 40 });
-    t.run(GM, { type: "undo", who: "Alice", whose: ALICE });
-    expect(t.submit(GM, redo)).toBe(changed);
-    expect(t.state.ds.heroes[0]?.conditions).toEqual([]);
-  });
+	test("at the Draw Steel table: undo, undo, redo, redo ends where it began", () => {
+		const t = new Table();
+		t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+		t.run(ALICE, { type: "play", hero: "vex" });
+		t.run(ALICE, { type: "res", who: "vex", by: 1 });
+		t.run(GM, { type: "dmg", who: "vex", amount: 5 });
+		const before = t.state.ds;
+		t.run(GM, undo);
+		t.run(GM, undo);
+		expect(t.state.ds.heroes[0]).toMatchObject({
+			stamina: 21,
+			resource: 0,
+			player: ALICE,
+		});
+		t.run(GM, redo);
+		t.run(GM, redo);
+		expect(t.state.ds).toEqual(before);
+		expect(t.submit(GM, redo)).toBe("Nothing to redo.");
+	});
 
-  test("nor temporary Stamina lowered under a larger amount given since", () => {
-    const t = new Table();
-    t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
-    t.run(ALICE, { type: "play", hero: "vex" });
-    t.run(ALICE, { type: "temp", who: "vex", amount: 5 });
-    t.run(GM, { type: "temp", who: "vex", amount: 9 });
-    t.run(GM, { type: "undo", who: "Alice", whose: ALICE });
-    expect(t.submit(GM, redo)).toBe(changed);
-    expect(t.state.ds.heroes[0]?.temp).toBe(9);
-  });
+	test("a player can't redo onto a hero that has changed hands since", () => {
+		const t = new Table();
+		t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+		t.run(ALICE, { type: "play", hero: "vex" });
+		t.run(ALICE, { type: "res", who: "vex", by: 1 });
+		t.run(ALICE, { type: "undo" });
+		t.run(ALICE, { type: "unplay" });
+		t.run(BOB, { type: "play", hero: "vex" });
+		expect(t.submit(ALICE, redo)).toBe(changed);
+		expect(t.state.ds.heroes[0]).toMatchObject({ resource: 0, player: BOB });
+	});
+
+	test("an older change the GM took back isn't put back past decide: no condition on the dead", () => {
+		const t = new Table();
+		t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+		t.run(ALICE, { type: "play", hero: "vex" });
+		t.run(ALICE, {
+			type: "cond",
+			who: "vex",
+			condition: "slowed",
+			duration: "end",
+		});
+		t.run(GM, { type: "dmg", who: "vex", amount: 40 });
+		t.run(GM, { type: "undo", who: "Alice", whose: ALICE });
+		expect(t.submit(GM, redo)).toBe(changed);
+		expect(t.state.ds.heroes[0]?.conditions).toEqual([]);
+	});
+
+	test("nor temporary Stamina lowered under a larger amount given since", () => {
+		const t = new Table();
+		t.run(GM, { type: "hero", hero: "vex", sheet: VEX });
+		t.run(ALICE, { type: "play", hero: "vex" });
+		t.run(ALICE, { type: "temp", who: "vex", amount: 5 });
+		t.run(GM, { type: "temp", who: "vex", amount: 9 });
+		t.run(GM, { type: "undo", who: "Alice", whose: ALICE });
+		expect(t.submit(GM, redo)).toBe(changed);
+		expect(t.state.ds.heroes[0]?.temp).toBe(9);
+	});
 });
 
 describe("a lenient reader", () => {
-  test("takes back a batch that held an event it doesn't know", () => {
-    const log = [
-      env(1, "counter.bumped", { by: 5 }, GM, at(0)),
-      env(2, "counter.bumped", { by: 2 }, ALICE, at(1)),
-      env(3, "counter.future-thing", {}, ALICE, at(1)),
-      env(4, "core.retracted", { seqs: [2, 3], undone: ["+2 → 7", "?"] }, GM, at(2)),
-    ];
-    const folded = fold(toy.rules, log, { strict: false });
-    expect(folded.error).toBeUndefined();
-    expect(folded.skipped.map((e) => e.seq)).toEqual([3]);
-    expect(folded.state.counter).toEqual({ n: 5 });
-  });
+	test("takes back a batch that held an event it doesn't know", () => {
+		const log = [
+			env(1, "ds.malice-changed", { by: 5 }, GM, at(0)),
+			env(2, "ds.malice-changed", { by: 2 }, ALICE, at(1)),
+			env(3, "ds.future-thing", {}, ALICE, at(1)),
+			env(
+				4,
+				"core.retracted",
+				{ seqs: [2, 3], undone: ["Malice +2 → 7.", "?"] },
+				GM,
+				at(2)
+			),
+		];
 
-  test("takes back a batch it knows nothing of, or one that began with such an event", () => {
-    const log = [
-      env(1, "counter.bumped", { by: 5 }, GM, at(0)),
-      env(2, "counter.future-thing", {}, ALICE, at(1)),
-      env(3, "core.retracted", { seqs: [2], undone: ["?"] }, GM, at(2)),
-      env(4, "counter.future-thing", {}, ALICE, at(3)),
-      env(5, "counter.bumped", { by: 2 }, ALICE, at(3)),
-      env(6, "core.retracted", { seqs: [4, 5], undone: ["?", "+2 → 7"] }, GM, at(4)),
-    ];
-    const folded = fold(toy.rules, log, { strict: false });
-    expect(folded.error).toBeUndefined();
-    expect(folded.skipped.map((e) => e.seq)).toEqual([2, 4]);
-    expect(folded.state.counter).toEqual({ n: 5 });
-    expect(folded.state.undo.map((b) => b.seqs)).toEqual([[1]]);
-    // And the redo of it, which names the batch as its retraction did.
-    const redone = fold(toy.rules, [...log, env(7, "core.redone", { seqs: [4, 5] }, GM, at(5))], {
-      strict: false,
-    });
-    expect(redone.error).toBeUndefined();
-    expect(redone.state.counter).toEqual({ n: 7 });
-  });
+		const folded = fold(rules, log, { strict: false });
+		expect(folded.error).toBeUndefined();
+		expect(folded.skipped.map((e) => e.seq)).toEqual([3]);
+		expect(folded.state.ds.malice).toBe(5);
+	});
+
+	test("takes back a batch it knows nothing of, or one that began with such an event", () => {
+		const log = [
+			env(1, "ds.malice-changed", { by: 5 }, GM, at(0)),
+			env(2, "ds.future-thing", {}, ALICE, at(1)),
+			env(3, "core.retracted", { seqs: [2], undone: ["?"] }, GM, at(2)),
+			env(4, "ds.future-thing", {}, ALICE, at(3)),
+			env(5, "ds.malice-changed", { by: 2 }, ALICE, at(3)),
+			env(
+				6,
+				"core.retracted",
+				{ seqs: [4, 5], undone: ["?", "Malice +2 → 7."] },
+				GM,
+				at(4)
+			),
+		];
+
+		const folded = fold(rules, log, { strict: false });
+		expect(folded.error).toBeUndefined();
+		expect(folded.skipped.map((e) => e.seq)).toEqual([2, 4]);
+		expect(folded.state.ds.malice).toBe(5);
+		expect(folded.state.undo.map((b) => b.seqs)).toEqual([[1]]);
+
+		const redone = fold(
+			rules,
+			[...log, env(7, "core.redone", { seqs: [4, 5] }, GM, at(5))],
+			{ strict: false }
+		);
+
+		expect(redone.error).toBeUndefined();
+		expect(redone.state.ds.malice).toBe(7);
+	});
 });

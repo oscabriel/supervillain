@@ -1,0 +1,36 @@
+{
+	"success": true,
+	"build": {
+		"name": "Orrin Vale",
+		"class": "Wizard",
+		"level": 1,
+		"ancestry": "Gnome",
+		"sizeName": "Small",
+		"size": 1,
+		"keyability": "int",
+		"attributes": { "ancestryhp": 8, "classhp": 6, "bonushp": 0, "bonushpPerLevel": 0, "speed": 25, "speedBonus": 0 },
+		"abilities": { "str": 10, "dex": 14, "con": 12, "int": 18, "wis": 12, "cha": 10 },
+		"proficiencies": { "classDC": 2, "perception": 2, "fortitude": 2, "reflex": 2, "will": 4, "arcana": 2, "crafting": 2 },
+		"weapons": [
+			{ "name": "Staff", "display": "Staff", "die": "d4", "str": "", "damageType": "B", "attack": 3, "damageBonus": 0, "runes": [], "extraDamage": [] }
+		],
+		"armor": [],
+		"spellCasters": [
+			{
+				"name": "Wizard",
+				"magicTradition": "arcane",
+				"spellcastingType": "prepared",
+				"ability": "int",
+				"proficiency": 2,
+				"focusPoints": 0,
+				"innate": false,
+				"perDay": [5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+				"spells": [
+					{ "spellLevel": 0, "list": ["Spark Arc", "Light Mote"] },
+					{ "spellLevel": 1, "list": ["Searing Bolt"] }
+				]
+			}
+		],
+		"acTotal": { "acTotal": 15, "shieldBonus": null }
+	}
+}

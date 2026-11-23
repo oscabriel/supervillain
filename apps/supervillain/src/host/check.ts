@@ -1,75 +1,96 @@
-import { fold, parseLog } from "@supervillain/engine";
-import {
-  feedLines,
-  labelOf,
-  plainText,
-  type Ruleset,
-  rules,
-  type TableState,
-  tableLabel,
-} from "../game/index.ts";
+import { labelOf, plainText, readLog } from "@supervillain/domain";
+import type { RulesetName, Skipped, TableState } from "@supervillain/domain";
+import { parseLog } from "@supervillain/platform-jsonl";
 
-/**
- * The state as the state pane and `check` print it: the feed only counted, since it's on screen,
- * and the undo and redo stacks only counted, since each batch holds a copy of the slices it would
- * restore or the events it would put back.
- */
+const counted = (n: number, one: string, many: string) =>
+	`[${n} ${n === 1 ? one : many}]`;
+
 export const shownState = (state: TableState) => ({
-  ...state,
-  feed: `[${state.feed.length} lines]`,
-  undo: `[${state.undo.length} ${state.undo.length === 1 ? "batch" : "batches"}]`,
-  redo: `[${state.redo.length} ${state.redo.length === 1 ? "batch" : "batches"}]`,
+	...state,
+	feed: `[${state.feed.length} lines]`,
+	undo: counted(state.undo.length, "batch", "batches"),
+	redo: counted(state.redo.length, "batch", "batches"),
 });
 
 export interface CheckReport {
-  /** The summary, the feed and the final state, for stdout. */
-  readonly out: ReadonlyArray<string>;
-  /** What was skipped or cut, for stderr. */
-  readonly warnings: ReadonlyArray<string>;
-  /** Why the read stopped early, if it did. */
-  readonly error?: string;
+	readonly out: ReadonlyArray<string>;
+	readonly warnings: ReadonlyArray<string>;
+	readonly error?: string;
 }
 
-/**
- * Reads a campaign log the way any reader does: the shared parser, then a lenient fold that
- * skips unknown events loudly. Pure, so it never takes the host's lock or writes anything.
- */
-export function checkLog(path: string, text: string, ruleset: Ruleset): CheckReport {
-  const parsed = parseLog(text);
-  const folded = fold(rules, parsed.envelopes, { strict: false });
-  const { state } = folded;
-  const warnings: string[] = [];
-  if (parsed.torn !== undefined)
-    warnings.push(`the last line has no newline (a write that never finished); ignoring it`);
-  for (const e of folded.skipped)
-    warnings.push(`seq ${e.seq}: skipped unknown event type ${JSON.stringify(e.type)}`);
+const warningOf = (skipped: Skipped): string => {
+	const where =
+		skipped.seq === undefined ? `line ${skipped.line}` : `seq ${skipped.seq}`;
 
-  const counts = new Map<string, number>();
-  const applied = folded.error
-    ? parsed.envelopes.filter((e) => e.seq < folded.error!.seq)
-    : parsed.envelopes;
-  for (const e of applied) {
-    if (rules.knows(e.type)) counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
-  }
-  const label = labelOf(state);
-  const out = [
-    `${path}: ${parsed.envelopes.length} events, through seq ${state.seq}, ${folded.skipped.length} skipped`,
-    `events: ${[...counts].map(([type, n]) => `${type} ×${n}`).join(", ") || "none"}`,
-    `actors: ${state.actors.map((a) => `${label(a)} (${a})`).join(", ") || "none"}`,
-    "",
-    "feed:",
-    ...feedLines(state, tableLabel(state, ruleset)).map(
-      (l) => `${String(l.seq).padStart(6)}  ${plainText(l)}`,
-    ),
-    "",
-    "state:",
-    JSON.stringify(shownState(state), null, 2),
-  ];
+	return skipped.reason.startsWith("unknown event type")
+		? `${where}: skipped ${skipped.reason}`
+		: `${where}: skipped ${skipped.type ?? "a line"}: ${skipped.reason}`;
+};
 
-  const error = parsed.error
-    ? `${path}:${parsed.error.line}: ${parsed.error.message} (read ${parsed.envelopes.length} lines before it)`
-    : folded.error
-      ? `${path}: stopped at seq ${folded.error.seq}: ${folded.error.message}`
-      : undefined;
-  return error === undefined ? { out, warnings } : { out, warnings, error };
-}
+export const checkLog = (
+	path: string,
+	text: string,
+	ruleset: RulesetName
+): CheckReport => {
+	const parsed = parseLog(text);
+	const intact = parsed.intact.split("\n").slice(0, parsed.lines.length);
+	const read = readLog(intact, ruleset);
+	const { state } = read;
+	const skippedLines = new Set(read.skipped.map((s) => s.line));
+
+	const torn =
+		parsed.torn === undefined
+			? []
+			: [
+					"the last line has no newline (a write that never finished); ignoring it",
+				];
+
+	const warnings = [...torn, ...read.skipped.map(warningOf)];
+
+	const halt = read.error?.line ?? Number.POSITIVE_INFINITY;
+	const counts = new Map<string, number>();
+
+	for (const [index, line] of parsed.lines.entries()) {
+		const number = index + 1;
+
+		if (number < halt && !skippedLines.has(number)) {
+			counts.set(line.type, (counts.get(line.type) ?? 0) + 1);
+		}
+	}
+
+	const label = labelOf(state);
+	const events = [...counts].map(([type, n]) => `${type} ×${n}`).join(", ");
+	const actors = state.actors.map((a) => `${label(a)} (${a})`).join(", ");
+
+	const out = [
+		`${path}: ${parsed.lines.length} events, through seq ${state.seq}, ${read.skipped.length} skipped`,
+		`events: ${events === "" ? "none" : events}`,
+		`actors: ${actors === "" ? "none" : actors}`,
+		"",
+		"feed:",
+		...read.feed.map(
+			(line) => `${String(line.seq).padStart(6)}  ${plainText(line)}`
+		),
+		"",
+		"state:",
+		JSON.stringify(shownState(state), null, 2),
+	];
+
+	if (parsed.error !== undefined) {
+		return {
+			out,
+			warnings,
+			error: `${path}:${parsed.error.line}: ${parsed.error.message} (read ${parsed.lines.length} lines before it)`,
+		};
+	}
+
+	if (read.error !== undefined) {
+		return {
+			out,
+			warnings,
+			error: `${path}: stopped at seq ${read.error.seq}: ${read.error.message}`,
+		};
+	}
+
+	return { out, warnings };
+};

@@ -1,12 +1,16 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "emitDeclarationOnly": true,
-    "outDir": "dist",
-    "rootDir": ".",
-    "jsx": "preserve",
-    "jsxImportSource": "@opentui/solid"
-  },
-  "include": ["src", "test", "preload.ts"],
-  "references": [{ "path": "../../packages/engine" }, { "path": "../../packages/ssh" }]
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"emitDeclarationOnly": true,
+		"outDir": "dist",
+		"rootDir": ".",
+		"jsx": "preserve",
+		"jsxImportSource": "@opentui/solid"
+	},
+	"include": ["src", "test", "preload.ts"],
+	"references": [
+		{ "path": "../../packages/domain" },
+		{ "path": "../../packages/platform-jsonl" },
+		{ "path": "../../packages/ssh" }
+	]
 }

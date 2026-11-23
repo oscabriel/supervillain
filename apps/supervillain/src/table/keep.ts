@@ -1,30 +1,59 @@
-/**
- * `next`, with every object and array in it that reads the same as last time's swapped for last
- * time's: `previous` itself when all of it does. In a list an item is matched wherever it moved,
- * else by place. The host keeps a seat's views so: an event that leaves the map as it was paints
- * no picture again, and one that changes a prep item rebuilds that item alone. The band and the
- * map keep their lines so too, since `<For>` keys rows by identity and would rebuild every row of
- * a fresh array.
- */
-export function kept<A>(previous: A | undefined, next: A): A {
-  if (previous === next) return next;
-  if (
-    typeof previous !== "object" ||
-    typeof next !== "object" ||
-    previous === null ||
-    next === null ||
-    Array.isArray(previous) !== Array.isArray(next)
-  )
-    return next;
-  const was = previous as Record<string, unknown>;
-  const now = next as Record<string, unknown>;
-  const keys = Object.keys(now);
-  const moved = Array.isArray(was) ? new Map(was.map((v) => [JSON.stringify(v), v])) : undefined;
-  const out = (Array.isArray(now) ? [] : {}) as Record<string, unknown>;
-  let same = keys.length === Object.keys(was).length;
-  for (const key of keys) {
-    out[key] = moved?.get(JSON.stringify(now[key])) ?? kept(was[key], now[key]);
-    if (out[key] !== was[key] || !Object.hasOwn(was, key)) same = false;
-  }
-  return same ? previous : (out as A);
-}
+const isPlain = <A>(value: A): value is NonNullable<A> =>
+	value !== null &&
+	value !== undefined &&
+	Object.getPrototypeOf(value) === Object.prototype;
+
+const isComposite = <A>(value: A): value is NonNullable<A> =>
+	Array.isArray(value) || isPlain(value);
+
+const fieldsOf = <A>(value: NonNullable<A>): ReadonlyMap<string, unknown> =>
+	new Map(Object.entries(value));
+
+const sameKind = <A, B>(candidate: B, next: A): candidate is A & B =>
+	Array.isArray(candidate) && Array.isArray(next)
+		? candidate.length === next.length
+		: isPlain(candidate) && isPlain(next);
+
+export const kept = <A>(previous: A | undefined, next: A): A => {
+	if (previous === next) {
+		return next;
+	}
+
+	if (
+		!isComposite(previous) ||
+		!isComposite(next) ||
+		Array.isArray(previous) !== Array.isArray(next)
+	) {
+		return next;
+	}
+
+	const was = fieldsOf(previous);
+	const now = fieldsOf(next);
+
+	const moved = Array.isArray(previous)
+		? new Map([...was.values()].map((v) => [JSON.stringify(v), v]))
+		: undefined;
+
+	let same = now.size === was.size;
+
+	const pairs = [...now].map(([key, value]) => {
+		const reused =
+			moved?.get(JSON.stringify(value)) ?? kept(was.get(key), value);
+
+		if (reused !== was.get(key) || !was.has(key)) {
+			same = false;
+		}
+
+		return [key, reused] as const;
+	});
+
+	if (same) {
+		return previous;
+	}
+
+	const out = Array.isArray(next)
+		? pairs.map(([, value]) => value)
+		: Object.fromEntries(pairs);
+
+	return sameKind(out, next) ? out : next;
+};

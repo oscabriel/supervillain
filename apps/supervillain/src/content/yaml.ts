@@ -1,61 +1,121 @@
-/**
- * Writes the YAML a GM would: block mappings, short lists and number maps on one line, and quotes
- * only where a plain value would read back differently. Enough for the sheets we write; not a
- * general emitter.
- */
-export function toYaml(
-  value: Readonly<Record<string, unknown>>,
-  header: ReadonlyArray<string> = [],
-) {
-  const lines = header.map((line) => (line === "" ? "#" : `# ${line}`));
-  mapping(value, "", lines);
-  return `${lines.join("\n")}\n`;
+import { Option, Predicate, Schema } from "effect";
+
+export type YamlScalar = string | number | boolean;
+
+export type YamlValue =
+	| YamlScalar
+	| undefined
+	| ReadonlyArray<YamlValue>
+	| { readonly [key: string]: YamlValue };
+
+export interface YamlMap {
+	readonly [key: string]: YamlValue;
 }
 
-type Scalar = string | number | boolean;
+const isScalar = (v: YamlValue): v is YamlScalar =>
+	Predicate.isString(v) || Predicate.isNumber(v) || Predicate.isBoolean(v);
 
-const isScalar = (v: unknown): v is Scalar =>
-  typeof v === "string" || typeof v === "number" || typeof v === "boolean";
+const isList = (v: YamlValue): v is ReadonlyArray<YamlValue> =>
+	Array.isArray(v);
 
-function mapping(value: Readonly<Record<string, unknown>>, indent: string, out: string[]) {
-  for (const [key, v] of Object.entries(value)) {
-    if (v === undefined) continue;
-    if (isScalar(v)) out.push(`${indent}${key}: ${scalar(v)}`);
-    else if (Array.isArray(v)) {
-      if (v.every(isScalar)) out.push(`${indent}${key}: [${v.map(flowScalar).join(", ")}]`);
-      else {
-        out.push(`${indent}${key}:`);
-        for (const item of v) {
-          const block: string[] = [];
-          mapping(item as Record<string, unknown>, `${indent}    `, block);
-          out.push(`${indent}  - ${block.join("\n").trimStart()}`);
-        }
-      }
-    } else {
-      const entries = Object.entries(v as Record<string, unknown>);
-      if (entries.every(([, x]) => typeof x === "number"))
-        out.push(`${indent}${key}: { ${entries.map(([k, x]) => `${k}: ${x}`).join(", ")} }`);
-      else {
-        out.push(`${indent}${key}:`);
-        mapping(v as Record<string, unknown>, `${indent}  `, out);
-      }
-    }
-  }
-}
+const isMap = (v: YamlValue): v is YamlMap =>
+	Predicate.isObject(v) && !isList(v);
 
-/** Plain when it reads back as the same string, double-quoted (JSON is valid YAML) when not. */
-function scalar(v: Scalar): string {
-  if (typeof v !== "string") return String(v);
-  if (v !== "" && !v.includes("\n") && v.trim() === v) {
-    try {
-      if ((Bun.YAML.parse(`k: ${v}`) as { k: unknown }).k === v) return v;
-    } catch {
-      // Not plain-safe; quote it.
-    }
-  }
-  return JSON.stringify(v);
-}
+const quoted = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
-/** Inside `[…]` a comma or bracket would end the item, so those are quoted too. */
-const flowScalar = (v: Scalar) =>
-  typeof v === "string" && /[,[\]{}]/.test(v) ? JSON.stringify(v) : scalar(v);
+const echoed = Schema.decodeUnknownOption(Schema.Struct({ k: Schema.String }));
+
+const readsBack = (v: string): boolean => {
+	try {
+		return Option.exists(
+			echoed(Bun.YAML.parse(`k: ${v}`)),
+			(parsed) => parsed.k === v
+		);
+	} catch {
+		return false;
+	}
+};
+
+const scalar = (v: YamlScalar): string => {
+	if (!Predicate.isString(v)) {
+		return String(v);
+	}
+
+	const plain = v !== "" && !v.includes("\n") && v.trim() === v;
+
+	return plain && readsBack(v) ? v : quoted(v);
+};
+
+const flowScalar = (v: YamlScalar) =>
+	Predicate.isString(v) && /[,[\]{}]/u.test(v) ? quoted(v) : scalar(v);
+
+const flowKey = (k: string) =>
+	/[,:[\]{}#"']/u.test(k) || k.trim() !== k || k === "" ? quoted(k) : k;
+
+const mapping = (value: YamlMap, indent: string, out: Array<string>) => {
+	for (const [key, v] of Object.entries(value)) {
+		if (v === undefined) {
+			continue;
+		}
+
+		if (isScalar(v)) {
+			out.push(`${indent}${key}: ${scalar(v)}`);
+		} else if (isList(v)) {
+			list(key, v, indent, out);
+		} else if (isMap(v)) {
+			nested(key, v, indent, out);
+		}
+	}
+};
+
+const list = (
+	key: string,
+	v: ReadonlyArray<YamlValue>,
+	indent: string,
+	out: Array<string>
+) => {
+	const scalars = v.filter(isScalar);
+
+	if (scalars.length === v.length) {
+		out.push(`${indent}${key}: [${scalars.map(flowScalar).join(", ")}]`);
+
+		return;
+	}
+
+	out.push(`${indent}${key}:`);
+
+	for (const item of v.filter(isMap)) {
+		const block: Array<string> = [];
+		mapping(item, `${indent}    `, block);
+		out.push(`${indent}  - ${block.join("\n").trimStart()}`);
+	}
+};
+
+const nested = (
+	key: string,
+	v: YamlMap,
+	indent: string,
+	out: Array<string>
+) => {
+	const entries = Object.entries(v);
+
+	const flow = entries.flatMap(([k, x]) =>
+		Predicate.isNumber(x) ? [`${flowKey(k)}: ${x}`] : []
+	);
+
+	if (flow.length === entries.length) {
+		out.push(`${indent}${key}: { ${flow.join(", ")} }`);
+
+		return;
+	}
+
+	out.push(`${indent}${key}:`);
+	mapping(v, `${indent}  `, out);
+};
+
+export const toYaml = (value: YamlMap, header: ReadonlyArray<string> = []) => {
+	const lines = header.map((line) => (line === "" ? "#" : `# ${line}`));
+	mapping(value, "", lines);
+
+	return `${lines.join("\n")}\n`;
+};
