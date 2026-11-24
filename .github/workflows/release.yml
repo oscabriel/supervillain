@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
 
 permissions:
   contents: read
@@ -14,29 +15,72 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Node
+        uses: actions/setup-node@v7
         with:
           node-version: "26"
-      - uses: oven-sh/setup-bun@v2
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
-      - run: bun install --frozen-lockfile --os="*" --cpu="*"
-      - run: bun run check
-      - run: bun test
-      - run: bun scripts/build.ts --all --version "$GITHUB_REF_NAME"
-      - uses: actions/upload-artifact@v4
+      - name: Cache Bun packages
+        uses: actions/cache@v6
         with:
-          name: binaries
-          path: dist/supervillain-*
+          path: ~/.bun/install/cache
+          key: bun-all-${{ runner.os }}-${{ hashFiles('bun.lock', 'patches/**') }}
+          restore-keys: |
+            bun-all-${{ runner.os }}-
+            bun-${{ runner.os }}-
+      - name: Install dependencies for all targets
+        run: bun install --frozen-lockfile --os="*" --cpu="*"
+      - name: Check format, lint, comments, and types
+        run: bun run check
+      - name: Run tests
+        run: bun test --parallel=4
+      - name: Build all release binaries
+        run: bun scripts/build.ts --all --version "$GITHUB_REF_NAME"
+      - name: Upload supervillain-linux-x64
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/supervillain-linux-x64
+          archive: false
           if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+      - name: Upload supervillain-linux-arm64
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/supervillain-linux-arm64
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+      - name: Upload supervillain-darwin-arm64
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/supervillain-darwin-arm64
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+      - name: Upload supervillain-darwin-x64
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/supervillain-darwin-x64
+          archive: false
+          if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   smoke:
     needs: build
+    timeout-minutes: 10
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
@@ -45,44 +89,69 @@ jobs:
             binary: supervillain-darwin-arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - name: Checkout smoke script
+        uses: actions/checkout@v7
         with:
-          name: binaries
+          sparse-checkout: scripts
+      - name: Download binary
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.binary }}
           path: dist
-      - name: Install tmux for the terminal seat (Linux)
+      - name: Install tmux (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
-      - name: Install tmux for the terminal seat (macOS)
+        run: command -v tmux >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends tmux)
+      - name: Install tmux (macOS)
         if: runner.os == 'macOS'
-        run: brew install tmux
-      - run: bash scripts/smoke.sh "dist/${{ matrix.binary }}"
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: command -v tmux >/dev/null || brew install tmux
+      - name: Run smoke test
+        run: bash scripts/smoke.sh "dist/${{ matrix.binary }}"
         env:
           SMOKE_REQUIRE_TTY: "1"
 
   release:
     needs: smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download all binaries
+        uses: actions/download-artifact@v8
         with:
-          name: binaries
+          pattern: supervillain-*
           path: dist
-      - name: Checksums
+          merge-multiple: true
+      - name: Verify binaries and generate checksums
         working-directory: dist
         run: |
-          chmod +x supervillain-*
-          sha256sum supervillain-* > SHA256SUMS
+          bins=(
+            supervillain-linux-x64
+            supervillain-linux-arm64
+            supervillain-darwin-arm64
+            supervillain-darwin-x64
+          )
+          for bin in "${bins[@]}"; do
+            test -f "$bin"
+          done
+          chmod +x "${bins[@]}"
+          sha256sum "${bins[@]}" > SHA256SUMS
           cat SHA256SUMS
-      - name: Publish the release
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          prerelease=""
-          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$TAG" dist/supervillain-* dist/SHA256SUMS \
-            --verify-tag --title "supervillain $TAG" --generate-notes $prerelease
+          args=(--verify-tag --title "supervillain $TAG" --generate-notes)
+          case "$TAG" in *-*) args+=(--prerelease) ;; esac
+          gh release create "$TAG" \
+            dist/supervillain-linux-x64 \
+            dist/supervillain-linux-arm64 \
+            dist/supervillain-darwin-arm64 \
+            dist/supervillain-darwin-x64 \
+            dist/SHA256SUMS \
+            "${args[@]}"

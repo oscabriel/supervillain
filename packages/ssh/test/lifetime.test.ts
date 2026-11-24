@@ -91,6 +91,9 @@ describe("session lifetime", () => {
 				).pipe(Effect.timeout("3 seconds"));
 
 				expect(exited).toBeNumber();
+				yield* waitFor("the shutdown notice", () =>
+					terminal.output().includes("The GM closed the table.\r\n")
+				);
 				const output = terminal.output();
 				expect(
 					output.lastIndexOf("The GM closed the table.\r\n")
@@ -165,6 +168,9 @@ describe("session lifetime", () => {
 
 				expect(exited).toBe(0);
 				expect(log).toEqual(["closed"]);
+				yield* waitFor("the screen restore", () =>
+					terminal.output().includes("\u001B[?1049l")
+				);
 				expect(terminal.output()).toContain("READY");
 				expect(terminal.output()).toContain("\u001B[?1049l");
 			})

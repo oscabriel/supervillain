@@ -19,10 +19,21 @@ export const campaignDir = Effect.tap(tempDir, (dir) =>
 	})
 );
 
+const plainEnv = () => {
+	const {
+		CLICOLOR_FORCE: _clicolor,
+		FORCE_COLOR: _force,
+		...rest
+	} = process.env;
+
+	return { ...rest, NO_COLOR: "1" };
+};
+
 export const cli = (args: ReadonlyArray<string>, cwd = root) =>
 	Effect.promise(async () => {
 		const proc = Bun.spawn(["bun", main, ...args], {
 			cwd,
+			env: plainEnv(),
 			stdout: "pipe",
 			stderr: "pipe",
 		});
@@ -47,6 +58,7 @@ export const startHost = (args: ReadonlyArray<string>, cwd = root) =>
 		Effect.promise(async () => {
 			const proc = Bun.spawn(["bun", main, "host", ...args, "--port", "0"], {
 				cwd,
+				env: plainEnv(),
 				stdout: "pipe",
 				stderr: "pipe",
 			});

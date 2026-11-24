@@ -46,7 +46,7 @@
 		"comments": "node tools/oxlint/supervillain/comments.ts check",
 		"fix": "oxlint --disable-nested-config --fix && oxfmt",
 		"typecheck": "tsc -b",
-		"test": "bun test",
+		"test": "bun test --parallel",
 		"check": "oxfmt --check && bun run lint && bun run typecheck",
 		"release:build": "bun scripts/build.ts",
 		"release:smoke": "bash scripts/smoke.sh"

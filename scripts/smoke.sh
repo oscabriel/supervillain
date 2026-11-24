@@ -37,7 +37,11 @@ cd "$work"
 cp "$bin" ./supervillain
 chmod +x ./supervillain
 
-step "$(./supervillain --version)"
+version="$(./supervillain --version)"
+case "$version" in
+"supervillain v"*) step "$version" ;;
+*) fail "unexpected --version output: '$version'" ;;
+esac
 ./supervillain new ./camp --example || fail "new --example"
 if [ ! -f camp/heroes/brann.yaml ] || [ ! -f camp/maps/ford-road.txt ]; then
   fail "the sample campaign wasn't copied"
@@ -54,6 +58,7 @@ for _ in $(seq 1 100); do
 done
 [ -n "$port" ] || fail "the host never printed its port"
 printed_fp="$(sed -n 's/^host key \(SHA256:[A-Za-z0-9+/]*\)$/\1/p' host.out | head -n 1)"
+[ -n "$printed_fp" ] || fail "the host never printed its host key"
 step "hosting on 127.0.0.1:$port, host key $printed_fp"
 
 ssh-keygen -q -t ed25519 -N "" -C smoke -f "$work/player_key"
@@ -101,7 +106,7 @@ if command -v tmux >/dev/null 2>&1; then
   sleep 0.3
   tmux -L "$tmux_socket" send-keys -t seat C-m
   for _ in $(seq 1 50); do
-    screen="$(tmux -L "$tmux_socket" capture-pane -p -t seat)"
+    screen="$(tmux -L "$tmux_socket" capture-pane -p -t seat 2>/dev/null || true)"
     case "$screen" in *"Smoke: typed in a terminal"*) break ;; esac
     sleep 0.1
   done
@@ -141,7 +146,7 @@ for _ in $(seq 1 100); do
   kill -0 "$relay_pid" 2>/dev/null || fail "the relay exited before it listened"
   sleep 0.1
 done
-[ -n "$gm_port" ] || fail "the relay never printed its ports"
+[ -n "$player_port" ] && [ -n "$gm_port" ] || fail "the relay never printed its ports"
 step "relay: players on $player_port, GMs on $gm_port"
 
 ./supervillain host ./camp --headless --port 0 --relay "127.0.0.1:$gm_port" \
