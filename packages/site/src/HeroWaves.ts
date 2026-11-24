@@ -226,7 +226,7 @@ const fillStyleFor = (intensity: number): string => {
 	const alpha = Math.min(0.46, 0.115 + intensity * 0.34);
 
 	if (intensity > 0.72) {
-		return `rgba(229, 192, 123, ${alpha.toFixed(3)})`;
+		return `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
 	}
 
 	if (intensity > 0.28) {
