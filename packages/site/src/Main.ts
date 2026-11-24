@@ -1,11 +1,12 @@
-import { Data, Effect, Match, Option, Schema } from "effect";
-import { Command } from "foldkit";
+import { Data, Effect, Match, Option, Schema, Stream } from "effect";
+import { Command, Subscription } from "foldkit";
 import type { Update } from "foldkit";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { load, pushUrl } from "foldkit/navigation";
 import type { Url } from "foldkit/url";
 import { toString as urlToString } from "foldkit/url";
 
+import { advanceAutoplay, delayOfStep } from "./Autoplay.ts";
 import { blogView, postView } from "./Blog.ts";
 import { docOf, postOf } from "./Content.ts";
 import { docsHubView, docView } from "./Docs.ts";
@@ -39,16 +40,23 @@ export const routeOf = (url: Url): AppRoute => {
 	return isMissing ? AppRoute.NotFound({ path: url.pathname }) : route;
 };
 
-export const init = (url: Url): Return => ({
-	model: {
-		route: routeOf(url),
-		demo: DEMO,
-		copied: false,
-		copiedBlock: "",
-		copyToken: 0,
-		mapMode: "pictures",
-	},
-});
+export const init = (url: Url): Return => {
+	const route = routeOf(url);
+
+	return {
+		model: {
+			route,
+			demo: DEMO,
+			copied: false,
+			copiedBlock: "",
+			copyToken: 0,
+			mapMode: "pictures",
+			autoplay: AppRoute.guards.Home(route),
+			autoplayStep: 0,
+			autoplayLine: "",
+		},
+	};
+};
 
 const Navigate = Command.define("Navigate", {
 	args: { url: Schema.String },
@@ -126,17 +134,53 @@ const CopyCode = Command.define("CopyCode", {
 		),
 });
 
+const stopped = (model: Model): Model => ({
+	...model,
+	autoplay: false,
+	autoplayLine: "",
+});
+
 const playing = (model: Model, demo: Demo): Return => ({
-	model: { ...model, demo },
+	model: { ...stopped(model), demo },
 });
 
 const playingClick = (model: Model, demo: Demo): Return =>
 	demo.line === ""
-		? { model: { ...model, demo } }
+		? { model: { ...stopped(model), demo } }
 		: {
-				model: { ...model, demo },
+				model: { ...stopped(model), demo },
 				commands: [FocusLine({ selector: "#demo-line" })],
 			};
+
+const prefersReducedMotion = (): boolean =>
+	globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
+	autoplay: entry(
+		{ active: Schema.Boolean, step: Schema.Int },
+		{
+			modelToDependencies: (model) => ({
+				active: AppRoute.guards.Home(model.route) && model.autoplay,
+				step: model.autoplayStep,
+			}),
+			dependenciesToStream: ({ active, step }) => {
+				if (!active) {
+					return Stream.empty;
+				}
+
+				if (prefersReducedMotion()) {
+					return Stream.make(Message.PausedAutoplay());
+				}
+
+				return Stream.fromEffect(
+					Effect.sleep(`${delayOfStep(step)} millis`).pipe(
+						Effect.as(Message.AutoplayStepped({ step }))
+					)
+				);
+			},
+		}
+	),
+}));
 
 const pressed = (demo: Demo, key: Key): Demo =>
 	Match.value(key).pipe(
@@ -171,8 +215,8 @@ export const update = (model: Model, message: Message): Return =>
 		}),
 		CompletedNavigate: () => ({ model }),
 		TypedLine: ({ line }) => playing(model, typed(model.demo, line)),
-		SubmittedLine: () => ({ model: ranLine(model, model.demo.line) }),
-		ClickedSuggestion: ({ line }) => ({ model: ranLine(model, line) }),
+		SubmittedLine: () => ({ model: ranLine(stopped(model), model.demo.line) }),
+		ClickedSuggestion: ({ line }) => ({ model: ranLine(stopped(model), line) }),
 		ClickedSquare: ({ square }) =>
 			playingClick(model, actedSquare(model.demo, square)),
 		ClickedToken: ({ id }) => playingClick(model, actedToken(model.demo, id)),
@@ -182,9 +226,35 @@ export const update = (model: Model, message: Message): Return =>
 		ClickedRestart: () => playing(model, restarted(model.demo)),
 		ClickedMapMode: ({ mode }) => ({
 			model: {
-				...model,
+				...stopped(model),
 				mapMode: mode,
 				demo: { ...model.demo, refusal: "" },
+			},
+		}),
+		AutoplayStepped: ({ step }) => {
+			if (!model.autoplay || model.autoplayStep !== step) {
+				return { model };
+			}
+
+			const next = advanceAutoplay(model.demo, step);
+
+			return {
+				model: {
+					...model,
+					demo: next.demo,
+					autoplayLine: next.autoplayLine,
+					autoplayStep: next.nextStep,
+				},
+			};
+		},
+		PausedAutoplay: () => ({ model: stopped(model) }),
+		StartedAutoplay: () => ({
+			model: {
+				...model,
+				demo: restarted(model.demo),
+				autoplay: true,
+				autoplayStep: 0,
+				autoplayLine: "",
 			},
 		}),
 		ClickedCopyCommand: () => {

@@ -17,6 +17,9 @@ export const Model = Schema.Struct({
 	copiedBlock: Schema.String,
 	copyToken: Schema.Int,
 	mapMode: MapMode,
+	autoplay: Schema.Boolean,
+	autoplayStep: Schema.Int,
+	autoplayLine: Schema.String,
 });
 
 export type Model = typeof Model.Type;
@@ -43,6 +46,9 @@ export const Message = defineMessageUnion({
 	ResetCopyCommand: { token: Schema.Int },
 	ClickedCopyCode: { id: Schema.String, text: Schema.String },
 	ResetCopyCode: { id: Schema.String, token: Schema.Int },
+	AutoplayStepped: { step: Schema.Int },
+	PausedAutoplay: {},
+	StartedAutoplay: {},
 });
 
 export type Message = typeof Message.Type;

@@ -366,7 +366,7 @@ const feedLineView = (h: HtmlBuilder<Message>, line: FeedLine): Html => {
 	if (line.who !== "") {
 		parts.push(
 			h.span(
-				[h.Class("who")],
+				[h.Class(line.who === "GM" ? "who gm" : "who")],
 				[`${line.who}${line.kind === "chat" ? ":" : ""} `]
 			)
 		);
@@ -494,53 +494,106 @@ const hintRowView = (
 		]
 	);
 
-const inputView = (h: HtmlBuilder<Message>, demo: Demo): Html =>
-	h.form(
-		[h.Class("tui-input-form"), h.OnSubmit(Message.SubmittedLine())],
+export interface TerminalOptions {
+	readonly autoplay?: boolean;
+	readonly autoplayLine?: string;
+}
+
+const inputView = (
+	h: HtmlBuilder<Message>,
+	demo: Demo,
+	autoplay: boolean,
+	autoplayLine: string
+): Html => {
+	const previewing = autoplay && autoplayLine !== "";
+
+	return h.form(
+		[
+			h.Class(classes(["tui-input-form", previewing ? "is-preview" : ""])),
+			h.OnSubmit(Message.SubmittedLine()),
+		],
 		[
 			h.label([h.For("demo-line"), h.Class("tui-prompt")], [">"]),
 			h.input([
 				h.Id("demo-line"),
 				h.Class("tui-input"),
 				h.Type("text"),
-				h.Value(demo.line),
+				h.Value(previewing ? autoplayLine : demo.line),
 				h.Placeholder("say something, or /help"),
 				h.Autocomplete("off"),
 				h.Spellcheck(false),
 				h.AriaLabel("The input line"),
+				h.OnFocus(Message.PausedAutoplay()),
 				h.OnInput((line) => Message.TypedLine({ line })),
 				h.OnKeyDownPreventDefault(keyOf),
 			]),
 			h.span([h.Class("tui-enter-hint"), h.AriaHidden(true)], ["Enter"]),
 		]
 	);
+};
 
-const chromeView = (h: HtmlBuilder<Message>): Html =>
-	h.div(
+const chromeView = (h: HtmlBuilder<Message>, autoplay: boolean): Html => {
+	const controls: Array<Html> = [];
+
+	if (autoplay) {
+		controls.push(
+			h.span(
+				[h.Class("term-chrome-live")],
+				[
+					h.span([h.Class("term-live-dot"), h.AriaHidden(true)], []),
+					"live preview",
+				]
+			),
+			h.button(
+				[
+					h.Type("button"),
+					h.Class("term-chrome-btn"),
+					h.OnClick(Message.PausedAutoplay()),
+				],
+				["pause"]
+			)
+		);
+	} else {
+		controls.push(
+			h.button(
+				[
+					h.Type("button"),
+					h.Class("term-chrome-btn"),
+					h.OnClick(Message.StartedAutoplay()),
+				],
+				["replay"]
+			)
+		);
+	}
+
+	controls.push(
+		h.button(
+			[
+				h.Type("button"),
+				h.Class("term-chrome-btn"),
+				h.OnClick(Message.ClickedRestart()),
+			],
+			["reset"]
+		)
+	);
+
+	return h.div(
 		[h.Class("term-chrome")],
 		[
 			h.span([h.Class("term-chrome-cmd")], ["ssh first-fight@supervillain.sh"]),
-			h.div(
-				[h.Class("term-chrome-right")],
-				[
-					h.button(
-						[
-							h.Type("button"),
-							h.Class("term-chrome-btn"),
-							h.OnClick(Message.ClickedRestart()),
-						],
-						["reset"]
-					),
-				]
-			),
+			h.div([h.Class("term-chrome-right")], controls),
 		]
 	);
+};
 
 export const terminalView = (
 	demo: Demo,
 	h: HtmlBuilder<Message>,
-	mapMode: MapMode = "pictures"
+	mapMode: MapMode = "pictures",
+	options: TerminalOptions = {}
 ): Html => {
+	const autoplay = options.autoplay ?? false;
+	const autoplayLine = options.autoplayLine ?? "";
 	const { state, feed } = projectionOf(demo);
 
 	const screen: Array<Html> = [
@@ -556,7 +609,10 @@ export const terminalView = (
 		screen.push(replyView(h, demo.reply));
 	}
 
-	screen.push(hintRowView(h, demo, state), inputView(h, demo));
+	screen.push(
+		hintRowView(h, demo, state),
+		inputView(h, demo, autoplay, autoplayLine)
+	);
 
 	return h.section(
 		[
@@ -564,6 +620,6 @@ export const terminalView = (
 			h.Id("table"),
 			h.AriaLabel("Interactive supervillain terminal"),
 		],
-		[chromeView(h), h.div([h.Class("tui")], screen)]
+		[chromeView(h, autoplay), h.div([h.Class("tui")], screen)]
 	);
 };

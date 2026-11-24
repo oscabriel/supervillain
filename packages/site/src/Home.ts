@@ -118,6 +118,9 @@ export const homeView = (
 	h: HtmlBuilder<Message>
 ): ReadonlyArray<Html> => [
 	heroView(model.copied, h),
-	terminalView(model.demo, h, model.mapMode),
+	terminalView(model.demo, h, model.mapMode, {
+		autoplay: model.autoplay,
+		autoplayLine: model.autoplayLine,
+	}),
 	editorialView(h),
 ];

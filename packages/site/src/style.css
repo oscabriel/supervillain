@@ -383,6 +383,35 @@ p {
 	gap: 12px;
 }
 
+.term-chrome-live {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 10px;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--muted);
+}
+
+.term-live-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 999px;
+	background: var(--tui-you);
+	animation: term-live-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes term-live-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+
+	50% {
+		opacity: 0.32;
+	}
+}
+
 .term-chrome-btn {
 	padding: 3px 9px;
 	border: 1px solid var(--line);
@@ -402,13 +431,6 @@ p {
 .term-chrome-btn:hover {
 	color: var(--ink);
 	border-color: rgba(255, 255, 255, 0.32);
-}
-
-.term-chrome-btn.on,
-.term-chrome-btn[aria-pressed="true"] {
-	background: rgba(255, 255, 255, 0.1);
-	color: var(--ink);
-	border-color: rgba(255, 255, 255, 0.28);
 }
 
 .tui {
@@ -754,6 +776,10 @@ p {
 	font-weight: 500;
 }
 
+.tui-fline .who.gm {
+	color: var(--tui-gm);
+}
+
 .tui-fline[data-kind="undo"] {
 	color: var(--tui-gm);
 	font-style: italic;
@@ -913,6 +939,14 @@ p {
 
 .tui-input-form:focus-within {
 	border-top-color: rgba(255, 255, 255, 0.14);
+}
+
+.tui-input-form.is-preview {
+	border-top-color: rgba(229, 192, 123, 0.28);
+}
+
+.tui-input-form.is-preview .tui-input {
+	color: var(--tui-gm);
 }
 
 .tui-enter-hint {

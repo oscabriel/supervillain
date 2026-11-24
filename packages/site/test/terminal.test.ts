@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
+import { AUTOPLAY_SCRIPT, advanceAutoplay } from "../src/Autoplay.ts";
 import { COLUMNS, ROWS, TERRAIN } from "../src/Encounter.ts";
 import { homeView } from "../src/Home.ts";
 import { ranLine } from "../src/Model.ts";
 import type { Model } from "../src/Model.ts";
 import { AppRoute } from "../src/Route.ts";
+import { fold } from "../src/Rules.ts";
 import { actedSquare, actedToken, DEMO, sent } from "../src/Table.ts";
 import { terminalView } from "../src/Terminal.ts";
 import { countOf, htmlOf } from "./render.ts";
@@ -21,6 +23,9 @@ const START: Model = {
 	copiedBlock: "",
 	copyToken: 0,
 	mapMode: "pictures",
+	autoplay: false,
+	autoplayStep: 0,
+	autoplayLine: "",
 };
 
 describe("the terminal on the front page", () => {
@@ -150,6 +155,65 @@ describe("the stylesheet contract", () => {
 		]) {
 			expect(css).toContain(`[data-kind="${kind}"]`);
 		}
+	});
+});
+
+describe("the autoplay encounter", () => {
+	test("plays every GM and player beat cleanly and loops back to the start", () => {
+		let demo = DEMO;
+		let step = 0;
+		let sawGm = false;
+		let sawPreview = false;
+		let maxRound = 1;
+
+		for (const index of AUTOPLAY_SCRIPT.keys()) {
+			expect(step).toBe(index);
+
+			const {
+				demo: nextDemo,
+				autoplayLine,
+				nextStep,
+			} = advanceAutoplay(demo, step);
+
+			expect(nextDemo.refusal).toBe("");
+
+			if (autoplayLine !== "") {
+				sawPreview = true;
+			}
+
+			const { state, feed } = fold(nextDemo.log);
+
+			if (feed.some((line) => line.who === "GM")) {
+				sawGm = true;
+			}
+
+			if (state.round > maxRound) {
+				maxRound = state.round;
+			}
+
+			demo = nextDemo;
+			step = nextStep;
+		}
+
+		expect(sawGm).toBeTruthy();
+		expect(sawPreview).toBeTruthy();
+		expect(maxRound).toBeGreaterThanOrEqual(3);
+		expect(step).toBe(0);
+		expect(demo.log).toStrictEqual(DEMO.log);
+	});
+
+	test("shows live preview controls and preview text while playing", async () => {
+		const html = await htmlOf((model, h) =>
+			terminalView(model.demo, h, "pictures", {
+				autoplay: true,
+				autoplayLine: "/move brann g4",
+			})
+		);
+
+		expect(html).toContain("live preview");
+		expect(html).toContain("pause");
+		expect(html).toContain('value="/move brann g4"');
+		expect(html).toContain("is-preview");
 	});
 });
 

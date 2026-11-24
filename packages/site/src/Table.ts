@@ -18,6 +18,8 @@ import {
 	Entry,
 	entriesOf,
 	fold,
+	GM,
+	Happened,
 	isDead,
 	movesLeft,
 	OPENING_LOG,
@@ -176,6 +178,13 @@ export const sent = (demo: Demo, line: string): Demo => {
 		}),
 	});
 };
+
+export const gmSaid = (demo: Demo, text: string): Demo => ({
+	...demo,
+	log: entriesOf(demo.log, [
+		{ actor: GM, event: Happened.ChatPosted({ text }) },
+	]),
+});
 
 export const submitted = (demo: Demo): Demo => sent(demo, demo.line);
 
