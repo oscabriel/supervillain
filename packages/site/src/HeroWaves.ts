@@ -7,11 +7,20 @@ const FONT = '400 12.5px "Geist Mono", ui-monospace, SFMono-Regular, monospace';
 
 const CELL_H = 20;
 
-const DAMPING = 0.946;
+const FLIP_MS = 48;
 
-const MAX_AMPLITUDE = 2.4;
+const AMBIENT_SPEED = 118;
 
-const RIPPLE_GLYPHS = "·.,:;-~=+*";
+const CLICK_SPEED = 148;
+
+const AMBIENT_BAND = 42;
+
+const CLICK_BAND = 34;
+
+const REST_GAP_MS = 1200;
+
+const SCRAMBLE_POOL =
+	"!@#$%^&*()_+-=[]{}|;:',.<>?/~`0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 const FANTASY_LINES: ReadonlyArray<string> = [
 	"Torchlight gutters against damp limestone as the iron portcullis settles into the sill.",
@@ -30,20 +39,29 @@ const FANTASY_LINES: ReadonlyArray<string> = [
 
 const CORPUS = `${FANTASY_LINES.join("     ")}     `;
 
-export interface WaveState {
+export interface TextField {
 	readonly cols: number;
 	readonly rows: number;
 	readonly cellW: number;
 	readonly cellH: number;
 	readonly chars: ReadonlyArray<string>;
-	readonly current: Float32Array;
-	readonly previous: Float32Array;
+}
+
+export interface Ripple {
+	readonly ox: number;
+	readonly oy: number;
+	readonly startedAt: number;
+	readonly speed: number;
+	readonly bandWidth: number;
+	readonly maxRadius: number;
+	readonly strength: number;
 }
 
 export const buildTextField = (
 	cols: number,
-	rows: number
-): ReadonlyArray<string> => {
+	rows: number,
+	cellW: number
+): TextField => {
 	const total = cols * rows;
 	const chars: Array<string> = Array.from({ length: total });
 	const len = CORPUS.length;
@@ -57,159 +75,177 @@ export const buildTextField = (
 		}
 	}
 
-	return chars;
+	return { cols, rows, cellW, cellH: CELL_H, chars };
 };
 
-export const createWaveState = (
-	cols: number,
-	rows: number,
-	cellW: number
-): WaveState => {
-	const total = cols * rows;
+export const farthestCorner = (
+	ox: number,
+	oy: number,
+	width: number,
+	height: number
+): number =>
+	Math.max(
+		Math.hypot(ox, oy),
+		Math.hypot(width - ox, oy),
+		Math.hypot(ox, height - oy),
+		Math.hypot(width - ox, height - oy)
+	);
 
-	return {
-		cols,
-		rows,
-		cellW,
-		cellH: CELL_H,
-		chars: buildTextField(cols, rows),
-		current: new Float32Array(total),
-		previous: new Float32Array(total),
-	};
-};
+export const rippleRadiusAt = (ripple: Ripple, nowMs: number): number =>
+	Math.max(0, ((nowMs - ripple.startedAt) / 1000) * ripple.speed);
 
-export const dropRipple = (
-	state: WaveState,
-	cx: number,
-	cy: number,
-	strength: number,
-	radius: number
-): void => {
-	const { cols, rows, current } = state;
+export const isRippleFinished = (ripple: Ripple, nowMs: number): boolean =>
+	rippleRadiusAt(ripple, nowMs) > ripple.maxRadius + ripple.bandWidth * 3.2;
 
-	for (let dy = -radius; dy <= radius; dy += 1) {
-		const y = cy + dy;
+export const rippleIntensityAt = (
+	ripple: Ripple,
+	px: number,
+	py: number,
+	nowMs: number
+): number => {
+	const elapsed = nowMs - ripple.startedAt;
 
-		if (y <= 1 || y >= rows - 2) {
-			continue;
-		}
-
-		for (let dx = -radius; dx <= radius; dx += 1) {
-			const x = cx + dx;
-
-			if (x <= 1 || x >= cols - 2) {
-				continue;
-			}
-
-			const dist = Math.hypot(dx, dy);
-
-			if (dist <= radius) {
-				const falloff = Math.cos((dist / radius) * (Math.PI / 2));
-				const index = y * cols + x;
-				const next = (current[index] ?? 0) + strength * falloff;
-
-				current[index] = Math.max(
-					-MAX_AMPLITUDE,
-					Math.min(MAX_AMPLITUDE, next)
-				);
-			}
-		}
-	}
-};
-
-export const stepRipple = (state: WaveState): WaveState => {
-	const { cols, rows, current, previous } = state;
-
-	for (let y = 1; y < rows - 1; y += 1) {
-		const row = y * cols;
-
-		for (let x = 1; x < cols - 1; x += 1) {
-			const i = row + x;
-
-			const avg =
-				((current[i - 1] ?? 0) +
-					(current[i + 1] ?? 0) +
-					(current[i - cols] ?? 0) +
-					(current[i + cols] ?? 0)) *
-				0.5;
-
-			const raw = (avg - (previous[i] ?? 0)) * DAMPING;
-			const clamped = Math.max(-MAX_AMPLITUDE, Math.min(MAX_AMPLITUDE, raw));
-
-			previous[i] = Math.abs(clamped) < 0.002 ? 0 : clamped;
-		}
+	if (elapsed < 0) {
+		return 0;
 	}
 
-	return {
-		...state,
-		current: previous,
-		previous: current,
-	};
+	const radius = (elapsed / 1000) * ripple.speed;
+
+	if (radius > ripple.maxRadius + ripple.bandWidth * 3.2) {
+		return 0;
+	}
+
+	const dist = Math.hypot(px - ripple.ox, py - ripple.oy);
+	const delta = dist - radius;
+	const band = ripple.bandWidth;
+
+	if (Math.abs(delta) > band * 3.2) {
+		return 0;
+	}
+
+	const bell = Math.exp(-(delta * delta) / (2 * band * band));
+	const fadeIn = Math.min(1, elapsed / 450);
+
+	const tailStart = ripple.maxRadius - band;
+
+	const fadeOut =
+		radius <= tailStart
+			? 1
+			: Math.max(0, 1 - (radius - tailStart) / (band * 3.2));
+
+	return bell * fadeIn * fadeOut * ripple.strength;
 };
 
-export const ambientWave = (x: number, y: number, timeSec: number): number => {
-	const swell = Math.sin(x * 0.085 - timeSec * 0.72 + y * 0.16) * 0.24;
-	const cross = Math.cos(x * 0.045 + y * 0.21 - timeSec * 0.48) * 0.16;
+const hashCell = (x: number, y: number, tick: number): number => {
+	const n = Math.imul(x + 17, 374_761_393) + Math.imul(y + 31, 668_265_263);
 
-	return swell + cross;
+	const mixed = Math.imul(
+		n + Math.imul(tick + 13, 2_147_483_647),
+		1_274_126_177
+	);
+
+	return Math.abs(mixed);
 };
 
-export const glyphForEnergy = (
+export const scrambleChar = (
 	base: string,
-	energy: number,
+	intensity: number,
 	x: number,
-	y: number
+	y: number,
+	flipTick: number
 ): string => {
-	if (energy <= 0.34) {
+	if (intensity < 0.14) {
 		return base;
 	}
 
-	const index = Math.min(
-		RIPPLE_GLYPHS.length - 1,
-		Math.floor(energy * RIPPLE_GLYPHS.length)
-	);
+	const hashed = hashCell(x, y, flipTick);
+	const threshold = (hashed % 1000) / 1000;
 
-	if ((x + y) % 3 === 0 || base === " ") {
-		return RIPPLE_GLYPHS[index] ?? base;
+	if (base === " " && intensity < 0.42) {
+		return " ";
 	}
 
-	return base;
+	if (threshold > Math.min(0.96, intensity * 1.18)) {
+		return base;
+	}
+
+	return SCRAMBLE_POOL[hashed % SCRAMBLE_POOL.length] ?? base;
 };
 
-const clampIndex = (value: number, max: number): number =>
-	Math.max(0, Math.min(max, Math.round(value)));
+interface PickedRipple {
+	readonly ripple: Ripple;
+	readonly zone: number;
+}
 
-const fillStyleFor = (
-	rippleVal: number,
-	waveVal: number,
-	energy: number
-): string => {
-	const crest = rippleVal + waveVal * 0.55;
-	const alpha = Math.min(0.42, 0.095 + energy * 0.28);
-
-	if (rippleVal > 0.38) {
-		return `rgba(229, 192, 123, ${Math.min(0.46, alpha + 0.06).toFixed(3)})`;
-	}
-
-	if (crest > 0.14) {
-		return `rgba(228, 228, 236, ${alpha.toFixed(3)})`;
-	}
-
-	if (crest < -0.14) {
-		return `rgba(113, 113, 128, ${Math.max(0.06, alpha * 0.65).toFixed(3)})`;
-	}
-
-	return `rgba(161, 161, 174, ${alpha.toFixed(3)})`;
-};
-
-const paintWaves = (
-	ctx: CanvasRenderingContext2D,
-	state: WaveState,
+const pickAmbientRipple = (
 	width: number,
 	height: number,
-	timeSec: number
+	nowMs: number,
+	previousZone: number
+): PickedRipple => {
+	const candidate = Math.floor(Math.random() * 4);
+	const zone = candidate === previousZone ? (candidate + 1) % 4 : candidate;
+	const t = 0.12 + Math.random() * 0.76;
+
+	let ox = 0;
+	let oy = 0;
+
+	if (zone === 0) {
+		ox = width * 0.04;
+		oy = height * t;
+	} else if (zone === 1) {
+		ox = width * 0.96;
+		oy = height * t;
+	} else if (zone === 2) {
+		ox = width * t;
+		oy = height * 0.06;
+	} else {
+		ox = width * t;
+		oy = height * 0.94;
+	}
+
+	return {
+		zone,
+		ripple: {
+			ox,
+			oy,
+			startedAt: nowMs,
+			speed: AMBIENT_SPEED,
+			bandWidth: AMBIENT_BAND,
+			maxRadius: farthestCorner(ox, oy, width, height),
+			strength: 1,
+		},
+	};
+};
+
+const fillStyleFor = (intensity: number): string => {
+	if (intensity < 0.04) {
+		return "rgba(161, 161, 174, 0.115)";
+	}
+
+	const alpha = Math.min(0.46, 0.115 + intensity * 0.34);
+
+	if (intensity > 0.72) {
+		return `rgba(229, 192, 123, ${alpha.toFixed(3)})`;
+	}
+
+	if (intensity > 0.28) {
+		return `rgba(232, 232, 240, ${alpha.toFixed(3)})`;
+	}
+
+	return `rgba(182, 182, 194, ${alpha.toFixed(3)})`;
+};
+
+const paintField = (
+	ctx: CanvasRenderingContext2D,
+	field: TextField,
+	width: number,
+	height: number,
+	ripples: ReadonlyArray<Ripple>,
+	nowMs: number
 ): void => {
-	const { cols, rows, cellW, cellH, chars, current } = state;
+	const { cols, rows, cellW, cellH, chars } = field;
+	const flipTick = Math.floor(nowMs / FLIP_MS);
 
 	ctx.clearRect(0, 0, width, height);
 	ctx.font = FONT;
@@ -218,38 +254,30 @@ const paintWaves = (
 	for (let y = 0; y < rows; y += 1) {
 		const row = y * cols;
 		const py = y * cellH + 4;
+		const cy = py + cellH * 0.5;
 
 		for (let x = 0; x < cols; x += 1) {
-			const i = row + x;
-			const rVal = current[i] ?? 0;
-			const wVal = ambientWave(x, y, timeSec);
-			const val = rVal + wVal;
+			const base = chars[row + x] ?? " ";
+			const px = x * cellW;
+			const cx = px + cellW * 0.5;
+			let intensity = 0;
 
-			const left = x > 0 ? (current[i - 1] ?? 0) : rVal;
-			const right = x < cols - 1 ? (current[i + 1] ?? 0) : rVal;
-			const up = y > 0 ? (current[i - cols] ?? 0) : rVal;
-			const down = y < rows - 1 ? (current[i + cols] ?? 0) : rVal;
+			for (const ripple of ripples) {
+				const value = rippleIntensityAt(ripple, cx, cy, nowMs);
 
-			const gx = right - left + (ambientWave(x + 1, y, timeSec) - wVal) * 0.9;
-			const gy = down - up + (ambientWave(x, y + 1, timeSec) - wVal) * 0.9;
+				if (value > intensity) {
+					intensity = value;
+				}
+			}
 
-			const energy = Math.min(
-				1,
-				Math.abs(val) * 0.58 + Math.hypot(gx, gy) * 0.34
-			);
-
-			const sx = clampIndex(x + gx * 0.95, cols - 1);
-			const sy = clampIndex(y + gy * 0.6, rows - 1);
-			const base = chars[sy * cols + sx] ?? " ";
-
-			if (base === " " && energy < 0.22) {
+			if (base === " " && intensity < 0.42) {
 				continue;
 			}
 
-			const ch = glyphForEnergy(base, energy, x, y);
+			const ch = scrambleChar(base, intensity, x, y, flipTick);
 
-			ctx.fillStyle = fillStyleFor(rVal, wVal, energy);
-			ctx.fillText(ch, x * cellW + gx * 1.6, py + gy * 1.15);
+			ctx.fillStyle = fillStyleFor(intensity);
+			ctx.fillText(ch, px, py);
 		}
 	}
 };
@@ -272,12 +300,37 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 	const reduced = prefersReducedMotion();
 	let width = 0;
 	let height = 0;
-	let state = createWaveState(1, 1, 8);
+	let field = buildTextField(1, 1, 8);
+	let ambient: Ripple | undefined;
+	let clickRipple: Ripple | undefined;
+	let lastZone = -1;
+	let nextAmbientAt = 0;
 	let frameId = 0;
 	let inView = true;
-	let lastPointerDrop = 0;
-	let nextAmbientAt = performance.now() + 2600;
 	let disposed = false;
+
+	const activeRipples = (nowMs: number): Array<Ripple> => {
+		const list: Array<Ripple> = [];
+
+		if (ambient !== undefined) {
+			if (isRippleFinished(ambient, nowMs)) {
+				ambient = undefined;
+				nextAmbientAt = nowMs + REST_GAP_MS;
+			} else {
+				list.push(ambient);
+			}
+		}
+
+		if (clickRipple !== undefined) {
+			if (isRippleFinished(clickRipple, nowMs)) {
+				clickRipple = undefined;
+			} else {
+				list.push(clickRipple);
+			}
+		}
+
+		return list;
+	};
 
 	const rebuild = (): void => {
 		const rect = surface.getBoundingClientRect();
@@ -293,28 +346,34 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 		const cellW = Math.max(7.4, ctx.measureText("M").width + 0.5);
 		const cols = Math.ceil(width / cellW) + 1;
 		const rows = Math.ceil(height / CELL_H) + 1;
+		const nowMs = performance.now();
 
-		state = createWaveState(cols, rows, cellW);
-		dropRipple(
-			state,
-			Math.floor(cols * 0.22),
-			Math.floor(rows * 0.34),
-			1.05,
-			4
-		);
-		dropRipple(
-			state,
-			Math.floor(cols * 0.78),
-			Math.floor(rows * 0.64),
-			1.15,
-			5
-		);
+		field = buildTextField(cols, rows, cellW);
 
-		for (let i = 0; i < 6; i += 1) {
-			state = stepRipple(state);
+		if (reduced) {
+			const calm: Ripple = {
+				ox: width * 0.08,
+				oy: height * 0.24,
+				startedAt: nowMs - 2600,
+				speed: AMBIENT_SPEED,
+				bandWidth: AMBIENT_BAND,
+				maxRadius: farthestCorner(width * 0.08, height * 0.24, width, height),
+				strength: 0.75,
+			};
+
+			paintField(ctx, field, width, height, [calm], nowMs);
+
+			return;
 		}
 
-		paintWaves(ctx, state, width, height, performance.now() / 1000);
+		if (ambient === undefined) {
+			const picked = pickAmbientRipple(width, height, nowMs - 900, lastZone);
+
+			ambient = picked.ripple;
+			lastZone = picked.zone;
+		}
+
+		paintField(ctx, field, width, height, activeRipples(nowMs), nowMs);
 	};
 
 	const stopLoop = (): void => {
@@ -324,24 +383,21 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 		}
 	};
 
-	const tick = (now: number): void => {
+	const tick = (nowMs: number): void => {
 		frameId = 0;
 
 		if (disposed || reduced || document.hidden || !inView) {
 			return;
 		}
 
-		if (now >= nextAmbientAt) {
-			nextAmbientAt = now + 3000 + Math.random() * 1600;
+		if (ambient === undefined && nowMs >= nextAmbientAt) {
+			const picked = pickAmbientRipple(width, height, nowMs, lastZone);
 
-			const rx = Math.floor(state.cols * (0.12 + Math.random() * 0.76));
-			const ry = Math.floor(state.rows * (0.16 + Math.random() * 0.68));
-
-			dropRipple(state, rx, ry, 1.15, 4);
+			ambient = picked.ripple;
+			lastZone = picked.zone;
 		}
 
-		state = stepRipple(state);
-		paintWaves(ctx, state, width, height, now / 1000);
+		paintField(ctx, field, width, height, activeRipples(nowMs), nowMs);
 		frameId = window.requestAnimationFrame(tick);
 	};
 
@@ -351,36 +407,24 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 		}
 	};
 
-	const onPointerMove = (event: PointerEvent): void => {
-		if (reduced) {
-			return;
-		}
-
-		const now = performance.now();
-
-		if (now - lastPointerDrop < 32) {
-			return;
-		}
-
-		lastPointerDrop = now;
-
-		const rect = surface.getBoundingClientRect();
-		const cx = Math.floor((event.clientX - rect.left) / state.cellW);
-		const cy = Math.floor((event.clientY - rect.top) / state.cellH);
-
-		dropRipple(state, cx, cy, 0.85, 3);
-	};
-
 	const onPointerDown = (event: PointerEvent): void => {
 		if (reduced) {
 			return;
 		}
 
 		const rect = surface.getBoundingClientRect();
-		const cx = Math.floor((event.clientX - rect.left) / state.cellW);
-		const cy = Math.floor((event.clientY - rect.top) / state.cellH);
+		const ox = event.clientX - rect.left;
+		const oy = event.clientY - rect.top;
 
-		dropRipple(state, cx, cy, 1.65, 5);
+		clickRipple = {
+			ox,
+			oy,
+			startedAt: performance.now(),
+			speed: CLICK_SPEED,
+			bandWidth: CLICK_BAND,
+			maxRadius: farthestCorner(ox, oy, width, height),
+			strength: 1,
+		};
 	};
 
 	const onVisibilityChange = (): void => {
@@ -408,7 +452,6 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 	rebuild();
 	resizeObserver.observe(surface);
 	intersectionObserver.observe(surface);
-	surface.addEventListener("pointermove", onPointerMove, { passive: true });
 	surface.addEventListener("pointerdown", onPointerDown, { passive: true });
 	document.addEventListener("visibilitychange", onVisibilityChange);
 
@@ -421,7 +464,6 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 	};
 
 	void syncFonts();
-
 	startLoop();
 
 	return () => {
@@ -429,7 +471,6 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 		stopLoop();
 		resizeObserver.disconnect();
 		intersectionObserver.disconnect();
-		surface.removeEventListener("pointermove", onPointerMove);
 		surface.removeEventListener("pointerdown", onPointerDown);
 		document.removeEventListener("visibilitychange", onVisibilityChange);
 	};

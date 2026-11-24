@@ -4,12 +4,13 @@ import { readFileSync } from "node:fs";
 import { AUTOPLAY_SCRIPT, advanceAutoplay } from "../src/Autoplay.ts";
 import { COLUMNS, ROWS, TERRAIN } from "../src/Encounter.ts";
 import {
-	ambientWave,
-	createWaveState,
-	dropRipple,
-	glyphForEnergy,
-	stepRipple,
+	buildTextField,
+	farthestCorner,
+	isRippleFinished,
+	rippleIntensityAt,
+	scrambleChar,
 } from "../src/HeroWaves.ts";
+import type { Ripple } from "../src/HeroWaves.ts";
 import { homeView } from "../src/Home.ts";
 import { ranLine } from "../src/Model.ts";
 import type { Model } from "../src/Model.ts";
@@ -225,22 +226,39 @@ describe("the autoplay encounter", () => {
 });
 
 describe("the hero ASCII wave field", () => {
-	test("builds a fantasy text grid and propagates damped ripples", () => {
-		const initial = createWaveState(24, 10, 8);
+	test("builds a fantasy text grid, sweeps a calm ripple ring, and scrambles passed characters", () => {
+		const field = buildTextField(24, 10, 8);
 
-		expect(initial.chars.length).toBe(240);
-		expect(initial.chars.join("")).toContain("Torchlight");
+		expect(field.chars.length).toBe(240);
+		expect(field.chars.join("")).toContain("Torchlight");
 
-		dropRipple(initial, 12, 5, 1.4, 3);
-		expect(initial.current[5 * 24 + 12]).toBeGreaterThan(1);
+		const ripple: Ripple = {
+			ox: 0,
+			oy: 0,
+			startedAt: 0,
+			speed: 120,
+			bandWidth: 40,
+			maxRadius: farthestCorner(0, 0, 800, 400),
+			strength: 1,
+		};
 
-		const stepped = stepRipple(initial);
-		const neighbor = stepped.current[5 * 24 + 13] ?? 0;
+		const atCrest = rippleIntensityAt(ripple, 240, 0, 2000);
+		const farAway = rippleIntensityAt(ripple, 600, 0, 2000);
 
-		expect(Math.abs(neighbor)).toBeGreaterThan(0);
-		expect(Math.abs(ambientWave(4, 2, 1.5))).toBeLessThanOrEqual(0.41);
-		expect(glyphForEnergy("a", 0.1, 0, 0)).toBe("a");
-		expect(glyphForEnergy(" ", 0.8, 1, 1)).not.toBe(" ");
+		expect(atCrest).toBeGreaterThan(0.9);
+		expect(farAway).toBe(0);
+		expect(isRippleFinished(ripple, 2000)).toBeFalsy();
+		expect(isRippleFinished(ripple, 12_000)).toBeTruthy();
+
+		expect(scrambleChar("a", 0.05, 4, 2, 10)).toBe("a");
+
+		const flipped = new Set(
+			Array.from({ length: 16 }, (_unused, tick) =>
+				scrambleChar("a", 0.95, 4, 2, tick)
+			)
+		);
+
+		expect(flipped.size).toBeGreaterThan(5);
 	});
 });
 
