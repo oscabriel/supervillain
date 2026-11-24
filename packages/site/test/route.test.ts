@@ -44,8 +44,8 @@ describe("the site's addresses", () => {
 
 	test("are written the way they are read", () => {
 		expect(docRouter({ slug: "rulesets" })).toBe("/docs/rulesets");
-		expect(postRouter({ slug: "alchemy-domain-over-jsonl" })).toBe(
-			"/blog/alchemy-domain-over-jsonl"
+		expect(postRouter({ slug: "cloudflare-tcp-vs-vps" })).toBe(
+			"/blog/cloudflare-tcp-vs-vps"
 		);
 	});
 });

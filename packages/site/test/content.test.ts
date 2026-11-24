@@ -52,7 +52,7 @@ const fieldOf = (page: (typeof pages)[number], field: string): string =>
 	});
 
 describe("the site's pages", () => {
-	test("are the four docs and the three posts the site promises", () => {
+	test("are the four docs and the post the site promises", () => {
 		expect(docs.map(({ slug }) => slug)).toStrictEqual([
 			"architecture",
 			"hosting",
@@ -61,8 +61,6 @@ describe("the site's pages", () => {
 		]);
 		expect(posts.map(({ slug }) => slug)).toStrictEqual([
 			"cloudflare-tcp-vs-vps",
-			"alchemy-domain-over-jsonl",
-			"zero-comments-zero-assertions",
 		]);
 	});
 
