@@ -40,7 +40,7 @@ jobs:
       - name: Check format, lint, comments, and types
         run: bun run check
       - name: Run tests
-        run: bun test --parallel=4
+        run: bun test --parallel
       - name: Build all release binaries
         run: bun scripts/build.ts --all --version "$GITHUB_REF_NAME"
       - name: Upload supervillain-linux-x64

@@ -41,7 +41,7 @@ jobs:
       - name: Check format, lint, comments, and types
         run: bun run check
       - name: Run tests
-        run: bun test --parallel=4
+        run: bun test --parallel
       - name: Build site
         run: bun --filter @supervillain/site build
       - name: Build standalone binary

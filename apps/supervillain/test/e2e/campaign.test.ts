@@ -122,7 +122,8 @@ describe("supervillain new", () => {
 				expect(usage.stderr).toContain(
 					"import pathbuilder <file.json> <campaign-dir>"
 				);
-			})
+			}),
+		30_000
 	);
 
 	effect(
@@ -243,7 +244,8 @@ describe("supervillain map", () => {
 					"ford-road.txt",
 					"keep-7.txt",
 				]);
-			})
+			}),
+		30_000
 	);
 
 	effect(
@@ -268,7 +270,8 @@ describe("supervillain map", () => {
 				expect(none.stderr).toBe(
 					`supervillain: there's no campaign at ${path.join(dir, "nowhere")}; make one with: bun supervillain new ${path.join(dir, "nowhere")}\n`
 				);
-			})
+			}),
+		30_000
 	);
 });
 
@@ -300,30 +303,42 @@ describe("supervillain import", () => {
 				).toBe(
 					"kept monsters/gutter-rat.yaml (Gutter Rat): it exists; --overwrite replaces it\n"
 				);
-			})
+			}),
+		15_000
 	);
 
-	effect("a creature it can't find or read fails the import, naming why", () =>
-		Effect.gen(function* () {
-			const dir = yield* tempDir;
-			const result = yield* cli(["import", BESTIARY, "--into", dir, "nobody"]);
-			expect(result).toMatchObject({
-				exitCode: 1,
-				stdout: 'no monster named "nobody"\n',
-				stderr: "supervillain: one creature not imported\n",
-			});
+	effect(
+		"a creature it can't find or read fails the import, naming why",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
 
-			const missing = yield* cli([
-				"import",
-				path.join(dir, "nope"),
-				"--into",
-				dir,
-			]);
+				const result = yield* cli([
+					"import",
+					BESTIARY,
+					"--into",
+					dir,
+					"nobody",
+				]);
 
-			expect(missing.exitCode).toBe(1);
-			expect(missing.stderr).toStartWith(
-				`supervillain: can't read ${path.join(dir, "nope")}: `
-			);
-		})
+				expect(result).toMatchObject({
+					exitCode: 1,
+					stdout: 'no monster named "nobody"\n',
+					stderr: "supervillain: one creature not imported\n",
+				});
+
+				const missing = yield* cli([
+					"import",
+					path.join(dir, "nope"),
+					"--into",
+					dir,
+				]);
+
+				expect(missing.exitCode).toBe(1);
+				expect(missing.stderr).toStartWith(
+					`supervillain: can't read ${path.join(dir, "nope")}: `
+				);
+			}),
+		15_000
 	);
 });
