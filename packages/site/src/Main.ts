@@ -257,6 +257,7 @@ export const update = (model: Model, message: Message): Return =>
 				autoplayLine: "",
 			},
 		}),
+		MountedHeroWaves: () => ({ model }),
 		ClickedCopyCommand: () => {
 			const token = model.copyToken + 1;
 

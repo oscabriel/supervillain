@@ -1,5 +1,6 @@
 import type { Html, HtmlBuilder } from "foldkit/html";
 
+import { HeroWaves } from "./HeroWaves.ts";
 import { Message } from "./Model.ts";
 import type { Model } from "./Model.ts";
 import { terminalView } from "./Terminal.ts";
@@ -33,6 +34,11 @@ const heroView = (copied: boolean, h: HtmlBuilder<Message>): Html =>
 	h.section(
 		[h.Class("g-hero-wrap")],
 		[
+			h.canvas(
+				[h.Class("g-hero-canvas"), h.AriaHidden(true), h.OnMount(HeroWaves())],
+				[]
+			),
+			h.div([h.Class("g-hero-vignette"), h.AriaHidden(true)], []),
 			h.div(
 				[h.Class("g-hero")],
 				[

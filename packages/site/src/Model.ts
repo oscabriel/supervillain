@@ -49,6 +49,7 @@ export const Message = defineMessageUnion({
 	AutoplayStepped: { step: Schema.Int },
 	PausedAutoplay: {},
 	StartedAutoplay: {},
+	MountedHeroWaves: {},
 });
 
 export type Message = typeof Message.Type;

@@ -3,6 +3,13 @@ import { readFileSync } from "node:fs";
 
 import { AUTOPLAY_SCRIPT, advanceAutoplay } from "../src/Autoplay.ts";
 import { COLUMNS, ROWS, TERRAIN } from "../src/Encounter.ts";
+import {
+	ambientWave,
+	createWaveState,
+	dropRipple,
+	glyphForEnergy,
+	stepRipple,
+} from "../src/HeroWaves.ts";
 import { homeView } from "../src/Home.ts";
 import { ranLine } from "../src/Model.ts";
 import type { Model } from "../src/Model.ts";
@@ -217,8 +224,28 @@ describe("the autoplay encounter", () => {
 	});
 });
 
+describe("the hero ASCII wave field", () => {
+	test("builds a fantasy text grid and propagates damped ripples", () => {
+		const initial = createWaveState(24, 10, 8);
+
+		expect(initial.chars.length).toBe(240);
+		expect(initial.chars.join("")).toContain("Torchlight");
+
+		dropRipple(initial, 12, 5, 1.4, 3);
+		expect(initial.current[5 * 24 + 12]).toBeGreaterThan(1);
+
+		const stepped = stepRipple(initial);
+		const neighbor = stepped.current[5 * 24 + 13] ?? 0;
+
+		expect(Math.abs(neighbor)).toBeGreaterThan(0);
+		expect(Math.abs(ambientWave(4, 2, 1.5))).toBeLessThanOrEqual(0.41);
+		expect(glyphForEnergy("a", 0.1, 0, 0)).toBe("a");
+		expect(glyphForEnergy(" ", 0.8, 1, 1)).not.toBe(" ");
+	});
+});
+
 describe("the front page", () => {
-	test("leads with the join command and a quiet copy hint", async () => {
+	test("leads with the join command, ASCII wave canvas, and a quiet copy hint", async () => {
 		const html = await htmlOf((model, h) => h.div([], homeView(model, h)));
 
 		expect(html).toContain('<span class="g-ssh">ssh</span>');
@@ -226,7 +253,8 @@ describe("the front page", () => {
 		expect(html).toContain('aria-label="Copy ssh supervillain.sh"');
 		expect(html).toContain("Click to copy");
 		expect(html).toContain("Copied");
-		expect(html).not.toContain("canvas");
+		expect(html).toContain('class="g-hero-canvas"');
+		expect(html).toContain('class="g-hero-vignette"');
 		expect(html).not.toContain("events.jsonl");
 	});
 

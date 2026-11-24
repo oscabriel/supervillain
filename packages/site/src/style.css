@@ -236,13 +236,47 @@ p {
 
 .g-hero-wrap {
 	position: relative;
+	overflow: hidden;
 	min-height: 560px;
 	display: flex;
 	align-items: center;
 	background: var(--bg);
 }
 
+.g-hero-canvas {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	display: block;
+	z-index: 1;
+	pointer-events: none;
+}
+
+.g-hero-vignette {
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	pointer-events: none;
+	background:
+		linear-gradient(
+			to bottom,
+			#09090b 0%,
+			rgba(9, 9, 11, 0) 16%,
+			rgba(9, 9, 11, 0) 80%,
+			#09090b 100%
+		),
+		radial-gradient(
+			ellipse 48% 44% at 50% 50%,
+			rgba(9, 9, 11, 0.92) 0%,
+			rgba(9, 9, 11, 0.56) 54%,
+			rgba(9, 9, 11, 0) 100%
+		);
+}
+
 .g-hero {
+	position: relative;
+	z-index: 3;
 	width: 100%;
 	max-width: var(--max-width);
 	margin: 0 auto;
