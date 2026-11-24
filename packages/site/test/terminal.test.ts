@@ -44,8 +44,9 @@ describe("the terminal on the front page", () => {
 		expect(countOf(html, 'class="tui-cell wall"')).toBe(walls);
 		expect(countOf(html, "tui-cell reach")).toBeGreaterThan(0);
 		expect(countOf(html, "tui-tile-svg")).toBe(COLUMNS * ROWS);
-		expect(html).toContain('class="term-chrome-btn on"');
-		expect(html).toContain('aria-pressed="true"');
+		expect(html).toContain('class="term-chrome-btn"');
+		expect(html).not.toContain("/view pictures");
+		expect(html).not.toContain("/view text");
 		expect(html).not.toContain("events.jsonl");
 	});
 

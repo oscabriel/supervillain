@@ -515,22 +515,7 @@ const inputView = (h: HtmlBuilder<Message>, demo: Demo): Html =>
 		]
 	);
 
-const chromeButtonView = (
-	h: HtmlBuilder<Message>,
-	mode: MapMode,
-	mapMode: MapMode
-): Html =>
-	h.button(
-		[
-			h.Type("button"),
-			h.Class(classes(["term-chrome-btn", mode === mapMode ? "on" : ""])),
-			h.AriaPressed(mode === mapMode ? "true" : "false"),
-			h.OnClick(Message.ClickedMapMode({ mode })),
-		],
-		[`/view ${mode}`]
-	);
-
-const chromeView = (h: HtmlBuilder<Message>, mapMode: MapMode): Html =>
+const chromeView = (h: HtmlBuilder<Message>): Html =>
 	h.div(
 		[h.Class("term-chrome")],
 		[
@@ -538,8 +523,6 @@ const chromeView = (h: HtmlBuilder<Message>, mapMode: MapMode): Html =>
 			h.div(
 				[h.Class("term-chrome-right")],
 				[
-					chromeButtonView(h, "pictures", mapMode),
-					chromeButtonView(h, "text", mapMode),
 					h.button(
 						[
 							h.Type("button"),
@@ -581,6 +564,6 @@ export const terminalView = (
 			h.Id("table"),
 			h.AriaLabel("Interactive supervillain terminal"),
 		],
-		[chromeView(h, mapMode), h.div([h.Class("tui")], screen)]
+		[chromeView(h), h.div([h.Class("tui")], screen)]
 	);
 };
