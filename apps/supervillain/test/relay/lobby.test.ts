@@ -4,7 +4,7 @@ import { Clock, Effect } from "effect";
 
 import { lobbyFrame } from "../../src/relay/lobby.ts";
 import type { LobbyScreen } from "../../src/relay/lobby.ts";
-import { JOIN_HINT } from "../../src/relay/protocol.ts";
+import { closedRoomMessage, JOIN_HINT } from "../../src/relay/protocol.ts";
 import { lobbyText } from "../../src/relay/server.ts";
 import { effect, waitFor } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
@@ -43,6 +43,8 @@ const shown = (terminal: { output: () => string }) =>
 	Bun.stripANSI(terminal.output());
 
 const PROMPT = "Enter sits you at";
+
+const NAME_PROMPT = "> type your table's room name";
 
 const rows = (frame: string) => Bun.stripANSI(frame).split("\r\n");
 
@@ -149,7 +151,7 @@ describe("relay: the lobby", () => {
 	);
 
 	effect(
-		"a key no open table knows, and a guest, get today's hint; a guest asks nobody",
+		"without a terminal, a key no open table knows, and a guest, get the hint; a guest asks nobody",
 		() =>
 			Effect.gen(function* () {
 				const relay = yield* startRelay();
@@ -194,13 +196,158 @@ describe("relay: the lobby", () => {
 					exitCode: 1,
 				});
 
-				const shell = yield* sshShell(relay.playerPort, SIZE, {
+				expect(ford.asked.count).toBe(asked);
+			})
+	);
+
+	effect(
+		"a key no open table knows sees the lobby with none listed, and sits by typing a room's name",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				const dir = yield* tempDir;
+				const vex = yield* clientKey(dir, "vex");
+				const kai = yield* clientKey(dir, "kai");
+
+				const ford = yield* openTable(relay, "ford", {
+					actors: [`key:${vex.fingerprint}`],
+				});
+
+				const terminal = yield* sshShell(relay.playerPort, SIZE, {
+					key: kai,
+					user: "alex",
+				});
+
+				yield* waitFor("the lobby", () =>
+					shown(terminal).includes(NAME_PROMPT)
+				);
+				const lobby = shown(terminal);
+				expect(lobby).toContain(
+					"a virtual tabletop you reach with ssh  ·  no open table knows your key yet"
+				);
+				expect(lobby).toContain("┌─ ¹ tables ─");
+				expect(lobby).toContain("│ Every table here is run by its");
+				expect(lobby).toContain("│ To sit at one, type its room's");
+				expect(lobby).not.toContain("ford");
+				expect(lobby).not.toContain("alex");
+				expect(lobby).toContain(`│ ${kai.fingerprint}`);
+				expect(lobby).toContain(
+					"type a room's name · Enter sits you down · Ctrl-C leaves"
+				);
+				expect(ford.asked.count).toBe(1);
+				terminal.write("\u001B[B7\r");
+				yield* waitFor("the nudge", () =>
+					shown(terminal).includes("› Type your table's room name, then Enter.")
+				);
+				terminal.write("nowhere\r");
+				yield* waitFor("the refusal", () =>
+					shown(terminal).includes("› There's no table called nowhere here.")
+				);
+				terminal.write("Fo-\u007Frd");
+				yield* waitFor("the name", () => shown(terminal).endsWith("> ford"));
+				terminal.write("\r");
+				yield* waitFor("the seat", () =>
+					terminal.output().includes(`seat key:${kai.fingerprint}`)
+				);
+				expect(terminal.output()).toContain("Joining ford…\r\n");
+				terminal.write("q");
+				expect(yield* Effect.promise(async () => await terminal.exited)).toBe(
+					5
+				);
+			})
+	);
+
+	effect(
+		"a guest sees the lobby too, asks nobody, and sits as a guest by a room's name",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				const vex = yield* clientKey(yield* tempDir, "vex");
+
+				const ford = yield* openTable(relay, "ford", {
+					actors: [`key:${vex.fingerprint}`],
+				});
+
+				const terminal = yield* sshShell(relay.playerPort, SIZE, {
+					user: "root",
+				});
+
+				yield* waitFor("the lobby", () =>
+					shown(terminal).includes(NAME_PROMPT)
+				);
+				const lobby = shown(terminal);
+				expect(lobby).toContain(
+					"a virtual tabletop you reach with ssh  ·  you came as a guest"
+				);
+				expect(lobby).toContain("key       none");
+				expect(lobby).toContain("so you'd sit as a guest.");
+				expect(lobby).not.toContain("ford");
+				expect(ford.asked.count).toBe(0);
+				terminal.write("ford\r");
+				yield* waitFor("the seat", () =>
+					/seat guest:[A-Za-z0-9_-]{1,64} /u.test(terminal.output())
+				);
+				terminal.write("q");
+				expect(yield* Effect.promise(async () => await terminal.exited)).toBe(
+					5
+				);
+			})
+	);
+
+	effect(
+		"a known key sits at a table off its list by name; a claimed room with no GM isn't open; five misses and the lobby lets go",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				const vex = yield* clientKey(yield* tempDir, "vex");
+				yield* openTable(relay, "ford", { actors: [`key:${vex.fingerprint}`] });
+				yield* openTable(relay, "keep", { actors: [] });
+				yield* Effect.scoped(openTable(relay, "shut", { actors: [] }));
+				yield* waitFor(
+					"room shut unlinked",
+					() => !relay.linkedRooms().includes("shut")
+				);
+
+				const named = yield* sshShell(relay.playerPort, SIZE, {
+					key: vex,
 					user: "lobby",
 				});
 
-				expect(yield* Effect.promise(async () => await shell.exited)).toBe(1);
-				expect(shell.output()).toBe(`${JOIN_HINT}\r\n`);
-				expect(ford.asked.count).toBe(asked);
+				yield* waitFor("the lobby", () => shown(named).includes(PROMPT));
+				expect(shown(named)).toContain(
+					"> Enter sits you at ford, or type another room's name"
+				);
+				named.write("keep\r");
+				yield* waitFor("the seat", () =>
+					named.output().includes(`seat key:${vex.fingerprint}`)
+				);
+				expect(named.output()).toContain("Joining keep…");
+				named.write("q");
+				expect(yield* Effect.promise(async () => await named.exited)).toBe(5);
+
+				const missing = yield* sshShell(relay.playerPort, SIZE, {
+					key: vex,
+					user: "lobby",
+				});
+
+				yield* waitFor("the lobby", () => shown(missing).includes(PROMPT));
+				missing.write("shut\r");
+				yield* waitFor("the closed room", () =>
+					shown(missing).includes(`› ${closedRoomMessage("shut")}`)
+				);
+				expect(shown(missing).split(PROMPT).at(-2)).toMatch(/│ ▌ 1 {2}ford/u);
+
+				for (const miss of ["one", "two", "three"]) {
+					missing.write(`${miss}\r`);
+					yield* waitFor(`no ${miss}`, () =>
+						shown(missing).includes(`› There's no table called ${miss} here.`)
+					);
+				}
+
+				missing.write("root\r");
+				expect(yield* Effect.promise(async () => await missing.exited)).toBe(1);
+				expect(missing.output()).toEndWith(`${JOIN_HINT}\r\n`);
+				expect(missing.output()).not.toContain("Joining");
 			})
 	);
 
@@ -436,10 +583,19 @@ describe("the lobby's frame", () => {
 		picked: 0,
 		typed: "",
 		you: {
-			fingerprint: "SHA256:Lb2N0yQ8m4fBkqyC2r0wbqv1o3cJm7k6zgWcT4m2Ywo",
-			algorithm: "ssh-ed25519",
+			key: {
+				fingerprint: "SHA256:Lb2N0yQ8m4fBkqyC2r0wbqv1o3cJm7k6zgWcT4m2Ywo",
+				algorithm: "ssh-ed25519",
+			},
 			term: "xterm-ghostty",
 		},
+	};
+
+	const nobody: LobbyScreen = { ...screen, tables: [] };
+
+	const guest: LobbyScreen = {
+		...nobody,
+		you: { key: undefined, term: "xterm-ghostty" },
 	};
 
 	test("it fits the terminal, from a narrow one to a wide one, cleared and drawn from the top", () => {
@@ -449,19 +605,60 @@ describe("the lobby's frame", () => {
 			[100, 30],
 			[140, 40],
 		] as const) {
-			const frame = lobbyFrame(screen, cols, height);
-			expect(frame).toStartWith("\u001B[H\u001B[2J");
-			const lines = rows(frame);
-			expect(lines.length).toBeLessThanOrEqual(height);
+			for (const each of [screen, nobody, guest]) {
+				const frame = lobbyFrame(each, cols, height);
+				expect(frame).toStartWith("\u001B[H\u001B[2J");
+				const lines = rows(frame);
+				expect(lines.length).toBeLessThanOrEqual(height);
 
-			for (const line of lines) {
-				expect(Bun.stringWidth(line)).toBeLessThanOrEqual(cols);
+				for (const line of lines) {
+					expect(Bun.stringWidth(line)).toBeLessThanOrEqual(cols);
+				}
+
+				expect(frame).toEndWith(
+					`\u001B[${lines.length};${(lines.at(-1) ?? "").indexOf(">") + 3}H`
+				);
 			}
+		}
+	});
 
-			expect(frame).toEndWith(
-				`\u001B[${lines.length};${(lines.at(-1) ?? "").indexOf(">") + 3}H`
+	test("with no table to list it says how to sit down, whole, in one pane or two; a guest is told so", () => {
+		const narrow = rows(lobbyFrame(nobody, 60, 20))
+			.map((l) => l.replaceAll(/[│┌┐└┘─]/gu, " ").trim())
+			.join(" ")
+			.replaceAll(/ +/gu, " ");
+
+		expect(narrow).toContain(
+			"Every table here is run by its GM, from their own machine. To sit at one, type its room's name below and press Enter. Your GM has it."
+		);
+		expect(narrow).toContain("> type your table's room name");
+		expect(narrow).not.toContain("² you");
+
+		for (const [cols, height] of [
+			[80, 24],
+			[100, 30],
+			[140, 40],
+		] as const) {
+			const left = rows(lobbyFrame(nobody, cols, height))
+				.map((l) => (l.trim().split("│")[1] ?? "").trim())
+				.join(" ")
+				.replaceAll(/ +/gu, " ");
+
+			expect(left).toContain(
+				"Every table here is run by its GM, from their own machine. To sit at one, type its room's name below and press Enter. Your GM has it."
 			);
 		}
+
+		const wide = Bun.stripANSI(lobbyFrame(nobody, 100, 30));
+		expect(wide).toContain("no open table knows your key yet");
+		expect(wide).toContain(screen.you.key?.fingerprint ?? "no key");
+		expect(wide).toContain("Once you've played at a table, it's listed here");
+		expect(wide).not.toContain("These tables know your key");
+		const asGuest = Bun.stripANSI(lobbyFrame(guest, 100, 30));
+		expect(asGuest).toContain("you came as a guest");
+		expect(asGuest).toContain("key       none");
+		expect(asGuest).toContain("ssh-keygen makes one");
+		expect(asGuest).not.toContain("SHA256:");
 	});
 
 	test("the title: between a hero and a villain when wide, in quadrants at 80, a word when short", () => {
@@ -506,7 +703,7 @@ describe("the lobby's frame", () => {
 		expect(second).toMatch(/│ ▌ 2 {2}the-keep/u);
 		expect(second).toContain("› There's no 7 on the list.");
 		expect((second.split("\r\n").at(-1) ?? "").trim()).toBe("> 2");
-		expect(first).toContain(screen.you.fingerprint);
+		expect(first).toContain(screen.you.key?.fingerprint ?? "no key");
 		expect(Bun.stripANSI(lobbyFrame(screen, 60, 20))).not.toContain("² you");
 	});
 });

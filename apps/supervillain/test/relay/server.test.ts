@@ -290,10 +290,14 @@ describe("relay: rooms", () => {
 					}
 				);
 
-				expect(yield* Effect.promise(async () => await shell.exited)).toBe(1);
-				expect(shell.output()).toBe(
-					`There's no table called nowhere here.\r\n${JOIN_HINT}\r\n`
+				yield* waitFor("the lobby", () =>
+					Bun.stripANSI(shell.output()).includes(
+						"> type your table's room name"
+					)
 				);
+				expect(shell.output()).not.toContain("nowhere");
+				shell.write("\u0003");
+				expect(yield* Effect.promise(async () => await shell.exited)).toBe(0);
 
 				const table = yield* scoped(openTable(relay));
 				yield* table.close;

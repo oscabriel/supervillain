@@ -28,7 +28,7 @@ Canonical domain terms for `supervillain`. Use these terms consistently across c
 ## Network and Relay
 
 - **Link:** The persistent outbound TCP + SSH connection dialed from a GM's `supervillain host --relay ...` to `supervillain relay`.
-- **Lobby:** The relay's ANSI selection screen shown to a keyed player who connects without naming an active room (`ssh lobby@host` or bare `ssh host`).
+- **Lobby:** The relay's ANSI screen shown to anyone with a terminal who connects without naming an open room (`ssh lobby@host` or bare `ssh host`): the open tables that know their key, to pick from, and a prompt that takes a room's name.
 - **Knows question (`knows-1@supervillain.sh`):** The SSH subsystem the relay uses to ask linked hosts whether they recognize a player's key, sending a random 16-byte nonce and HMAC-SHA256 of the key so hosts never see unknown keys.
 - **Relay (`supervillain relay`):** Stateless SSH forwarding bridge between players and GMs' hosts. Renders nothing beyond the lobby screen, stores only `host_key`, `relay_key`, and `rooms.json`.
 - **`relay_known`:** File in a campaign directory pinning trusted relay key fingerprints (populated via `--relay-key` or trust-on-first-use).

@@ -13,8 +13,9 @@ export interface LobbyScreen {
 	readonly typed: string;
 	readonly said?: string | undefined;
 	readonly you: {
-		readonly fingerprint: string;
-		readonly algorithm: string;
+		readonly key:
+			| { readonly fingerprint: string; readonly algorithm: string }
+			| undefined;
 		readonly term: string;
 	};
 }
@@ -286,39 +287,102 @@ const tableRows = (screen: LobbyScreen, w: number): Array<Row> => {
 
 const label = (s: string): Seg => ({ text: pad(s, 10), fg: color.dim });
 
-const youRows = (screen: LobbyScreen, w: number): Array<Row> => {
-	const words = (text: string, fg: string): Array<Row> => {
-		const lines: Array<Row> = [];
-		let line = "";
+const words = (text: string, fg: string, w: number): Array<Row> => {
+	const lines: Array<Row> = [];
+	let line = "";
 
-		for (const word of text.split(" ")) {
-			if (line !== "" && width(line) + 1 + width(word) > w) {
-				lines.push([{ text: line, fg }]);
-				line = word;
-			} else {
-				line = line === "" ? word : `${line} ${word}`;
-			}
-		}
-
-		if (line !== "") {
+	for (const word of text.split(" ")) {
+		if (line !== "" && width(line) + 1 + width(word) > w) {
 			lines.push([{ text: line, fg }]);
+			line = word;
+		} else {
+			line = line === "" ? word : `${line} ${word}`;
 		}
+	}
 
-		return lines;
-	};
+	if (line !== "") {
+		lines.push([{ text: line, fg }]);
+	}
+
+	return lines;
+};
+
+const noTableRows = (w: number): Array<Row> => [
+	...words(
+		"Every table here is run by its GM, from their own machine.",
+		color.text,
+		w
+	),
+	[],
+	...words(
+		"To sit at one, type its room's name below and press Enter. Your GM has it.",
+		color.dim,
+		w
+	),
+];
+
+const youRows = (screen: LobbyScreen, w: number): Array<Row> => {
+	const { key: yours, term } = screen.you;
+
+	const terminal: Row = [
+		label("terminal"),
+		{ text: cut(term, w - 10), fg: color.dim },
+	];
+
+	if (yours === undefined) {
+		return [
+			...words(
+				"You came without an ssh key, so you'd sit as a guest.",
+				color.text,
+				w
+			),
+			[],
+			[label("key"), { text: "none", fg: color.dim }],
+			terminal,
+			[],
+			...words(
+				"With a key (ssh-keygen makes one), a table knows you each time you come back.",
+				color.dim,
+				w
+			),
+		];
+	}
 
 	return [
-		...words("There's no account: your ssh key is who you are.", color.text),
+		...words("There's no account: your ssh key is who you are.", color.text, w),
 		[],
-		[label("key"), { text: cut(screen.you.algorithm, w - 10), fg: color.dim }],
-		[{ text: cut(screen.you.fingerprint, w), fg: color.bright }],
-		[label("terminal"), { text: cut(screen.you.term, w - 10), fg: color.dim }],
+		[label("key"), { text: cut(yours.algorithm, w - 10), fg: color.dim }],
+		[{ text: cut(yours.fingerprint, w), fg: color.bright }],
+		terminal,
 		[],
 		...words(
-			"These tables know your key: the relay asked each open one, without telling it who you are.",
-			color.dim
+			screen.tables.length === 0
+				? "Once you've played at a table, it's listed here whenever it's open."
+				: "These tables know your key: the relay asked each open one, without telling it who you are.",
+			color.dim,
+			w
 		),
 	];
+};
+
+const known = (screen: LobbyScreen): string => {
+	const n = screen.tables.length;
+
+	if (n > 0) {
+		return `${n} open table${n === 1 ? "" : "s"} know${n === 1 ? "s" : ""} your key`;
+	}
+
+	return screen.you.key === undefined
+		? "you came as a guest"
+		: "no open table knows your key yet";
+};
+
+const asking = (screen: LobbyScreen): string => {
+	const room = screen.tables[screen.picked]?.room;
+
+	return room === undefined
+		? "type your table's room name"
+		: `Enter sits you at ${room}, or type another room's name`;
 };
 
 const PANE_ROWS = 12;
@@ -341,10 +405,7 @@ const layout = (screen: LobbyScreen, cols: number, rows: number) => {
 	const tag: Row = [
 		{ text: "a virtual tabletop you reach with ssh", fg: color.text },
 		{ text: "  ·  ", fg: FAINT },
-		{
-			text: `${n} open table${n === 1 ? "" : "s"} know${n === 1 ? "s" : ""} your key`,
-			fg: color.dim,
-		},
+		{ text: known(screen), fg: color.dim },
 	];
 
 	const listH = Math.max(PANE_ROWS, n + 2);
@@ -365,7 +426,7 @@ const layout = (screen: LobbyScreen, cols: number, rows: number) => {
 
 	const left = framed(
 		paneTitle("¹", "tables"),
-		tableRows(screen, leftW - 4),
+		n === 0 ? noTableRows(leftW - 4) : tableRows(screen, leftW - 4),
 		leftW,
 		listH
 	);
@@ -397,10 +458,14 @@ const layout = (screen: LobbyScreen, cols: number, rows: number) => {
 
 	const byNumber = n > 1 ? key(`1-${n}`, "by number") : [];
 
+	const picking =
+		n === 0
+			? key("type", "a room's name")
+			: [...key("↑↓", "pick"), ...byNumber];
+
 	const hints: Row = [
 		{ text: " " },
-		...key("↑↓", "pick"),
-		...byNumber,
+		...picking,
 		...key("Enter", "sits you down"),
 		...key("Ctrl-C", "leaves", true),
 	];
@@ -413,16 +478,7 @@ const layout = (screen: LobbyScreen, cols: number, rows: number) => {
 	const prompt: Row = [{ text: " > ", fg: color.brand, bold: true }];
 	out.push(
 		screen.typed === ""
-			? [
-					...prompt,
-					{
-						text: cut(
-							`Enter sits you at ${screen.tables[screen.picked]?.room ?? ""}`,
-							w - 4
-						),
-						fg: color.dim,
-					},
-				]
+			? [...prompt, { text: cut(asking(screen), w - 4), fg: color.dim }]
 			: [...prompt, { text: screen.typed, fg: color.bright }]
 	);
 	const left0 = Math.max(0, Math.floor((cols - w) / 2));

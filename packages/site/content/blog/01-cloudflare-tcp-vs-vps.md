@@ -17,7 +17,7 @@ ssh -p 2222 first-fight@table.example.com
 That command is the entire product promise. A player pastes it into the OpenSSH client their operating system already ships, and they are seated. Five hard requirements fall straight out of it:
 
 - **Two inbound raw TCP ports.** One public port for players' stock OpenSSH clients (22 or 2222) and a second port for GMs' hosts dialing out to link their rooms (7022). Not HTTP, not WebSockets.
-- **SSH termination at the relay.** The relay holds a pinned host key players' `ssh` trusts, authenticates keys or guests, reads the room name from the SSH username, runs the returning-player lobby, and multiplexes sessions onto the GM's link.
+- **SSH termination at the relay.** The relay holds a pinned host key players' `ssh` trusts, authenticates keys or guests, reads the room name from the SSH username, runs the lobby, and multiplexes sessions onto the GM's link.
 - **Four-hour connections.** A tabletop session runs three to four hours with steady keystrokes one way and screen frames the other.
 - **Stranger bounds per address.** Public SSH ports attract scanners within minutes. The relay caps connections and sessions per address (and per IPv6 /64), rate-limits new logins and room claims, and cuts peers that stop reading past 4 MiB or rekey repeatedly.
 - **Tiny durable state.** Two SSH keys (`host_key`, `relay_key`) and `rooms.json`. Zero game logs, zero rendering.

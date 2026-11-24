@@ -216,7 +216,11 @@ export const lobbyText = (tables: ReadonlyArray<LobbyTable>): string =>
 		`Join one with its name before the @, as you came here: ssh ${tables[0]?.room ?? "<room>"}@…`,
 	].join("\n");
 
-type Picked = { readonly room: string } | "left" | "idle";
+type Picked =
+	| { readonly kind: "listed"; readonly room: string }
+	| { readonly kind: "named"; readonly name: string; readonly picked: number }
+	| { readonly kind: "left" }
+	| { readonly kind: "idle" };
 
 const CLEAR = "\u001B[H\u001B[2J";
 
@@ -242,6 +246,22 @@ const ZERO = 0x30;
 
 const NINE = 0x39;
 
+const HYPHEN = 0x2d;
+
+const UPPER_A = 0x41;
+
+const UPPER_Z = 0x5a;
+
+const LOWER_A = 0x61;
+
+const LOWER_Z = 0x7a;
+
+const NUMBER_DIGITS = 3;
+
+const ROOM_NAME_LENGTH = 32;
+
+const LOBBY_TRIES = 5;
+
 const FINAL_LOW = 0x40;
 
 const FINAL_HIGH = 0x7e;
@@ -259,6 +279,11 @@ interface Drawn {
 	readonly said: string | undefined;
 }
 
+interface Resumed {
+	readonly picked: number;
+	readonly said: string | undefined;
+}
+
 interface Picking {
 	picked: number;
 	typed: string;
@@ -271,11 +296,23 @@ interface Picking {
 type Keyed =
 	| { readonly kind: "more" }
 	| { readonly kind: "left" }
-	| { readonly kind: "chose"; readonly room: string; readonly skip: number };
+	| { readonly kind: "chose"; readonly room: string; readonly skip: number }
+	| { readonly kind: "named"; readonly name: string; readonly skip: number };
 
 const MORE: Keyed = { kind: "more" };
 
+const isDigit = (byte: number) => byte >= ZERO && byte <= NINE;
+
+const isLetter = (byte: number) =>
+	(byte >= LOWER_A && byte <= LOWER_Z) || (byte >= UPPER_A && byte <= UPPER_Z);
+
+const isNumber = (typed: string) => /^\d+$/u.test(typed);
+
 const moveBy = (state: Picking, by: 1 | -1, count: number) => {
+	if (count === 0) {
+		return;
+	}
+
 	state.picked = (state.picked + by + count) % count;
 	state.typed = "";
 	state.said = undefined;
@@ -320,18 +357,23 @@ const entered = (
 	next: number | undefined,
 	at: number
 ): Keyed => {
+	const skip = byte === CR && next === LF ? at + 2 : at + 1;
+
+	if (state.typed !== "" && !isNumber(state.typed)) {
+		return { kind: "named", name: state.typed, skip };
+	}
+
 	const n = state.typed === "" ? state.picked + 1 : Number(state.typed);
 	const room = Number.isInteger(n) && n >= 1 ? rooms[n - 1] : undefined;
 
 	if (room !== undefined) {
-		return {
-			kind: "chose",
-			room,
-			skip: byte === CR && next === LF ? at + 2 : at + 1,
-		};
+		return { kind: "chose", room, skip };
 	}
 
-	state.said = `There's no ${state.typed} on the list.`;
+	state.said =
+		state.typed === ""
+			? "Type your table's room name, then Enter."
+			: `There's no ${state.typed} on the list.`;
 	state.typed = "";
 
 	return MORE;
@@ -344,6 +386,31 @@ const typedDigit = (state: Picking, byte: number, count: number) => {
 
 	if (n >= 1 && n <= count) {
 		state.picked = n - 1;
+	}
+};
+
+const typedName = (state: Picking, byte: number) => {
+	state.typed += String.fromCodePoint(byte).toLowerCase();
+	state.said = undefined;
+};
+
+const typed = (state: Picking, byte: number, count: number) => {
+	const numbering = state.typed === "" ? count > 0 : isNumber(state.typed);
+
+	if (isDigit(byte) && numbering) {
+		if (state.typed.length < NUMBER_DIGITS) {
+			typedDigit(state, byte, count);
+		}
+
+		return;
+	}
+
+	const naming = state.typed !== "" && !isNumber(state.typed);
+	const starts = state.typed === "" && isLetter(byte);
+	const goesOn = naming && (isLetter(byte) || isDigit(byte) || byte === HYPHEN);
+
+	if ((starts || goesOn) && state.typed.length < ROOM_NAME_LENGTH) {
+		typedName(state, byte);
 	}
 };
 
@@ -373,8 +440,8 @@ const keyed = (
 		state.escape = "esc";
 	} else if (byte === DEL || byte === BACKSPACE) {
 		state.typed = state.typed.slice(0, -1);
-	} else if (byte >= ZERO && byte <= NINE && state.typed.length < 3) {
-		typedDigit(state, byte, rooms.length);
+	} else {
+		typed(state, byte, rooms.length);
 	}
 
 	return MORE;
@@ -384,6 +451,7 @@ const pickTable = (
 	session: RawSession,
 	rooms: ReadonlyArray<string>,
 	idleMs: number,
+	from: Resumed,
 	draw: (state: Drawn) => void,
 	redraw: (again: (() => void) | undefined) => void
 ): Effect.Effect<Picked> =>
@@ -391,9 +459,9 @@ const pickTable = (
 		const { stream } = session;
 
 		const state: Picking = {
-			picked: 0,
+			picked: from.picked,
 			typed: "",
-			said: undefined,
+			said: from.said,
 			escape: "no",
 			sequence: "",
 			afterCr: false,
@@ -423,7 +491,7 @@ const pickTable = (
 
 		const idleTimer = () =>
 			setTimeout(() => {
-				finish("idle");
+				finish({ kind: "idle" });
 			}, idleMs);
 
 		let idle = idleTimer();
@@ -436,13 +504,25 @@ const pickTable = (
 				const step = keyed(state, rooms, chunk, at, byte);
 
 				if (step.kind === "left") {
-					finish("left");
+					finish({ kind: "left" });
 
 					return;
 				}
 
 				if (step.kind === "chose") {
-					finish({ room: step.room }, chunk.subarray(step.skip));
+					finish(
+						{ kind: "listed", room: step.room },
+						chunk.subarray(step.skip)
+					);
+
+					return;
+				}
+
+				if (step.kind === "named") {
+					finish(
+						{ kind: "named", name: step.name, picked: state.picked },
+						chunk.subarray(step.skip)
+					);
 
 					return;
 				}
@@ -452,13 +532,14 @@ const pickTable = (
 		};
 
 		const onEnd = () => {
-			finish("left");
+			finish({ kind: "left" });
 		};
 
 		show();
 		redraw(show);
 		stream.on("data", onData);
 		stream.once("end", onEnd);
+		stream.resume();
 
 		return Effect.sync(stop);
 	});
@@ -1167,6 +1248,26 @@ const make = (
 				return found.toSorted((a, b) => (a.room < b.room ? -1 : 1));
 			});
 
+		const claimed = (room: string) =>
+			isRoomName(room) && !isReservedRoom(room)
+				? readRooms(roomsFile).pipe(
+						Effect.map((rooms) => rooms[room] !== undefined),
+						Effect.catchTag("RoomsError", (failure) =>
+							Effect.as(
+								Effect.logError(
+									`can't read the room registry: ${failure.message}`
+								),
+								true
+							)
+						)
+					)
+				: Effect.succeed(false);
+
+		const turnedDown = (room: string) =>
+			Effect.map(claimed(room), (held) =>
+				held ? closedRoomMessage(room) : `There's no table called ${room} here.`
+			);
+
 		const lobby = (
 			session: RawSession,
 			asked: string,
@@ -1189,22 +1290,7 @@ const make = (
 					return Option.none<string>();
 				};
 
-				const claimed =
-					isRoomName(asked) &&
-					!isReservedRoom(asked) &&
-					(yield* readRooms(roomsFile).pipe(
-						Effect.map((rooms) => rooms[asked] !== undefined),
-						Effect.catchTag("RoomsError", (failure) =>
-							Effect.as(
-								Effect.logError(
-									`can't read the room registry: ${failure.message}`
-								),
-								true
-							)
-						)
-					));
-
-				if (claimed) {
+				if (yield* claimed(asked)) {
 					return turnAway(1, closedRoomMessage(asked));
 				}
 
@@ -1217,67 +1303,85 @@ const make = (
 					`lobby: ${actor} from ${info.remoteAddress}: ${tables.length} open tables know the key`
 				);
 
-				if (tables.length === 0) {
-					return turnAway(1, unknownRoomMessage(asked));
-				}
-
 				if (!terminal) {
-					return turnAway(1, lobbyText(tables));
+					return turnAway(
+						1,
+						tables.length === 0 ? unknownRoomMessage(asked) : lobbyText(tables)
+					);
 				}
 
-				if (id.kind !== "key") {
-					return turnAway(1);
-				}
+				const you = {
+					key:
+						id.kind === "key"
+							? { fingerprint: id.fingerprint, algorithm: id.algorithm }
+							: undefined,
+					term: info.term,
+				};
 
+				const rooms = tables.map((t) => t.room);
 				let drawn = "";
+				let from: Resumed = { picked: 0, said: undefined };
 
-				const picked = yield* pickTable(
-					session,
-					tables.map((t) => t.room),
-					lobbyIdleMs,
-					(state) => {
-						const frame = lobbyFrame(
-							{
-								tables,
-								...state,
-								you: {
-									fingerprint: id.fingerprint,
-									algorithm: id.algorithm,
-									term: info.term,
-								},
-							},
-							sizing.size.cols,
-							sizing.size.rows
-						);
+				const draw = (state: Drawn) => {
+					const frame = lobbyFrame(
+						{ tables, ...state, you },
+						sizing.size.cols,
+						sizing.size.rows
+					);
 
-						if (frame !== drawn) {
-							drawn = frame;
-							session.stream.write(frame);
-						}
-					},
-					(again) => {
-						sizing.resize =
-							again === undefined
-								? undefined
-								: () => {
-										again();
-									};
+					if (frame !== drawn) {
+						drawn = frame;
+						session.stream.write(frame);
 					}
-				);
+				};
+
+				for (let tries = 0; tries < LOBBY_TRIES; tries += 1) {
+					const picked = yield* pickTable(
+						session,
+						rooms,
+						lobbyIdleMs,
+						from,
+						draw,
+						(again) => {
+							sizing.resize =
+								again === undefined
+									? undefined
+									: () => {
+											again();
+										};
+						}
+					);
+
+					if (picked.kind === "left") {
+						session.stream.write(CLEAR);
+
+						return turnAway(0);
+					}
+
+					if (picked.kind === "idle") {
+						session.stream.write(CLEAR);
+
+						return turnAway(1, "No table picked; come back any time.");
+					}
+
+					const room = picked.kind === "listed" ? picked.room : picked.name;
+
+					if (picked.kind === "listed" || isOpen(room)) {
+						session.stream.write(CLEAR);
+						say(`Joining ${room}…`);
+
+						return Option.some(room);
+					}
+
+					yield* Effect.logDebug(
+						`lobby: ${actor} from ${info.remoteAddress} asked for ${room}, which isn't open`
+					);
+					from = { picked: picked.picked, said: yield* turnedDown(room) };
+				}
 
 				session.stream.write(CLEAR);
 
-				if (picked === "left") {
-					return turnAway(0);
-				}
-
-				if (picked === "idle") {
-					return turnAway(1, "No table picked; come back any time.");
-				}
-
-				say(`Joining ${picked.room}…`);
-
-				return Option.some(picked.room);
+				return turnAway(1, JOIN_HINT);
 			});
 
 		const seatIn = (

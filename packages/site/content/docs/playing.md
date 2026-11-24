@@ -25,14 +25,16 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])?
 
 Check that the fingerprint matches the one your GM sent you, then type `yes`. After that ssh remembers the key. If ssh ever says the key has changed, stop and ask your GM. If the table goes through a relay, the key ssh shows is the relay's, not the GM's machine's: check it against the relay's fingerprint, which your GM gets from whoever runs the relay.
 
-### Back at a table you've sat at
+### The lobby
 
-If your GM's table goes through a relay and you've sat there before with your key, you don't need the room's name. Ssh to the relay with `lobby` for the room (`ssh -p 2222 lobby@relay.example.net`) and it lists the tables open right now that know your key. Up and Down move the pick, or type a table's number; Enter sits you at it. A table knows your key once you've done something there with it, such as setting your name or rolling. Guests are never shown a list.
+If your GM's table goes through a relay, you can come without the room's name: `ssh -p 2222 lobby@relay.example.net`, or a bare `ssh -p 2222 relay.example.net`. Either way you get the lobby. If you've sat at a table there before with your key, it lists the tables open right now that know it: Up and Down move the pick, or type a table's number; Enter sits you at it. A table knows your key once you've done something there with it, such as setting your name or rolling.
+
+The first time you come, or as a guest, nothing is listed and the lobby says how to sit down instead: type the room's name your GM gave you and press Enter. That works with tables listed too.
 
 ### When the table doesn't answer
 
 - `The table first-fight isn't open right now.` The GM's machine isn't linked to the relay. Try again once they say it's up.
-- `There's no table called first-fight here.` Check the room name before the `@` with your GM.
+- The lobby, when you expected the table, or `There's no table called first-fight here.` in it. Check the room name with your GM, and type the right one there.
 - `The table first-fight is full right now.` Try again when someone leaves.
 - `The table closed.` The table went away while you were seated. Run the same command again when it's back; your name and hero are kept for your key.
 - `Connection reset by peer`, before anything else. Your address has as many connections open as the table allows, or opened them too fast. Close the others or wait a minute.
