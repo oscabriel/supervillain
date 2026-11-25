@@ -8,7 +8,8 @@ We rebuilt small from a cleared tree, then re-architected the domain and hardene
 
 - The previous build is tagged `archive/2026-09-exploration`; Spikes A and B live at `archive/2026-09-spikes`; Spikes C and D live in `spikes/` (skipped by root lint and format).
 - All three rulesets (`draw-steel`, `set-world`, `pf2e`), the `@alchemy.run/domain` + `@supervillain/platform-jsonl` engine, the post-quantum SSH server, the OpenTUI table (text + kitty picture map + mouse + GM prep panel), the relay + lobby, release binaries, and the public Foldkit site (`packages/site`) are built and green.
-- Next is Session Zero at a live table (ASSESSMENT §8) and deploying the public site and relay.
+- The public site and the public relay are deployed; the relay runs v0.6.1 on a Linux VPS, with players on port 22.
+- Next is Session Zero at a live table (ASSESSMENT §8).
 
 ## Rules
 
