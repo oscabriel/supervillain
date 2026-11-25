@@ -37,10 +37,10 @@ const START: Model = {
 };
 
 describe("the terminal on the front page", () => {
-	test("draws the header, band, map, feed, hint row and input line", async () => {
+	test("draws the band, map, feed, hint row and input line with no header bar", async () => {
 		const html = await htmlOf((model, h) => terminalView(model.demo, h));
 
-		expect(html).toContain("ssh first-fight@supervillain.sh");
+		expect(html).not.toContain("ssh first-fight@supervillain.sh");
 		expect(html).toContain("Brann (you)");
 		expect(html).toContain("B Brann (you)");
 		expect(html).toContain("b Bandit Bruiser");
@@ -57,7 +57,7 @@ describe("the terminal on the front page", () => {
 		expect(countOf(html, 'class="tui-cell wall"')).toBe(walls);
 		expect(countOf(html, "tui-cell reach")).toBeGreaterThan(0);
 		expect(countOf(html, "tui-tile-svg")).toBe(COLUMNS * ROWS);
-		expect(html).toContain('class="term-chrome-btn"');
+		expect(html).not.toContain("term-chrome");
 		expect(html).not.toContain("/view pictures");
 		expect(html).not.toContain("/view text");
 		expect(html).not.toContain("events.jsonl");
@@ -210,7 +210,7 @@ describe("the autoplay encounter", () => {
 		expect(demo.log).toStrictEqual(DEMO.log);
 	});
 
-	test("shows live preview controls and preview text while playing", async () => {
+	test("shows preview text and no header controls while playing", async () => {
 		const html = await htmlOf((model, h) =>
 			terminalView(model.demo, h, "pictures", {
 				autoplay: true,
@@ -218,8 +218,8 @@ describe("the autoplay encounter", () => {
 			})
 		);
 
-		expect(html).toContain("live preview");
-		expect(html).toContain("pause");
+		expect(html).not.toContain("live preview");
+		expect(html).not.toContain("term-chrome");
 		expect(html).toContain('value="/move brann g4"');
 		expect(html).toContain("is-preview");
 	});

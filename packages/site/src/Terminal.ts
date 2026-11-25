@@ -532,60 +532,6 @@ const inputView = (
 	);
 };
 
-const chromeView = (h: HtmlBuilder<Message>, autoplay: boolean): Html => {
-	const controls: Array<Html> = [];
-
-	if (autoplay) {
-		controls.push(
-			h.span(
-				[h.Class("term-chrome-live")],
-				[
-					h.span([h.Class("term-live-dot"), h.AriaHidden(true)], []),
-					"live preview",
-				]
-			),
-			h.button(
-				[
-					h.Type("button"),
-					h.Class("term-chrome-btn"),
-					h.OnClick(Message.PausedAutoplay()),
-				],
-				["pause"]
-			)
-		);
-	} else {
-		controls.push(
-			h.button(
-				[
-					h.Type("button"),
-					h.Class("term-chrome-btn"),
-					h.OnClick(Message.StartedAutoplay()),
-				],
-				["replay"]
-			)
-		);
-	}
-
-	controls.push(
-		h.button(
-			[
-				h.Type("button"),
-				h.Class("term-chrome-btn"),
-				h.OnClick(Message.ClickedRestart()),
-			],
-			["reset"]
-		)
-	);
-
-	return h.div(
-		[h.Class("term-chrome")],
-		[
-			h.span([h.Class("term-chrome-cmd")], ["ssh first-fight@supervillain.sh"]),
-			h.div([h.Class("term-chrome-right")], controls),
-		]
-	);
-};
-
 export const terminalView = (
 	demo: Demo,
 	h: HtmlBuilder<Message>,
@@ -620,6 +566,6 @@ export const terminalView = (
 			h.Id("table"),
 			h.AriaLabel("Interactive supervillain terminal"),
 		],
-		[chromeView(h, autoplay), h.div([h.Class("tui")], screen)]
+		[h.div([h.Class("tui")], screen)]
 	);
 };

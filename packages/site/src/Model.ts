@@ -40,7 +40,6 @@ export const Message = defineMessageUnion({
 	PressedKey: { key: Key },
 	ClickedCloseReply: {},
 	ClickedLogToggle: {},
-	ClickedRestart: {},
 	ClickedMapMode: { mode: MapMode },
 	ClickedCopyCommand: {},
 	ResetCopyCommand: { token: Schema.Int },
@@ -48,7 +47,6 @@ export const Message = defineMessageUnion({
 	ResetCopyCode: { id: Schema.String, token: Schema.Int },
 	AutoplayStepped: { step: Schema.Int },
 	PausedAutoplay: {},
-	StartedAutoplay: {},
 	MountedHeroWaves: {},
 });
 

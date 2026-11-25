@@ -387,86 +387,6 @@ p {
 	background: var(--term-bg);
 }
 
-.term-chrome {
-	max-width: 1440px;
-	margin: 0 auto;
-	padding: 10px 28px;
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	flex-wrap: wrap;
-	gap: 10px 16px;
-	border-bottom: 1px solid var(--line-soft);
-	font-family: var(--mono);
-	font-size: 11px;
-	color: var(--dim);
-}
-
-.term-chrome-cmd {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--muted);
-}
-
-.term-chrome-right {
-	display: flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 12px;
-}
-
-.term-chrome-live {
-	display: inline-flex;
-	align-items: center;
-	gap: 7px;
-	font-size: 10px;
-	letter-spacing: 0.08em;
-	text-transform: uppercase;
-	color: var(--muted);
-}
-
-.term-live-dot {
-	width: 6px;
-	height: 6px;
-	border-radius: 999px;
-	background: var(--tui-you);
-	animation: term-live-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes term-live-pulse {
-	0%,
-	100% {
-		opacity: 1;
-	}
-
-	50% {
-		opacity: 0.32;
-	}
-}
-
-.term-chrome-btn {
-	padding: 3px 9px;
-	border: 1px solid var(--line);
-	background: transparent;
-	color: var(--muted);
-	font-family: var(--mono);
-	font-size: 10px;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
-	cursor: pointer;
-	transition:
-		border-color 140ms ease,
-		color 140ms ease,
-		background-color 140ms ease;
-}
-
-.term-chrome-btn:hover {
-	color: var(--ink);
-	border-color: rgba(255, 255, 255, 0.32);
-}
-
 .tui {
 	--cell-w: 44px;
 	--cell-h: calc(var(--cell-w) * 1.5);
@@ -1797,10 +1717,6 @@ details[open] > summary .summary-chevron {
 
 	.g-foot-legal {
 		text-align: left;
-	}
-
-	.term-chrome {
-		padding: 10px 14px;
 	}
 
 	.tui {

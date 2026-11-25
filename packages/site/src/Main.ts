@@ -23,7 +23,6 @@ import {
 	DEMO,
 	escaped,
 	recalled,
-	restarted,
 	toggledLog,
 	typed,
 } from "./Table.ts";
@@ -223,7 +222,6 @@ export const update = (model: Model, message: Message): Return =>
 		PressedKey: ({ key }) => playing(model, pressed(model.demo, key)),
 		ClickedCloseReply: () => playing(model, closedReply(model.demo)),
 		ClickedLogToggle: () => playing(model, toggledLog(model.demo)),
-		ClickedRestart: () => playing(model, restarted(model.demo)),
 		ClickedMapMode: ({ mode }) => ({
 			model: {
 				...stopped(model),
@@ -248,15 +246,6 @@ export const update = (model: Model, message: Message): Return =>
 			};
 		},
 		PausedAutoplay: () => ({ model: stopped(model) }),
-		StartedAutoplay: () => ({
-			model: {
-				...model,
-				demo: restarted(model.demo),
-				autoplay: true,
-				autoplayStep: 0,
-				autoplayLine: "",
-			},
-		}),
 		MountedHeroWaves: () => ({ model }),
 		ClickedCopyCommand: () => {
 			const token = model.copyToken + 1;
