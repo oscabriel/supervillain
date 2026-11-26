@@ -8,7 +8,7 @@ We rebuilt small from a cleared tree, then re-architected the domain and hardene
 
 - The previous build is tagged `archive/2026-09-exploration`; Spikes A and B live at `archive/2026-09-spikes`; Spikes C and D live in `spikes/` (skipped by root lint and format).
 - All three rulesets (`draw-steel`, `set-world`, `pf2e`), the `@alchemy.run/domain` + `@supervillain/platform-jsonl` engine, the post-quantum SSH server, the OpenTUI table (text + kitty picture map + mouse + GM prep panel), the relay + lobby, release binaries, and the public Foldkit site (`packages/site`) are built and green.
-- The public site and the public relay are deployed; the relay runs v0.6.1 on a Linux VPS, with players on port 22.
+- The public site and the public relay are deployed (the relay runs on a Linux VPS with players on port 22, auto-upgraded on every stable `v*` release; the public site auto-deploys on pushes to `main` touching `packages/site/**`).
 - Next is Session Zero at a live table (ASSESSMENT §8).
 
 ## Rules
@@ -20,7 +20,7 @@ We rebuilt small from a cleared tree, then re-architected the domain and hardene
 - **Commit subjects are at most 72 characters.** Detail goes in the body.
 - **A red CI gets fixed, or the rule gets turned off, the same day.**
 - **Commit only when the user asks.**
-- **Host neutrality.** Never commit personal domains, VPS IPs, usernames, or credentials into tracked files; keep deployment variables in gitignored root `.env`.
+- **Host neutrality.** Never commit personal domains, VPS IPs, usernames, or credentials into tracked files; keep local deployment variables in gitignored root `.env` and CI/CD coordinates in GitHub Actions secrets/variables (`relay` environment and repository secrets/variables).
 - **ORC trademark neutrality.** The `pf2e` ruleset implements open mechanics under the ORC License (`docs/ORC-NOTICE.md`). Never use Paizo trademarks (including `"Pathfinder"`) or Reserved Material in code, UI, or public copy.
 
 ## Engine invariants
@@ -32,7 +32,7 @@ We rebuilt small from a cleared tree, then re-architected the domain and hardene
 
 ## Stack & Workspace Layout
 
-Bun 1.4.5 workspaces (pinned versions in root `package.json` `workspaces.catalog`), TypeScript 7 (`tsrs` + `tsc -b` with `exactOptionalPropertyTypes` and `verbatimModuleSyntax`), `oxlint` (`typeAware: true`, `denyWarnings: true`, Ultracite, `@effect/tsgo`, vendored `anti-slop`, `supervillain/no-comments`), `oxfmt`, and `bun test`.
+Bun 1.4.5 workspaces (pinned versions in root `package.json` `workspaces.catalog`) and Node 26+ (required for `oxlint.config.ts` and `.ts` lint plugins), TypeScript 7 (`tsrs` + `tsc -b` with `exactOptionalPropertyTypes` and `verbatimModuleSyntax`), `oxlint` (`typeAware: true`, `denyWarnings: true`, Ultracite, `@effect/tsgo`, vendored `anti-slop`, `supervillain/no-comments`), `oxfmt`, and `bun test`.
 
 - **Rules are pure.** `packages/domain` depends only on `effect` and `@alchemy.run/domain`: no Effect runtime, I/O, clock, or `Math.random` in rules.
 - **Effect 4 runs the host edge:** the log file, single writer, HTTP client, sessions and their lifetimes, as `Context.Service` classes with layers. Effect's own agent guide ships at `node_modules/effect/AGENTS.md`.
@@ -50,18 +50,25 @@ Packages:
   - `relay/`: `supervillain relay` (`protocol.ts` with `knows-1@supervillain.sh` lobby MAC, `rooms.ts`, `lobby.ts`, `server.ts`).
 - `packages/site`: the Foldkit + `@foldkit/markdown` + `@alchemy.run/cloudflare` static site, docs, blog, and playable Draw Steel front-page terminal demo.
 - `tools/oxlint/`: vendored `anti-slop` plugin and local `supervillain/` plugin (`no-comments` + `comments.ts` checker).
-- `scripts/`: `build.ts` (`bun build --compile` with embedded sample campaign) and `smoke.sh`; `.github/workflows/{ci,release}.yml`.
+- `scripts/`: `build.ts` (`bun build --compile` with embedded sample campaign), `smoke.sh` (tmux TTY smoke harness), and `deploy-relay.sh` (forced-command VPS deployer with checksum, version, atomic swap, and rollback); `.github/workflows/{ci,release,relay-deploy,site-deploy}.yml`.
 - `examples/campaign`: the sample Draw Steel campaign copied by `supervillain new --example` and exercised by end-to-end tests.
 
-## Commands
+## Commands & CI/CD
 
-- `bun run build` — `tsc -b` across the workspace
-- `bun test` — run all tests from the repo root (preloads Solid JSX transform via `bunfig.toml`)
-- `bun run check` — `oxfmt --check`, strict `oxlint` (`--disable-nested-config`), and `comments.ts check`
+- `bun install` — install workspace dependencies and patch `oxlint`/`tsrs` (`prepare`)
 - `bun run fmt` — format with `oxfmt`
+- `bun run check` — `oxfmt --check`, `oxlint --disable-nested-config`, `comments.ts check`, and `tsc -b`
+- `bun run build` — `tsc -b` across the workspace
+- `bun test` / `bun run test` — run all tests from the repo root (`bun run test` runs `bun test --parallel`; preloads Solid JSX transform via `bunfig.toml`)
 - `bun supervillain host` — run the CLI from source
 - `bun --filter @supervillain/site build` — build and prerender the static site
 - `bun run release:build` / `bun run release:smoke dist/supervillain-<os>-<arch>` — compile and smoke-test the standalone binary
+
+CI/CD triggers:
+
+- **`git push origin main`**: runs `ci.yml` (`bun run check`, `bun test --parallel`, site build, binary build + TTY smoke test) and, when `packages/site/**` changes, runs `site-deploy.yml` (`bun run check`, `bun test packages/site`, and Alchemy deploy to Cloudflare).
+- **`git push origin vX.Y.Z`**: runs `release.yml` (`bun run check`, `bun test --parallel`, all 4 platform binaries, 3-platform TTY smoke tests, `SHA256SUMS`, SLSA build provenance attestation, GitHub Release) and, for stable (non-prerelease) tags, calls `relay-deploy.yml` to verify `SHA256SUMS` + `gh attestation verify` and roll out atomically to the relay VPS via `scripts/deploy-relay.sh` (`relay` GitHub Environment; also runnable manually via `workflow_dispatch` for rollbacks).
+- **`git push origin main vX.Y.Z`**: runs all of the above in one push.
 
 ## References
 

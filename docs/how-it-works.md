@@ -12,7 +12,7 @@ packages/
   site/            Foldkit + @foldkit/markdown public landing page, docs & blog (own Cloudflare stack)
 apps/
   supervillain/    Single compiled Bun binary: host/, content/, relay/, table/, main.ts
-scripts/           Cross-platform `bun build --compile` release builder and tmux TTY smoke harness
+scripts/           Cross-platform `bun build --compile` release builder, tmux TTY smoke harness, and forced-command VPS relay deployer
 tools/             Oxlint plugins: vendored anti-slop + supervillain/no-comments + comments.ts scanner
 ```
 
@@ -48,16 +48,24 @@ All three share one tactical grid, multi-square footprint (`1×1`–`4×4` + Tin
 - **`packages/ssh/`** wraps `ssh2@1.17.0` (patched via `patches/ssh2@1.17.0.patch` for post-quantum `mlkem768x25519-sha256` first, elliptic-curve only, no compression) with strict public-key signature checks (`Object.is(key.verify(...), true)`), per-address connection/session/connect-rate caps, login and idle timeouts, keepalive cutoffs, rekey caps, and a 4 MiB unread backpressure bound.
 - **`apps/supervillain/src/relay/`** is a dumb byte-forwarding bridge listening on two ports (players' SSH and GMs' link). It pins room ownership in `rooms.json` (180-day lapse, per-subnet claim rates, 1,024 max rooms) and powers the lobby via `knows-1@supervillain.sh` (random 16-byte nonce + HMAC-SHA256 so linked hosts never learn unknown keys).
 
-## Tooling and Checks
+## Tooling, Checks, and CI/CD
+
+Development requires Bun 1.4.5+ and Node 26+ (for native TypeScript stripping in `oxlint.config.ts` and `.ts` lint plugins).
 
 `bun run check` runs the full zero-warning gate across every tracked file:
-1. `oxfmt --check` (tabs, width 80)
+1. `oxfmt --check` (tabs, width 80; format with `bun run fmt`)
 2. `oxlint --disable-nested-config` (`typeAware: true` via `tsrs`, `denyWarnings: true`, Ultracite core, `@effect/tsgo` recommended + 12 strict rules, vendored `anti-slop` core + Effect, `supervillain/no-comments`, and import boundaries)
 3. `node tools/oxlint/supervillain/comments.ts check` (catches comments in CSS, HTML, YAML, TOML, shell, Dockerfiles, JSONC, and disable directives in TSX)
 4. `tsc -b` (TypeScript 7.1 beta with `exactOptionalPropertyTypes`, `verbatimModuleSyntax`, `noImplicitOverride`, `noFallthroughCasesInSwitch`)
 
-All tracked source files carry **zero comments** and **zero non-`as const` type assertions** (ADR 0009, ADR 0010).
+All tracked source files carry **zero comments** and **zero non-`as const` type assertions** (ADR 0009, ADR 0010). Run the full test suite with `bun run test` (`bun test --parallel`).
+
+Workflows in `.github/workflows/`:
+- **`ci.yml`** (push to `main` and PRs): `bun run check`, `bun test --parallel`, site build, binary build, and tmux TTY smoke test.
+- **`site-deploy.yml`** (push to `main` touching `packages/site/**`, plus `workflow_dispatch`): runs `bun run check`, `bun test packages/site`, and deploys the public site to Cloudflare via Alchemy (`bun run deploy:ci`, skipping cleanly when Cloudflare secrets are unset).
+- **`release.yml`** (push of a `v*` tag): runs `bun run check` and `bun test --parallel`, builds all 4 platform binaries, runs tmux TTY smoke tests on Linux x64, Linux ARM64, and macOS ARM64, generates `SHA256SUMS`, signs SLSA build provenance (`actions/attest-build-provenance`), publishes the GitHub Release, and calls `relay-deploy.yml` for stable (non-prerelease) tags.
+- **`relay-deploy.yml`** (`workflow_call` from `release.yml` and `workflow_dispatch` for manual deploys/rollbacks): scoped to the `relay` GitHub Environment; downloads the release binary, verifies `SHA256SUMS` and `gh attestation verify`, and streams the archive over pinned, restricted forced-command SSH to `scripts/deploy-relay.sh` on the VPS (atomic swap + health check + automatic rollback).
 
 ## Public Site (`packages/site`)
 
-A Foldkit + `@foldkit/markdown` app prerendered to static pages by Vite and deployed independently to Cloudflare via `packages/site/alchemy.run.ts` (`SUPERVILLAIN_SITE_DOMAIN` in root `.env`). Its front page includes a self-contained client-side Draw Steel encounter demo built on the same event-log mental model as the real table.
+A Foldkit + `@foldkit/markdown` app prerendered to static pages by Vite and deployed independently to Cloudflare via `packages/site/alchemy.run.ts` (`Cloudflare.Website.Foldkit` + `Cloudflare.state()`, reading `SUPERVILLAIN_SITE_DOMAIN` from root `.env` locally or GitHub Actions variables in `site-deploy.yml`). Its front page includes a self-contained client-side Draw Steel encounter demo built on the same event-log mental model as the real table.
