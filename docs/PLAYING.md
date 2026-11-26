@@ -23,33 +23,49 @@ Check that the fingerprint matches the one your GM sent you, then type `yes`. Af
 
 ### The lobby
 
-If your GM's table goes through a relay, you can come without the room's name: `ssh -p 2222 lobby@relay.example.net`, or a bare `ssh -p 2222 relay.example.net`, since ssh then sends your own username as the room. Either way you get the lobby, a frame under the supervillain title. If you've sat at a table there before with your key, it shows the tables open right now that know it:
+If your GM's table goes through a relay, you can come without the room's name: `ssh -p 2222 lobby@relay.example.net`, or a bare `ssh -p 2222 relay.example.net`, since ssh then sends your own username as the room. Either way you get the lobby, a centered stage under the supervillain title with a status bar across the top. If you've sat at a table there before with your key, it lists the tables open right now that know it on the left and shows the selected table's details and direct `ssh` command on the right:
 
 ```
-┌─ ¹ tables ─────────────────────┐ ┌─ ² you ──────────────────────────────────┐
-│ ▌ 1  first-fight           ● 3 │ │ There's no account: your ssh key is who  │
-│   2  the-keep              ● 1 │ │ you are.                                 │
-…
- ↑↓ pick · 1-2 by number · Enter sits you down · Ctrl-C leaves
- > Enter sits you at first-fight
+┌───────────────────────────┬───────────────────────────┬──────────────────────────┐
+│ ◆ lobby · ssh tabletop    │ ● 2 open tables           │ xterm-ghostty · 100×30   │
+└───────────────────────────┴───────────────────────────┴──────────────────────────┘
+
+tables ───────────────────────      first-fight ────────────────────────────────────
+ 1  first-fight           ● 3       ● 3 seated · open now
+ 2  the-keep              ● 1
+                                     sit down   enter
+
+                                    direct    ssh first-fight@…
+                                    key       ssh-ed25519 · no account
+                                    SHA256:…
+
+> Enter sits at first-fight, or type another room
+────────────────────────────────────────────────────────────────────────────────────
+                    ↑/↓ pick   1-2 jump   enter sit down   ctrl-c quit
 ```
 
-↑ and ↓ move the pick (the ▌), or type a table's number; Enter sits you at it. You sit down exactly as if you had typed the room's name before the `@`. A table knows your key once you've done something there with it (set your name, rolled, chatted), and a GM can keep their table off the list with `--no-lobby`.
+↑ and ↓ move the selection, or type a table's number; Enter sits you at it. You sit down exactly as if you had typed the room's name before the `@`. A table knows your key once you've done something there with it (set your name, rolled, chatted), and a GM can keep their table off the list with `--no-lobby`.
 
-The first time you come, or as a guest, there's nothing to list, and the `tables` pane says how to sit down instead:
+The first time you come, or as a guest, there's nothing to list, so the right column shows your key's fingerprint and quick commands (`direct`, `host`, `rules`) instead:
 
 ```
-┌─ ¹ tables ─────────────────────┐ ┌─ ² you ──────────────────────────────────┐
-│ Every table here is run by its │ │ There's no account: your ssh key is who  │
-│ GM, from their own machine.    │ │ you are.                                 │
-…
- type a room's name · Enter sits you down · Ctrl-C leaves
- > type your table's room name
+tables ───────────────────────      identity ───────────────────────────────────────
+○ none open yet                     key       ssh-ed25519 · no account
+                                    SHA256:…
+Played tables appear here
+whenever their GM is live.          commands ───────────────────────────────────────
+                                    direct    ssh <room>@…
+Ask your GM for a room name.        host      supervillain host --room <name>
+                                    rules     draw-steel · set.world · pf2e
+
+> type your table's room name
+────────────────────────────────────────────────────────────────────────────────────
+                     a-z room name   enter sit down   ctrl-c quit
 ```
 
 Type the room's name your GM gave you and press Enter. That works with tables listed too, for one that isn't on your list. A name that isn't open is answered on the screen (`There's no table called dungeon here.`, or `The table first-fight isn't open right now.`), and after five of those the relay shows the join hint below and lets go.
 
-Ctrl-C or Ctrl-D leaves, and after a minute without a key pressed the relay says goodbye. The `you` pane shows your key's fingerprint, the one thing the relay knows you by, or that you came without a key. Asked with a command (`ssh -p 2222 lobby@relay.example.net help`), the relay has no screen to draw: it prints the list and the command to join one, or the join hint when there's nothing to list, and runs nothing.
+Ctrl-C or Ctrl-D leaves, and after a minute without a key pressed the relay says goodbye. The `identity` section shows your key's fingerprint, the one thing the relay knows you by, or that you came as a guest (`ssh-keygen -t ed25519` makes a key). Asked with a command (`ssh -p 2222 lobby@relay.example.net help`), the relay has no screen to draw: it prints the list and the command to join one, or the join hint when there's nothing to list, and runs nothing.
 
 If your GM's table goes through a relay, a few things can come back instead of the table:
 

@@ -29,9 +29,19 @@ interface Seg {
 
 type Row = ReadonlyArray<Seg>;
 
-const FAINT = "#3a3f4b";
+const RULE = "#464c5a";
 
 const SHADOW = "#2a2d33";
+
+const MIN_TABLE_COLS = 72;
+
+const MIN_TABLE_ROWS = 20;
+
+const MAX_STAGE_WIDTH = 90;
+
+const WIDE_SPLIT = 76;
+
+const BODY_ROWS = 8;
 
 const width = (s: string) => Bun.stringWidth(s);
 
@@ -39,15 +49,17 @@ const rowWidth = (r: Row) => r.reduce((n, s) => n + width(s.text), 0);
 
 const pad = (s: string, n: number) => s + " ".repeat(Math.max(0, n - width(s)));
 
-const padRow = (r: Row, n: number): Row => [
-	...r,
-	{ text: " ".repeat(Math.max(0, n - rowWidth(r))) },
-];
+const padRow = (r: Row, n: number): Row => {
+	const extra = Math.max(0, n - rowWidth(r));
 
-const centred = (r: Row, n: number): Row => [
-	{ text: " ".repeat(Math.max(0, Math.floor((n - rowWidth(r)) / 2))) },
-	...r,
-];
+	return extra === 0 ? r : [...r, { text: " ".repeat(extra) }];
+};
+
+const centred = (r: Row, n: number): Row => {
+	const left = Math.max(0, Math.floor((n - rowWidth(r)) / 2));
+
+	return left === 0 ? r : [{ text: " ".repeat(left) }, ...r];
+};
 
 const codePoints = (s: string): Array<string> => Array.from(s, (ch) => ch);
 
@@ -57,6 +69,33 @@ const cut = (s: string, n: number) =>
 		: `${codePoints(s)
 				.slice(0, Math.max(0, n - 1))
 				.join("")}…`;
+
+const fitRow = (r: Row, max: number): Row => {
+	if (rowWidth(r) <= max) {
+		return r;
+	}
+
+	const out: Array<Seg> = [];
+	let left = max;
+
+	for (const seg of r) {
+		if (left <= 0) {
+			break;
+		}
+
+		const segW = width(seg.text);
+
+		if (segW <= left) {
+			out.push(seg);
+			left -= segW;
+		} else {
+			out.push({ ...seg, text: cut(seg.text, left) });
+			left = 0;
+		}
+	}
+
+	return out;
+};
 
 type Pixels = ReadonlyArray<ReadonlyArray<string | undefined>>;
 
@@ -198,94 +237,208 @@ const beside = (blocks: ReadonlyArray<Array<Row>>, gap: number): Array<Row> => {
 	);
 };
 
-const title = (w: number): Array<Row> => {
-	const word = wordPixels("SUPERVILLAIN", 2, color.bright);
+const banner = (cols: number): Array<Row> => {
+	const tight = wordPixels("SUPERVILLAIN", 1, color.bright);
 
-	if (w >= 118) {
+	if (cols >= 112) {
 		return beside(
 			[
 				halfBlocks(figurePixels("&", color.heroes)),
-				halfBlocks(word),
+				halfBlocks(tight),
 				halfBlocks(figurePixels('"', color.director)),
 			],
-			4
+			3
 		);
 	}
 
-	if (w >= 96) {
-		return halfBlocks(word);
+	if (cols >= 88) {
+		return halfBlocks(tight);
 	}
 
-	if (w >= 50) {
-		return quadrants(word);
+	if (cols >= 50) {
+		return quadrants(wordPixels("SUPERVILLAIN", 2, color.bright));
 	}
 
-	return [[{ text: "supervillain", fg: color.brand, bold: true }]];
+	return [];
 };
 
-const framed = (
-	head: Row,
-	body: ReadonlyArray<Row>,
+const section = (
+	title: string,
 	w: number,
-	h: number
+	fg: string = color.dim,
+	bold = false
+): Row => {
+	const label = cut(title, Math.max(1, w - 2));
+	const rule = Math.max(0, w - width(label) - 1);
+	const head: Seg = { text: label, fg, bold };
+
+	if (rule === 0) {
+		return [head];
+	}
+
+	return [head, { text: ` ${"─".repeat(rule)}`, fg: RULE }];
+};
+
+const field = (name: string, value: Row): Row => [
+	{ text: pad(name, 10), fg: color.dim },
+	...value,
+];
+
+const pill = (text: string, bg: string, fg: string): Seg => ({
+	text: ` ${text} `,
+	fg,
+	bg,
+	bold: true,
+});
+
+const isTypingName = (typed: string): boolean =>
+	typed !== "" && !/^\d+$/u.test(typed);
+
+const cell = (content: Row, inner: number): Row => {
+	const fitted = fitRow(content, Math.max(1, inner - 2));
+	const used = rowWidth(fitted);
+	const left = Math.max(0, Math.floor((inner - used) / 2));
+	const right = Math.max(0, inner - used - left);
+	const out: Array<Seg> = [];
+
+	if (left > 0) {
+		out.push({ text: " ".repeat(left) });
+	}
+
+	out.push(...fitted);
+
+	if (right > 0) {
+		out.push({ text: " ".repeat(right) });
+	}
+
+	return out;
+};
+
+const statusCell = (n: number, guest: boolean): Row => {
+	if (n > 0) {
+		return [
+			{ text: "● ", fg: color.healthy },
+			{
+				text: `${n} open table${n === 1 ? "" : "s"}`,
+				fg: color.bright,
+				bold: true,
+			},
+		];
+	}
+
+	if (guest) {
+		return [
+			{ text: "○ ", fg: color.gm },
+			{ text: "guest session", fg: color.text },
+		];
+	}
+
+	return [
+		{ text: "○ ", fg: color.dim },
+		{ text: "no open tables", fg: color.dim },
+	];
+};
+
+const topBar = (
+	screen: LobbyScreen,
+	w: number,
+	cols: number,
+	rows: number,
+	showArt: boolean
 ): Array<Row> => {
-	const inner = w - 2;
+	const n = screen.tables.length;
+	const guest = screen.you.key === undefined;
+	const tight = cols < MIN_TABLE_COLS || rows < MIN_TABLE_ROWS;
+
+	const brandCell: Row = showArt
+		? [
+				{ text: "◆ ", fg: color.brand },
+				{ text: "lobby", fg: color.bright, bold: true },
+				{ text: " · ssh tabletop", fg: color.dim },
+			]
+		: [
+				{ text: "◆ ", fg: color.brand },
+				{ text: "supervillain", fg: color.brand, bold: true },
+				{ text: " · lobby", fg: color.dim },
+			];
+
+	const tablesCell = statusCell(n, guest);
+	const sizeText = `${cols}×${rows}`;
+
+	const cells: ReadonlyArray<Row> =
+		w >= 72
+			? [
+					brandCell,
+					tablesCell,
+					tight
+						? [{ text: `! ${sizeText} (min 72×20)`, fg: color.notice }]
+						: [
+								{ text: screen.you.term, fg: color.text },
+								{ text: ` · ${sizeText}`, fg: color.dim },
+							],
+				]
+			: [
+					showArt
+						? [
+								{ text: "◆ ", fg: color.brand },
+								{ text: "lobby", fg: color.bright, bold: true },
+							]
+						: [
+								{ text: "◆ ", fg: color.brand },
+								{ text: "supervillain", fg: color.brand, bold: true },
+							],
+					tablesCell,
+				];
+
+	const separators = cells.length + 1;
+	const innerTotal = Math.max(cells.length * 4, w - separators);
+	const base = Math.floor(innerTotal / cells.length);
+	const extra = innerTotal - base * cells.length;
+	const widths = cells.map((_c, i) => base + (i < extra ? 1 : 0));
+	const termWidth = widths.at(2);
+
+	const fittedCells =
+		w >= 72 && !tight && termWidth !== undefined
+			? [
+					brandCell,
+					tablesCell,
+					[
+						{
+							text: cut(
+								screen.you.term,
+								Math.max(4, termWidth - 2 - width(` · ${sizeText}`))
+							),
+							fg: color.text,
+						},
+						{ text: ` · ${sizeText}`, fg: color.dim },
+					],
+				]
+			: cells;
 
 	const top: Row = [
-		{ text: "┌─ ", fg: color.border },
-		...head,
 		{
-			text: ` ${"─".repeat(Math.max(0, inner - rowWidth(head) - 3))}┐`,
-			fg: color.border,
+			text: `┌${widths.map((cw) => "─".repeat(cw)).join("┬")}┐`,
+			fg: RULE,
 		},
 	];
 
-	const middle = Array.from({ length: Math.max(0, h - 2) }, (_row, i): Row => {
-		const line = body[i] ?? [];
-
-		return [
-			{ text: "│", fg: color.border },
-			...padRow([{ text: " " }, ...line], inner),
-			{ text: "│", fg: color.border },
-		];
-	});
-
-	return [
-		top,
-		...middle,
-		[{ text: `└${"─".repeat(inner)}┘`, fg: color.border }],
+	const mid: Row = [
+		{ text: "│", fg: RULE },
+		...fittedCells.flatMap((c, i): Row => [
+			...cell(c, widths[i] ?? 0),
+			{ text: "│", fg: RULE },
+		]),
 	];
+
+	const bottom: Row = [
+		{
+			text: `└${widths.map((cw) => "─".repeat(cw)).join("┴")}┘`,
+			fg: RULE,
+		},
+	];
+
+	return [top, mid, bottom];
 };
-
-const paneTitle = (mark: string, label: string): Row => [
-	{ text: `${mark} `, fg: color.dim },
-	{ text: label, fg: color.bright },
-];
-
-const tableRows = (screen: LobbyScreen, w: number): Array<Row> => {
-	const digits = String(screen.tables.length).length;
-
-	return screen.tables.map((t, i): Row => {
-		const on = i === screen.picked;
-		const seated = `${t.seated > 0 ? "●" : "○"} ${t.seated}`;
-
-		return [
-			{ text: on ? "▌" : " ", fg: color.brand },
-			{ text: ` ${String(i + 1).padStart(digits)}  `, fg: color.dim },
-			{
-				text: pad(
-					cut(t.room, w - digits - 5 - width(seated)),
-					w - digits - 4 - width(seated)
-				),
-				fg: on ? color.bright : color.text,
-				bold: on,
-			},
-			{ text: seated, fg: t.seated > 0 ? color.healthy : FAINT },
-		];
-	});
-};
-
-const label = (s: string): Seg => ({ text: pad(s, 10), fg: color.dim });
 
 const words = (text: string, fg: string, w: number): Array<Row> => {
 	const lines: Array<Row> = [];
@@ -307,74 +460,206 @@ const words = (text: string, fg: string, w: number): Array<Row> => {
 	return lines;
 };
 
-const noTableRows = (w: number): Array<Row> => [
-	...words(
-		"Every table here is run by its GM, from their own machine.",
-		color.text,
-		w
-	),
-	[],
-	...words(
-		"To sit at one, type its room's name below and press Enter. Your GM has it.",
-		color.dim,
-		w
-	),
-];
+const tableListRows = (
+	screen: LobbyScreen,
+	w: number,
+	maxItems: number
+): Array<Row> => {
+	const { tables, picked } = screen;
+	const digits = String(tables.length).length;
+	const typingOther = isTypingName(screen.typed);
+	const shown = Math.min(tables.length, Math.max(1, maxItems));
 
-const youRows = (screen: LobbyScreen, w: number): Array<Row> => {
-	const { key: yours, term } = screen.you;
+	const start = Math.max(
+		0,
+		Math.min(picked - Math.floor(shown / 2), tables.length - shown)
+	);
 
-	const terminal: Row = [
-		label("terminal"),
-		{ text: cut(term, w - 10), fg: color.dim },
-	];
+	const slice = tables.slice(start, start + shown);
+	const rows: Array<Row> = [section("tables", w)];
+
+	for (const [offset, t] of slice.entries()) {
+		const i = start + offset;
+		const on = i === picked;
+		const num = String(i + 1).padStart(digits);
+		const seated = `${t.seated > 0 ? "●" : "○"} ${t.seated}`;
+		const nameW = Math.max(4, w - digits - 5 - width(seated));
+		const room = pad(cut(t.room, nameW), nameW);
+
+		if (on && !typingOther) {
+			rows.push([
+				{
+					text: ` ${num}  ${room} ${seated} `,
+					fg: color.cursorFg,
+					bg: color.brand,
+					bold: true,
+				},
+			]);
+		} else if (on) {
+			rows.push([
+				{
+					text: ` ${num}  ${room} ${seated} `,
+					fg: color.bright,
+					bg: color.mineBg,
+				},
+			]);
+		} else {
+			rows.push([
+				{ text: ` ${num}  `, fg: color.dim },
+				{ text: `${room} `, fg: color.text },
+				{ text: `${seated} `, fg: t.seated > 0 ? color.healthy : color.dim },
+			]);
+		}
+	}
+
+	if (tables.length > shown) {
+		const above = start;
+		const below = tables.length - (start + shown);
+		const parts: Array<string> = [];
+
+		if (above > 0) {
+			parts.push(`↑${above}`);
+		}
+
+		if (below > 0) {
+			parts.push(`↓${below}`);
+		}
+
+		rows.push([{ text: ` ${parts.join("  ")}`, fg: color.dim }]);
+	}
+
+	return rows;
+};
+
+const emptyLeftRows = (screen: LobbyScreen, w: number): Array<Row> => {
+	const guest = screen.you.key === undefined;
+
+	return guest
+		? [
+				section("tables", w),
+				[
+					{ text: "○ ", fg: color.gm },
+					{ text: cut("unavailable as guest", w - 2), fg: color.text },
+				],
+				[],
+				...words("Tables need an ssh key to remember your seat.", color.dim, w),
+				[],
+				...words("Ask your GM for a room name.", color.text, w),
+			]
+		: [
+				section("tables", w),
+				[
+					{ text: "○ ", fg: color.dim },
+					{ text: cut("none open yet", w - 2), fg: color.dim },
+				],
+				[],
+				...words(
+					"Played tables appear here whenever their GM is live.",
+					color.dim,
+					w
+				),
+				[],
+				...words("Ask your GM for a room name.", color.text, w),
+			];
+};
+
+const identityFields = (screen: LobbyScreen, w: number): Array<Row> => {
+	const yours = screen.you.key;
 
 	if (yours === undefined) {
 		return [
-			...words(
-				"You came without an ssh key, so you'd sit as a guest.",
-				color.text,
-				w
-			),
+			field("key", [
+				{ text: "none", fg: color.gm },
+				{ text: cut(" · ephemeral seat", Math.max(0, w - 14)), fg: color.dim },
+			]),
+			field("make one", [
+				{ text: cut("ssh-keygen -t ed25519", w - 10), fg: color.bright },
+			]),
+		];
+	}
+
+	const algo = cut(yours.algorithm, Math.max(4, w - 10));
+	const noteSpace = w - 10 - width(algo);
+	const keyValue: Array<Seg> = [{ text: algo, fg: color.heroes }];
+
+	if (noteSpace >= 13) {
+		keyValue.push({ text: " · no account", fg: color.dim });
+	}
+
+	return [
+		field("key", keyValue),
+		[{ text: cut(yours.fingerprint, w), fg: color.bright }],
+	];
+};
+
+const detailRows = (screen: LobbyScreen, w: number): Array<Row> => {
+	const typingOther = isTypingName(screen.typed);
+	const current = screen.tables[screen.picked];
+
+	if (typingOther) {
+		return [
+			section(screen.typed, w, color.bright, true),
+			[
+				{ text: "◈ ", fg: color.brand },
+				{ text: "joining by room name", fg: color.text },
+			],
 			[],
-			[label("key"), { text: "none", fg: color.dim }],
-			terminal,
+			[
+				pill("sit down", color.brand, color.cursorFg),
+				{ text: "  enter", fg: color.dim },
+			],
 			[],
-			...words(
-				"With a key (ssh-keygen makes one), a table knows you each time you come back.",
-				color.dim,
-				w
-			),
+			field("direct", [
+				{ text: cut(`ssh ${screen.typed}@…`, w - 10), fg: color.dice },
+			]),
+			...identityFields(screen, w),
+		];
+	}
+
+	if (current !== undefined) {
+		const live: Row =
+			current.seated > 0
+				? [
+						{ text: `● ${current.seated} seated`, fg: color.healthy },
+						{ text: " · open now", fg: color.dim },
+					]
+				: [
+						{ text: "○ empty", fg: color.dim },
+						{ text: " · open now", fg: color.dim },
+					];
+
+		return [
+			section(current.room, w, color.bright, true),
+			live,
+			[],
+			[
+				pill("sit down", color.brand, color.cursorFg),
+				{ text: "  enter", fg: color.dim },
+			],
+			[],
+			field("direct", [
+				{ text: cut(`ssh ${current.room}@…`, w - 10), fg: color.dice },
+			]),
+			...identityFields(screen, w),
 		];
 	}
 
 	return [
-		...words("There's no account: your ssh key is who you are.", color.text, w),
+		section("identity", w),
+		...identityFields(screen, w),
 		[],
-		[label("key"), { text: cut(yours.algorithm, w - 10), fg: color.dim }],
-		[{ text: cut(yours.fingerprint, w), fg: color.bright }],
-		terminal,
-		[],
-		...words(
-			screen.tables.length === 0
-				? "Once you've played at a table, it's listed here whenever it's open."
-				: "These tables know your key: the relay asked each open one, without telling it who you are.",
-			color.dim,
-			w
-		),
+		section("commands", w),
+		field("direct", [{ text: cut("ssh <room>@…", w - 10), fg: color.dice }]),
+		field("host", [
+			{
+				text: cut("supervillain host --room <name>", w - 10),
+				fg: color.director,
+			},
+		]),
+		field("rules", [
+			{ text: cut("draw-steel · set.world · pf2e", w - 10), fg: color.text },
+		]),
 	];
-};
-
-const known = (screen: LobbyScreen): string => {
-	const n = screen.tables.length;
-
-	if (n > 0) {
-		return `${n} open table${n === 1 ? "" : "s"} know${n === 1 ? "s" : ""} your key`;
-	}
-
-	return screen.you.key === undefined
-		? "you came as a guest"
-		: "no open table knows your key yet";
 };
 
 const asking = (screen: LobbyScreen): string => {
@@ -382,111 +667,158 @@ const asking = (screen: LobbyScreen): string => {
 
 	return room === undefined
 		? "type your table's room name"
-		: `Enter sits you at ${room}, or type another room's name`;
+		: `Enter sits at ${room}, or type another room`;
 };
 
-const PANE_ROWS = 12;
+const hint = (k: string, what: string): Array<Seg> => [
+	{ text: k, fg: color.bright, bold: true },
+	{ text: ` ${what}`, fg: color.dim },
+];
 
-const key = (k: string, what: string, last = false): Array<Seg> => {
-	const said: Array<Seg> = [
-		{ text: k, fg: color.bright },
-		{ text: ` ${what}`, fg: color.dim },
+const joinHints = (parts: ReadonlyArray<Array<Seg>>): Row =>
+	parts.flatMap((p, i) => (i === 0 ? p : [{ text: "   " }, ...p]));
+
+const footerParts = (n: number): ReadonlyArray<Array<Seg>> => {
+	if (n === 0) {
+		return [
+			hint("a-z", "room name"),
+			hint("enter", "sit down"),
+			hint("ctrl-c", "quit"),
+		];
+	}
+
+	if (n === 1) {
+		return [
+			hint("enter", "sit down"),
+			hint("a-z", "another room"),
+			hint("ctrl-c", "quit"),
+		];
+	}
+
+	return [
+		hint("↑/↓", "pick"),
+		hint(`1-${n}`, "jump"),
+		hint("enter", "sit down"),
+		hint("ctrl-c", "quit"),
 	];
+};
 
-	return last ? said : [...said, { text: " · ", fg: FAINT }];
+const footerRow = (screen: LobbyScreen, w: number): Row => {
+	const full = joinHints(footerParts(screen.tables.length));
+
+	if (rowWidth(full) <= w) {
+		return centred(full, w);
+	}
+
+	const compact = joinHints([
+		hint("enter", "sit down"),
+		hint("ctrl-c", "quit"),
+	]);
+
+	return centred(fitRow(compact, w), w);
+};
+
+const columnGap = (w: number): number => {
+	if (w >= 88) {
+		return 6;
+	}
+
+	return w >= 82 ? 4 : 3;
 };
 
 const layout = (screen: LobbyScreen, cols: number, rows: number) => {
-	const w = Math.max(20, Math.min(cols - 2, 124));
+	const w = Math.max(24, Math.min(cols - 4, MAX_STAGE_WIDTH));
+	const art = banner(cols);
 	const n = screen.tables.length;
-	const out: Array<Row> = [];
-	const art = title(w);
+	const twoCol = w >= WIDE_SPLIT;
+	const maxList = Math.max(4, Math.min(n, Math.max(BODY_ROWS - 1, rows - 16)));
 
-	const tag: Row = [
-		{ text: "a virtual tabletop you reach with ssh", fg: color.text },
-		{ text: "  ·  ", fg: FAINT },
-		{ text: known(screen), fg: color.dim },
-	];
+	const bodyH = twoCol
+		? Math.max(BODY_ROWS, Math.min(n, maxList) + (n > maxList ? 2 : 1))
+		: Math.max(6, Math.min(n, maxList) + 2);
 
-	const listH = Math.max(PANE_ROWS, n + 2);
-	const below = 3 + listH + 3;
-	const showArt = art.length + below <= rows;
+	const coreHeight = 3 + 1 + bodyH + 1 + 1 + 1 + 1;
+	const showArt = art.length > 0 && art.length + 1 + coreHeight <= rows;
+	const stage: Array<Row> = [...topBar(screen, w, cols, rows, showArt), []];
 
-	for (const r of showArt ? art : title(0)) {
-		out.push(centred(r, w));
-	}
+	if (twoCol) {
+		const gap = columnGap(w);
+		const rightW = Math.min(52, Math.max(50, Math.floor((w - gap) * 0.6)));
+		const leftW = w - gap - rightW;
 
-	out.push(
-		[],
-		rowWidth(tag) <= w ? centred(tag, w) : centred(tag.slice(0, 1), w),
-		[]
-	);
+		const left =
+			n === 0
+				? emptyLeftRows(screen, leftW)
+				: tableListRows(screen, leftW, maxList);
 
-	const leftW = w >= 76 ? 34 : w;
+		const right = detailRows(screen, rightW);
+		const height = Math.max(left.length, right.length, BODY_ROWS);
 
-	const left = framed(
-		paneTitle("¹", "tables"),
-		n === 0 ? noTableRows(leftW - 4) : tableRows(screen, leftW - 4),
-		leftW,
-		listH
-	);
+		for (let i = 0; i < height; i += 1) {
+			const rightRow = right[i] ?? [];
 
-	if (leftW === w) {
-		out.push(...left);
-	} else {
-		const rightW = w - leftW - 1;
-
-		const right = framed(
-			paneTitle("²", "you"),
-			youRows(screen, rightW - 4),
-			rightW,
-			listH
-		);
-
-		for (const [i, l] of left.slice(0, listH).entries()) {
-			const r = right[i] ?? [];
-
-			out.push([...l, { text: " " }, ...r]);
+			stage.push([
+				...padRow(left[i] ?? [], leftW),
+				{ text: " ".repeat(gap) },
+				...rightRow,
+			]);
 		}
+	} else {
+		const narrowBody =
+			n === 0 ? emptyLeftRows(screen, w) : tableListRows(screen, w, maxList);
+
+		stage.push(...narrowBody);
 	}
 
-	out.push(
+	const feedback: Row =
 		screen.said === undefined
 			? []
-			: [{ text: ` › ${screen.said}`, fg: color.notice }]
+			: [{ text: `› ${cut(screen.said, w - 2)}`, fg: color.notice }];
+
+	const prompt: Row = [{ text: "> ", fg: color.brand, bold: true }];
+	const promptIndex = stage.length + 1;
+
+	const promptRow: Row =
+		screen.typed === ""
+			? [...prompt, { text: cut(asking(screen), w - 2), fg: color.dim }]
+			: [
+					...prompt,
+					{ text: cut(screen.typed, w - 2), fg: color.bright, bold: true },
+				];
+
+	stage.push(
+		feedback,
+		promptRow,
+		[{ text: "─".repeat(w), fg: RULE }],
+		footerRow(screen, w)
 	);
 
-	const byNumber = n > 1 ? key(`1-${n}`, "by number") : [];
+	const stageLeft = Math.max(0, Math.floor((cols - w) / 2));
 
-	const picking =
-		n === 0
-			? key("type", "a room's name")
-			: [...key("↑↓", "pick"), ...byNumber];
+	const positionedArt: Array<Row> = showArt
+		? [...art.map((r) => centred(r, cols)), []]
+		: [];
 
-	const hints: Row = [
-		{ text: " " },
-		...picking,
-		...key("Enter", "sits you down"),
-		...key("Ctrl-C", "leaves", true),
+	const positionedStage: Array<Row> = stage.map((r) =>
+		stageLeft === 0 || r.length === 0
+			? r
+			: [{ text: " ".repeat(stageLeft) }, ...r]
+	);
+
+	const combined = [...positionedArt, ...positionedStage];
+	const topPad = Math.max(0, Math.floor((rows - combined.length) * 0.4));
+
+	const out: Array<Row> = [
+		...Array.from({ length: topPad }, (): Row => []),
+		...combined,
 	];
 
-	out.push(
-		rowWidth(hints) <= w
-			? hints
-			: [{ text: " Enter sits you down", fg: color.dim }]
-	);
-	const prompt: Row = [{ text: " > ", fg: color.brand, bold: true }];
-	out.push(
-		screen.typed === ""
-			? [...prompt, { text: cut(asking(screen), w - 4), fg: color.dim }]
-			: [...prompt, { text: screen.typed, fg: color.bright }]
-	);
-	const left0 = Math.max(0, Math.floor((cols - w) / 2));
+	const cursorRow = topPad + positionedArt.length + promptIndex + 1;
+	const cursorCol = stageLeft + 2 + width(cut(screen.typed, w - 2));
 
 	return {
 		rows: out,
-		left: left0,
-		cursor: { row: out.length, col: left0 + 3 + width(screen.typed) },
+		cursor: { row: cursorRow, col: cursorCol },
 	};
 };
 
@@ -537,8 +869,7 @@ export const lobbyFrame = (
 	cols: number,
 	rows: number
 ): string => {
-	const { rows: lines, left, cursor } = layout(screen, cols, rows);
-	const margin = " ".repeat(left);
+	const { rows: lines, cursor } = layout(screen, cols, rows);
 
-	return `\u001B[H\u001B[2J${lines.map((r) => margin + ansi(r)).join("\r\n")}\u001B[${cursor.row};${cursor.col + 1}H`;
+	return `\u001B[H\u001B[2J${lines.map((r) => ansi(r)).join("\r\n")}\u001B[${cursor.row};${cursor.col + 1}H`;
 };

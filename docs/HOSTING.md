@@ -288,7 +288,7 @@ Players run `ssh -p 2222 first-fight@table.example.com`. The first time, ssh sho
 
 ### The lobby
 
-A player who connects to the relay without an open room (`ssh -p 2222 lobby@table.example.com`, or a bare `ssh` whose username names no table) gets the lobby: a screen under the supervillain title, with a `tables` pane and a `you` pane that shows their key's fingerprint, or that they came without a key. From it they sit down exactly as if they had typed a room before the `@`.
+A player who connects to the relay without an open room (`ssh -p 2222 lobby@table.example.com`, or a bare `ssh` whose username names no table) gets the lobby: a centered stage under the supervillain title with a status bar, a `tables` column on the left, and selected-table details or `identity` + `commands` on the right. From it they sit down exactly as if they had typed a room before the `@`.
 
 A returning player is shown the open tables that know their key, and picks one with the arrows or its number. For that, the relay asks every host linked now, over its link, whether it knows the player's key. Your host says yes if the key has an event in your log (it has sat at your table and done something there) or has a seat open now, and adds how many are seated. A host that doesn't answer within 2 seconds counts as no.
 

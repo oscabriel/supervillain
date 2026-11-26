@@ -411,11 +411,9 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				);
 
 				yield* waitFor("the lobby", () =>
-					Bun.stripANSI(terminal.output()).includes("Enter sits you at den")
+					Bun.stripANSI(terminal.output()).includes("Enter sits at den")
 				);
-				expect(Bun.stripANSI(terminal.output())).toMatch(
-					/│ ▌ 1 {2}den +○ 0 │/u
-				);
+				expect(Bun.stripANSI(terminal.output())).toMatch(/1 {2}den +○ 0/u);
 				terminal.write("\r");
 				yield* waitFor(
 					"the name prompt",
