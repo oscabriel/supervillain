@@ -28,16 +28,11 @@ const written = (folder: string) =>
 
 const docs = written("docs");
 
-const posts = written("blog");
-
-const pages = [...docs, ...posts];
-
 const paths = new Set([
 	"/",
 	"/docs",
-	"/blog",
+	"/acknowledgments",
 	...docs.map(({ slug }) => `/docs/${slug}`),
-	...posts.map(({ slug }) => `/blog/${slug}`),
 ]);
 
 const linksIn = (source: string): Array<string> =>
@@ -45,27 +40,24 @@ const linksIn = (source: string): Array<string> =>
 		(found) => found.groups?.path ?? ""
 	);
 
-const fieldOf = (page: (typeof pages)[number], field: string): string =>
+const fieldOf = (page: (typeof docs)[number], field: string): string =>
 	Option.match(page.parsed.maybeFrontmatter, {
 		onNone: () => "",
 		onSome: (fields) => fields[field] ?? "",
 	});
 
 describe("the site's pages", () => {
-	test("are the four docs and the post the site promises", () => {
+	test("are the four docs the site promises", () => {
 		expect(docs.map(({ slug }) => slug)).toStrictEqual([
 			"architecture",
 			"hosting",
 			"playing",
 			"rulesets",
 		]);
-		expect(posts.map(({ slug }) => slug)).toStrictEqual([
-			"cloudflare-tcp-vs-vps",
-		]);
 	});
 
 	test("each say what they are, in words the build accepts", () => {
-		for (const page of pages) {
+		for (const page of docs) {
 			expect(fieldOf(page, "title")).not.toBe("");
 			expect(fieldOf(page, "summary")).not.toBe("");
 		}
@@ -78,14 +70,8 @@ describe("the site's pages", () => {
 		expect(orders.every((order) => /^\d+$/u.test(order))).toBeTruthy();
 	});
 
-	test("date every post as a day", () => {
-		for (const post of posts) {
-			expect(fieldOf(post, "date")).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
-		}
-	});
-
 	test("link only to pages that exist", () => {
-		const broken = pages.flatMap(({ slug, source }) =>
+		const broken = docs.flatMap(({ slug, source }) =>
 			linksIn(source).flatMap((path) =>
 				paths.has(path) ? [] : [`${slug}: ${path}`]
 			)
@@ -95,7 +81,7 @@ describe("the site's pages", () => {
 	});
 
 	test("are written without a dash for a pause", () => {
-		const dashed = pages.flatMap(({ slug, source }) =>
+		const dashed = docs.flatMap(({ slug, source }) =>
 			source.includes("—") ? [slug] : []
 		);
 
@@ -104,7 +90,7 @@ describe("the site's pages", () => {
 
 	test("render to HTML with an anchor for each section", async () => {
 		const rendered = await Promise.all(
-			pages.map(async (page) => ({
+			docs.map(async (page) => ({
 				anchors: anchorsOf(page.parsed.document),
 				html: await htmlOf((_model, h) => proseView(page.parsed.document, h)),
 			}))
@@ -121,10 +107,8 @@ describe("the site's pages", () => {
 });
 
 describe("a page's address", () => {
-	test("is its file name without the number that orders the posts", () => {
-		expect(slugOf("../content/blog/01-cloudflare-tcp-vs-vps.md")).toBe(
-			"cloudflare-tcp-vs-vps"
-		);
+	test("is its file name without any leading order prefix", () => {
+		expect(slugOf("../content/docs/01-playing.md")).toBe("playing");
 		expect(slugOf("../content/docs/hosting.md")).toBe("hosting");
 	});
 });

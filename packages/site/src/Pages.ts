@@ -14,7 +14,6 @@ export interface Page {
 	readonly title: string;
 	readonly summary: string;
 	readonly order: number;
-	readonly date: string;
 	readonly document: MarkdownDocument;
 }
 
@@ -27,20 +26,16 @@ export const slugOf = (path: string): string =>
 		.replace(/^\d+-/u, "");
 
 export const pageOf = (path: string, file: Written): Page => {
-	const { title, summary, order, date } = about(file.frontmatter);
+	const { title, summary, order } = about(file.frontmatter);
 
 	return {
 		slug: slugOf(path),
 		title,
 		summary,
 		order: order ?? 0,
-		date: date ?? "",
 		document: Markdown.decodeDocument(file.default),
 	};
 };
 
 export const inOrder = (pages: ReadonlyArray<Page>): Array<Page> =>
 	pages.toSorted((a, b) => a.order - b.order);
-
-export const newestFirst = (pages: ReadonlyArray<Page>): Array<Page> =>
-	pages.toSorted((a, b) => b.date.localeCompare(a.date));

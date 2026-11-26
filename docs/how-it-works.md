@@ -9,7 +9,7 @@ packages/
   domain/          Pure rules, commands, events, intake, projections (@alchemy.run/domain + effect only)
   platform-jsonl/  Domain.Platform over atomic append-only events.jsonl (generic, no domain imports)
   ssh/             Custom ssh2 server & client, post-quantum ML-KEM hybrid KEX, stranger rate/memory bounds
-  site/            Foldkit + @foldkit/markdown public landing page, docs & blog (own Cloudflare stack)
+  site/            Foldkit + @foldkit/markdown public landing page, docs & acknowledgments (own Cloudflare stack)
 apps/
   supervillain/    Single compiled Bun binary: host/, content/, relay/, table/, main.ts
 scripts/           Cross-platform `bun build --compile` release builder, tmux TTY smoke harness, and forced-command VPS relay deployer

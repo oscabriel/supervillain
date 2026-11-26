@@ -7,8 +7,7 @@ export const AppRoute = defineRouteUnion({
 	Home: {},
 	Docs: {},
 	Doc: { slug: Schema.String },
-	Blog: {},
-	Post: { slug: Schema.String },
+	Acknowledgments: {},
 	NotFound: { path: Schema.String },
 });
 
@@ -24,16 +23,13 @@ export const docRouter = pipe(
 	Route.mapTo(AppRoute.Doc)
 );
 
-export const blogRouter = pipe(literal("blog"), Route.mapTo(AppRoute.Blog));
-
-export const postRouter = pipe(
-	literal("blog"),
-	slash(string("slug")),
-	Route.mapTo(AppRoute.Post)
+export const acknowledgmentsRouter = pipe(
+	literal("acknowledgments"),
+	Route.mapTo(AppRoute.Acknowledgments)
 );
 
 const parse = Route.parseUrlWithFallback(
-	Route.oneOf(docRouter, docsRouter, postRouter, blogRouter, homeRouter),
+	Route.oneOf(docRouter, docsRouter, acknowledgmentsRouter, homeRouter),
 	AppRoute.NotFound
 );
 

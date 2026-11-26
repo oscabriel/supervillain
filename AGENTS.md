@@ -48,7 +48,7 @@ Packages:
   - `table/`: Solid + OpenTUI 0.9.7 UI (`view.ts`, `keep.ts`, `panels.ts`, `band.ts`, text `MapPane.tsx`, kitty-graphics `PictureMap.tsx` with MEKMODE `atlas/`, `mouse.ts`, and GM `Prep.tsx`).
   - `host/`: Effect edge (`TableRoom`, `Presence`, `SetWorld` on `HttpClient`, `AutoFoes` for set.world `/auto foes`, `tableServices`, `line.ts`, `Seat`, `TableServer`, `lobby.ts`, `RelayLink` with synchronous `relay_known` pinning, `LocalSeat`, and `check`).
   - `relay/`: `supervillain relay` (`protocol.ts` with `knows-1@supervillain.sh` lobby MAC, `rooms.ts`, `lobby.ts`, `server.ts`).
-- `packages/site`: the Foldkit + `@foldkit/markdown` + `@alchemy.run/cloudflare` static site, docs, blog, and playable Draw Steel front-page terminal demo.
+- `packages/site`: the Foldkit + `@foldkit/markdown` + `@alchemy.run/cloudflare` static site, docs, acknowledgments, and playable Draw Steel front-page terminal demo.
 - `tools/oxlint/`: vendored `anti-slop` plugin and local `supervillain/` plugin (`no-comments` + `comments.ts` checker).
 - `scripts/`: `build.ts` (`bun build --compile` with embedded sample campaign), `smoke.sh` (tmux TTY smoke harness), and `deploy-relay.sh` (forced-command VPS deployer with checksum, version, atomic swap, and rollback); `.github/workflows/{ci,release,relay-deploy,site-deploy}.yml`.
 - `examples/campaign`: the sample Draw Steel campaign copied by `supervillain new --example` and exercised by end-to-end tests.

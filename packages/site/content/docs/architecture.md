@@ -69,4 +69,4 @@ The table's screen is one Solid app on OpenTUI, rendered once for the GM's termi
 
 `supervillain relay` renders nothing and keeps no record of play. A GM's host dials out to it and holds a link open; the relay takes players' SSH connections on its public port and passes each one down that link. The host pins the relay's key, so nobody else can pretend to be the relay. The relay's own state is two keys and `rooms.json`, a list of which GM host key holds which room name.
 
-Because players' SSH ends at the relay, the relay sees play in the clear and vouches for which key each player holds. A GM runs their own relay or uses one they trust. The [blog](/blog/cloudflare-tcp-vs-vps) explains why the relay runs on a small VPS and not on a serverless platform.
+Because players' SSH ends at the relay, the relay sees play in the clear and vouches for which key each player holds. A GM runs their own relay or uses one they trust.

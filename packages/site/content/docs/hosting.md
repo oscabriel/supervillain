@@ -93,7 +93,7 @@ bore local 2222 --to bore.pub
 
 It prints a public port, and players run `ssh -p <port> first-fight@bore.pub`. Or forward through a VPS you already have with `ssh -N -R 0.0.0.0:2222:127.0.0.1:2222 you@your.vps`, with `GatewayPorts clientspecified` in that server's sshd config.
 
-A Cloudflare tunnel won't do: a quick tunnel carries only HTTP, and a named one needs every player to install `cloudflared`. That breaks "nothing to install". The [blog](/blog/cloudflare-tcp-vs-vps) has the longer version.
+A Cloudflare tunnel won't do: a quick tunnel carries only HTTP, and a named one needs every player to install `cloudflared`. That breaks "nothing to install".
 
 ### The relay, on a small VPS
 

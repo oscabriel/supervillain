@@ -2,8 +2,8 @@ import type { Html, HtmlBuilder } from "foldkit/html";
 
 import type { Message } from "./Model.ts";
 import {
+	acknowledgmentsRouter,
 	AppRoute,
-	blogRouter,
 	docRouter,
 	docsRouter,
 	homeRouter,
@@ -15,9 +15,6 @@ const HOSTING = docRouter({ slug: "hosting" });
 
 const isDocs = (route: AppRoute): boolean =>
 	AppRoute.guards.Docs(route) || AppRoute.guards.Doc(route);
-
-const isBlog = (route: AppRoute): boolean =>
-	AppRoute.guards.Blog(route) || AppRoute.guards.Post(route);
 
 const linkView = (
 	h: HtmlBuilder<Message>,
@@ -34,12 +31,21 @@ const headView = (route: AppRoute, h: HtmlBuilder<Message>): Html =>
 			h.header(
 				[h.Class("g-nav")],
 				[
-					h.a([h.Href(homeRouter()), h.Class("g-brand")], ["supervillain"]),
+					h.a(
+						[h.Href(homeRouter()), h.Class("g-brand")],
+						[
+							h.img([
+								h.Src("/icon.svg"),
+								h.Alt("supervillain"),
+								h.Width("36"),
+								h.Height("36"),
+							]),
+						]
+					),
 					h.nav(
 						[h.Class("g-links"), h.AriaLabel("Site")],
 						[
 							linkView(h, docsRouter(), "Docs", isDocs(route)),
-							linkView(h, blogRouter(), "Blog", isBlog(route)),
 							h.a([h.Href(SOURCE)], ["GitHub"]),
 						]
 					),
@@ -52,19 +58,19 @@ const headView = (route: AppRoute, h: HtmlBuilder<Message>): Html =>
 		]
 	);
 
-const footView = (h: HtmlBuilder<Message>): Html =>
+const footView = (route: AppRoute, h: HtmlBuilder<Message>): Html =>
 	h.footer(
 		[h.Class("g-foot-bar")],
 		[
 			h.div(
 				[h.Class("g-foot")],
 				[
-					h.span([], ["supervillain · MIT License"]),
-					h.span(
-						[h.Class("g-foot-legal")],
-						[
-							"Independent product published under the DRAW STEEL Creator License, not affiliated with MCDM Productions, LLC (DRAW STEEL © 2024 MCDM Productions, LLC). pf2e uses the ORC License.",
-						]
+					h.span([], ["supervillain"]),
+					linkView(
+						h,
+						acknowledgmentsRouter(),
+						"Acknowledgments",
+						AppRoute.guards.Acknowledgments(route)
 					),
 				]
 			),
@@ -78,5 +84,9 @@ export const pageView = (
 ): Html =>
 	h.div(
 		[h.Class("shell-page")],
-		[headView(route, h), h.main([h.Class("page-main")], content), footView(h)]
+		[
+			headView(route, h),
+			h.main([h.Class("page-main")], content),
+			footView(route, h),
+		]
 	);

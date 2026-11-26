@@ -2,9 +2,14 @@ import { Effect, Option } from "effect";
 import { Server } from "foldkit/experimental";
 import { fromString } from "foldkit/url";
 
-import { DOCS, docHref, POSTS, postHref } from "./Content.ts";
+import { DOCS, docHref } from "./Content.ts";
 import { init, routeOf, view } from "./Main.ts";
-import { AppRoute, blogRouter, docsRouter, homeRouter } from "./Route.ts";
+import {
+	acknowledgmentsRouter,
+	AppRoute,
+	docsRouter,
+	homeRouter,
+} from "./Route.ts";
 
 const ABOUT =
 	"supervillain is a terminal-first virtual tabletop. Players type one ssh command and sit at a live tactical board, with nothing to install and no account to make.";
@@ -31,8 +36,7 @@ export const prerenderPaths: ReadonlyArray<string> = [
 	homeRouter(),
 	docsRouter(),
 	...DOCS.map(docHref),
-	blogRouter(),
-	...POSTS.map(postHref),
+	acknowledgmentsRouter(),
 ];
 
 const statusOf = (request: Request): number =>

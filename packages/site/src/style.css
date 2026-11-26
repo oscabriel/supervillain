@@ -140,16 +140,17 @@ p {
 	justify-self: start;
 	display: inline-flex;
 	align-items: center;
-	gap: 10px;
-	font-size: 16px;
-	font-weight: 600;
-	letter-spacing: -0.025em;
-	color: var(--ink);
+	transition: opacity 140ms ease;
 }
 
-.g-brand svg {
-	width: 18px;
-	height: 18px;
+.g-brand:hover {
+	opacity: 0.85;
+}
+
+.g-brand img {
+	display: block;
+	width: 36px;
+	height: 36px;
 	flex-shrink: 0;
 }
 
@@ -221,16 +222,12 @@ p {
 	color: var(--dim);
 }
 
-.g-foot-legal {
-	max-width: 78ch;
-	text-align: right;
-}
-
 .g-foot a {
 	color: var(--muted);
 }
 
-.g-foot a:hover {
+.g-foot a:hover,
+.g-foot a[aria-current="page"] {
 	color: var(--ink);
 }
 
@@ -1216,19 +1213,6 @@ details[open] > summary .summary-chevron {
 	border-bottom: 1px solid var(--line);
 }
 
-.post-article .doc-head {
-	padding-bottom: 32px;
-}
-
-.post-meta-date,
-.post-date {
-	color: var(--dim);
-	font-family: var(--mono);
-	font-size: 11px;
-	letter-spacing: 0.09em;
-	text-transform: uppercase;
-}
-
 .turns {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1275,69 +1259,6 @@ details[open] > summary .summary-chevron {
 	font-size: 15px;
 	font-weight: 500;
 	letter-spacing: -0.01em;
-}
-
-.posts {
-	margin: 26px 0 0;
-	padding: 0;
-	list-style: none;
-	border-top: 1px solid var(--line);
-}
-
-.posts li {
-	border-bottom: 1px solid var(--line);
-}
-
-.post-row {
-	display: grid;
-	grid-template-columns: 11rem minmax(0, 1fr) auto;
-	align-items: baseline;
-	gap: 32px;
-	padding: 30px 0;
-}
-
-.post-body {
-	display: grid;
-	gap: 8px;
-	min-width: 0;
-}
-
-.post-title {
-	color: #f4f4f5;
-	font-size: 18px;
-	font-weight: 500;
-	line-height: 1.35;
-	letter-spacing: -0.02em;
-	text-wrap: balance;
-}
-
-.post-summary {
-	max-width: 40rem;
-	color: var(--muted);
-	font-size: 15px;
-	line-height: 1.6;
-}
-
-.post-read {
-	color: var(--dim);
-	font-family: var(--mono);
-	font-size: 11px;
-	letter-spacing: 0.09em;
-	text-transform: uppercase;
-	white-space: nowrap;
-	transition: color 140ms ease;
-}
-
-.post-row:hover .post-read {
-	color: var(--ink);
-}
-
-.post-row:hover .post-title {
-	color: #ffffff;
-}
-
-.post-article {
-	gap: 28px;
 }
 
 .prose {
@@ -1669,15 +1590,6 @@ details[open] > summary .summary-chevron {
 	.doc-sheet {
 		padding: 36px 32px 32px;
 	}
-
-	.post-row {
-		grid-template-columns: minmax(0, 1fr);
-		gap: 10px;
-	}
-
-	.post-read {
-		justify-self: start;
-	}
 }
 
 @media (max-width: 680px) {
@@ -1713,10 +1625,6 @@ details[open] > summary .summary-chevron {
 
 	.g-foot {
 		padding: 28px var(--gutter) 44px;
-	}
-
-	.g-foot-legal {
-		text-align: left;
 	}
 
 	.tui {

@@ -6,9 +6,9 @@ import { load, pushUrl } from "foldkit/navigation";
 import type { Url } from "foldkit/url";
 import { toString as urlToString } from "foldkit/url";
 
+import { acknowledgmentsView } from "./Acknowledgments.ts";
 import { advanceAutoplay, delayOfStep } from "./Autoplay.ts";
-import { blogView, postView } from "./Blog.ts";
-import { docOf, postOf } from "./Content.ts";
+import { docOf } from "./Content.ts";
 import { docsHubView, docView } from "./Docs.ts";
 import { homeView, JOIN_COMMAND } from "./Home.ts";
 import { pageView } from "./Layout.ts";
@@ -33,8 +33,7 @@ export const routeOf = (url: Url): AppRoute => {
 	const route = urlToAppRoute(url);
 
 	const isMissing =
-		(AppRoute.guards.Doc(route) && docOf(route.slug) === undefined) ||
-		(AppRoute.guards.Post(route) && postOf(route.slug) === undefined);
+		AppRoute.guards.Doc(route) && docOf(route.slug) === undefined;
 
 	return isMissing ? AppRoute.NotFound({ path: url.pathname }) : route;
 };
@@ -301,19 +300,11 @@ const notFoundView = (h: HtmlBuilder<Message>) => [
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 	const { route } = model;
 	const doc = docOf(AppRoute.guards.Doc(route) ? route.slug : "");
-	const post = postOf(AppRoute.guards.Post(route) ? route.slug : "");
 
 	if (doc !== undefined) {
 		return {
 			title: `${doc.title} · supervillain`,
 			body: pageView(route, h, docView(doc, h, model.copiedBlock)),
-		};
-	}
-
-	if (post !== undefined) {
-		return {
-			title: `${post.title} · supervillain`,
-			body: pageView(route, h, postView(post, h, model.copiedBlock)),
 		};
 	}
 
@@ -324,10 +315,10 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 		};
 	}
 
-	if (AppRoute.guards.Blog(route)) {
+	if (AppRoute.guards.Acknowledgments(route)) {
 		return {
-			title: "Blog · supervillain",
-			body: pageView(route, h, blogView(h)),
+			title: "Acknowledgments · supervillain",
+			body: pageView(route, h, acknowledgmentsView(h)),
 		};
 	}
 

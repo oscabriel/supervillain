@@ -2,8 +2,9 @@
 
 ## MEKMODE (Dings Mode and Text Mode)
 
-The 1-bit 8×12 bitmap atlases in `apps/supervillain/src/table/atlas/dings.ts`, `apps/supervillain/src/table/atlas/text.ts`, and `packages/site/src/Mekmode.ts` are derived from MEKMODE (Version `1.000;hotconv 1.0.109;makeotfexe 2.5.65596`) by MEK.txt, used with the author's permission granted to Oscar Gabriel (recorded 2026-10-22 in `ASSESSMENT.md` §9 Q7).
+The 1-bit 8×12 bitmap atlases in `apps/supervillain/src/table/atlas/dings.ts`, `apps/supervillain/src/table/atlas/text.ts`, and `packages/site/src/Mekmode.ts` are derived from MEKMODE (Version `1.000;hotconv 1.0.109;makeotfexe 2.5.65596`) by Michael Micasso (MEK.txt), used with the author's permission granted to Oscar Gabriel (recorded 2026-10-22 in `ASSESSMENT.md` §9 Q7).
 
+- Font page: <https://mektxt.com/fonts/mekmode>
 - Source: <https://www.mek.gallery/mekmode-otf> (accessed 2026-07-30)
 - `MEKMODE-Dings.otf` SHA-256: `1d7e274c5e08835703c0d7e935c208ae91079e4cd47e5297b7b32d2ee2ecd590`
 - `MEKMODE-Text.otf` SHA-256: `97470fbc65e698a13b057260b0df468bf9db391b5c4b38dcdbdb41bbcb516caa`
