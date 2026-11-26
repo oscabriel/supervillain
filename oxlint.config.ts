@@ -103,7 +103,7 @@ export default defineConfig({
 		"effecttsgo/strict-effect-provide": "error",
 
 		"oxc/no-accumulating-spread": "error",
-		"anti-slop/max-ternary-depth": ["error", { maxDepth: 2 }],
+		"anti-slop/max-ternary-depth": ["error", { maxDepth: 1 }],
 		"anti-slop/no-array-filter-map": "error",
 		"anti-slop/no-chained-type-assertions": "error",
 		"anti-slop/no-conditional-spread": "error",

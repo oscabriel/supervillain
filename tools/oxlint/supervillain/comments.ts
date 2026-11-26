@@ -365,9 +365,10 @@ const strip = (source: string, comments: ReadonlyArray<Comment>): string => {
 			out.slice(lineStart, comment.start).trim() === "" &&
 			out.slice(comment.end, lineEnd).trim() === "";
 
+		const afterLine = newline === -1 ? out.length : lineEnd + 1;
+
 		out = alone
-			? out.slice(0, lineStart) +
-				out.slice(newline === -1 ? out.length : lineEnd + 1)
+			? out.slice(0, lineStart) + out.slice(afterLine)
 			: out.slice(0, comment.start).replace(/[ \t]+$/u, "") +
 				out.slice(comment.end);
 	}
