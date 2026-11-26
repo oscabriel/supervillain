@@ -45,10 +45,10 @@ export const refuse = (refusal: string): Refused => ({ refusal });
 export const messageOf = (cause: unknown): string =>
 	cause instanceof Error ? cause.message : String(cause);
 
-export const decodePayload = <A>(
-	schema: Schema.Decoder<A>,
+export const decodePayload = <S extends Schema.Decoder<unknown>>(
+	schema: S,
 	envelope: Envelope
-): A => {
+): S["Type"] => {
 	const result = Schema.decodeResult(schema)(envelope.payload);
 
 	if (Result.isFailure(result)) {
@@ -58,4 +58,28 @@ export const decodePayload = <A>(
 	}
 
 	return result.success;
+};
+
+export const payloadDecoder =
+	<P extends { readonly [K in keyof P]: Schema.Decoder<unknown> }>(
+		payloads: P
+	) =>
+	<T extends keyof P>(type: T, envelope: Envelope): P[T]["Type"] =>
+		decodePayload(payloads[type], envelope);
+
+export const bad: (envelope: Envelope, why: string) => never = (
+	envelope,
+	why
+) => {
+	throw new Error(`${envelope.type} at seq ${envelope.seq} ${why}`);
+};
+
+export const rollFace = (dice: Dice, sides: number): number => {
+	const face = dice(sides);
+
+	if (!Number.isInteger(face) || face < 1 || face > sides) {
+		throw new Error(`the dice gave ${face} for a d${sides}`);
+	}
+
+	return face;
 };

@@ -11,7 +11,7 @@ import type { Square } from "../board/grid.ts";
 import { cheapestPath, moverWalk } from "../board/movement.ts";
 import { GM } from "../core/module.ts";
 import { ID } from "../drawSteel/schema.ts";
-import { isRefused, refuse } from "../engine.ts";
+import { isRefused, refuse, rollFace } from "../engine.ts";
 import type { Decision, Dice, NewEvent, Refused } from "../engine.ts";
 import type { FfCommand } from "./commands.ts";
 import { event } from "./events.ts";
@@ -372,14 +372,8 @@ const check = (
 	}
 
 	const rolls = Array.from({ length: notation.count }, () =>
-		dice(notation.sides)
+		rollFace(dice, notation.sides)
 	);
-
-	for (const face of rolls) {
-		if (!Number.isInteger(face) || face < 1 || face > notation.sides) {
-			throw new Error(`the dice gave ${face} for a d${notation.sides}`);
-		}
-	}
 
 	const total = rolls.reduce((a, b) => a + b, 0) + notation.modifier + value;
 

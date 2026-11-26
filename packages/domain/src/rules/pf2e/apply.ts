@@ -5,7 +5,7 @@ import { formatSquare, malformed, standable } from "../board/grid.ts";
 import type { Square } from "../board/grid.ts";
 import type { FeedNote } from "../core/module.ts";
 import { plural } from "../drawSteel/state.ts";
-import { decodePayload } from "../engine.ts";
+import { bad, payloadDecoder } from "../engine.ts";
 import type { Envelope } from "../engine.ts";
 import { actionsText, maxActions } from "./combat.ts";
 import { Payloads, isEventType } from "./events.ts";
@@ -48,12 +48,7 @@ export const formats = {
 	"pf-claim": { speaker: true, separator: " ", plainLabel: true },
 } as const;
 
-const decode = <T extends EventType>(type: T, envelope: Envelope): Payload<T> =>
-	decodePayload<Payload<T>>(Payloads[type], envelope);
-
-const bad: (envelope: Envelope, why: string) => never = (envelope, why) => {
-	throw new Error(`${envelope.type} at seq ${envelope.seq} ${why}`);
-};
+const decode = payloadDecoder(Payloads);
 
 const creature = (slice: PfState, envelope: Envelope, id: string): PfCreature =>
 	findCreature(slice, id) ??
@@ -200,9 +195,25 @@ const fallenText = (
 		return `${c.name} ${hpText(worn)}${isDead(worn) ? ", dead" : ""}`;
 	}
 
+	const shift = moved ? ", initiative moves before this turn" : "";
+
 	return worn.dead
 		? `${c.name} 0 HP, dead`
-		: `${c.name} 0 HP, dying ${worn.dying}${moved ? ", initiative moves before this turn" : ""}`;
+		: `${c.name} 0 HP, dying ${worn.dying}${shift}`;
+};
+
+const untilText = (
+	slice: PfState,
+	envelope: Envelope,
+	expires: PfExpires | undefined
+): string => {
+	if (expires === undefined) {
+		return "";
+	}
+
+	const edge = expires.at === "eot" ? "end" : "start";
+
+	return ` until the ${edge} of ${creature(slice, envelope, expires.of).name}'s turn`;
 };
 
 interface Hurt {
@@ -773,13 +784,15 @@ const appliers = {
 						const dying = Math.max(0, x.dying + delta);
 						const dead = dying >= deadAt(x);
 
-						return dying === 0
-							? { ...x, dying: 0, wounded: x.wounded + 1 }
-							: {
-									...x,
-									dying: Math.min(dying, deadAt(x)),
-									dead: x.dead || dead,
-								};
+						if (dying === 0) {
+							return { ...x, dying: 0, wounded: x.wounded + 1 };
+						}
+
+						return {
+							...x,
+							dying: Math.min(dying, deadAt(x)),
+							dead: x.dead || dead,
+						};
 					});
 
 		const after = creature(recovered, envelope, p.id);
@@ -963,14 +976,15 @@ const appliers = {
 			bad(envelope, "doesn't add up");
 		}
 
+		const striking = (struck: ReadonlyArray<string>) =>
+			struck.includes(t.id) ? struck : [...struck, t.id];
+
 		const spent = p.reaction
 			? reacted(slice, a.id)
 			: withTurn(spend(slice, a.id, 1), a.id, (turn) => ({
 					...turn,
 					attacks: turn.attacks + 1,
-					struck: turn.struck.includes(t.id)
-						? turn.struck
-						: [...turn.struck, t.id],
+					struck: striking(turn.struck),
 				}));
 
 		const hit =
@@ -1338,12 +1352,15 @@ const appliers = {
 		for (const r of p.results) {
 			const t = creature(next, envelope, r.target);
 
+			const against = p.attack ? "AC" : "DC";
+			const versus = r.dc === undefined ? "" : ` vs ${against} ${r.dc}`;
+
 			const rolledText =
 				r.natural === undefined ||
 				r.bonus === undefined ||
 				r.total === undefined
 					? ""
-					: `${rollText(r.natural, r.bonus, r.total)}${r.dc === undefined ? "" : ` vs ${p.attack ? "AC" : "DC"} ${r.dc}`}${degreeText(r.degree)}`;
+					: `${rollText(r.natural, r.bonus, r.total)}${versus}${degreeText(r.degree)}`;
 
 			if (r.healed !== undefined) {
 				next = withCreature(next, t.id, (x) => restore(x, r.healed ?? 0));
@@ -1433,10 +1450,7 @@ const appliers = {
 			...ifDefined(p.by, (b) => ({ by: b })),
 		};
 
-		const until =
-			p.expires === undefined
-				? ""
-				: ` until the ${p.expires.at === "eot" ? "end" : "start"} of ${creature(slice, envelope, p.expires.of).name}'s turn`;
+		const until = untilText(slice, envelope, p.expires);
 
 		return {
 			slice: withCreature(slice, c.id, (x) =>
@@ -1451,11 +1465,11 @@ const appliers = {
 		const { id, name } = decode("pf.condition-removed", envelope);
 		const c = creature(slice, envelope, id);
 
+		const woken = (x: PfCreature) => (name === "unconscious" ? unhit(x) : x);
+
 		const after = isCounter(name)
 			? withCreature(slice, id, (x) => ({ ...unhit(x), [name]: 0 }))
-			: withCreature(slice, id, (x) =>
-					lift(name === "unconscious" ? unhit(x) : x, name)
-				);
+			: withCreature(slice, id, (x) => lift(woken(x), name));
 
 		return {
 			slice: after,
@@ -1532,10 +1546,13 @@ const appliers = {
 			fortune: true,
 		});
 
+		const against = last.kind === "strike" ? "AC" : "DC";
+		const versus = last.dc === undefined ? "" : ` vs ${against} ${last.dc}`;
+
 		return {
 			slice: after,
 			feed: note(
-				`${c.name} spends a Hero Point to reroll ${last.label}: ${rollText(p.natural, last.bonus, p.total)}${last.dc === undefined ? "" : ` vs ${last.kind === "strike" ? "AC" : "DC"} ${last.dc}`}${degreeText(p.degree)}, and keeps it.${hit === undefined ? "" : ` ${hit.text}.`}`
+				`${c.name} spends a Hero Point to reroll ${last.label}: ${rollText(p.natural, last.bonus, p.total)}${versus}${degreeText(p.degree)}, and keeps it.${hit === undefined ? "" : ` ${hit.text}.`}`
 			),
 		};
 	},

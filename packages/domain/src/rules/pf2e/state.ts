@@ -220,9 +220,6 @@ const OFF_GUARD_FROM: ReadonlyArray<PfConditionName> = [
 export const isOffGuard = (c: PfCreature): boolean =>
 	OFF_GUARD_FROM.some((n) => hasCondition(c, n)) || isUnconscious(c);
 
-export const isValued = (name: PfConditionName): boolean =>
-	VALUED.some((v) => v === name);
-
 export const spaceOfCreature = (c: PfCreature): PfSpace =>
 	spaceOf(c.sheet.size);
 
@@ -257,9 +254,9 @@ export const skillBonus = (c: PfCreature, skill: string): number => {
 
 	const attribute = attributeOfSkill(skill);
 
-	return attribute === undefined
-		? attributeMod(c, skill.endsWith("lore") ? "int" : "wis")
-		: attributeMod(c, attribute);
+	const fallback = skill.endsWith("lore") ? "int" : "wis";
+
+	return attributeMod(c, attribute ?? fallback);
 };
 
 export const saveBonus = (c: PfCreature, save: PfSave): number =>

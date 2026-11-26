@@ -54,7 +54,6 @@ import {
 	meleeReach,
 	reachOfStrike,
 	sizeRank,
-	spaceOf,
 	traitDie,
 } from "./sheets.ts";
 import type { PfSave, PfSheet, PfSpell, PfStrike } from "./sheets.ts";
@@ -2212,5 +2211,3 @@ export const decide = (
 	command: PfCommand,
 	dice: Dice
 ): Decision => HANDLERS[command.type](slice, actor, command, dice);
-
-export const spaceFor = spaceOf;

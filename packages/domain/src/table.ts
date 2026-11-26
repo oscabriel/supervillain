@@ -88,13 +88,6 @@ export const sheetTargetFor = (
 	)?.id;
 };
 
-export const canReadSheet = (
-	state: TableView,
-	actor: string,
-	who: string,
-	ruleset: RulesetName
-): boolean => sheetTargetFor(state, actor, who, ruleset) !== undefined;
-
 export const notInParty = (who: string): string =>
 	`No one in the party is called "${who}".`;
 

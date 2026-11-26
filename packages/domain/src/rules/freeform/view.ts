@@ -102,6 +102,7 @@ export const ffBand = (
 	};
 
 	const turn = acting === undefined ? undefined : findFigure(slice, acting);
+	const turnText = turn === undefined ? "" : `: ${turn.name}`;
 
 	return {
 		round: order?.round ?? 0,
@@ -109,9 +110,7 @@ export const ffBand = (
 		malice: 0,
 		heroTokens: 0,
 		title:
-			order === undefined
-				? " party "
-				: ` round ${order.round}${turn === undefined ? "" : `: ${turn.name}`} `,
+			order === undefined ? " party " : ` round ${order.round}${turnText} `,
 		combatants: shown.map(combatant),
 	};
 };
@@ -161,7 +160,7 @@ export const ffSheetLines = (f: FfFigure): ReadonlyArray<string> => {
 	const head = [
 		sheet.name,
 		...listIfDefined(sheet.pronouns, (p) => [`(${p})`]),
-		...listIfDefined(sheet.concept, (c) => [`— ${c}`]),
+		...listIfDefined(sheet.concept, (c) => [`· ${c}`]),
 	].join(" ");
 
 	const stats = Object.keys(sheet.stats ?? {}).map(
@@ -213,14 +212,13 @@ export const ffActions = (
 		return undefined;
 	}
 
+	const spot: TokenAction =
+		f.at === undefined
+			? { label: "Place", pick: "square", line: `/place ${f.id}` }
+			: { label: "Move", pick: "square", line: `/move ${f.id}` };
+
 	const board: ReadonlyArray<TokenAction> =
-		slice.map === undefined
-			? []
-			: [
-					f.at === undefined
-						? { label: "Place", pick: "square", line: `/place ${f.id}` }
-						: { label: "Move", pick: "square", line: `/move ${f.id}` },
-				];
+		slice.map === undefined ? [] : [spot];
 
 	return [
 		...board,

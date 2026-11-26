@@ -7,7 +7,7 @@ import type { Prose } from "../../prose.ts";
 import { cleanText, hasTerminalControls, lengthOf, quote } from "../../text.ts";
 import { MAP_HEIGHT, MAP_WIDTH, malformed } from "../board/grid.ts";
 import { pick } from "../drawSteel/state.ts";
-import { decodePayload, isRefused, refuse } from "../engine.ts";
+import { bad, decodePayload, isRefused, refuse } from "../engine.ts";
 import type { Decision, Envelope, Refused } from "../engine.ts";
 import type { HostFact, HostNeed } from "../hostFacts.ts";
 import type { CommandSpec, FeedFormat, FeedNote } from "./module.ts";
@@ -683,11 +683,10 @@ const changeTracker = (
 	}
 
 	const tier = command.action === "show" ? "revealed" : "gm-only";
+	const seen = command.action === "show" ? "shown" : "hidden";
 
 	return was.tier === tier
-		? refuse(
-				`${was.label} is ${tier === "revealed" ? "shown" : "hidden"} already.`
-			)
+		? refuse(`${was.label} is ${seen} already.`)
 		: decided("core.tracker-set", { tracker: { ...was, tier } });
 };
 
@@ -747,10 +746,10 @@ const sync = (
 		return refuse("Nothing changed.");
 	}
 
-	const bad = cards.find((c) => cardProblem(c) !== undefined);
+	const unsafe = cards.find((c) => cardProblem(c) !== undefined);
 
-	if (bad !== undefined) {
-		return refuse(`${bad.key}: ${cardProblem(bad) ?? "no good"}.`);
+	if (unsafe !== undefined) {
+		return refuse(`${unsafe.key}: ${cardProblem(unsafe) ?? "no good"}.`);
 	}
 
 	return decided("core.content-synced", { cards });
@@ -822,10 +821,6 @@ export const decideStage = (
 			return refuse("There is no such command.");
 		}
 	}
-};
-
-const bad: (envelope: Envelope, why: string) => never = (envelope, why) => {
-	throw new Error(`${envelope.type} at seq ${envelope.seq} ${why}`);
 };
 
 const safeCard = (envelope: Envelope, card: StageCard): StageCard => {
@@ -1034,24 +1029,23 @@ const appliers: Readonly<
 			bad(envelope, `sets more than ${TRACKERS_MAX} trackers`);
 		}
 
-		const trackers =
-			was === undefined
-				? [...slice.trackers, tracker]
-				: slice.trackers.map((t) => (t.id === tracker.id ? tracker : t));
+		const swapped = slice.trackers.map((t) =>
+			t.id === tracker.id ? tracker : t
+		);
+
+		const trackers = was === undefined ? [...slice.trackers, tracker] : swapped;
 
 		const of =
 			tracker.max === undefined
 				? `${tracker.value}`
 				: `${tracker.value}/${tracker.max}`;
 
-		const shown =
-			tracker.tier === "revealed"
-				? note(
-						was?.tier === "gm-only" || was === undefined
-							? `${tracker.label}: ${of}.`
-							: `${tracker.label}: ${was.value} → ${of}.`
-					)
-				: undefined;
+		const said =
+			was?.tier === "gm-only" || was === undefined
+				? `${tracker.label}: ${of}.`
+				: `${tracker.label}: ${was.value} → ${of}.`;
+
+		const shown = tracker.tier === "revealed" ? note(said) : undefined;
 
 		return {
 			slice: { ...slice, trackers },
@@ -1129,8 +1123,6 @@ const appliers: Readonly<
 		};
 	},
 };
-
-export const isStageEvent = (type: string): boolean => isStageEventType(type);
 
 export const applyStage = (
 	slice: StageState,

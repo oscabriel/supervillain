@@ -5,10 +5,10 @@ import { formatSquare, malformed, standable } from "../board/grid.ts";
 import type { Square } from "../board/grid.ts";
 import type { FeedNote } from "../core/module.ts";
 import { ID } from "../drawSteel/schema.ts";
-import { decodePayload, isRefused } from "../engine.ts";
+import { bad, isRefused, payloadDecoder } from "../engine.ts";
 import type { Envelope } from "../engine.ts";
 import { isEventType, Payloads } from "./events.ts";
-import type { EventType, Payload } from "./events.ts";
+import type { EventType } from "./events.ts";
 import { ffSheetProblem, STAT_LIMIT, TAG, TAGS_MAX } from "./schema.ts";
 import type { FfSheet } from "./schema.ts";
 import { findFigure, maxOf, occupants, valueOf, valuesOf } from "./state.ts";
@@ -26,12 +26,7 @@ export const formats = {
 	"ff-claim": { speaker: true, separator: " ", plainLabel: true },
 } as const;
 
-const decode = <T extends EventType>(type: T, envelope: Envelope): Payload<T> =>
-	decodePayload<Payload<T>>(Payloads[type], envelope);
-
-const bad: (envelope: Envelope, why: string) => never = (envelope, why) => {
-	throw new Error(`${envelope.type} at seq ${envelope.seq} ${why}`);
-};
+const decode = payloadDecoder(Payloads);
 
 const figure = (slice: FfState, envelope: Envelope, id: string): FfFigure =>
 	findFigure(slice, id) ??
@@ -128,20 +123,19 @@ const appliers = {
 		}
 
 		const next = joined(sheet, was);
+		const swapped = slice.figures.map((f) => (f.id === sheet.id ? next : f));
+		const concept = sheet.concept === undefined ? "" : `, ${sheet.concept},`;
 
 		return {
 			slice: {
 				...slice,
-				figures:
-					was === undefined
-						? [...slice.figures, next]
-						: slice.figures.map((f) => (f.id === sheet.id ? next : f)),
+				figures: was === undefined ? [...slice.figures, next] : swapped,
 			},
 			feed: {
 				kind: "ff",
 				text:
 					was === undefined
-						? `${sheet.name}${sheet.concept === undefined ? "" : `, ${sheet.concept},`} joins the party.`
+						? `${sheet.name}${concept} joins the party.`
 						: `${sheet.name}'s sheet is loaded again.`,
 			},
 		};

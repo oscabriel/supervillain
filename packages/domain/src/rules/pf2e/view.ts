@@ -139,6 +139,7 @@ export const pfBand = (
 	};
 
 	const acting = turn === undefined ? undefined : findCreature(slice, turn.id);
+	const turnText = acting === undefined ? "" : ` · ${acting.name}'s turn`;
 
 	return {
 		round: combat?.round ?? 0,
@@ -147,9 +148,7 @@ export const pfBand = (
 		heroTokens: 0,
 		meterLabel: "HP",
 		title:
-			combat === undefined
-				? " party "
-				: ` round ${combat.round}${acting === undefined ? "" : ` · ${acting.name}'s turn`} `,
+			combat === undefined ? " party " : ` round ${combat.round}${turnText} `,
 		combatants: shown(slice).map(combatant),
 	};
 };

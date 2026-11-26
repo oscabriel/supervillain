@@ -17,7 +17,7 @@ import { GM } from "../core/module.ts";
 import type { FeedNote } from "../core/module.ts";
 import { ID } from "../drawSteel/schema.ts";
 import { plural } from "../drawSteel/state.ts";
-import { decodePayload } from "../engine.ts";
+import { bad, payloadDecoder, rollFace } from "../engine.ts";
 import type { Decision, Dice, Envelope, NewEvent, Refused } from "../engine.ts";
 import type { SetCommand } from "./commands.ts";
 import { event, isEventType, Payloads, SetCharacterSchema } from "./events.ts";
@@ -136,15 +136,7 @@ export const hit = (
 	const d = defender.attributes;
 	const reach = reachOf(attacker.mainhand);
 
-	const draw = () => {
-		const face = dice(1000);
-
-		if (!Number.isInteger(face) || face < 1 || face > 1000) {
-			throw new Error(`the dice gave ${face} for a d1000`);
-		}
-
-		return face;
-	};
+	const draw = () => rollFace(dice, 1000);
 
 	const dodgeChance = d.dodgeRate * (1 - a.clarity);
 	const dodgeRoll = draw();
@@ -345,11 +337,13 @@ const unplay = (
 	if (who === undefined) {
 		const own = fighterOf(slice, actor);
 
-		return own === undefined
-			? refuse(
-					actor === GM ? "Usage: /unplay <who>" : "You don't play a fighter."
-				)
-			: decided(event("sw.fighter-released", { id: own.id }));
+		if (own !== undefined) {
+			return decided(event("sw.fighter-released", { id: own.id }));
+		}
+
+		return refuse(
+			actor === GM ? "Usage: /unplay <who>" : "You don't play a fighter."
+		);
 	}
 
 	const f = resolveFighter(slice, who);
@@ -694,12 +688,7 @@ export const formats = {
 	"sw-claim": { speaker: true, separator: " ", plainLabel: true },
 } as const;
 
-const decode = <T extends EventType>(type: T, envelope: Envelope): Payload<T> =>
-	decodePayload<Payload<T>>(Payloads[type], envelope);
-
-const bad: (envelope: Envelope, why: string) => never = (envelope, why) => {
-	throw new Error(`${envelope.type} at seq ${envelope.seq} ${why}`);
-};
+const decode = payloadDecoder(Payloads);
 
 const fighter = (slice: SetState, envelope: Envelope, id: string): Fighter =>
 	findFighter(slice, id) ??
@@ -1052,9 +1041,12 @@ const appliers = {
 			(x) => ({ ...x, health })
 		);
 
+		const critical = p.critical ? "a critical hit, " : "";
+		const down = health <= 0 ? ", down" : "";
+
 		const outcome = p.dodged
 			? `${t.name} dodges (a ${Math.round(p.dodgeChance * 100)}% chance).`
-			: `${p.critical ? "a critical hit, " : ""}${p.damage} damage → ${health}/${maxHealth(t.character)}${health <= 0 ? ", down" : ""}.`;
+			: `${critical}${p.damage} damage → ${health}/${maxHealth(t.character)}${down}.`;
 
 		return {
 			slice: {
@@ -1098,6 +1090,7 @@ const appliers = {
 		}
 
 		const { fight: _fight, ...rest } = slice;
+		const verb = won === "party" ? "wins" : "win";
 
 		return {
 			slice: {
@@ -1112,7 +1105,7 @@ const appliers = {
 				text:
 					won === undefined
 						? "The fight is over."
-						: `The fight is over: ${sideName(won)} ${won === "party" ? "wins" : "win"}.`,
+						: `The fight is over: ${sideName(won)} ${verb}.`,
 			},
 		};
 	},

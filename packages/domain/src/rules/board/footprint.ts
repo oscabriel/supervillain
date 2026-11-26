@@ -18,9 +18,6 @@ export const footprintOf = (size: string | undefined): Footprint => {
 	return n === 2 ? 2 : 1;
 };
 
-export const isTinySize = (size: string | undefined): boolean =>
-	/^\s*1T\s*$/iu.test(size ?? "");
-
 export const squaresOf = (
 	at: Square,
 	footprint: Footprint = 1

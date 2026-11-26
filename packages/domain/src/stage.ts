@@ -147,7 +147,7 @@ export const stageOf = (
 };
 
 export const cardLines = (card: StageCard): ReadonlyArray<string> => [
-	[card.title, ...listIfDefined(card.subtitle, (s) => [`— ${s}`])].join(" "),
+	[card.title, ...listIfDefined(card.subtitle, (s) => [`· ${s}`])].join(" "),
 	...listIfDefined(card.readAloud, (prose) =>
 		prose.length === 0 ? [] : ["", ...proseLines(prose).map((l) => `“ ${l}`)]
 	),

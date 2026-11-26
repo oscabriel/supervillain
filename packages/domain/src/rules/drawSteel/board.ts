@@ -340,7 +340,9 @@ const moveBudget = (
 	}
 
 	if (budget.dazed) {
-		return (needsMove ? 1 : 0) + (needsMain ? 1 : 0) > budget.move
+		const wanted = Number(needsMove) + Number(needsMain);
+
+		return wanted > budget.move
 			? `${who.name} is dazed and has taken their one action this turn.`
 			: undefined;
 	}

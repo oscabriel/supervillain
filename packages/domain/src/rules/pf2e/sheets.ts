@@ -110,10 +110,6 @@ export interface PfSheet {
 	readonly flurry?: boolean;
 }
 
-export type PfHeroSheet = PfSheet;
-
-export type PfCreatureBlock = PfSheet;
-
 export interface PfSpace {
 	readonly footprint: Footprint;
 	readonly tiny: boolean;

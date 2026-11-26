@@ -123,8 +123,6 @@ export {
 	type PfAbility,
 	type PfAmount,
 	type PfAttribute,
-	type PfCreatureBlock,
-	type PfHeroSheet,
 	type PfSave,
 	type PfSheet,
 	type PfSize,

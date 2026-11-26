@@ -104,10 +104,10 @@ export const mapView = (
 			? slice.combat.moved
 			: undefined;
 
+	const allowance = moved?.main === true ? 2 * speed : speed;
+
 	const left =
-		moved === undefined
-			? speed
-			: Math.max(0, (moved.main ? 2 * speed : speed) - moved.spent);
+		moved === undefined ? speed : Math.max(0, allowance - moved.spent);
 
 	const reach =
 		subject === undefined || from === undefined
@@ -125,10 +125,12 @@ export const mapView = (
 					moverOf(slice, subject)
 				);
 
+	const spent = moved?.main === true ? ", main action spent" : "";
+
 	const label =
 		moved === undefined
 			? `speed ${speed}`
-			: `${left} of speed ${speed} left${moved.main ? ", main action spent" : ""}`;
+			: `${left} of speed ${speed} left${spent}`;
 
 	return {
 		name: board.name,

@@ -99,6 +99,8 @@ export const setBand = (
 	const turn =
 		fight?.turn === undefined ? undefined : findFighter(slice, fight.turn.id);
 
+	const turnText = turn === undefined ? "" : `: ${turn.name}`;
+
 	return {
 		round: fight?.turns ?? 0,
 		active: fight !== undefined,
@@ -107,7 +109,7 @@ export const setBand = (
 		title:
 			fight === undefined
 				? " party "
-				: ` set.world · ${seconds(fight.clock)} · turn ${fight.turns}${turn === undefined ? "" : `: ${turn.name}`} `,
+				: ` set.world · ${seconds(fight.clock)} · turn ${fight.turns}${turnText} `,
 		combatants: shown.map(combatant),
 	};
 };

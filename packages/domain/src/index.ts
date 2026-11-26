@@ -299,7 +299,6 @@ export {
 export {
 	actionsOf,
 	bandOf,
-	canReadSheet,
 	type Command,
 	commands,
 	commandsFor,
@@ -534,7 +533,6 @@ export {
 } from "./rules/board/grid.ts";
 
 export {
-	dingOf,
 	type Ding,
 	LEGEND,
 	terrainOf,
@@ -661,10 +659,8 @@ export {
 	type PfCommand,
 	PF_CONDITIONS,
 	type PfCreature,
-	type PfCreatureBlock,
 	PfCreatureBlockSchema,
 	pfFillHostFact,
-	type PfHeroSheet,
 	PfHeroSheetSchema,
 	pfHostNeed,
 	pfMap,

@@ -7,7 +7,7 @@ import { apart } from "../board/footprint.ts";
 import { formatSquare } from "../board/grid.ts";
 import { GM } from "../core/module.ts";
 import type { Shared } from "../core/module.ts";
-import { isRefused } from "../engine.ts";
+import { isRefused, rollFace } from "../engine.ts";
 import type { Decision, Dice, NewEvent, Refused } from "../engine.ts";
 import {
 	clearedAtEnd,
@@ -82,16 +82,6 @@ const noCombat = (actor: string) =>
 const SAVE = 6;
 
 const OWN = "You can only change your own hero.";
-
-const roll = (dice: Dice, sides: number): number => {
-	const face = dice(sides);
-
-	if (!Number.isInteger(face) || face < 1 || face > sides) {
-		throw new Error(`the dice gave ${face} for a d${sides}`);
-	}
-
-	return face;
-};
 
 const changeable = (
 	slice: DrawSteelState,
@@ -465,7 +455,7 @@ const start = (slice: DrawSteelState, dice: Dice): Decision => {
 		return refuse("A combat is already running; /end it first.");
 	}
 
-	const face = roll(dice, 10);
+	const face = rollFace(dice, 10);
 	const living = slice.heroes.filter((h) => heroHealth(h) !== "dead");
 	const total = living.reduce((sum, h) => sum + h.victories, 0);
 	const victories = living.length === 0 ? 0 : Math.floor(total / living.length);
@@ -490,7 +480,7 @@ const turnEnd = (slice: DrawSteelState, id: string, dice: Dice): NewEvent => {
 		saves: conditions
 			.filter((c) => c.duration === "save")
 			.map((c) => {
-				const face = roll(dice, 10);
+				const face = rollFace(dice, 10);
 
 				return { condition: c.name, roll: face, ends: face >= SAVE };
 			}),
@@ -527,7 +517,7 @@ const turnStart = (who: Who, dice: Dice): NewEvent => {
 	}
 
 	const rolls = Array.from({ length: notation.count }, () =>
-		roll(dice, notation.sides)
+		rollFace(dice, notation.sides)
 	);
 
 	const gain = rolls.reduce((a, b) => a + b, 0) + notation.modifier;
@@ -675,7 +665,7 @@ const bleed = (
 			? who.hero.sheet.level
 			: (slice.blocks[who.creature.block]?.level ?? 0);
 
-	return [event("ds.bled", { id: who.id, roll: roll(dice, 6), level })];
+	return [event("ds.bled", { id: who.id, roll: rollFace(dice, 6), level })];
 };
 
 const MIGHT_OR_AGILITY: ReadonlySet<Characteristic> = new Set<Characteristic>([
@@ -944,7 +934,7 @@ const powerRollFor = (
 		aimed.map((a) => a.target)
 	);
 
-	const pair = [roll(dice, 10), roll(dice, 10)] as const;
+	const pair = [rollFace(dice, 10), rollFace(dice, 10)] as const;
 
 	const { edges, banes } = netModifiers(command, typed, modifiers);
 
@@ -1517,7 +1507,7 @@ const save = (
 
 	return {
 		events: chosen.map((c) => {
-			const face = roll(dice, 10);
+			const face = rollFace(dice, 10);
 
 			return event("ds.saved", {
 				id: who.id,

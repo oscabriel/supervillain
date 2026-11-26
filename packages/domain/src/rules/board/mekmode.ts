@@ -81,5 +81,3 @@ export const LEGEND: ReadonlyMap<string, Ding> = new Map(
 
 export const terrainOf = (letter: string): string | undefined =>
 	letter === " " ? " " : LEGEND.get(letter)?.terrain;
-
-export const dingOf = (letter: string): Ding | undefined => LEGEND.get(letter);

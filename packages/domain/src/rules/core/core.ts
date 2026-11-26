@@ -10,7 +10,7 @@ import {
 	mixesLatin,
 	nameKey,
 } from "../../text.ts";
-import { decodePayload, isRefused, refuse } from "../engine.ts";
+import { decodePayload, isRefused, refuse, rollFace } from "../engine.ts";
 import type { Decision, Dice, Refused } from "../engine.ts";
 import { GM } from "./module.ts";
 import type { Applied, Module, Shared } from "./module.ts";
@@ -334,11 +334,14 @@ const kick = (slice: CoreState, shared: Shared, who: string): Decision => {
 	return { events: [{ type: "core.member-removed", payload: { member } }] };
 };
 
+const DOOR_STATES = {
+	knock: "set to knock",
+	open: "open",
+} as const satisfies Record<Door, string>;
+
 const setDoor = (slice: CoreState, door: Door): Decision =>
 	slice.door === door
-		? refuse(
-				`The door is already ${door === "open" ? "open" : "set to knock"}.`
-			)
+		? refuse(`The door is already ${DOOR_STATES[door]}.`)
 		: { events: [{ type: "core.door-set", payload: { door } }] };
 
 const DOOR_NOTES = {
@@ -357,14 +360,8 @@ const roll = (raw: string, dice: Dice): Decision => {
 	}
 
 	const rolls = Array.from({ length: notation.count }, () =>
-		dice(notation.sides)
+		rollFace(dice, notation.sides)
 	);
-
-	for (const face of rolls) {
-		if (!Number.isInteger(face) || face < 1 || face > notation.sides) {
-			throw new Error(`the dice gave ${face} for a d${notation.sides}`);
-		}
-	}
 
 	const total = sum(rolls) + notation.modifier;
 

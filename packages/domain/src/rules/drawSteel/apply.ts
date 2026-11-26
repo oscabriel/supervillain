@@ -11,7 +11,7 @@ import {
 } from "../board/grid.ts";
 import type { Square } from "../board/grid.ts";
 import type { FeedNote } from "../core/module.ts";
-import { decodePayload } from "../engine.ts";
+import { bad, payloadDecoder } from "../engine.ts";
 import type { Envelope } from "../engine.ts";
 import { occupants } from "./board.ts";
 import { Payloads, isEventType } from "./events.ts";
@@ -63,8 +63,7 @@ export const formats = {
 	"ds-claim": { speaker: true, separator: " ", plainLabel: true },
 } as const;
 
-const decode = <T extends EventType>(type: T, envelope: Envelope): Payload<T> =>
-	decodePayload<Payload<T>>(Payloads[type], envelope);
+const decode = payloadDecoder(Payloads);
 
 const EDGE_NOTES: ReadonlyMap<number, ReadonlyArray<string>> = new Map([
 	[2, ["double edge"]],
@@ -75,10 +74,6 @@ const EDGE_BONUS: ReadonlyMap<number, ReadonlyArray<string>> = new Map([
 	[1, ["+2 edge"]],
 	[-1, ["-2 bane"]],
 ]);
-
-const bad: (envelope: Envelope, why: string) => never = (envelope, why) => {
-	throw new Error(`${envelope.type} at seq ${envelope.seq} ${why}`);
-};
 
 const who = (slice: DrawSteelState, envelope: Envelope, id: string): Who =>
 	findWho(slice, id) ?? bad(envelope, `names '${id}', who isn't at the table`);
@@ -817,13 +812,16 @@ const powerRolled = (slice: DrawSteelState, envelope: Envelope): Applied => {
 			: []
 	);
 
+	const stop = ability?.effect === undefined ? "" : ".";
+	const spoken = said === "" ? "" : ` · ${said}${stop}`;
+
 	const text = [
 		head,
 		`[${p.dice[0]}, ${p.dice[1]}]`,
 		...listIf(p.bonus !== 0, () => [signed(p.bonus)]),
 		...orEmpty(EDGE_BONUS.get(net)),
 		`= ${p.total}${notes.length > 0 ? `, ${notes.join(", ")}` : ""}${modifierText(slice, envelope, p)}`,
-		`· tier ${p.tier}${said === "" ? "" : ` — ${said}${ability?.effect === undefined ? "" : "."}`}`,
+		`· tier ${p.tier}${spoken}`,
 		...listIf(far.length > 0, () => [
 			`(${far.join("; ")}; ${ability?.distance})`,
 		]),
@@ -934,9 +932,9 @@ const squadNote = (before: number, after: Who | undefined): string => {
 		return " · the squad is dead";
 	}
 
-	return died > 0
-		? ` · ${plural(died, "minion")} ${died === 1 ? "dies" : "die"}, ${left} left`
-		: "";
+	const verb = died === 1 ? "dies" : "die";
+
+	return died > 0 ? ` · ${plural(died, "minion")} ${verb}, ${left} left` : "";
 };
 
 const strikeSource = (
@@ -1090,10 +1088,13 @@ const conditionSet = (slice: DrawSteelState, envelope: Envelope): Applied => {
 			? { name: condition, duration }
 			: { name: condition, duration, by };
 
+	const reset = (conditions: ReadonlyArray<Condition>) =>
+		conditions.map((c) => (c.name === condition ? set : c));
+
 	const next = withWho(slice, envelope, id, (x) => ({
 		...x,
 		conditions: x.conditions.some((c) => c.name === condition)
-			? x.conditions.map((c) => (c.name === condition ? set : c))
+			? reset(x.conditions)
 			: [...x.conditions, set],
 	}));
 
