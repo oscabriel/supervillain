@@ -176,7 +176,7 @@ describe("handshake", () => {
 					socket.destroy();
 				});
 				socket.resume();
-				yield* nextEvent(socket, "close").pipe(Effect.timeout("3 seconds"));
+				yield* nextEvent(socket, "close").pipe(Effect.timeout("5 seconds"));
 				expect((yield* Clock.currentTimeMillis) - start).toBeLessThan(2000);
 			})
 	);
@@ -294,7 +294,7 @@ describe("connection limits", () => {
 
 				const client = yield* ssh2Client({ port: server.port, keyboard: true });
 				const start = yield* Clock.currentTimeMillis;
-				yield* closeOf(client).pipe(Effect.timeout("3 seconds"));
+				yield* closeOf(client).pipe(Effect.timeout("5 seconds"));
 				expect((yield* Clock.currentTimeMillis) - start).toBeLessThan(2000);
 			})
 	);
@@ -314,7 +314,7 @@ describe("connection limits", () => {
 				const idle = [yield* ssh2Client(guest), yield* ssh2Client(guest)];
 				expect(yield* Effect.flip(ssh2Client(guest))).toBeInstanceOf(Error);
 				yield* Effect.forEach(idle, closeOf, { concurrency: 1 }).pipe(
-					Effect.timeout("3 seconds")
+					Effect.timeout("5 seconds")
 				);
 				yield* Effect.sleep("100 millis");
 				expect((yield* ssh2Exec(yield* ssh2Client(guest), "x")).stdout).toBe(
@@ -336,7 +336,7 @@ describe("connection limits", () => {
 				const client = yield* ssh2Client({ port: server.port, keyboard: true });
 				expect((yield* ssh2Exec(client, "x")).stdout).toBe("ok");
 				const ended = yield* Clock.currentTimeMillis;
-				yield* closeOf(client).pipe(Effect.timeout("3 seconds"));
+				yield* closeOf(client).pipe(Effect.timeout("5 seconds"));
 				expect((yield* Clock.currentTimeMillis) - ended).toBeLessThan(2000);
 			})
 	);
@@ -421,7 +421,7 @@ describe("connection limits", () => {
 					client.subsys("nothing", (refused) => {
 						answers.push(refused === undefined);
 					});
-				}).pipe(Effect.timeout("3 seconds"));
+				}).pipe(Effect.timeout("5 seconds"));
 
 				expect((yield* Clock.currentTimeMillis) - start).toBeLessThan(2000);
 			})

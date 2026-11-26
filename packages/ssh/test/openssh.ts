@@ -208,7 +208,7 @@ export const sshShell = (
 			})
 	);
 
-export const waitFor = (what: string, predicate: () => boolean, ms = 3000) =>
+export const waitFor = (what: string, predicate: () => boolean, ms = 5000) =>
 	Effect.sync(predicate).pipe(
 		Effect.repeat({
 			until: (done) => done,

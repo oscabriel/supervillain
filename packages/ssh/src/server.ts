@@ -193,9 +193,10 @@ const endChannel = (channel: ServerChannel, how: RawExit) => {
 	});
 };
 
-const watchChannel = (channel: ServerChannel) =>
+const watchChannel = (channel: ServerChannel, client?: Connection) =>
 	Effect.gen(function* () {
 		const ended = yield* Deferred.make<boolean>();
+		const closed = yield* Deferred.make<boolean>();
 		const state = { gone: false };
 
 		const end = () => {
@@ -204,13 +205,23 @@ const watchChannel = (channel: ServerChannel) =>
 
 		const onGone = () => {
 			state.gone = true;
+			Deferred.doneUnsafe(closed, Exit.succeed(true));
 			end();
 		};
 
 		channel.once("close", onGone);
 		channel.on("error", onGone);
 
-		return { ended, end, state };
+		if (client !== undefined) {
+			client.once("close", onGone);
+			yield* Effect.addFinalizer(() =>
+				Effect.sync(() => {
+					client.removeListener("close", onGone);
+				})
+			);
+		}
+
+		return { ended, closed, end, state };
 	});
 
 const execSession = (
@@ -698,7 +709,7 @@ export const serve = (
 					runSession(
 						sessionInfo.identity.actor,
 						release,
-						shellSession(channel, sessionInfo, onShell, onResize)
+						shellSession(client, channel, sessionInfo, onShell, onResize)
 					);
 				});
 				session.on("subsystem", (accept, reject, { name }) => {
@@ -802,22 +813,27 @@ export const serve = (
 		};
 
 		const shellSession = (
+			client: Connection,
 			channel: ServerChannel,
 			info: SessionInfo,
 			onShell: NonNullable<ServeOptions["onShell"]>,
 			onResize: (resize: (cols: number, rows: number) => void) => void
 		): Effect.Effect<void, never, Scope.Scope> =>
 			Effect.gen(function* () {
-				const { ended, end, state } = yield* watchChannel(channel);
+				const { ended, closed, end, state } = yield* watchChannel(
+					channel,
+					client
+				);
+
 				const streams = yield* streamsOf(channel, info.cols, info.rows);
 
 				const nativeSession = new NativeSession(channel);
 				yield* Effect.addFinalizer(() =>
-					Effect.sync(() => {
+					Effect.suspend(() => {
 						streams.detach();
 
 						if (state.gone) {
-							return;
+							return Effect.void;
 						}
 
 						if (!accepting && options.shutdownNotice !== undefined) {
@@ -825,6 +841,15 @@ export const serve = (
 						}
 
 						endChannel(channel, 0);
+
+						if (accepting) {
+							return Effect.void;
+						}
+
+						return Deferred.await(closed).pipe(
+							Effect.timeout(RESTORE_TIMEOUT_MS),
+							Effect.ignore
+						);
 					})
 				);
 				let rendering = false;
@@ -938,21 +963,16 @@ export const serve = (
 			onResize: (resize: (cols: number, rows: number) => void) => void
 		): Effect.Effect<void, never, Scope.Scope> =>
 			Effect.gen(function* () {
-				const { ended, end, state } = yield* watchChannel(channel);
+				const { ended, closed, end, state } = yield* watchChannel(
+					channel,
+					client
+				);
 
-				const onConnectionGone = () => {
-					state.gone = true;
-					end();
-				};
-
-				client.once("close", onConnectionGone);
 				let exited = false;
 				let status: RawExit = 1;
 				yield* Effect.addFinalizer(() =>
 					Effect.suspend(() => {
 						if (state.gone || exited) {
-							client.removeListener("close", onConnectionGone);
-
 							return Effect.void;
 						}
 
@@ -972,14 +992,9 @@ export const serve = (
 
 						endChannel(channel, status);
 
-						return Deferred.await(ended).pipe(
+						return Deferred.await(closed).pipe(
 							Effect.timeout(RESTORE_TIMEOUT_MS),
-							Effect.ignore,
-							Effect.ensuring(
-								Effect.sync(() =>
-									client.removeListener("close", onConnectionGone)
-								)
-							)
+							Effect.ignore
 						);
 					})
 				);

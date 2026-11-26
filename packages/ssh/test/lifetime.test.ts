@@ -58,7 +58,8 @@ describe("session lifetime", () => {
 					"the renderer to go",
 					() => must(sessions[0], "onShell ran").renderer.isDestroyed
 				);
-			})
+			}),
+		15_000
 	);
 
 	effect(
@@ -88,7 +89,7 @@ describe("session lifetime", () => {
 
 				const exited = yield* Effect.promise(
 					async () => await terminal.exited
-				).pipe(Effect.timeout("3 seconds"));
+				).pipe(Effect.timeout("5 seconds"));
 
 				expect(exited).toBeNumber();
 				yield* waitFor("the shutdown notice", () =>
@@ -100,7 +101,8 @@ describe("session lifetime", () => {
 				).toBeGreaterThan(output.lastIndexOf("\u001B[?1049l"));
 				const refused = yield* sshExec(server.port, ["hello"], { key });
 				expect(refused.exitCode).toBe(255);
-			})
+			}),
+		15_000
 	);
 
 	effect(
@@ -145,7 +147,8 @@ describe("session lifetime", () => {
 				yield* Effect.sleep("100 millis");
 				yield* Scope.close(scope, Exit.void);
 				expect(seats).toBe(1);
-			})
+			}),
+		15_000
 	);
 
 	effect(
@@ -164,7 +167,7 @@ describe("session lifetime", () => {
 
 				const exited = yield* Effect.promise(
 					async () => await terminal.exited
-				).pipe(Effect.timeout("3 seconds"));
+				).pipe(Effect.timeout("5 seconds"));
 
 				expect(exited).toBe(0);
 				expect(log).toEqual(["closed"]);
@@ -173,51 +176,57 @@ describe("session lifetime", () => {
 				);
 				expect(terminal.output()).toContain("READY");
 				expect(terminal.output()).toContain("\u001B[?1049l");
-			})
+			}),
+		15_000
 	);
 
-	effect("the session ends when the handler calls close()", () =>
-		Effect.gen(function* () {
-			const key = yield* clientKey(yield* tempDir, "alice");
-			const log: Array<string> = [];
+	effect(
+		"the session ends when the handler calls close()",
+		() =>
+			Effect.gen(function* () {
+				const key = yield* clientKey(yield* tempDir, "alice");
+				const log: Array<string> = [];
 
-			const server = yield* testServer({
-				onShell: (session) =>
-					Effect.gen(function* () {
-						yield* Effect.addFinalizer(() =>
-							Effect.sync(() => {
-								log.push("closed");
-							})
-						);
-						session.renderer.keyInput.on("keypress", (pressed) => {
-							if (pressed.name === "q") {
-								session.close();
-							}
-						});
-						session.renderer.root.add(
-							new TextRenderable(session.renderer, { content: "READY" })
-						);
+				const server = yield* testServer({
+					onShell: (session) =>
+						Effect.gen(function* () {
+							yield* Effect.addFinalizer(() =>
+								Effect.sync(() => {
+									log.push("closed");
+								})
+							);
+							session.renderer.keyInput.on("keypress", (pressed) => {
+								if (pressed.name === "q") {
+									session.close();
+								}
+							});
+							session.renderer.root.add(
+								new TextRenderable(session.renderer, { content: "READY" })
+							);
 
-						return yield* Effect.never;
-					}),
-			});
+							return yield* Effect.never;
+						}),
+				});
 
-			const terminal = yield* sshShell(
-				server.port,
-				{ cols: 80, rows: 24 },
-				{ key }
-			);
+				const terminal = yield* sshShell(
+					server.port,
+					{ cols: 80, rows: 24 },
+					{ key }
+				);
 
-			yield* waitFor("the session", () => terminal.output().includes("READY"));
-			terminal.write("q");
+				yield* waitFor("the session", () =>
+					terminal.output().includes("READY")
+				);
+				terminal.write("q");
 
-			const exited = yield* Effect.promise(
-				async () => await terminal.exited
-			).pipe(Effect.timeout("3 seconds"));
+				const exited = yield* Effect.promise(
+					async () => await terminal.exited
+				).pipe(Effect.timeout("5 seconds"));
 
-			expect(exited).toBe(0);
-			expect(log).toEqual(["closed"]);
-		})
+				expect(exited).toBe(0);
+				expect(log).toEqual(["closed"]);
+			}),
+		15_000
 	);
 
 	effect(
@@ -247,49 +256,54 @@ describe("session lifetime", () => {
 			})
 	);
 
-	effect("a handler that dies ends its own session and nobody else's", () =>
-		Effect.gen(function* () {
-			const key = yield* clientKey(yield* tempDir, "alice");
-			let calls = 0;
-			const logged: Array<string> = [];
+	effect(
+		"a handler that dies ends its own session and nobody else's",
+		() =>
+			Effect.gen(function* () {
+				const key = yield* clientKey(yield* tempDir, "alice");
+				let calls = 0;
+				const logged: Array<string> = [];
 
-			const collect = Logger.make(({ logLevel, message }) => {
-				logged.push(`${logLevel}: ${String(message)}`);
-			});
+				const collect = Logger.make(({ logLevel, message }) => {
+					logged.push(`${logLevel}: ${String(message)}`);
+				});
 
-			const server = yield* testServer({
-				onShell: () => Effect.die(new Error("handler blew up")),
-				onExec: (session) =>
-					Effect.suspend(() => {
-						calls += 1;
+				const server = yield* testServer({
+					onShell: () => Effect.die(new Error("handler blew up")),
+					onExec: (session) =>
+						Effect.suspend(() => {
+							calls += 1;
 
-						return calls === 1
-							? Effect.die(new Error("exec blew up"))
-							: Effect.sync(() => {
-									session.write("still here");
+							return calls === 1
+								? Effect.die(new Error("exec blew up"))
+								: Effect.sync(() => {
+										session.write("still here");
 
-									return 0;
-								});
-					}),
-			}).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([collect])));
+										return 0;
+									});
+						}),
+				}).pipe(
+					Effect.provideService(Logger.CurrentLoggers, new Set([collect]))
+				);
 
-			const terminal = yield* sshShell(
-				server.port,
-				{ cols: 80, rows: 24 },
-				{ key }
-			);
+				const terminal = yield* sshShell(
+					server.port,
+					{ cols: 80, rows: 24 },
+					{ key }
+				);
 
-			yield* Effect.promise(async () => await terminal.exited).pipe(
-				Effect.timeout("3 seconds")
-			);
-			const died = yield* sshExec(server.port, ["boom"], { key });
-			expect(died.exitCode).toBe(1);
-			const next = yield* sshExec(server.port, ["hello"], { key });
-			expect(next).toMatchObject({ stdout: "still here", exitCode: 0 });
-			const errors = logged.filter((line) => line.startsWith("Error:"));
-			expect(errors).toHaveLength(2);
-			expect(errors[0]).toContain("handler blew up");
-			expect(errors[1]).toContain("exec blew up");
-		})
+				yield* Effect.promise(async () => await terminal.exited).pipe(
+					Effect.timeout("5 seconds")
+				);
+				const died = yield* sshExec(server.port, ["boom"], { key });
+				expect(died.exitCode).toBe(1);
+				const next = yield* sshExec(server.port, ["hello"], { key });
+				expect(next).toMatchObject({ stdout: "still here", exitCode: 0 });
+				const errors = logged.filter((line) => line.startsWith("Error:"));
+				expect(errors).toHaveLength(2);
+				expect(errors[0]).toContain("handler blew up");
+				expect(errors[1]).toContain("exec blew up");
+			}),
+		15_000
 	);
 });

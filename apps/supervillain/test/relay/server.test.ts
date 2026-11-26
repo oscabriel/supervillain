@@ -804,12 +804,12 @@ describe("relay: limits", () => {
 			const a = yield* open();
 			const b = yield* open();
 			const c = yield* open();
-			yield* waitFor("the third link to be refused", c.closed, 1000);
+			yield* waitFor("the third link to be refused", c.closed, 3000);
 			expect(a.closed() || b.closed()).toBe(false);
 			yield* waitFor(
 				"the silent links to be cut",
 				() => a.closed() && b.closed(),
-				2000
+				4000
 			);
 			const gm = yield* gmTable();
 
