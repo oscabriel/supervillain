@@ -4,9 +4,12 @@ import { readFileSync } from "node:fs";
 import { AUTOPLAY_SCRIPT, advanceAutoplay } from "../src/Autoplay.ts";
 import { COLUMNS, ROWS, TERRAIN } from "../src/Encounter.ts";
 import {
+	appendClickRipple,
 	buildTextField,
 	farthestCorner,
 	isRippleFinished,
+	makeClickRipple,
+	pruneRipples,
 	rippleIntensityAt,
 	scrambleChar,
 } from "../src/HeroWaves.ts";
@@ -259,6 +262,37 @@ describe("the hero ASCII wave field", () => {
 		);
 
 		expect(flipped.size).toBeGreaterThan(5);
+	});
+
+	test("keeps multiple concurrent click ripples alive until each finishes, capped by limit", () => {
+		const first = makeClickRipple(100, 120, 800, 400, 0);
+		const second = makeClickRipple(400, 200, 800, 400, 200);
+		const third = makeClickRipple(700, 80, 800, 400, 400);
+
+		let ripples = appendClickRipple([], first, 0);
+
+		ripples = appendClickRipple(ripples, second, 200);
+		ripples = appendClickRipple(ripples, third, 400);
+
+		expect(ripples).toStrictEqual([first, second, third]);
+		expect(pruneRipples(ripples, 1000)).toStrictEqual([first, second, third]);
+
+		const capped = appendClickRipple(
+			ripples,
+			makeClickRipple(250, 300, 800, 400, 600),
+			600,
+			3
+		);
+
+		expect(capped.length).toBe(3);
+		expect(capped[0]).toStrictEqual(second);
+		expect(capped[1]).toStrictEqual(third);
+		expect(capped[2]?.ox).toBe(250);
+
+		const late = makeClickRipple(300, 150, 800, 400, 10_000);
+		const afterFirstEnds = appendClickRipple(ripples, late, 10_000);
+
+		expect(afterFirstEnds).toStrictEqual([late]);
 	});
 });
 

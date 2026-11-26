@@ -19,6 +19,8 @@ const CLICK_BAND = 34;
 
 const REST_GAP_MS = 1200;
 
+export const MAX_CLICK_RIPPLES = 32;
+
 const SCRAMBLE_POOL =
 	"!@#$%^&*()_+-=[]{}|;:',.<>?/~`0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
@@ -96,6 +98,41 @@ export const rippleRadiusAt = (ripple: Ripple, nowMs: number): number =>
 
 export const isRippleFinished = (ripple: Ripple, nowMs: number): boolean =>
 	rippleRadiusAt(ripple, nowMs) > ripple.maxRadius + ripple.bandWidth * 3.2;
+
+export const makeClickRipple = (
+	ox: number,
+	oy: number,
+	width: number,
+	height: number,
+	nowMs: number
+): Ripple => ({
+	ox,
+	oy,
+	startedAt: nowMs,
+	speed: CLICK_SPEED,
+	bandWidth: CLICK_BAND,
+	maxRadius: farthestCorner(ox, oy, width, height),
+	strength: 1,
+});
+
+export const pruneRipples = (
+	ripples: ReadonlyArray<Ripple>,
+	nowMs: number
+): Array<Ripple> =>
+	ripples.filter((ripple) => !isRippleFinished(ripple, nowMs));
+
+export const appendClickRipple = (
+	ripples: ReadonlyArray<Ripple>,
+	next: Ripple,
+	nowMs: number,
+	limit = MAX_CLICK_RIPPLES
+): Array<Ripple> => {
+	const live = pruneRipples(ripples, nowMs);
+
+	live.push(next);
+
+	return live.length > limit ? live.slice(live.length - limit) : live;
+};
 
 export const rippleIntensityAt = (
 	ripple: Ripple,
@@ -302,7 +339,7 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 	let height = 0;
 	let field = buildTextField(1, 1, 8);
 	let ambient: Ripple | undefined;
-	let clickRipple: Ripple | undefined;
+	let clickRipples: Array<Ripple> = [];
 	let lastZone = -1;
 	let nextAmbientAt = 0;
 	let frameId = 0;
@@ -321,13 +358,8 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 			}
 		}
 
-		if (clickRipple !== undefined) {
-			if (isRippleFinished(clickRipple, nowMs)) {
-				clickRipple = undefined;
-			} else {
-				list.push(clickRipple);
-			}
-		}
+		clickRipples = pruneRipples(clickRipples, nowMs);
+		list.push(...clickRipples);
 
 		return list;
 	};
@@ -415,16 +447,13 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 		const rect = surface.getBoundingClientRect();
 		const ox = event.clientX - rect.left;
 		const oy = event.clientY - rect.top;
+		const nowMs = performance.now();
 
-		clickRipple = {
-			ox,
-			oy,
-			startedAt: performance.now(),
-			speed: CLICK_SPEED,
-			bandWidth: CLICK_BAND,
-			maxRadius: farthestCorner(ox, oy, width, height),
-			strength: 1,
-		};
+		clickRipples = appendClickRipple(
+			clickRipples,
+			makeClickRipple(ox, oy, width, height, nowMs),
+			nowMs
+		);
 	};
 
 	const onVisibilityChange = (): void => {
