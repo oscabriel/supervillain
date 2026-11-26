@@ -1,21 +1,51 @@
 import type { Html, HtmlBuilder } from "foldkit/html";
 
 import { DOCS, docHref } from "./Content.ts";
-import type { Message } from "./Model.ts";
+import type { Message, Model } from "./Model.ts";
 import type { Page } from "./Pages.ts";
-import { anchorsOf, proseView } from "./Prose.ts";
-import { docsRouter } from "./Route.ts";
+import { proseView, anchorsOf } from "./Prose.ts";
+import {
+	PROTOCOL_ANCHORS,
+	PROTOCOL_SUMMARY,
+	PROTOCOL_TITLE,
+	protocolContentView,
+} from "./Protocol.ts";
+import { docsRouter, protocolRouter } from "./Route.ts";
+
+interface DocNavItem {
+	readonly slug: string;
+	readonly title: string;
+	readonly summary: string;
+	readonly href: string;
+}
+
+const PROTOCOL_ITEM: DocNavItem = {
+	slug: "protocol",
+	title: PROTOCOL_TITLE,
+	summary: PROTOCOL_SUMMARY,
+	href: protocolRouter(),
+};
+
+const navItems = (): ReadonlyArray<DocNavItem> => [
+	...DOCS.map((page) => ({
+		slug: page.slug,
+		title: page.title,
+		summary: page.summary,
+		href: docHref(page),
+	})),
+	PROTOCOL_ITEM,
+];
 
 const listView = (here: string, h: HtmlBuilder<Message>): Html =>
 	h.ol(
 		[],
-		DOCS.map((other) =>
+		navItems().map((other) =>
 			h.li(
 				[],
 				[
 					h.a(
 						[
-							h.Href(docHref(other)),
+							h.Href(other.href),
 							h.AriaCurrent(other.slug === here ? "page" : "false"),
 						],
 						[other.title]
@@ -27,7 +57,7 @@ const listView = (here: string, h: HtmlBuilder<Message>): Html =>
 
 const turnView = (
 	h: HtmlBuilder<Message>,
-	other: Page | undefined,
+	other: DocNavItem | undefined,
 	label: string,
 	side: string
 ): ReadonlyArray<Html> =>
@@ -35,7 +65,7 @@ const turnView = (
 		? []
 		: [
 				h.a(
-					[h.Href(docHref(other)), h.Class(`turn-card ${side}`)],
+					[h.Href(other.href), h.Class(`turn-card ${side}`)],
 					[
 						h.span([h.Class("turn-label")], [label]),
 						h.span([h.Class("turn-title")], [other.title]),
@@ -54,17 +84,17 @@ export const docsHubView = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
 					h.p(
 						[h.Class("lede")],
 						[
-							"Players need a terminal and ssh. GMs keep their campaign in plain files and run one local binary. These guides cover sitting down, hosting, rulesets, agents, and how the pieces fit.",
+							"Players need a terminal and ssh. GMs keep their campaign in plain files and run one local binary. These guides cover sitting down, hosting, rulesets, agents, and the protocol reference.",
 						]
 					),
 					h.ol(
 						[h.Class("hub")],
-						DOCS.map((page, index) =>
+						navItems().map((page, index) =>
 							h.li(
 								[],
 								[
 									h.a(
-										[h.Href(docHref(page))],
+										[h.Href(page.href)],
 										[
 											h.span(
 												[h.Class("hub-index"), h.AriaHidden(true)],
@@ -85,20 +115,23 @@ export const docsHubView = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
 	),
 ];
 
-export const docView = (
-	page: Page,
-	h: HtmlBuilder<Message>,
-	copiedBlock = ""
+const shellDocView = (
+	slug: string,
+	title: string,
+	summary: string,
+	anchors: ReadonlyArray<{ readonly id: string; readonly text: string }>,
+	body: ReadonlyArray<Html>,
+	h: HtmlBuilder<Message>
 ): ReadonlyArray<Html> => {
-	const at = DOCS.findIndex((other) => other.slug === page.slug);
-	const anchors = anchorsOf(page.document);
+	const items = navItems();
+	const at = items.findIndex((other) => other.slug === slug);
 
 	const columns: Array<Html> = [
 		h.nav(
 			[h.Class("docs-list wide"), h.AriaLabel("Docs")],
 			[
 				h.a([h.Href(docsRouter()), h.Class("rail-heading")], ["Documentation"]),
-				listView(page.slug, h),
+				listView(slug, h),
 			]
 		),
 		h.details(
@@ -111,7 +144,7 @@ export const docView = (
 						"All documentation",
 					]
 				),
-				listView(page.slug, h),
+				listView(slug, h),
 			]
 		),
 		h.article(
@@ -119,14 +152,14 @@ export const docView = (
 			[
 				h.header(
 					[h.Class("doc-head")],
-					[h.h1([], [page.title]), h.p([h.Class("lede")], [page.summary])]
+					[h.h1([], [title]), h.p([h.Class("lede")], [summary])]
 				),
-				proseView(page.document, h, copiedBlock),
+				...body,
 				h.nav(
 					[h.Class("turns"), h.AriaLabel("Next and previous")],
 					[
-						...turnView(h, DOCS[at - 1], "← Previous", "back"),
-						...turnView(h, DOCS[at + 1], "Next →", "on"),
+						...turnView(h, items[at - 1], "← Previous", "back"),
+						...turnView(h, items[at + 1], "Next →", "on"),
 					]
 				),
 			]
@@ -152,3 +185,30 @@ export const docView = (
 
 	return [h.div([h.Class("container")], [h.div([h.Class("docs")], columns)])];
 };
+
+export const docView = (
+	page: Page,
+	h: HtmlBuilder<Message>,
+	copiedBlock = ""
+): ReadonlyArray<Html> =>
+	shellDocView(
+		page.slug,
+		page.title,
+		page.summary,
+		anchorsOf(page.document),
+		[proseView(page.document, h, copiedBlock)],
+		h
+	);
+
+export const protocolDocView = (
+	model: Model,
+	h: HtmlBuilder<Message>
+): ReadonlyArray<Html> =>
+	shellDocView(
+		"protocol",
+		PROTOCOL_TITLE,
+		PROTOCOL_SUMMARY,
+		PROTOCOL_ANCHORS,
+		[h.div([h.Class("proto-root")], protocolContentView(model, h))],
+		h
+	);

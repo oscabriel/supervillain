@@ -15,6 +15,7 @@
 	},
 	"dependencies": {
 		"@foldkit/markdown": "catalog:",
+		"@supervillain/domain": "workspace:*",
 		"effect": "catalog:",
 		"foldkit": "catalog:"
 	},

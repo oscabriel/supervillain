@@ -31,6 +31,7 @@ const docs = written("docs");
 const paths = new Set([
 	"/",
 	"/docs",
+	"/docs/protocol",
 	"/acknowledgments",
 	"/install",
 	...docs.map(({ slug }) => `/docs/${slug}`),

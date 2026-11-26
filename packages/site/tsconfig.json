@@ -9,5 +9,6 @@
 		"rootDir": ".",
 		"types": ["bun", "vite/client", "@foldkit/markdown/content"]
 	},
-	"include": ["src", "test", "vite.config.ts", "alchemy.run.ts"]
+	"include": ["src", "test", "vite.config.ts", "alchemy.run.ts"],
+	"references": [{ "path": "../domain" }]
 }

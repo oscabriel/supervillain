@@ -3,6 +3,7 @@ import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
 
+import { ALL_RULESETS } from "./ProtocolTypes.ts";
 import { AppRoute } from "./Route.ts";
 import { Demo, restarted, sent } from "./Table.ts";
 
@@ -10,12 +11,24 @@ export const MapMode = Schema.Literals(["pictures", "text"]);
 
 export type MapMode = typeof MapMode.Type;
 
+export const ProtocolRuleset = Schema.Literals(ALL_RULESETS);
+
+export type ProtocolRuleset = typeof ProtocolRuleset.Type;
+
+export const ProtocolRole = Schema.Literals(["gm", "player"]);
+
+export type ProtocolRole = typeof ProtocolRole.Type;
+
 export const Model = Schema.Struct({
 	route: AppRoute,
 	demo: Demo,
 	copied: Schema.Boolean,
 	copiedBlock: Schema.String,
 	copyToken: Schema.Int,
+	whatIsOpen: Schema.Boolean,
+	protocolRuleset: ProtocolRuleset,
+	protocolRole: ProtocolRole,
+	protocolQuery: Schema.String,
 	mapMode: MapMode,
 	autoplay: Schema.Boolean,
 	autoplayStep: Schema.Int,
@@ -45,6 +58,11 @@ export const Message = defineMessageUnion({
 	ResetCopyCommand: { token: Schema.Int },
 	ClickedCopyCode: { id: Schema.String, text: Schema.String },
 	ResetCopyCode: { id: Schema.String, token: Schema.Int },
+	ClickedOpenWhatIs: {},
+	ClickedCloseWhatIs: {},
+	ClickedProtocolRuleset: { ruleset: ProtocolRuleset },
+	ClickedProtocolRole: { role: ProtocolRole },
+	TypedProtocolQuery: { query: Schema.String },
 	AutoplayStepped: { step: Schema.Int },
 	PausedAutoplay: {},
 	MountedHeroWaves: {},

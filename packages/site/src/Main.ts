@@ -9,11 +9,12 @@ import { toString as urlToString } from "foldkit/url";
 import { acknowledgmentsView } from "./Acknowledgments.ts";
 import { advanceAutoplay, delayOfStep } from "./Autoplay.ts";
 import { docOf } from "./Content.ts";
-import { docsHubView, docView } from "./Docs.ts";
+import { docsHubView, docView, protocolDocView } from "./Docs.ts";
 import { homeView, JOIN_COMMAND } from "./Home.ts";
 import { pageView } from "./Layout.ts";
 import { Message, ranLine } from "./Model.ts";
 import type { Key, Model } from "./Model.ts";
+import { PROTOCOL_TITLE } from "./Protocol.ts";
 import { AppRoute, homeRouter, urlToAppRoute } from "./Route.ts";
 import type { Demo } from "./Table.ts";
 import {
@@ -48,6 +49,10 @@ export const init = (url: Url): Return => {
 			copied: false,
 			copiedBlock: "",
 			copyToken: 0,
+			whatIsOpen: false,
+			protocolRuleset: "draw-steel",
+			protocolRole: "gm",
+			protocolQuery: "",
 			mapMode: "pictures",
 			autoplay: AppRoute.guards.Home(route),
 			autoplayStep: 0,
@@ -96,6 +101,19 @@ const FocusLine = Command.define("FocusLine", {
 			if (input instanceof HTMLInputElement) {
 				input.focus({ preventScroll: true });
 				input.setSelectionRange(input.value.length, input.value.length);
+			}
+		}).pipe(Effect.as(Message.CompletedNavigate())),
+});
+
+const FocusElement = Command.define("FocusElement", {
+	args: { selector: Schema.String },
+	messages: [Message.CompletedNavigate],
+	execute: ({ selector }) =>
+		Effect.sync(() => {
+			const el = document.querySelector(selector);
+
+			if (el instanceof HTMLElement) {
+				el.focus({ preventScroll: true });
 			}
 		}).pipe(Effect.as(Message.CompletedNavigate())),
 });
@@ -207,6 +225,7 @@ export const update = (model: Model, message: Message): Return =>
 				route: routeOf(url),
 				copied: false,
 				copiedBlock: "",
+				whatIsOpen: false,
 				copyToken: model.copyToken + 1,
 			},
 			commands: [Settle({ anchor: Option.getOrElse(url.hash, () => "") })],
@@ -271,6 +290,22 @@ export const update = (model: Model, message: Message): Return =>
 					? { ...model, copiedBlock: "" }
 					: model,
 		}),
+		ClickedOpenWhatIs: () => ({
+			model: { ...model, whatIsOpen: true },
+			commands: [FocusElement({ selector: "#what-is-dialog" })],
+		}),
+		ClickedCloseWhatIs: () => ({
+			model: { ...model, whatIsOpen: false },
+		}),
+		ClickedProtocolRuleset: ({ ruleset }) => ({
+			model: { ...model, protocolRuleset: ruleset },
+		}),
+		ClickedProtocolRole: ({ role }) => ({
+			model: { ...model, protocolRole: role },
+		}),
+		TypedProtocolQuery: ({ query }) => ({
+			model: { ...model, protocolQuery: query },
+		}),
 	});
 
 const notFoundView = (h: HtmlBuilder<Message>) => [
@@ -299,6 +334,14 @@ const notFoundView = (h: HtmlBuilder<Message>) => [
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 	const { route } = model;
+
+	if (AppRoute.guards.Protocol(route)) {
+		return {
+			title: `${PROTOCOL_TITLE} · supervillain`,
+			body: pageView(route, h, protocolDocView(model, h)),
+		};
+	}
+
 	const doc = docOf(AppRoute.guards.Doc(route) ? route.slug : "");
 
 	if (doc !== undefined) {

@@ -6,6 +6,7 @@ import type { Url } from "foldkit/url";
 export const AppRoute = defineRouteUnion({
 	Home: {},
 	Docs: {},
+	Protocol: {},
 	Doc: { slug: Schema.String },
 	Acknowledgments: {},
 	NotFound: { path: Schema.String },
@@ -16,6 +17,12 @@ export type AppRoute = typeof AppRoute.Type;
 export const homeRouter = pipe(Route.root, Route.mapTo(AppRoute.Home));
 
 export const docsRouter = pipe(literal("docs"), Route.mapTo(AppRoute.Docs));
+
+export const protocolRouter = pipe(
+	literal("docs"),
+	slash(literal("protocol")),
+	Route.mapTo(AppRoute.Protocol)
+);
 
 export const docRouter = pipe(
 	literal("docs"),
@@ -29,7 +36,13 @@ export const acknowledgmentsRouter = pipe(
 );
 
 const parse = Route.parseUrlWithFallback(
-	Route.oneOf(docRouter, docsRouter, acknowledgmentsRouter, homeRouter),
+	Route.oneOf(
+		protocolRouter,
+		docRouter,
+		docsRouter,
+		acknowledgmentsRouter,
+		homeRouter
+	),
 	AppRoute.NotFound
 );
 

@@ -14,7 +14,9 @@ export const SOURCE = "https://github.com/oscabriel/supervillain";
 const HOSTING = docRouter({ slug: "hosting" });
 
 const isDocs = (route: AppRoute): boolean =>
-	AppRoute.guards.Docs(route) || AppRoute.guards.Doc(route);
+	AppRoute.guards.Docs(route) ||
+	AppRoute.guards.Doc(route) ||
+	AppRoute.guards.Protocol(route);
 
 const linkView = (
 	h: HtmlBuilder<Message>,

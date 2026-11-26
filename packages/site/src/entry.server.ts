@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { Server } from "foldkit/experimental";
 import { fromString } from "foldkit/url";
 
@@ -9,6 +9,7 @@ import {
 	AppRoute,
 	docsRouter,
 	homeRouter,
+	protocolRouter,
 } from "./Route.ts";
 
 const ABOUT =
@@ -17,10 +18,36 @@ const ABOUT =
 const FONTS =
 	"https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap";
 
+const SiteEnv = Schema.Struct({
+	VITE_SITE_ORIGIN: Schema.optionalKey(Schema.String),
+});
+
+const originOf = (): string =>
+	Option.match(Schema.decodeUnknownOption(SiteEnv)(import.meta.env), {
+		onNone: () => "",
+		onSome: (env) => env.VITE_SITE_ORIGIN ?? "",
+	});
+
+const ogImageUrl = (): string => {
+	const origin = originOf();
+
+	return origin === "" ? "/og.png" : `${origin}/og.png`;
+};
+
+const OG_IMAGE = ogImageUrl();
+
 const HEAD = [
 	`<meta name="description" content="${ABOUT}" />`,
+	`<meta property="og:type" content="website" />`,
 	`<meta property="og:site_name" content="supervillain" />`,
 	`<meta property="og:description" content="${ABOUT}" />`,
+	`<meta property="og:image" content="${OG_IMAGE}" />`,
+	`<meta property="og:image:type" content="image/png" />`,
+	`<meta property="og:image:width" content="1200" />`,
+	`<meta property="og:image:height" content="630" />`,
+	`<meta property="og:image:alt" content="ssh supervillain.sh" />`,
+	`<meta name="twitter:card" content="summary_large_image" />`,
+	`<meta name="twitter:image" content="${OG_IMAGE}" />`,
 	`<meta name="color-scheme" content="dark" />`,
 	`<meta name="theme-color" content="#09090b" />`,
 	`<link rel="preconnect" href="https://fonts.googleapis.com" />`,
@@ -36,6 +63,7 @@ export const prerenderPaths: ReadonlyArray<string> = [
 	homeRouter(),
 	docsRouter(),
 	...DOCS.map(docHref),
+	protocolRouter(),
 	acknowledgmentsRouter(),
 ];
 

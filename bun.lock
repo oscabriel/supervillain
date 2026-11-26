@@ -58,6 +58,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@foldkit/markdown": "catalog:",
+        "@supervillain/domain": "workspace:*",
         "effect": "catalog:",
         "foldkit": "catalog:",
       },

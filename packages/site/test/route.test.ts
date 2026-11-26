@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 
 import { Option } from "effect";
 import { fromString } from "foldkit/url";
@@ -9,6 +10,7 @@ import {
 	acknowledgmentsRouter,
 	AppRoute,
 	docRouter,
+	protocolRouter,
 	urlToAppRoute,
 } from "../src/Route.ts";
 import { htmlOf } from "./render.ts";
@@ -20,15 +22,22 @@ const routeOf = (path: string) =>
 	);
 
 describe("the site's addresses", () => {
-	test("are the front page, the docs, a doc, and acknowledgments", () => {
+	test("are the front page, the docs, protocol reference, a doc, and acknowledgments", () => {
 		expect(routeOf("/")).toStrictEqual(Option.some(AppRoute.Home()));
 		expect(routeOf("/docs")).toStrictEqual(Option.some(AppRoute.Docs()));
+		expect(routeOf("/docs/protocol")).toStrictEqual(
+			Option.some(AppRoute.Protocol())
+		);
+		expect(routeOf("/docs/protocol/")).toStrictEqual(
+			Option.some(AppRoute.Protocol())
+		);
 		expect(routeOf("/docs/hosting")).toStrictEqual(
 			Option.some(AppRoute.Doc({ slug: "hosting" }))
 		);
 		expect(routeOf("/acknowledgments")).toStrictEqual(
 			Option.some(AppRoute.Acknowledgments())
 		);
+		expect(protocolRouter()).toBe("/docs/protocol");
 	});
 
 	test("send anything else to not found", () => {
@@ -80,5 +89,9 @@ describe("the layout and acknowledgments", () => {
 		expect(html).toContain("Open RPG Creative (ORC) License");
 		expect(html).not.toContain("Pathfinder");
 		expect(html).not.toContain("—");
+	});
+
+	test("ships the 1200x630 hero og.png asset", () => {
+		expect(existsSync(`${import.meta.dirname}/../public/og.png`)).toBe(true);
 	});
 });

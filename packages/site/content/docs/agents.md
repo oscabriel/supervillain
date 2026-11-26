@@ -140,6 +140,8 @@ Rules to follow:
 | State (`get_table_state`) | Strictly player-safe: `seq`, `ruleset`, `myName`, `present`, `party`, `stage` (only `on-table` and `revealed`), `band`, `map`, `feed` | Full GM state plus `prep`, `gmNotes`, `contentProblems`, `knocks`, `catalog`, and recent log envelopes |
 | Resources | `supervillain://help`, `supervillain://table/state`, `supervillain://sheet/{party-member}`, `supervillain://codex/{revealed-key}` | Everything players see, plus `supervillain://campaign/files`, `supervillain://campaign/{kind}/{id}`, `supervillain://schema/{kind}`, and any creature sheet |
 
+Browse every generated tool schema, command parameter, and resource URI in the interactive [Protocol & MCP reference](/docs/protocol).
+
 ## Safety
 
 - **Host-fact rejection:** command fields that the host fills from disk or presence (`sheet`, `grid`, `card`, `cards`, `member`, `seated`, `character`, and similar) are stripped from every MCP tool schema and rejected if an agent tries to forge them.
