@@ -35,11 +35,8 @@ export {
 	keyed,
 	lobbying,
 	readLobby,
-	switchTab,
-	TABS,
 	type CopyWhat,
 	type Keyed,
-	type LobbyTab,
 	type Lobbying,
 	type Picked,
 } from "./keys.ts";

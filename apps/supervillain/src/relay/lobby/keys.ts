@@ -1,51 +1,32 @@
 import type { RawSession } from "@supervillain/ssh";
-import { Effect } from "effect";
+import type { Effect } from "effect";
 
+import {
+	CR,
+	flushEscape as flushNavEscape,
+	isEnter,
+	isErase,
+	LF,
+	LOWER_E,
+	LOWER_J,
+	LOWER_K,
+	movePick,
+	navKeyed,
+	SLASH,
+	SPACE,
+	TILDE,
+} from "../../chrome/keys.ts";
+import type { NavRules, NavState, Side } from "../../chrome/keys.ts";
+import { readKeys } from "../../chrome/read.ts";
+import type { NavTab } from "../../chrome/tabs.ts";
 import { createKey } from "./create.ts";
 import type { CreateAsk, CreateForm, CreateKey } from "./create.ts";
 
-export type LobbyTab = "tables" | "try" | "create" | "session";
-
-export const TABS: ReadonlyArray<LobbyTab> = [
-	"tables",
-	"try",
-	"create",
-	"session",
-];
-
-const CTRL_C = 0x03;
-
-const CTRL_D = 0x04;
-
-const BACKSPACE = 0x08;
-
-const TAB = 0x09;
-
-const LF = 0x0a;
-
-const CR = 0x0d;
-
-const ESC = 0x1b;
-
-const SPACE = 0x20;
-
-const TILDE = 0x7e;
-
-const SS3 = 0x4f;
-
-const CSI = 0x5b;
-
-const DEL = 0x7f;
-
 const ZERO = 0x30;
-
-const ONE = 0x31;
 
 const NINE = 0x39;
 
 const HYPHEN = 0x2d;
-
-const SLASH = 0x2f;
 
 const DOT = 0x2e;
 
@@ -57,63 +38,13 @@ const LOWER_A = 0x61;
 
 const LOWER_C = 0x63;
 
-const LOWER_E = 0x65;
-
-const LOWER_J = 0x6a;
-
-const LOWER_K = 0x6b;
-
-const LOWER_Q = 0x71;
-
 const LOWER_Z = 0x7a;
 
 const ADDRESS_LENGTH = 57;
 
-const FINAL_LOW = 0x40;
-
-const FINAL_HIGH = 0x7e;
-
-const ESCAPE_FLUSH_MS = 50;
-
-export const SEQUENCE_CAP = 32;
-
-const ARROWS: ReadonlyMap<string, 1 | -1> = new Map([
-	["[A", -1],
-	["OA", -1],
-	["[B", 1],
-	["OB", 1],
-]);
-
-const SIDEWAYS: ReadonlyMap<string, "left" | "right"> = new Map([
-	["[C", "right"],
-	["OC", "right"],
-	["[D", "left"],
-	["OD", "left"],
-]);
-
-const FUNCTION_TABS: ReadonlyMap<string, LobbyTab> = new Map([
-	["OP", "tables"],
-	["OQ", "try"],
-	["OR", "create"],
-	["OS", "session"],
-	["[11~", "tables"],
-	["[12~", "try"],
-	["[13~", "create"],
-	["[14~", "session"],
-]);
-
-const BACK_TAB = "[Z";
-
-export interface Lobbying {
-	tab: LobbyTab;
-	picked: number;
-	editing: boolean;
+export interface Lobbying extends NavState {
 	typed: string;
-	said: string | undefined;
 	create: CreateForm;
-	escape: "no" | "esc" | "body";
-	sequence: string;
-	afterCr: boolean;
 }
 
 export const lobbying = (
@@ -144,12 +75,14 @@ export type Keyed =
 
 const MORE: Keyed = { kind: "more" };
 
+const LEFT: Keyed = { kind: "left" };
+
 const isDigit = (byte: number) => byte >= ZERO && byte <= NINE;
 
 const isLetter = (byte: number) =>
 	(byte >= LOWER_A && byte <= LOWER_Z) || (byte >= UPPER_A && byte <= UPPER_Z);
 
-export const switchTab = (state: Lobbying, tab: LobbyTab) => {
+const switchTab = (state: Lobbying, tab: NavTab) => {
 	if (state.tab === tab) {
 		return;
 	}
@@ -160,25 +93,6 @@ export const switchTab = (state: Lobbying, tab: LobbyTab) => {
 	state.create = { ...state.create, said: undefined };
 };
 
-const stepTab = (state: Lobbying, by: 1 | -1) => {
-	const at = TABS.indexOf(state.tab);
-	const next = TABS[(at + by + TABS.length) % TABS.length];
-
-	if (next !== undefined) {
-		switchTab(state, next);
-	}
-};
-
-const moveBy = (state: Lobbying, by: 1 | -1, count: number) => {
-	if (count === 0) {
-		return;
-	}
-
-	const total = count + 1;
-	state.picked = (state.picked + by + total) % total;
-	state.said = undefined;
-};
-
 const createWith = (state: Lobbying, key: CreateKey): CreateAsk | undefined => {
 	const stepped = createKey(state.create, key);
 	state.create = stepped.form;
@@ -186,13 +100,7 @@ const createWith = (state: Lobbying, key: CreateKey): CreateAsk | undefined => {
 	return stepped.ask;
 };
 
-export const flushEscape = (state: Lobbying): boolean => {
-	if (state.escape !== "esc") {
-		return false;
-	}
-
-	state.escape = "no";
-
+const backOut = (state: Lobbying): boolean => {
 	if (state.editing) {
 		state.editing = false;
 
@@ -216,93 +124,24 @@ export const flushEscape = (state: Lobbying): boolean => {
 	return false;
 };
 
-const sequenced = (state: Lobbying, sequence: string, count: number) => {
-	const tab = FUNCTION_TABS.get(sequence);
-
-	if (tab !== undefined) {
-		switchTab(state, tab);
-
-		return;
-	}
-
-	if (sequence === BACK_TAB) {
-		stepTab(state, -1);
-
-		return;
-	}
-
-	const by = ARROWS.get(sequence);
-
-	if (by !== undefined && state.tab === "tables" && !state.editing) {
-		moveBy(state, by, count);
-
-		return;
-	}
-
-	const side = SIDEWAYS.get(sequence);
-
-	if (side === undefined) {
-		return;
-	}
-
+const sideways = (state: Lobbying, side: Side): boolean => {
 	if (
-		state.tab === "create" &&
-		!state.create.guest &&
-		state.create.step === "table"
+		state.tab !== "create" ||
+		state.create.guest ||
+		state.create.step !== "table"
 	) {
-		createWith(state, { kind: side });
-
-		return;
-	}
-
-	if (!state.editing) {
-		stepTab(state, side === "right" ? 1 : -1);
-	}
-};
-
-const escaped = (state: Lobbying, byte: number, count: number): boolean => {
-	if (state.escape === "esc") {
-		if (byte === CSI || byte === SS3) {
-			state.escape = "body";
-			state.sequence = String.fromCodePoint(byte);
-
-			return true;
-		}
-
-		const alt = TABS[byte - ONE];
-
-		if (alt !== undefined) {
-			state.escape = "no";
-			switchTab(state, alt);
-
-			return true;
-		}
-
-		flushEscape(state);
-
 		return false;
 	}
 
-	if (state.escape === "no") {
-		return false;
-	}
-
-	if (state.sequence.length >= SEQUENCE_CAP) {
-		state.escape = "no";
-		state.sequence = "";
-
-		return true;
-	}
-
-	state.sequence += String.fromCodePoint(byte);
-
-	if (byte >= FINAL_LOW && byte <= FINAL_HIGH) {
-		state.escape = "no";
-		sequenced(state, state.sequence, count);
-	}
+	createWith(state, { kind: side });
 
 	return true;
 };
+
+const LOBBY_NAV: NavRules<Lobbying> = { switchTab, backOut, sideways };
+
+export const flushEscape = (state: Lobbying): boolean =>
+	flushNavEscape(LOBBY_NAV, state);
 
 const typedName = (state: Lobbying, byte: number) => {
 	const starts = state.typed === "" && isLetter(byte);
@@ -328,7 +167,7 @@ const startTableEdit = (state: Lobbying) => {
 };
 
 const onTablesEdit = (state: Lobbying, byte: number, skip: number): Keyed => {
-	if (byte === CR || byte === LF) {
+	if (isEnter(byte)) {
 		if (state.typed === "") {
 			state.said = "Type your table's name, then Enter.";
 
@@ -338,7 +177,7 @@ const onTablesEdit = (state: Lobbying, byte: number, skip: number): Keyed => {
 		return { kind: "named", name: state.typed, skip };
 	}
 
-	if (byte === DEL || byte === BACKSPACE) {
+	if (isErase(byte)) {
 		state.typed = state.typed.slice(0, -1);
 		state.said = undefined;
 	} else {
@@ -365,18 +204,18 @@ const onTables = (
 	}
 
 	if (byte === LOWER_J) {
-		moveBy(state, 1, rooms.length);
+		movePick(state, 1, rooms.length);
 
 		return MORE;
 	}
 
 	if (byte === LOWER_K) {
-		moveBy(state, -1, rooms.length);
+		movePick(state, -1, rooms.length);
 
 		return MORE;
 	}
 
-	if (byte === CR || byte === LF) {
+	if (isEnter(byte)) {
 		const room = rooms[state.picked];
 
 		if (room !== undefined) {
@@ -390,13 +229,13 @@ const onTables = (
 };
 
 const onCreateEdit = (state: Lobbying, byte: number, skip: number): Keyed => {
-	if (byte === CR || byte === LF) {
+	if (isEnter(byte)) {
 		const ask = createWith(state, { kind: "enter" });
 
 		return ask === undefined ? MORE : { kind: "ask", ask, skip };
 	}
 
-	if (byte === DEL || byte === BACKSPACE) {
+	if (isErase(byte)) {
 		createWith(state, { kind: "back" });
 	} else if (byte > SPACE && byte < TILDE) {
 		createWith(state, { kind: "char", char: String.fromCodePoint(byte) });
@@ -422,7 +261,7 @@ const onCreate = (state: Lobbying, byte: number, skip: number): Keyed => {
 
 	if (form.step === "handle") {
 		if (form.held !== undefined) {
-			if (byte === CR || byte === LF) {
+			if (isEnter(byte)) {
 				createWith(state, { kind: "enter" });
 				state.editing = true;
 			}
@@ -430,7 +269,7 @@ const onCreate = (state: Lobbying, byte: number, skip: number): Keyed => {
 			return MORE;
 		}
 
-		if (byte === CR || byte === LF || byte === SLASH || byte === LOWER_E) {
+		if (isEnter(byte) || byte === SLASH || byte === LOWER_E) {
 			state.editing = true;
 			state.create = { ...form, said: undefined };
 		}
@@ -445,7 +284,7 @@ const onCreate = (state: Lobbying, byte: number, skip: number): Keyed => {
 		return MORE;
 	}
 
-	if (byte === CR || byte === LF) {
+	if (isEnter(byte)) {
 		if (form.table === "") {
 			state.editing = true;
 			state.create = { ...form, said: undefined };
@@ -461,22 +300,6 @@ const onCreate = (state: Lobbying, byte: number, skip: number): Keyed => {
 	return MORE;
 };
 
-const navShortcut = (state: Lobbying, byte: number): Keyed | undefined => {
-	if (byte === LOWER_Q) {
-		return { kind: "left" };
-	}
-
-	const tab = TABS[byte - ONE];
-
-	if (tab !== undefined) {
-		switchTab(state, tab);
-
-		return MORE;
-	}
-
-	return undefined;
-};
-
 export const keyed = (
 	state: Lobbying,
 	rooms: ReadonlyArray<string>,
@@ -484,35 +307,14 @@ export const keyed = (
 	at: number,
 	byte: number
 ): Keyed => {
-	const lfOfCrLf = byte === LF && state.afterCr;
-	state.afterCr = byte === CR;
+	const nav = navKeyed(LOBBY_NAV, state, byte, rooms.length);
 
-	if (byte === CTRL_C || byte === CTRL_D) {
-		return { kind: "left" };
+	if (nav === "quit") {
+		return LEFT;
 	}
 
-	if (escaped(state, byte, rooms.length) || lfOfCrLf) {
+	if (nav === "handled") {
 		return MORE;
-	}
-
-	if (byte === ESC) {
-		state.escape = "esc";
-
-		return MORE;
-	}
-
-	if (byte === TAB) {
-		stepTab(state, 1);
-
-		return MORE;
-	}
-
-	if (!state.editing) {
-		const nav = navShortcut(state, byte);
-
-		if (nav !== undefined) {
-			return nav;
-		}
 	}
 
 	const skip = byte === CR && chunk[at + 1] === LF ? at + 2 : at + 1;
@@ -531,7 +333,7 @@ export const keyed = (
 			: MORE;
 	}
 
-	return byte === CR || byte === LF ? { kind: "try", skip } : MORE;
+	return isEnter(byte) ? { kind: "try", skip } : MORE;
 };
 
 export type Picked =
@@ -577,89 +379,21 @@ export const readLobby = (
 	state: Lobbying,
 	draw: (state: Lobbying) => void,
 	redraw: (again: (() => void) | undefined) => void
-): Effect.Effect<Picked> => {
-	const show = () => {
-		draw(state);
-	};
+): Effect.Effect<Picked> =>
+	readKeys({
+		stream: session.stream,
+		state,
+		rules: LOBBY_NAV,
+		keyed: (chunk, at, byte) => {
+			const step = keyed(state, rooms, chunk, at, byte);
+			const result = pickedOf(step);
 
-	return Effect.callback((resume) => {
-		const { stream } = session;
-		let escTimer: ReturnType<typeof setTimeout> | undefined;
-
-		const clearEsc = () => {
-			if (escTimer !== undefined) {
-				clearTimeout(escTimer);
-				escTimer = undefined;
-			}
-		};
-
-		const stop = () => {
-			clearTimeout(idle);
-			clearEsc();
-			redraw(undefined);
-			stream.removeListener("data", onData);
-			stream.removeListener("end", onEnd);
-		};
-
-		const finish = (result: Picked, rest?: Buffer) => {
-			stop();
-			stream.pause();
-
-			if (rest !== undefined && rest.length > 0) {
-				stream.unshift(rest);
-			}
-
-			resume(Effect.succeed(result));
-		};
-
-		const idleTimer = () =>
-			setTimeout(() => {
-				finish({ kind: "idle" });
-			}, idleMs);
-
-		let idle = idleTimer();
-
-		const onData = (chunk: Buffer) => {
-			clearTimeout(idle);
-			clearEsc();
-			idle = idleTimer();
-
-			for (const [at, byte] of chunk.entries()) {
-				const step = keyed(state, rooms, chunk, at, byte);
-				const picked = pickedOf(step);
-
-				if (picked !== undefined) {
-					const skip = skipOf(step);
-
-					finish(picked, skip === undefined ? undefined : chunk.subarray(skip));
-
-					return;
-				}
-			}
-
-			if (state.escape === "esc") {
-				escTimer = setTimeout(() => {
-					escTimer = undefined;
-
-					if (flushEscape(state)) {
-						show();
-					}
-				}, ESCAPE_FLUSH_MS);
-			}
-
-			show();
-		};
-
-		const onEnd = () => {
-			finish({ kind: "left" });
-		};
-
-		show();
-		redraw(show);
-		stream.on("data", onData);
-		stream.once("end", onEnd);
-		stream.resume();
-
-		return Effect.sync(stop);
+			return result === undefined ? undefined : { result, rest: skipOf(step) };
+		},
+		ended: { kind: "left" },
+		idle: { ms: idleMs, result: { kind: "idle" } },
+		draw: () => {
+			draw(state);
+		},
+		redraw,
 	});
-};

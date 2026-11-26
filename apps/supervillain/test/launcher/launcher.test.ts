@@ -1,19 +1,36 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 
-import { Effect, Option } from "effect";
+import { Cause, Effect, Exit, Fiber, Option } from "effect";
 
+import { launcherFrame, playedText } from "../../src/launcher/frame.ts";
 import { GmConfig } from "../../src/launcher/GmConfig.ts";
-import { playedText } from "../../src/launcher/Launcher.tsx";
+import {
+	flushLauncherEscape,
+	launcherKeyed,
+	launching,
+} from "../../src/launcher/keys.ts";
+import type { LauncherChoice } from "../../src/launcher/keys.ts";
+import {
+	ENTER_ALT_SCREEN,
+	LEAVE_ALT_SCREEN,
+	runLauncher,
+} from "../../src/launcher/run.ts";
+import type {
+	LauncherProps,
+	LauncherTerminal,
+} from "../../src/launcher/run.ts";
 import { isBareName, scanCampaigns } from "../../src/launcher/scan.ts";
+import type { FoundCampaign } from "../../src/launcher/scan.ts";
 import { newWizard, tableSlug, wizardKey } from "../../src/launcher/wizard.ts";
 import type {
 	Wizard,
 	WizardKey,
 	WizardOutcome,
 } from "../../src/launcher/wizard.ts";
-import { effect } from "../host/effect.ts";
+import { effect, waitFor } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
 
 const campaign = async (dir: string, rules: string, playedAt?: Date) => {
@@ -271,6 +288,231 @@ describe("gm.json", () => {
 			expect(failed.message).toStartWith(
 				`can't understand ${path.join(dir, "gm.json")}:`
 			);
+		})
+	);
+});
+
+const feedBytes = (
+	state: ReturnType<typeof launching>,
+	campaigns: ReadonlyArray<FoundCampaign>,
+	relay: string | undefined,
+	handle: string | undefined,
+	input: string
+): LauncherChoice | undefined => {
+	let chosen: LauncherChoice | undefined;
+
+	for (const byte of Buffer.from(input, "utf-8")) {
+		const step = launcherKeyed(state, campaigns, relay, handle, byte);
+
+		if (step.kind === "done") {
+			chosen = step.choice;
+			break;
+		}
+	}
+
+	return chosen;
+};
+
+describe("the unified launcher TUI", () => {
+	const sample: ReadonlyArray<FoundCampaign> = [
+		{
+			dir: "/home/gm/supervillain/keep",
+			name: "keep",
+			rules: "pf2e",
+			here: false,
+			lastPlayed: Option.none(),
+		},
+	];
+
+	test("renders the same 4-tab chrome as the SSH lobby", () => {
+		const state = launching(false);
+
+		const plain = Bun.stripANSI(
+			launcherFrame(
+				{
+					state,
+					campaigns: sample,
+					home: "/home/gm/supervillain",
+					handle: "ana",
+					relay: "supervillain.sh",
+					term: "xterm-256color",
+					now: 0,
+				},
+				120,
+				34
+			)
+		);
+
+		expect(plain).toContain("1 Tables");
+		expect(plain).toContain("2 Try a Table");
+		expect(plain).toContain("3 Create a Table");
+		expect(plain).toContain("4 Session");
+		expect(plain).toContain("keep");
+		expect(plain).toContain("PF2e (ORC)");
+		expect(plain).toContain("ssh ana/keep@supervillain.sh");
+	});
+
+	test("switches tabs with 1-4 and opens Try a Table with Enter", () => {
+		const state = launching(false);
+		expect(feedBytes(state, sample, undefined, undefined, "2")).toBeUndefined();
+		expect(state.tab).toBe("try");
+
+		const tryPlain = Bun.stripANSI(
+			launcherFrame(
+				{
+					state,
+					campaigns: sample,
+					home: "/home/gm/supervillain",
+					handle: undefined,
+					relay: undefined,
+					term: "xterm-256color",
+					now: 0,
+				},
+				100,
+				30
+			)
+		);
+
+		expect(tryPlain).toContain("Solo Draw Steel sandbox");
+		expect(feedBytes(state, sample, undefined, undefined, "\r")).toEqual({
+			kind: "try",
+		});
+	});
+
+	test("jumps to Create a Table with n, steps through wizard, and handles Esc", () => {
+		const state = launching(false);
+		expect(feedBytes(state, sample, undefined, undefined, "n")).toBeUndefined();
+		expect(state.tab).toBe("create");
+		expect(state.editing).toBe(true);
+
+		expect(
+			feedBytes(state, sample, undefined, undefined, "Ford Road\r\r\r")
+		).toEqual({
+			kind: "new",
+			table: {
+				slug: "ford-road",
+				rules: "draw-steel",
+				example: true,
+				handle: undefined,
+			},
+		});
+
+		const cancelling = launching(false);
+		feedBytes(cancelling, sample, undefined, undefined, "n\u001B");
+		expect(flushLauncherEscape(cancelling)).toBe(true);
+		expect(cancelling.editing).toBe(false);
+		expect(feedBytes(cancelling, sample, undefined, undefined, "q")).toEqual({
+			kind: "quit",
+		});
+	});
+});
+
+const FRAME_START = "\u001B[H\u001B[2J";
+
+const fakeTerminal = (breaksAtFrame?: number) => {
+	const written: Array<string> = [];
+	const raw: Array<boolean> = [];
+	const resizes = new Set<() => void>();
+	const keyboard = new PassThrough();
+	let frames = 0;
+
+	const terminal: LauncherTerminal = {
+		stdin: Object.assign(keyboard, {
+			isRaw: false,
+			setRawMode: (on: boolean) => {
+				raw.push(on);
+			},
+		}),
+		stdout: {
+			columns: 100,
+			rows: 30,
+			write: (text) => {
+				if (text.startsWith(FRAME_START)) {
+					frames += 1;
+
+					if (frames === breaksAtFrame) {
+						throw new Error("the frame broke");
+					}
+				}
+
+				written.push(text);
+			},
+			on: (_event, listener) => {
+				resizes.add(listener);
+			},
+			removeListener: (_event, listener) => {
+				resizes.delete(listener);
+			},
+		},
+	};
+
+	return { terminal, keyboard, written, raw, resizes, frames: () => frames };
+};
+
+describe("the launcher's terminal", () => {
+	const props: LauncherProps = {
+		campaigns: [],
+		home: "/home/gm/supervillain",
+		handle: undefined,
+		relay: undefined,
+		term: "xterm-256color",
+		now: 0,
+	};
+
+	effect("is handed back when a choice is made", () =>
+		Effect.gen(function* () {
+			const { terminal, keyboard, written, raw, resizes, frames } =
+				fakeTerminal();
+
+			const fiber = yield* Effect.forkChild(runLauncher(props, terminal));
+			yield* waitFor("the first frame", () => frames() === 1);
+			expect(written[0]).toBe(ENTER_ALT_SCREEN);
+			expect(raw).toEqual([true]);
+			expect(resizes.size).toBe(1);
+
+			for (const resized of resizes) {
+				resized();
+			}
+
+			expect(frames()).toBe(2);
+			keyboard.write("2\r");
+			expect(yield* Fiber.join(fiber)).toEqual({ kind: "try" });
+			expect(written.at(-1)).toBe(LEAVE_ALT_SCREEN);
+			expect(raw).toEqual([true, false]);
+			expect(resizes.size).toBe(0);
+		})
+	);
+
+	effect("is handed back when the launcher is interrupted", () =>
+		Effect.gen(function* () {
+			const { terminal, written, raw, resizes, frames } = fakeTerminal();
+			const fiber = yield* Effect.forkChild(runLauncher(props, terminal));
+			yield* waitFor("the first frame", () => frames() === 1);
+			expect(written).not.toContain(LEAVE_ALT_SCREEN);
+			yield* Fiber.interrupt(fiber);
+			expect(written.at(-1)).toBe(LEAVE_ALT_SCREEN);
+			expect(raw).toEqual([true, false]);
+			expect(resizes.size).toBe(0);
+		})
+	);
+
+	effect("is handed back when drawing a frame throws", () =>
+		Effect.gen(function* () {
+			for (const breaksAt of [1, 2]) {
+				const { terminal, keyboard, written, raw, frames } =
+					fakeTerminal(breaksAt);
+
+				const fiber = yield* Effect.forkChild(runLauncher(props, terminal));
+				yield* waitFor("the first frame", () => frames() === 1);
+				keyboard.write("j");
+				const exit = yield* Fiber.await(fiber);
+				expect(Exit.hasDies(exit)).toBe(true);
+				expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
+					"the frame broke"
+				);
+				expect(written.at(-1)).toBe(LEAVE_ALT_SCREEN);
+				expect(raw).toEqual([true, false]);
+			}
 		})
 	);
 });

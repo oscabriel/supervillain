@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { Effect } from "effect";
 
+import { ENTER_ALT_SCREEN, LEAVE_ALT_SCREEN } from "../../src/launcher/run.ts";
 import { effect, waitFor } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
 import { cli, plainEnv } from "./cli.ts";
@@ -35,6 +36,7 @@ const inPty = (
 			return {
 				proc,
 				output: () => Bun.stripANSI(output),
+				raw: () => output,
 				write: (text: string) => {
 					proc.terminal?.write(text);
 				},
@@ -86,9 +88,12 @@ describe("bare supervillain", () => {
 				const quitting = yield* inPty(["--local"], here, env);
 				yield* waitFor(
 					"the launcher",
-					() => quitting.output().includes("N new table"),
+					() => quitting.output().includes("2 Try a Table"),
 					10_000
 				);
+				expect(quitting.output()).toContain("1 Tables");
+				expect(quitting.output()).toContain("3 Create a Table");
+				expect(quitting.output()).toContain("4 Session");
 				expect(quitting.output()).toContain("keep");
 				expect(quitting.output()).toContain("PF2e (ORC)");
 				expect(quitting.output()).toContain("local only");
@@ -100,12 +105,12 @@ describe("bare supervillain", () => {
 				const making = yield* inPty(["--local"], here, env);
 				yield* waitFor(
 					"the launcher",
-					() => making.output().includes("N new table"),
+					() => making.output().includes("2 Try a Table"),
 					10_000
 				);
 				making.write("n");
 				yield* waitFor("the wizard", () =>
-					making.output().includes("New table")
+					making.output().includes("Ford Road")
 				);
 				making.write("Ford Road");
 				yield* Effect.sleep("100 millis");
@@ -132,6 +137,41 @@ describe("bare supervillain", () => {
 				expect(
 					yield* Effect.promise(async () => await making.proc.exited)
 				).toBe(0);
+			}),
+		40_000
+	);
+
+	effect(
+		"killed in the launcher, it hands the terminal back before it exits",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				const here = path.join(dir, "here");
+
+				yield* Effect.promise(async () => {
+					await mkdir(here);
+				});
+
+				const env = {
+					SUPERVILLAIN_HOME: path.join(dir, "home"),
+					XDG_CONFIG_HOME: path.join(dir, "config"),
+				};
+
+				for (const signal of ["SIGTERM", "SIGHUP", "SIGINT"] as const) {
+					const killed = yield* inPty(["--local"], here, env);
+					yield* waitFor(
+						"the launcher",
+						() => killed.output().includes("2 Try a Table"),
+						10_000
+					);
+					expect(killed.raw()).toContain(ENTER_ALT_SCREEN);
+					expect(killed.raw()).not.toContain(LEAVE_ALT_SCREEN);
+					killed.proc.kill(signal);
+					yield* Effect.promise(async () => await killed.proc.exited);
+					yield* waitFor(`the terminal back after ${signal}`, () =>
+						killed.raw().endsWith(LEAVE_ALT_SCREEN)
+					);
+				}
 			}),
 		40_000
 	);

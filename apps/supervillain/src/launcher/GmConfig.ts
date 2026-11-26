@@ -1,4 +1,5 @@
 import {
+	Clock,
 	Context,
 	Effect,
 	FileSystem,
@@ -10,7 +11,7 @@ import {
 
 import { configDir } from "../host/GmKey.ts";
 
-export const GM_CONFIG_FILE = "gm.json";
+const GM_CONFIG_FILE = "gm.json";
 
 export const GmConfigData = Schema.Struct({
 	handle: Schema.optionalKey(Schema.String),
@@ -71,12 +72,28 @@ export class GmConfig extends Context.Service<
 			Effect.withSpan("GmConfig.read")
 		);
 
+		let saves = 0;
+
 		const save = Effect.fn("GmConfig.save")(
 			function* (config: GmConfigData) {
 				const text = yield* encodeConfig(config);
+				const now = yield* Clock.currentTimeMillis;
+				saves += 1;
+				const temporary = `${file}.${process.pid}.${now}.${saves}.tmp`;
+
 				yield* fs.makeDirectory(folder, { recursive: true, mode: 0o700 });
-				yield* fs.writeFileString(file, `${text}\n`, { mode: 0o600 });
-				yield* fs.chmod(file, 0o600);
+				yield* fs
+					.writeFileString(temporary, `${text}\n`, {
+						mode: 0o600,
+						flag: "wx",
+					})
+					.pipe(
+						Effect.andThen(fs.chmod(temporary, 0o600)),
+						Effect.andThen(fs.rename(temporary, file)),
+						Effect.onError(() =>
+							fs.remove(temporary, { force: true }).pipe(Effect.ignore)
+						)
+					);
 			},
 			Effect.mapError(failed("can't write"))
 		);

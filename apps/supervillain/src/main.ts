@@ -1,6 +1,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import {
 	DEFAULT_RULESET,
+	GM,
 	MAP_SEED_MAX,
 	RULESET_NAMES as RULESETS,
 } from "@supervillain/domain";
@@ -8,6 +9,7 @@ import type { Door, MapWriteReason } from "@supervillain/domain";
 import { isFingerprint } from "@supervillain/ssh";
 import {
 	Cause,
+	Clock,
 	Config,
 	Console,
 	Effect,
@@ -30,6 +32,7 @@ import { CAMPAIGN_FILE } from "./content/campaignFile.ts";
 import {
 	CampaignError,
 	COMPILED,
+	examplePath,
 	madeWith,
 	writeCampaign,
 } from "./content/newCampaign.ts";
@@ -43,9 +46,11 @@ import {
 	relayJoinCommand,
 	roomSlug,
 } from "./host/RelayLink.ts";
+import { SANDBOX_LOG_CAP } from "./host/TableRoom.ts";
 import type { TableServerOptions } from "./host/TableServer.ts";
 import { GmConfig } from "./launcher/GmConfig.ts";
 import type { GmConfigData } from "./launcher/GmConfig.ts";
+import { runLauncher } from "./launcher/run.ts";
 import {
 	isBareName,
 	scanCampaigns,
@@ -61,6 +66,9 @@ import {
 	isTableName,
 	TABLE_RULE,
 } from "./relay/protocol.ts";
+import { SANDBOX_ROOM, SANDBOX_SETUP } from "./relay/sandbox.ts";
+import { runUpdate } from "./update.ts";
+import { VERSION } from "./version.ts";
 
 class CheckError extends Schema.TaggedError<CheckError>()("CheckError", {
 	message: Schema.String,
@@ -128,13 +136,16 @@ const looksLikeCampaign = Effect.fn("main.looksLikeCampaign")(function* (
 		(mark) => {
 			const folder = mark.endsWith("/");
 			const name = folder ? mark.slice(0, -1) : mark;
+			const kind = folder ? "Directory" : "File";
 
-			return names.includes(name)
-				? fs.stat(path.join(dir, name)).pipe(
-						Effect.map(({ type }) => type === (folder ? "Directory" : "File")),
-						Effect.orElseSucceed(() => false)
-					)
-				: Effect.succeed(false);
+			if (!names.includes(name)) {
+				return Effect.succeed(false);
+			}
+
+			return fs.stat(path.join(dir, name)).pipe(
+				Effect.map(({ type }) => type === kind),
+				Effect.orElseSucceed(() => false)
+			);
 		},
 		{ concurrency: "unbounded" }
 	);
@@ -916,10 +927,70 @@ const make = Command.make(
 	)
 );
 
-const launch = Effect.fn("main.launch")(function* (o: {
+const LOCAL_SANDBOX_HELP =
+	"This is a sandbox: a private Draw Steel table in memory. Nothing is saved, and it closes when you leave (Ctrl-C).";
+
+const openLocalSandbox = Effect.fn("main.openLocalSandbox")(function* () {
+	const modules = yield* Effect.promise(async () => {
+		await import("../preload.ts");
+
+		const [services, seat, line] = await Promise.all([
+			import("./host/services.ts"),
+			import("./host/LocalSeat.ts"),
+			import("./host/line.ts"),
+		]);
+
+		return {
+			sandboxServices: services.sandboxServices,
+			localSeat: seat.localSeat,
+			runLine: line.runLine,
+		};
+	});
+
+	const dir = yield* examplePath;
+
+	const layer = modules
+		.sandboxServices(dir, { logCap: SANDBOX_LOG_CAP })
+		.pipe(Layer.provide(SecureRandom.layerWebCrypto));
+
+	yield* Effect.scoped(
+		Effect.gen(function* () {
+			const context = yield* Layer.build(layer);
+
+			yield* Effect.forEach(
+				SANDBOX_SETUP.entries(),
+				([at, line]) =>
+					modules
+						.runLine(GM, line, "seat", `local-sandbox:${at}`)
+						.pipe(
+							Effect.tap((reply) =>
+								reply.kind === "refusal"
+									? Effect.logWarning(`sandbox: ${line}: ${reply.text}`)
+									: Effect.void
+							)
+						),
+				{ concurrency: 1, discard: true }
+			).pipe(Effect.provideContext(context));
+
+			yield* modules
+				.localSeat({
+					room: SANDBOX_ROOM,
+					helpFooter: LOCAL_SANDBOX_HELP,
+					joinHint: "a sandbox table: nothing is saved",
+				})
+				.pipe(Effect.provideContext(context));
+		})
+	).pipe(
+		Effect.mapError((cause) => new HostError({ message: cause.message, cause }))
+	);
+});
+
+interface LaunchOptions {
 	readonly local: boolean;
 	readonly relay: Option.Option<string>;
-}) {
+}
+
+const launch = Effect.fn("main.launch")(function* (o: LaunchOptions) {
 	if (o.local && Option.isSome(o.relay)) {
 		return yield* new HostError({
 			message:
@@ -942,24 +1013,28 @@ const launch = Effect.fn("main.launch")(function* (o: {
 
 	const campaigns = yield* scanCampaigns(process.cwd(), home);
 
-	const { runLauncher } = yield* Effect.promise(async () => {
-		await import("../preload.ts");
+	const term = Option.getOrElse(yield* envText("TERM"), () => "xterm-256color");
 
-		return await import("./launcher/Launcher.tsx");
-	});
+	const now = yield* Clock.currentTimeMillis;
 
-	const choice = yield* Effect.promise(
-		async () =>
-			await runLauncher({
-				campaigns,
-				home,
-				handle: config.handle,
-				relay: relayText,
-			})
+	const choice = yield* runLauncher(
+		{
+			campaigns,
+			home,
+			handle: config.handle,
+			relay: relayText,
+			term,
+			now,
+		},
+		{ stdin: process.stdin, stdout: process.stdout }
 	);
 
 	if (choice.kind === "quit") {
 		return yield* Effect.void;
+	}
+
+	if (choice.kind === "try") {
+		return yield* openLocalSandbox();
 	}
 
 	const handle =
@@ -1269,10 +1344,13 @@ const check = Command.make(
 
 		const files = keyedDocs(index).length + (index.table === undefined ? 0 : 1);
 
+		const found =
+			problems.length === 1 ? "a problem" : `${problems.length} problems`;
+
 		const content =
 			problems.length > 0
 				? new CheckError({
-						message: `${dir}: ${problems.length === 1 ? "a problem" : `${problems.length} problems`} in the campaign's files`,
+						message: `${dir}: ${found} in the campaign's files`,
 					})
 				: undefined;
 
@@ -1296,11 +1374,11 @@ const check = Command.make(
 			return yield* content;
 		}
 
+		const noun = files === 1 ? "file" : "files";
+
 		return yield* files === 0
 			? Effect.void
-			: Console.log(
-					`${dir}: ${files} campaign ${files === 1 ? "file" : "files"}, no problems`
-				);
+			: Console.log(`${dir}: ${files} campaign ${noun}, no problems`);
 	})
 ).pipe(
 	Command.withDescription(
@@ -1397,6 +1475,42 @@ const mcpCommand = Command.make(
 	)
 );
 
+const updateCommand = Command.make(
+	"update",
+	{
+		check: Flag.Boolean("check").pipe(
+			Flag.withDefault(false),
+			Flag.withDescription(
+				"Check whether a newer release is available without installing it"
+			)
+		),
+		force: Flag.Boolean("force").pipe(
+			Flag.withDefault(false),
+			Flag.withDescription(
+				"Install the latest release even if this binary already matches it or is newer"
+			)
+		),
+		version: Flag.String("version").pipe(
+			Flag.optional,
+			Flag.withDescription(
+				"Install a specific release tag (for example v0.7.1) instead of latest"
+			)
+		),
+	},
+	Effect.fn(function* (o) {
+		yield* runUpdate({
+			check: o.check,
+			force: o.force,
+			version: Option.getOrUndefined(o.version),
+			currentVersion: VERSION,
+		});
+	})
+).pipe(
+	Command.withDescription(
+		"Check for a newer supervillain release, verify SHA256SUMS, and replace this binary in place"
+	)
+);
+
 if (process.stdin.isTTY) {
 	process.on("SIGHUP", () => {
 		process.kill(process.pid, "SIGTERM");
@@ -1432,9 +1546,10 @@ Command.make(
 		check,
 		schemaCommand,
 		mcpCommand,
+		updateCommand,
 		relayCommand,
 	]),
-	Command.run({ version: process.env.SUPERVILLAIN_VERSION ?? "0.0.0" }),
+	Command.run({ version: VERSION }),
 	Effect.catchTags({
 		CampaignConfigInvalid: fail,
 		CampaignError: fail,
@@ -1447,6 +1562,7 @@ Command.make(
 		McpBridgeError: fail,
 		McpSocketError: fail,
 		SshError: fail,
+		UpdateError: fail,
 	}),
 	Effect.provide([
 		BunServices.layer,

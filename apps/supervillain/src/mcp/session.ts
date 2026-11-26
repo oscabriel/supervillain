@@ -1,13 +1,14 @@
 import type { Duplex, Writable } from "node:stream";
 
 import { GM, isMember, KNOCK_FIRST } from "@supervillain/domain";
-import { Cause, Config, Effect, Fiber, Layer, Stdio, Stream } from "effect";
+import { Cause, Effect, Fiber, Layer, Stdio, Stream } from "effect";
 import type { Scope } from "effect";
 import { McpProtocol, McpServer } from "effect/ai";
 
 import { CampaignContent } from "../content/index.ts";
 import { Presence } from "../host/Presence.ts";
 import { TableRoom } from "../host/TableRoom.ts";
+import { VERSION } from "../version.ts";
 import { gateOf } from "./limits.ts";
 import { registerResources } from "./resources.ts";
 import { AGENT_NEEDS_KEY, AGENT_SERVER } from "./seat.ts";
@@ -28,11 +29,7 @@ export interface McpSessionOptions extends McpSeat {
 	readonly close: (code: number) => void;
 }
 
-const VERSION = Config.String("SUPERVILLAIN_VERSION").pipe(
-	Config.withDefault("0.0.0")
-);
-
-export const instructionsOf = (seat: McpSeat, ruleset: string): string =>
+const instructionsOf = (seat: McpSeat, ruleset: string): string =>
 	[
 		`You are seated at the supervillain table "${seat.room}", which plays ${ruleset}, as ${seat.role === "gm" ? "its GM" : "a player"}.`,
 		"Read get_table_state (or supervillain://table/state) first, then act with the cmd_ tools, or send_line to type a line as a person at the table would.",
@@ -50,14 +47,14 @@ export const registrations = (seat: McpSeat) =>
 		})
 	);
 
-export const serverLayer = (seat: McpSeat, stdio: Stdio.Stdio) =>
+const serverLayer = (seat: McpSeat, stdio: Stdio.Stdio) =>
 	Layer.unwrap(
 		Effect.gen(function* () {
 			const { ruleset } = yield* CampaignContent;
 
 			return McpServer.layerStdio({
 				name: AGENT_SERVER,
-				version: yield* VERSION,
+				version: VERSION,
 				instructions: instructionsOf(seat, ruleset),
 				protocols: MCP_PROTOCOLS,
 				registrations: registrations(seat),
