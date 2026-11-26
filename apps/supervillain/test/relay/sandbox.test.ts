@@ -37,12 +37,10 @@ const tryTab = (
 			key === undefined ? { user: "lobby" } : { key, user: "lobby" }
 		);
 
-		yield* waitFor("the lobby", () =>
-			shown(terminal).includes("> type your table's name")
-		);
-		terminal.write("\u001BOQ");
+		yield* waitFor("the lobby", () => shown(terminal).includes("join by name"));
+		terminal.write("2");
 		yield* waitFor("the try tab", () =>
-			shown(terminal).includes("a Draw Steel table to play by yourself")
+			shown(terminal).includes("Solo Draw Steel sandbox")
 		);
 
 		return terminal;

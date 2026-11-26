@@ -277,7 +277,7 @@ export const lobbyText = (tables: ReadonlyArray<LobbyTable>): string =>
 		`Join one with its name before the @: ssh ${tables[0] === undefined ? "<handle>/<table>" : lobbyAddress(tables[0])}@…`,
 	].join("\n");
 
-const CLEAR = "\u001B[H\u001B[2J";
+const CLEAR = "\u001B[?25h\u001B[H\u001B[2J";
 
 const LOBBY_TRIES = 5;
 
@@ -1414,6 +1414,7 @@ const make = (
 					const frame = lobbyFrame(
 						{
 							tab: now.tab,
+							editing: now.editing,
 							create: now.create,
 							sandbox: sandboxNote,
 							tables,
@@ -1480,14 +1481,17 @@ const make = (
 						}
 
 						if (asked.kind === "claim") {
-							state.create = afterClaim(
-								state.create,
-								yield* claimInLobby(
-									asked.handle,
-									fingerprint,
-									info.remoteAddress
-								)
+							const outcome = yield* claimInLobby(
+								asked.handle,
+								fingerprint,
+								info.remoteAddress
 							);
+
+							state.create = afterClaim(state.create, outcome);
+
+							if (outcome.kind === "held") {
+								state.editing = true;
+							}
 
 							return;
 						}
@@ -1497,6 +1501,7 @@ const make = (
 						const { ready } = state.create;
 
 						if (outcome.kind === "minted" && ready !== undefined) {
+							state.editing = false;
 							yield* Effect.logInfo(
 								`handle ${asked.handle}: ${actor} made a pairing code in the lobby`
 							);
@@ -1509,6 +1514,37 @@ const make = (
 							);
 						}
 					});
+
+				const copied = (what: "commands" | "fingerprint") => {
+					if (what === "commands") {
+						const { ready } = state.create;
+
+						if (ready === undefined) {
+							return;
+						}
+
+						session.stream.write(
+							osc52(
+								commandsText(commandsOf(state.create, ready)),
+								info.term,
+								info.env
+							)
+						);
+						state.create = {
+							...state.create,
+							said: "Copied commands to clipboard.",
+						};
+
+						return;
+					}
+
+					if (fingerprint === undefined) {
+						return;
+					}
+
+					session.stream.write(osc52(fingerprint, info.term, info.env));
+					state.said = "Copied fingerprint to clipboard.";
+				};
 
 				const tried = Effect.gen(function* () {
 					const problem = sizeProblem(
@@ -1576,6 +1612,12 @@ const make = (
 
 					if (picked.kind === "ask") {
 						yield* answered(picked.ask);
+
+						continue;
+					}
+
+					if (picked.kind === "copy") {
+						copied(picked.what);
 
 						continue;
 					}

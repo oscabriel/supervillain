@@ -36,10 +36,11 @@ Once admitted, your SSH key enters directly on every future session until the GM
 Once a table knows your key, two shortcuts work:
 
 - **Short name:** `ssh first-fight@supervillain.sh` takes you straight in if exactly one live table of that name knows your key. If two do, the lobby opens filtered to those two.
-- **Bare lobby:** `ssh supervillain.sh` opens the three-tab lobby:
-  - **Tables** lists every open table that knows your key, plus a prompt to type `<handle>/<table>` directly.
-  - **Try a Table** drops you into a private, in-memory Draw Steel sandbox table right over SSH so you can explore the interface with nothing installed and nothing saved.
-  - **Create a Table** lets future GMs claim a handle with their SSH key and get a one-line install and setup command for their own machine.
+- **Bare lobby:** `ssh supervillain.sh` opens the lobby (`1`–`4`, `Tab`, or `←`/`→` switch tabs; `q` leaves):
+  - **1 Tables** lists every open table that knows your key, plus `/` or `Enter` to type `<handle>/<table>` directly.
+  - **2 Try a Table** drops you into a private, in-memory Draw Steel sandbox table right over SSH so you can explore the interface with nothing installed and nothing saved.
+  - **3 Create a Table** lets future GMs claim a handle with their SSH key and get a one-line install and setup command for their own machine.
+  - **4 Session** shows your SSH key fingerprint, claimed GM handle, terminal info, and CLI quick reference whenever you need them.
 
 ### When the table doesn't answer
 

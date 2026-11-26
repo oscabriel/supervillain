@@ -439,9 +439,9 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				);
 
 				yield* waitFor("the lobby", () =>
-					Bun.stripANSI(terminal.output()).includes("Enter sits at ana/den")
+					Bun.stripANSI(terminal.output()).includes("ssh ana/den@…")
 				);
-				expect(Bun.stripANSI(terminal.output())).toMatch(/1 {2}ana\/den +○ 0/u);
+				expect(Bun.stripANSI(terminal.output())).toMatch(/ana\/den +○ 0/u);
 				terminal.write("\r");
 				yield* waitFor(
 					"the name prompt",

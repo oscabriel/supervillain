@@ -346,7 +346,7 @@ describe("relay: handles", () => {
 					const shown = Bun.stripANSI(shell.output());
 
 					return (
-						shown.includes("> type your table's name") &&
+						shown.includes("join by name") &&
 						shown.includes("isn't open right now")
 					);
 				});
@@ -972,7 +972,7 @@ describe("relay: the returning player's shorthand", () => {
 				);
 
 				yield* waitFor("the lobby", () =>
-					Bun.stripANSI(shell.output()).includes("> type your table's name")
+					Bun.stripANSI(shell.output()).includes("join by name")
 				);
 				expect(Bun.stripANSI(shell.output())).not.toContain("called den");
 				shell.write("\u0003");

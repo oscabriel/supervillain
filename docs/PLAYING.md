@@ -35,55 +35,35 @@ Once a table knows your key, the table's name alone finds it: `ssh first-fight@r
 
 ### The lobby
 
-If your GM's table goes through a relay, you can come without the table's name: `ssh lobby@relay.example.net`, or a bare `ssh relay.example.net`. Either way you get the three-tab lobby (`Tab`, `Shift-Tab`, `F1`–`F3`, or `Alt+1`–`Alt+3` switch tabs):
+If your GM's table goes through a relay, you can come without the table's name: `ssh lobby@relay.example.net`, or a bare `ssh relay.example.net`. Either way you get the four-tab lobby (`1`–`4`, `Tab`/`Shift-Tab`, `←`/`→`, `F1`–`F4`, or `Alt+1`–`Alt+4` switch tabs; `q`, `Ctrl-C`, or `Ctrl-D` leaves):
 
-- **Tables**: lists the tables open right now that know your key on the left, with details on the right, plus a prompt to enter `<handle>/<table>` directly.
-- **Try a Table**: launches a private, in-memory Draw Steel sandbox table right over SSH with nothing installed and nothing saved.
-- **Create a Table**: lets future GMs claim a handle bound to their SSH key and get a copy-ready install and setup command for their own machine.
+- **1 Tables**: lists the tables open right now that know your key on the left, with details on the right, plus a join-by-name action (`/` or `Enter`) to enter `<handle>/<table>` directly.
+- **2 Try a Table**: launches a private, in-memory Draw Steel sandbox table right over SSH with nothing installed and nothing saved.
+- **3 Create a Table**: lets future GMs claim a handle bound to their SSH key and get a copy-ready install and setup command for their own machine (`c` re-copies the commands via OSC 52).
+- **4 Session**: shows your SSH key fingerprint (`c` copies it), claimed GM handle, terminal info, and direct/host CLI commands whenever you want to inspect them.
 
-On the **Tables** tab, if you've sat at a table before with your key, it looks like this:
-
-```
-┌───────────────────────────┬───────────────────────────┬──────────────────────────┐
-│ ◆ lobby · ssh tabletop    │ ● 2 open tables           │ xterm-ghostty · 100×30   │
-└───────────────────────────┴───────────────────────────┴──────────────────────────┘
-
-tables ───────────────────────      ana/first-fight ────────────────────────────────
- 1  ana/first-fight       ● 3       ● 3 seated · open now
- 2  bo/the-keep           ● 1
-                                     sit down   enter
-
-                                    direct    ssh ana/first-fight@…
-                                    key       ssh-ed25519 · no account
-                                    SHA256:…
-
-> Enter sits at ana/first-fight, or type another table
-────────────────────────────────────────────────────────────────────────────────────
-                    ↑/↓ pick   1-2 jump   enter sit down   ctrl-c quit
-```
-
-↑ and ↓ move the selection, or type a table's number; Enter sits you at it, exactly as if you had typed its name before the `@`. A table knows your key once the GM has let you in (or you've done something there with it at a table whose door is open), and a GM can keep their table off the list with `--no-lobby`.
-
-The first time you come, or as a guest, there's nothing to list, so the right column shows your key's fingerprint and quick commands (`direct`, `host`, `rules`) instead:
+On **Tables**, if you've sat at a table before with your key, it looks like this:
 
 ```
-tables ───────────────────────      identity ───────────────────────────────────────
-○ none open yet                     key       ssh-ed25519 · no account
-                                    SHA256:…
-Played tables appear here
-whenever their GM is live.          commands ───────────────────────────────────────
-                                    direct    ssh <handle>/<table>@…
-Ask your GM for the table's name.   host      supervillain host --handle <you> --relay
-                                    rules     draw-steel · set.world · pf2e
+ 1 Tables · 2     2 Try a Table     3 Create a Table                        4 Session
+━━━━━━━━━━━━━━───────────────────────────────────────────────────────────────────────
 
-> type your table's name
-────────────────────────────────────────────────────────────────────────────────────
-                     a-z table name   enter sit down   ctrl-c quit
+open tables                          ana/first-fight
+ ana/first-fight            ● 3      ● 3 seated · open now
+ bo/the-keep                ● 1
+                                      sit down   enter
+ + join another table…
+                                     direct    ssh ana/first-fight@…
+
+─────────────────────────────────────────────────────────────────────────────────────
+             ↑/↓ pick   enter sit down   / join by name   1-4 tabs   q quit
 ```
 
-Type the table's full name your GM gave you (`ana/first-fight`) and press Enter. That works with tables listed too, for one that isn't on your list, and a bare table name picks it from your list. A name that isn't open is answered on the screen (`ana/first-fight isn't open right now.`, or `No open table called first-fight knows your key…`), and after five of those the relay shows the join hint below and lets go.
+`↑`/`↓` (or `j`/`k`) move the selection; `Enter` sits you at the highlighted table, exactly as if you had typed its name before the `@`. A table knows your key once the GM has let you in (or you've done something there with it at a table whose door is open), and a GM can keep their table off the list with `--no-lobby`.
 
-Ctrl-C or Ctrl-D leaves, and after a minute without a key pressed the relay says goodbye. The `identity` section shows your key's fingerprint, the one thing the relay knows you by, or that you came as a guest (`ssh-keygen -t ed25519` makes a key). Asked with a command (`ssh lobby@relay.example.net help`), the relay has no screen to draw: it prints the list and the command to join one, or the join hint when there's nothing to list, and runs nothing.
+The first time you come, or as a guest, there's nothing to list, so **Tables** shows a clean join-by-name prompt on the left and pointers to **Try a Table** and **Create a Table** on the right. Press `Enter` or `/` to type the table's full name your GM gave you (`ana/first-fight`), then `Enter` to join (`Esc` cancels back to navigation). That works with tables listed too, for one that isn't on your list, and a bare table name picks it from your list. A name that isn't open is answered on the screen (`ana/first-fight isn't open right now.`, or `No open table called first-fight knows your key…`), and after five of those the relay shows the join hint below and lets go.
+
+`q`, `Ctrl-C`, or `Ctrl-D` leaves, and after a minute without a key pressed the relay says goodbye. Open **4 Session** at any time to check your SSH key's fingerprint, your claimed GM handle, or guest setup (`ssh-keygen -t ed25519`). Asked with a command (`ssh lobby@relay.example.net help`), the relay has no screen to draw: it prints the list and the command to join one, or the join hint when there's nothing to list, and runs nothing.
 
 If your GM's table goes through a relay, a few things can come back instead of the table:
 

@@ -31,11 +31,13 @@ export {
 } from "./frame.ts";
 
 export {
+	flushEscape,
 	keyed,
 	lobbying,
 	readLobby,
 	switchTab,
 	TABS,
+	type CopyWhat,
 	type Keyed,
 	type LobbyTab,
 	type Lobbying,

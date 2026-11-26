@@ -4,9 +4,14 @@ import { Effect } from "effect";
 import { createKey } from "./create.ts";
 import type { CreateAsk, CreateForm, CreateKey } from "./create.ts";
 
-export type LobbyTab = "tables" | "try" | "create";
+export type LobbyTab = "tables" | "try" | "create" | "session";
 
-export const TABS: ReadonlyArray<LobbyTab> = ["tables", "try", "create"];
+export const TABS: ReadonlyArray<LobbyTab> = [
+	"tables",
+	"try",
+	"create",
+	"session",
+];
 
 const CTRL_C = 0x03;
 
@@ -50,15 +55,25 @@ const UPPER_Z = 0x5a;
 
 const LOWER_A = 0x61;
 
-const LOWER_Z = 0x7a;
+const LOWER_C = 0x63;
 
-const NUMBER_DIGITS = 3;
+const LOWER_E = 0x65;
+
+const LOWER_J = 0x6a;
+
+const LOWER_K = 0x6b;
+
+const LOWER_Q = 0x71;
+
+const LOWER_Z = 0x7a;
 
 const ADDRESS_LENGTH = 57;
 
 const FINAL_LOW = 0x40;
 
 const FINAL_HIGH = 0x7e;
+
+const ESCAPE_FLUSH_MS = 50;
 
 export const SEQUENCE_CAP = 32;
 
@@ -80,9 +95,11 @@ const FUNCTION_TABS: ReadonlyMap<string, LobbyTab> = new Map([
 	["OP", "tables"],
 	["OQ", "try"],
 	["OR", "create"],
+	["OS", "session"],
 	["[11~", "tables"],
 	["[12~", "try"],
 	["[13~", "create"],
+	["[14~", "session"],
 ]);
 
 const BACK_TAB = "[Z";
@@ -90,6 +107,7 @@ const BACK_TAB = "[Z";
 export interface Lobbying {
 	tab: LobbyTab;
 	picked: number;
+	editing: boolean;
 	typed: string;
 	said: string | undefined;
 	create: CreateForm;
@@ -104,6 +122,7 @@ export const lobbying = (
 ): Lobbying => ({
 	tab: "tables",
 	picked: from.picked,
+	editing: false,
 	typed: "",
 	said: from.said,
 	create,
@@ -112,13 +131,16 @@ export const lobbying = (
 	afterCr: false,
 });
 
+export type CopyWhat = "commands" | "fingerprint";
+
 export type Keyed =
 	| { readonly kind: "more" }
 	| { readonly kind: "left" }
 	| { readonly kind: "chose"; readonly room: string; readonly skip: number }
 	| { readonly kind: "named"; readonly name: string; readonly skip: number }
 	| { readonly kind: "try"; readonly skip: number }
-	| { readonly kind: "ask"; readonly ask: CreateAsk; readonly skip: number };
+	| { readonly kind: "ask"; readonly ask: CreateAsk; readonly skip: number }
+	| { readonly kind: "copy"; readonly what: CopyWhat; readonly skip: number };
 
 const MORE: Keyed = { kind: "more" };
 
@@ -127,14 +149,13 @@ const isDigit = (byte: number) => byte >= ZERO && byte <= NINE;
 const isLetter = (byte: number) =>
 	(byte >= LOWER_A && byte <= LOWER_Z) || (byte >= UPPER_A && byte <= UPPER_Z);
 
-const isNumber = (typed: string) => /^\d+$/u.test(typed);
-
 export const switchTab = (state: Lobbying, tab: LobbyTab) => {
 	if (state.tab === tab) {
 		return;
 	}
 
 	state.tab = tab;
+	state.editing = false;
 	state.said = undefined;
 	state.create = { ...state.create, said: undefined };
 };
@@ -153,8 +174,8 @@ const moveBy = (state: Lobbying, by: 1 | -1, count: number) => {
 		return;
 	}
 
-	state.picked = (state.picked + by + count) % count;
-	state.typed = "";
+	const total = count + 1;
+	state.picked = (state.picked + by + total) % total;
 	state.said = undefined;
 };
 
@@ -163,6 +184,36 @@ const createWith = (state: Lobbying, key: CreateKey): CreateAsk | undefined => {
 	state.create = stepped.form;
 
 	return stepped.ask;
+};
+
+export const flushEscape = (state: Lobbying): boolean => {
+	if (state.escape !== "esc") {
+		return false;
+	}
+
+	state.escape = "no";
+
+	if (state.editing) {
+		state.editing = false;
+
+		if (state.tab === "tables") {
+			state.typed = "";
+		}
+
+		state.said = undefined;
+		state.create = { ...state.create, said: undefined };
+
+		return true;
+	}
+
+	if (state.said !== undefined || state.create.said !== undefined) {
+		state.said = undefined;
+		state.create = { ...state.create, said: undefined };
+
+		return true;
+	}
+
+	return false;
 };
 
 const sequenced = (state: Lobbying, sequence: string, count: number) => {
@@ -182,7 +233,7 @@ const sequenced = (state: Lobbying, sequence: string, count: number) => {
 
 	const by = ARROWS.get(sequence);
 
-	if (by !== undefined && state.tab === "tables") {
+	if (by !== undefined && state.tab === "tables" && !state.editing) {
 		moveBy(state, by, count);
 
 		return;
@@ -190,8 +241,22 @@ const sequenced = (state: Lobbying, sequence: string, count: number) => {
 
 	const side = SIDEWAYS.get(sequence);
 
-	if (side !== undefined && state.tab === "create") {
+	if (side === undefined) {
+		return;
+	}
+
+	if (
+		state.tab === "create" &&
+		!state.create.guest &&
+		state.create.step === "table"
+	) {
 		createWith(state, { kind: side });
+
+		return;
+	}
+
+	if (!state.editing) {
+		stepTab(state, side === "right" ? 1 : -1);
 	}
 };
 
@@ -204,14 +269,16 @@ const escaped = (state: Lobbying, byte: number, count: number): boolean => {
 			return true;
 		}
 
-		state.escape = "no";
 		const alt = TABS[byte - ONE];
 
 		if (alt !== undefined) {
+			state.escape = "no";
 			switchTab(state, alt);
 
 			return true;
 		}
+
+		flushEscape(state);
 
 		return false;
 	}
@@ -237,62 +304,11 @@ const escaped = (state: Lobbying, byte: number, count: number): boolean => {
 	return true;
 };
 
-const entered = (
-	state: Lobbying,
-	rooms: ReadonlyArray<string>,
-	skip: number
-): Keyed => {
-	if (state.typed !== "" && !isNumber(state.typed)) {
-		return { kind: "named", name: state.typed, skip };
-	}
-
-	const n = state.typed === "" ? state.picked + 1 : Number(state.typed);
-	const room = Number.isInteger(n) && n >= 1 ? rooms[n - 1] : undefined;
-
-	if (room !== undefined) {
-		return { kind: "chose", room, skip };
-	}
-
-	state.said =
-		state.typed === ""
-			? "Type your table's name, then Enter."
-			: `There's no ${state.typed} on the list.`;
-	state.typed = "";
-
-	return MORE;
-};
-
-const typedDigit = (state: Lobbying, byte: number, count: number) => {
-	state.typed += String.fromCodePoint(byte);
-	state.said = undefined;
-	const n = Number(state.typed);
-
-	if (n >= 1 && n <= count) {
-		state.picked = n - 1;
-	}
-};
-
 const typedName = (state: Lobbying, byte: number) => {
-	state.typed += String.fromCodePoint(byte).toLowerCase();
-	state.said = undefined;
-};
-
-const typed = (state: Lobbying, byte: number, count: number) => {
-	const numbering = state.typed === "" ? count > 0 : isNumber(state.typed);
-
-	if (isDigit(byte) && numbering) {
-		if (state.typed.length < NUMBER_DIGITS) {
-			typedDigit(state, byte, count);
-		}
-
-		return;
-	}
-
-	const naming = state.typed !== "" && !isNumber(state.typed);
 	const starts = state.typed === "" && isLetter(byte);
 
 	const goesOn =
-		naming &&
+		state.typed !== "" &&
 		(isLetter(byte) ||
 			isDigit(byte) ||
 			byte === HYPHEN ||
@@ -300,8 +316,36 @@ const typed = (state: Lobbying, byte: number, count: number) => {
 			byte === DOT);
 
 	if ((starts || goesOn) && state.typed.length < ADDRESS_LENGTH) {
+		state.typed += String.fromCodePoint(byte).toLowerCase();
+		state.said = undefined;
+	}
+};
+
+const startTableEdit = (state: Lobbying) => {
+	state.editing = true;
+	state.typed = "";
+	state.said = undefined;
+};
+
+const onTablesEdit = (state: Lobbying, byte: number, skip: number): Keyed => {
+	if (byte === CR || byte === LF) {
+		if (state.typed === "") {
+			state.said = "Type your table's name, then Enter.";
+
+			return MORE;
+		}
+
+		return { kind: "named", name: state.typed, skip };
+	}
+
+	if (byte === DEL || byte === BACKSPACE) {
+		state.typed = state.typed.slice(0, -1);
+		state.said = undefined;
+	} else {
 		typedName(state, byte);
 	}
+
+	return MORE;
 };
 
 const onTables = (
@@ -310,20 +354,42 @@ const onTables = (
 	byte: number,
 	skip: number
 ): Keyed => {
-	if (byte === CR || byte === LF) {
-		return entered(state, rooms, skip);
+	if (state.editing) {
+		return onTablesEdit(state, byte, skip);
 	}
 
-	if (byte === DEL || byte === BACKSPACE) {
-		state.typed = state.typed.slice(0, -1);
-	} else {
-		typed(state, byte, rooms.length);
+	if (byte === SLASH) {
+		startTableEdit(state);
+
+		return MORE;
+	}
+
+	if (byte === LOWER_J) {
+		moveBy(state, 1, rooms.length);
+
+		return MORE;
+	}
+
+	if (byte === LOWER_K) {
+		moveBy(state, -1, rooms.length);
+
+		return MORE;
+	}
+
+	if (byte === CR || byte === LF) {
+		const room = rooms[state.picked];
+
+		if (room !== undefined) {
+			return { kind: "chose", room, skip };
+		}
+
+		startTableEdit(state);
 	}
 
 	return MORE;
 };
 
-const onCreate = (state: Lobbying, byte: number, skip: number): Keyed => {
+const onCreateEdit = (state: Lobbying, byte: number, skip: number): Keyed => {
 	if (byte === CR || byte === LF) {
 		const ask = createWith(state, { kind: "enter" });
 
@@ -337,6 +403,78 @@ const onCreate = (state: Lobbying, byte: number, skip: number): Keyed => {
 	}
 
 	return MORE;
+};
+
+const onCreate = (state: Lobbying, byte: number, skip: number): Keyed => {
+	const form = state.create;
+
+	if (form.guest) {
+		return MORE;
+	}
+
+	if (form.step === "ready") {
+		return byte === LOWER_C ? { kind: "copy", what: "commands", skip } : MORE;
+	}
+
+	if (state.editing) {
+		return onCreateEdit(state, byte, skip);
+	}
+
+	if (form.step === "handle") {
+		if (form.held !== undefined) {
+			if (byte === CR || byte === LF) {
+				createWith(state, { kind: "enter" });
+				state.editing = true;
+			}
+
+			return MORE;
+		}
+
+		if (byte === CR || byte === LF || byte === SLASH || byte === LOWER_E) {
+			state.editing = true;
+			state.create = { ...form, said: undefined };
+		}
+
+		return MORE;
+	}
+
+	if (byte === SLASH || byte === LOWER_E) {
+		state.editing = true;
+		state.create = { ...form, said: undefined };
+
+		return MORE;
+	}
+
+	if (byte === CR || byte === LF) {
+		if (form.table === "") {
+			state.editing = true;
+			state.create = { ...form, said: undefined };
+
+			return MORE;
+		}
+
+		const ask = createWith(state, { kind: "enter" });
+
+		return ask === undefined ? MORE : { kind: "ask", ask, skip };
+	}
+
+	return MORE;
+};
+
+const navShortcut = (state: Lobbying, byte: number): Keyed | undefined => {
+	if (byte === LOWER_Q) {
+		return { kind: "left" };
+	}
+
+	const tab = TABS[byte - ONE];
+
+	if (tab !== undefined) {
+		switchTab(state, tab);
+
+		return MORE;
+	}
+
+	return undefined;
 };
 
 export const keyed = (
@@ -369,6 +507,14 @@ export const keyed = (
 		return MORE;
 	}
 
+	if (!state.editing) {
+		const nav = navShortcut(state, byte);
+
+		if (nav !== undefined) {
+			return nav;
+		}
+	}
+
 	const skip = byte === CR && chunk[at + 1] === LF ? at + 2 : at + 1;
 
 	if (state.tab === "tables") {
@@ -379,6 +525,12 @@ export const keyed = (
 		return onCreate(state, byte, skip);
 	}
 
+	if (state.tab === "session") {
+		return byte === LOWER_C
+			? { kind: "copy", what: "fingerprint", skip }
+			: MORE;
+	}
+
 	return byte === CR || byte === LF ? { kind: "try", skip } : MORE;
 };
 
@@ -387,6 +539,7 @@ export type Picked =
 	| { readonly kind: "named"; readonly name: string }
 	| { readonly kind: "try" }
 	| { readonly kind: "ask"; readonly ask: CreateAsk }
+	| { readonly kind: "copy"; readonly what: CopyWhat }
 	| { readonly kind: "left" }
 	| { readonly kind: "idle" };
 
@@ -405,6 +558,10 @@ const pickedOf = (step: Keyed): Picked | undefined => {
 
 	if (step.kind === "try") {
 		return { kind: "try" };
+	}
+
+	if (step.kind === "copy") {
+		return { kind: "copy", what: step.what };
 	}
 
 	return step.kind === "ask" ? { kind: "ask", ask: step.ask } : undefined;
@@ -427,9 +584,18 @@ export const readLobby = (
 
 	return Effect.callback((resume) => {
 		const { stream } = session;
+		let escTimer: ReturnType<typeof setTimeout> | undefined;
+
+		const clearEsc = () => {
+			if (escTimer !== undefined) {
+				clearTimeout(escTimer);
+				escTimer = undefined;
+			}
+		};
 
 		const stop = () => {
 			clearTimeout(idle);
+			clearEsc();
 			redraw(undefined);
 			stream.removeListener("data", onData);
 			stream.removeListener("end", onEnd);
@@ -455,6 +621,7 @@ export const readLobby = (
 
 		const onData = (chunk: Buffer) => {
 			clearTimeout(idle);
+			clearEsc();
 			idle = idleTimer();
 
 			for (const [at, byte] of chunk.entries()) {
@@ -468,6 +635,16 @@ export const readLobby = (
 
 					return;
 				}
+			}
+
+			if (state.escape === "esc") {
+				escTimer = setTimeout(() => {
+					escTimer = undefined;
+
+					if (flushEscape(state)) {
+						show();
+					}
+				}, ESCAPE_FLUSH_MS);
 			}
 
 			show();

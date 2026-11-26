@@ -66,13 +66,13 @@ describe("Create a Table: from the relay's lobby to a linked table", () => {
 				);
 
 				yield* waitFor("the lobby", () =>
-					shown(lobby).includes("> type your table's name")
+					shown(lobby).includes("join by name")
 				);
-				lobby.write("\u001BOR");
+				lobby.write("3");
 				yield* waitFor("the create tab", () =>
 					shown(lobby).includes("Pick your GM handle.")
 				);
-				lobby.write("ana\r");
+				lobby.write("\rana\r");
 				yield* waitFor("the claim", () =>
 					shown(lobby).includes("› You hold ana now.")
 				);

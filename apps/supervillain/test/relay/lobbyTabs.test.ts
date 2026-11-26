@@ -2,17 +2,18 @@ import { describe, expect, test } from "bun:test";
 
 import {
 	afterClaim,
+	afterPairing,
 	commandsOf,
 	commandsText,
 	createForm,
 	createKey,
+	flushEscape,
 	INSTALL_COMMAND,
 	keyed,
 	KEYLESS_CREATE,
 	lobbyFrame,
 	lobbying,
 	osc52,
-	afterPairing,
 	shellLines,
 } from "../../src/relay/lobby/index.ts";
 import type {
@@ -59,7 +60,7 @@ const chars = (text: string): Array<CreateKey> =>
 	Array.from(text, (char) => ({ kind: "char", char }));
 
 describe("the lobby's keys", () => {
-	test("Tab, Shift+Tab, F1-F3 (both forms) and Alt+1-3 switch tabs", () => {
+	test("1-4, Tab, Shift+Tab, ←/→, F1-F4 and Alt+1-4 switch tabs in navigation mode", () => {
 		const state = fresh();
 		expect(state.tab).toBe("tables");
 		press(state, "\t");
@@ -67,49 +68,86 @@ describe("the lobby's keys", () => {
 		press(state, "\t");
 		expect(state.tab).toBe("create");
 		press(state, "\t");
+		expect(state.tab).toBe("session");
+		press(state, "\t");
 		expect(state.tab).toBe("tables");
 		press(state, "\u001B[Z");
+		expect(state.tab).toBe("session");
+		press(state, "\u001B[D");
 		expect(state.tab).toBe("create");
+		press(state, "\u001B[C");
+		expect(state.tab).toBe("session");
 
 		for (const [keys, tab] of [
+			["1", "tables"],
+			["2", "try"],
+			["3", "create"],
+			["4", "session"],
 			["\u001BOP", "tables"],
 			["\u001BOQ", "try"],
 			["\u001BOR", "create"],
+			["\u001BOS", "session"],
 			["\u001B[11~", "tables"],
 			["\u001B[12~", "try"],
 			["\u001B[13~", "create"],
+			["\u001B[14~", "session"],
 			["\u001B1", "tables"],
 			["\u001B2", "try"],
 			["\u001B3", "create"],
+			["\u001B4", "session"],
 		] as const) {
 			press(state, keys);
 			expect(state.tab).toBe(tab);
 		}
 	});
 
-	test("digits pick from the list on Tab 1 and nowhere else; a switch clears what was said", () => {
+	test("↑/↓ and j/k pick open tables or join-by-name; / enters editing and Esc cancels it", () => {
 		const state = fresh();
-		press(state, "2");
+		press(state, "j");
 		expect(state.picked).toBe(1);
 		expect(press(state, "\r")).toEqual([
 			{ kind: "chose", room: "ana/keep", skip: 1 },
 		]);
-		state.said = "There's no 7 on the list.";
-		press(state, "\u001B2");
+		press(state, "j");
+		expect(state.picked).toBe(2);
+		press(state, "\r");
+		expect(state.editing).toBe(true);
+		press(state, "ana/den");
+		expect(state.typed).toBe("ana/den");
+		press(state, "\u001B");
+		expect(flushEscape(state)).toBe(true);
+		expect(state.editing).toBe(false);
+		expect(state.typed).toBe("");
+
+		press(state, "/");
+		expect(state.editing).toBe(true);
+		press(state, "bo/keep");
+		expect(press(state, "\r")).toEqual([
+			{ kind: "named", name: "bo/keep", skip: 1 },
+		]);
+
+		state.said = "Not open.";
+		press(state, "\t");
+		expect(state.tab).toBe("try");
+		expect(state.editing).toBe(false);
 		expect(state.said).toBeUndefined();
-		press(state, "1");
-		expect(state.picked).toBe(1);
 		expect(press(state, "\r\n")).toEqual([{ kind: "try", skip: 2 }]);
 	});
 
-	test("on Tab 3 a key holder types a handle, and Enter asks the relay to claim it", () => {
+	test("on Tab 3, Enter starts handle input; claiming advances cleanly to table & rules; c copies when ready", () => {
 		const state = fresh();
-		press(state, "\u001B3");
+		press(state, "3");
+		expect(state.tab).toBe("create");
+		expect(state.editing).toBe(false);
+
+		press(state, "\r");
+		expect(state.editing).toBe(true);
 		press(state, "Ana-1\u007F\u007F");
 		expect(state.create.handle).toBe("ana");
 		expect(press(state, "\r")).toEqual([
 			{ kind: "ask", ask: { kind: "claim", handle: "ana" }, skip: 1 },
 		]);
+
 		state.create = afterClaim(state.create, { kind: "held", handle: "ana" });
 		press(state, "ford\u001B[C");
 		expect(state.create).toMatchObject({
@@ -124,14 +162,38 @@ describe("the lobby's keys", () => {
 				skip: 1,
 			},
 		]);
+
+		state.create = afterPairing(state.create, {
+			kind: "minted",
+			code: "sv-abcdefghjkmnpqrstvwx",
+			until: 9,
+		});
+		state.editing = false;
+		expect(press(state, "c")).toEqual([
+			{ kind: "copy", what: "commands", skip: 1 },
+		]);
 	});
 
-	test("a guest's Tab 3 takes no keys, and Ctrl-C or Ctrl-D leaves from any tab", () => {
+	test("q quits in navigation mode; Ctrl-C or Ctrl-D leaves from any tab or input; c copies fingerprint on Session", () => {
 		const state = fresh(true);
-		press(state, "\u001B3ana\r");
+		press(state, "3");
+		expect(state.tab).toBe("create");
+		press(state, "ana\r");
 		expect(state.create).toEqual(createForm(true, undefined));
-		expect(press(state, "\u0003")).toEqual([{ kind: "left" }]);
-		expect(press(fresh(), "\u001B2\u0004")).toEqual([{ kind: "left" }]);
+		expect(press(state, "q")).toEqual([{ kind: "left" }]);
+
+		const editing = fresh();
+		press(editing, "/q");
+		expect(editing.typed).toBe("q");
+		expect(press(editing, "\u0003")).toEqual([{ kind: "left" }]);
+		expect(press(fresh(), "2\u0004")).toEqual([{ kind: "left" }]);
+
+		const session = fresh();
+		press(session, "4");
+		expect(session.tab).toBe("session");
+		expect(press(session, "c")).toEqual([
+			{ kind: "copy", what: "fingerprint", skip: 1 },
+		]);
 	});
 });
 
@@ -325,26 +387,36 @@ describe("the lobby's tabs, drawn", () => {
 		},
 	};
 
-	test("a tab bar names the three tabs on every tab", () => {
-		for (const tab of ["tables", "try", "create"] as const) {
+	test("a single top nav bar names all four tabs on every tab, without leaking identity onto Tables", () => {
+		for (const tab of ["tables", "try", "create", "session"] as const) {
 			const shown = text({ ...base, tab });
 			expect(shown).toContain(" 1 Tables ");
 			expect(shown).toContain(" 2 Try a Table ");
 			expect(shown).toContain(" 3 Create a Table ");
+			expect(shown).toContain(" 4 Session ");
 			fits({ ...base, tab });
 		}
 
-		expect(text(base)).toContain("tab more");
+		const tablesView = text(base);
+		expect(tablesView).not.toContain("SHA256:abc");
+		expect(tablesView).not.toContain("xterm-256color");
+		expect(tablesView).toContain("1-4 tabs");
+		expect(tablesView).toContain("q quit");
 	});
 
-	test("Try a Table explains the sandbox, or that there is none", () => {
+	test("Try a Table explains the sandbox with live window check, or says it is off", () => {
 		const shown = text({ ...base, tab: "try" });
-		expect(shown).toContain("a Draw Steel table to play by yourself");
+		expect(shown).toContain("Solo Draw Steel sandbox");
 		expect(shown).toContain("Nothing is saved");
-		expect(shown).toContain("try a table   enter");
-		expect(shown).toContain("a terminal of 100×30 or more");
-		expect(shown).toContain("after 5 min idle, 20 min in all");
-		expect(shown).toContain("> Enter opens your sandbox table");
+		expect(shown).toContain("start sandbox   enter");
+		expect(shown).toContain("100×30+ ✓ 100×30");
+		expect(shown).toContain("5 min idle · 20 min max");
+		expect(lobbyFrame({ ...base, tab: "try" }, 100, 30)).toEndWith(
+			"\u001B[?25l"
+		);
+
+		const small = text({ ...base, tab: "try" }, 90, 28);
+		expect(small).toContain("100×30+ ! 90×28");
 
 		const off = text({
 			...base,
@@ -374,13 +446,12 @@ describe("the lobby's tabs, drawn", () => {
 		const typing = text({
 			...base,
 			tab: "create",
+			editing: true,
 			create: { ...createForm(false, undefined), handle: "an" },
 		});
 
 		expect(typing).toContain("Pick your GM handle.");
-		expect(typing.split("\r\n").some((line) => line.trim() === "> an")).toBe(
-			true
-		);
+		expect(typing).toContain("handle    › an");
 
 		expect(
 			text({ ...base, tab: "create", create: createForm(false, "ana") })
@@ -392,9 +463,9 @@ describe("the lobby's tabs, drawn", () => {
 			table: "ford",
 		};
 
-		expect(text({ ...base, tab: "create", create: form })).toContain(
-			"‹ draw-steel ›  set-world  pf2e"
-		);
+		expect(
+			text({ ...base, tab: "create", editing: true, create: form })
+		).toContain("‹ draw-steel ›  set-world  pf2e");
 
 		const ready = afterPairing(form, {
 			kind: "minted",
@@ -408,11 +479,41 @@ describe("the lobby's tabs, drawn", () => {
 		expect(shown).toContain(
 			"supervillain new ford --rules draw-steel --handle ana --claim sv-abcdefghjkmnpqrstvwx"
 		);
+		expect(shown).toContain("c copy commands");
 		fits(screen);
 		const narrow = text(screen, 60, 30);
 		expect(narrow).toContain(
-			"supervillain new ford --rules draw-steel --handle ana \\\r\n    --claim sv-abcdefghjkmnpqrstvwx"
+			"supervillain new ford --rules draw-steel --handle \\\r\n      ana --claim sv-abcdefghjkmnpqrstvwx"
 		);
+	});
+
+	test("Session shows SSH key, held handle, terminal info, and CLI commands only when opened", () => {
+		const shown = text({
+			...base,
+			tab: "session",
+			create: createForm(false, "ana"),
+		});
+
+		expect(shown).toContain("terminal  xterm-256color");
+		expect(shown).toContain("window    100×30");
+		expect(shown).toContain("handle    ana");
+		expect(shown).toContain("key       ssh-ed25519 · no account");
+		expect(shown).toContain("SHA256:abc");
+		expect(shown).toContain("ssh <handle>/<table>@…");
+		expect(shown).toContain("supervillain host --handle");
+		expect(shown).toContain("draw-steel · set.world · pf2e · freeform");
+		expect(shown).toContain("c copy fingerprint");
+
+		const asGuest = text({
+			...base,
+			tab: "session",
+			you: { key: undefined, term: "xterm-256color" },
+		});
+
+		expect(asGuest).toContain("auth      guest");
+		expect(asGuest).toContain("key       none");
+		expect(asGuest).toContain("ssh-keygen -t ed25519");
+		expect(asGuest).not.toContain("c copy fingerprint");
 	});
 
 	test("a long command wraps at spaces with shell continuations", () => {
