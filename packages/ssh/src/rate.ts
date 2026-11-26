@@ -5,6 +5,8 @@ export interface Rate {
 
 const PRUNE_AT = 1024;
 
+const PRUNE_EVERY_MS = 1000;
+
 export interface TokenBuckets {
 	readonly has: (key: string, now: number) => boolean;
 	readonly take: (key: string, now: number) => boolean;
@@ -21,15 +23,23 @@ export const tokenBuckets = (rate: Rate): TokenBuckets => {
 		bucket.at = now;
 	};
 
-	const bucketOf = (key: string, now: number) => {
-		if (buckets.size > PRUNE_AT) {
-			for (const [k, b] of buckets) {
-				refill(b, now);
+	let prunedAt = Number.NEGATIVE_INFINITY;
 
-				if (b.tokens >= rate.burst) {
-					buckets.delete(k);
-				}
+	const prune = (now: number) => {
+		prunedAt = now;
+
+		for (const [k, b] of buckets) {
+			refill(b, now);
+
+			if (b.tokens >= rate.burst) {
+				buckets.delete(k);
 			}
+		}
+	};
+
+	const bucketOf = (key: string, now: number) => {
+		if (buckets.size > PRUNE_AT && Math.abs(now - prunedAt) >= PRUNE_EVERY_MS) {
+			prune(now);
 		}
 
 		let bucket = buckets.get(key);

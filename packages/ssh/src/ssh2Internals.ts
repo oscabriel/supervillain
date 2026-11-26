@@ -1,4 +1,5 @@
-import { Socket } from "node:net";
+import { EventEmitter } from "node:events";
+import type { Server as NetServer, Socket } from "node:net";
 
 import type { KexAlgorithm, Server } from "ssh2";
 import protocolConstants from "ssh2/lib/protocol/constants.js";
@@ -16,6 +17,10 @@ declare module "ssh2" {
 			options: { readonly env?: Readonly<Record<string, string>> },
 			callback: ClientCallback
 		): this;
+	}
+
+	interface Server {
+		injectSocket(socket: Socket): void;
 	}
 
 	interface Session {
@@ -43,17 +48,14 @@ export const kexAlgorithm = (name: string): KexAlgorithm => {
 	return name;
 };
 
-type Ssh2Socket = Parameters<Server["injectSocket"]>[0];
+export const injectSocket = (server: Server, socket: Socket): void => {
+	server.injectSocket(socket);
+};
 
-const isSsh2Socket = (socket: Socket | Ssh2Socket): socket is Ssh2Socket =>
-	socket instanceof Socket;
-
-export const injectSocket = (server: Server, socket: Socket): boolean => {
-	if (!isSsh2Socket(socket)) {
-		return false;
+export const serverEvents = (server: NetServer): EventEmitter => {
+	if (server instanceof EventEmitter) {
+		return server;
 	}
 
-	server.injectSocket(socket);
-
-	return true;
+	throw new TypeError("this net.Server is not an event emitter");
 };

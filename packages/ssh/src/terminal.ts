@@ -83,13 +83,23 @@ export interface RendererStreams {
 	readonly detach: () => void;
 }
 
+const STDIN_READS = [
+	"on",
+	"removeListener",
+	"pause",
+	"resume",
+	"read",
+] as const;
+
+const STDOUT_READS = ["write", "emit"] as const;
+
 const isTerminalIn = (stream: Readable): stream is NodeJS.ReadStream =>
-	Predicate.isBoolean(stream.readable);
+	STDIN_READS.every((name) => Predicate.isFunction(stream[name]));
 
 const isTerminalOut = (
 	stream: ServerChannel & { columns: number; rows: number }
 ): stream is ServerChannel & NodeJS.WriteStream =>
-	Predicate.isBoolean(stream.writable) &&
+	STDOUT_READS.every((name) => Predicate.isFunction(stream[name])) &&
 	Predicate.isNumber(stream.columns) &&
 	Predicate.isNumber(stream.rows);
 

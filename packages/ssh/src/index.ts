@@ -28,7 +28,9 @@ export {
 	isRelayableInvite,
 } from "./relay.ts";
 
-export { serve } from "./server.ts";
+export { messageOf, serve } from "./server.ts";
+
+export { serverEvents } from "./ssh2Internals.ts";
 
 export { TERMINAL_RESET } from "./terminal.ts";
 

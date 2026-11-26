@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:net";
-import type { Server as NetServer, Socket } from "node:net";
+import type { Socket } from "node:net";
 import type { Writable } from "node:stream";
 
 import {
@@ -30,7 +30,7 @@ import {
 	isRelayableBucket,
 	isRelayableInvite,
 } from "./relay.ts";
-import { injectSocket } from "./ssh2Internals.ts";
+import { injectSocket, serverEvents } from "./ssh2Internals.ts";
 import {
 	rendererStreams,
 	sanitizePty,
@@ -77,7 +77,7 @@ const RESTORE_TIMEOUT_MS = 2000;
 
 const NO_PTY_MESSAGE = "This needs a terminal: connect with ssh -t.";
 
-const messageOf = (cause: unknown) =>
+export const messageOf = (cause: unknown): string =>
 	cause instanceof Error ? cause.message : String(cause);
 
 const attempt = (run: () => void): boolean => {
@@ -96,7 +96,7 @@ const crlf = (text: string) => text.replaceAll(/\r?\n/gu, "\r\n");
 
 const CLIENT_CHARS_MAX = 64;
 
-export const clientName = (text: string): string =>
+const clientName = (text: string): string =>
 	text
 		.replace(/^SSH-[^-]*-/u, "")
 		.replaceAll(/[^\u0020-\u007E]/gu, "?")
@@ -114,9 +114,6 @@ const RELAY_ENV: ReadonlyMap<string, (text: string) => string | undefined> =
 		["SV_BUCKET", valid(isRelayableBucket)],
 		["SV_CLIENT", clientName],
 	]);
-
-const isEmitter = (value: NetServer | EventEmitter): value is EventEmitter =>
-	value instanceof EventEmitter;
 
 const settled = async (
 	register: (done: () => void) => void
@@ -1208,23 +1205,14 @@ export const serve = (
 				fork(Effect.logWarning(`ssh server: ${printable(e.message)}`));
 			});
 
-			if (!injectSocket(ssh, socket)) {
-				fork(Effect.logWarning(`ssh server: ${address} is not a TCP socket`));
-				socket.destroy();
-			}
+			injectSocket(ssh, socket);
 		};
 
 		const listener = createServer((socket) => {
 			serveSocket(socket);
 		});
 
-		if (!isEmitter(listener)) {
-			return yield* Effect.die(
-				new SshError({ message: "the listener is not an event emitter" })
-			);
-		}
-
-		const listenerEvents = listener;
+		const listenerEvents = serverEvents(listener);
 
 		const port = yield* Effect.acquireRelease(
 			Effect.callback<number, SshError>((resume) => {

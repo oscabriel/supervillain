@@ -104,7 +104,7 @@ const unlinkIfThere = async (file: string): Promise<boolean> => {
 	}
 };
 
-const OTHERS_BITS = 0o100;
+const GROUP_AND_OTHER_MODULUS = 0o100;
 
 export const loadHostKey = async (keyPath: string): Promise<HostKey> => {
 	let pem = await readIfThere(keyPath);
@@ -129,7 +129,7 @@ export const loadHostKey = async (keyPath: string): Promise<HostKey> => {
 
 	const { mode } = await stat(keyPath);
 
-	if (mode % OTHERS_BITS !== 0) {
+	if (mode % GROUP_AND_OTHER_MODULUS !== 0) {
 		throw new Error(
 			`${keyPath} can be read by other users; run chmod 600 ${keyPath}`
 		);
