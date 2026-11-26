@@ -23,7 +23,7 @@ import type { CellPixels } from "./picture.ts";
 import { color } from "./theme.ts";
 import type { MapView } from "./view.ts";
 
-export const showsPictures = (renderer: CliRenderer): boolean =>
+const showsPictures = (renderer: CliRenderer): boolean =>
 	renderer.capabilities?.kitty_graphics === true &&
 	renderer.capabilities.multiplexer === "none";
 

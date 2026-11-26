@@ -51,11 +51,3 @@ export const closesFence = (line: string, open: Fence): boolean => {
 		line.trim().length === fence.length
 	);
 };
-
-export const startsBlock = (line: string): boolean =>
-	QUOTE.test(line) ||
-	BULLET.test(line) ||
-	NUMBERED.test(line) ||
-	RULE.test(line) ||
-	ATX.test(line) ||
-	fenceOf(line) !== undefined;

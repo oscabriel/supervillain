@@ -156,7 +156,7 @@ const yamlProblem = (source: string): string => {
 	}
 };
 
-export const issueProblems = (
+const issueProblems = (
 	file: string,
 	issue: SchemaIssue.Issue
 ): ReadonlyArray<ContentProblem> =>
@@ -187,9 +187,11 @@ export const fieldsOf = (file: string, text: string): ReadResult => {
 
 	const { value } = parsed;
 
+	const mapping = Array.isArray(value) ? undefined : value;
+
 	const fields = Predicate.isNullish(value)
 		? Option.some({})
-		: decodeFields(Array.isArray(value) ? undefined : value);
+		: decodeFields(mapping);
 
 	if (Option.isNone(fields)) {
 		return failed({
@@ -237,7 +239,7 @@ const bodyProblems = (read: Read): ReadonlyArray<ContentProblem> =>
 		message: p.message,
 	}));
 
-export const listFiles = Effect.fn("ContentIndex.listFiles")(function* (
+const listFiles = Effect.fn("ContentIndex.listFiles")(function* (
 	{ fs, path }: Files,
 	dir: string,
 	folder: string,

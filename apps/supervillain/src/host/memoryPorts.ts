@@ -15,9 +15,9 @@ import type { LoadedMap } from "../content/index.ts";
 import { generateMap, mapFileText } from "../content/mapgen.ts";
 import type { GeneratedMap } from "../content/mapgen.ts";
 
-export const MEMORY_MAPS = 16;
+const MEMORY_MAPS = 16;
 
-export const SANDBOX_SET_WORLD =
+const SANDBOX_SET_WORLD =
 	"this table is a sandbox, so it doesn't call set.world";
 
 export class MemoryMaps extends Context.Service<

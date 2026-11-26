@@ -108,7 +108,7 @@ describe("power rolls with abilities", () => {
 			tier: 2,
 		});
 		expect(t.lastFeed()).toEqual([
-			"Vex uses Spinning Strike: [7, 5] +2 = 14 · tier 2 — 5 damage; push 1",
+			"Vex uses Spinning Strike: [7, 5] +2 = 14 · tier 2 · 5 damage; push 1",
 		]);
 	});
 
@@ -138,7 +138,7 @@ describe("power rolls with abilities", () => {
 			fixedDice(9, 9)
 		);
 		expect(t.lastFeed()).toEqual([
-			"Vex uses Spirit Lash: [9, 9] +2 = 20 · tier 3 — 6 holy damage; taunted (EoT)",
+			"Vex uses Spirit Lash: [9, 9] +2 = 20 · tier 3 · 6 holy damage; taunted (EoT)",
 		]);
 	});
 
@@ -175,7 +175,7 @@ describe("power rolls with abilities", () => {
 			fixedDice(4, 4)
 		);
 		expect(t.lastFeed()).toEqual([
-			"Goblin Warrior uses Spear Charge: [4, 4] +2 +2 edge = 12 · tier 2 — 4 damage",
+			"Goblin Warrior uses Spear Charge: [4, 4] +2 +2 edge = 12 · tier 2 · 4 damage",
 		]);
 	});
 
@@ -277,7 +277,7 @@ describe("what an ability says beyond its tiers", () => {
 		const t = rookTable();
 		t.run(ALICE, pr("rook", "reckless"), fixedDice(7, 7));
 		expect(t.lastFeed()).toEqual([
-			"Rook uses Reckless Swing: [7, 7] +2 = 16 · tier 2 — 6 + M (2) = 8 damage. Effect: Strikes against Rook have an edge.",
+			"Rook uses Reckless Swing: [7, 7] +2 = 16 · tier 2 · 6 + M (2) = 8 damage. Effect: Strikes against Rook have an edge.",
 		]);
 	});
 
@@ -406,7 +406,7 @@ describe("power rolls at targets", () => {
 			},
 		]);
 		expect(t.lastFeed(2)).toEqual([
-			"Rook uses Spinning Strike on Goblin Warrior: [7, 5] +2 = 14 · tier 2 — 5 damage; push 1",
+			"Rook uses Spinning Strike on Goblin Warrior: [7, 5] +2 = 14 · tier 2 · 5 damage; push 1",
 			"Goblin Warrior takes 5 damage → 10/15",
 		]);
 		t.run(
@@ -415,7 +415,7 @@ describe("power rolls at targets", () => {
 			fixedDice(9, 9)
 		);
 		expect(t.lastFeed(3)).toEqual([
-			"Rook uses Spirit Lash on Kor and Goblin Warrior: [9, 9] +2 = 20 · tier 3 — 6 holy damage; taunted (EoT)",
+			"Rook uses Spirit Lash on Kor and Goblin Warrior: [9, 9] +2 = 20 · tier 3 · 6 holy damage; taunted (EoT)",
 			"Kor takes 9 holy damage (6 +3 weakness) → 15/24",
 			"Goblin Warrior takes 6 holy damage → 4/15 · winded",
 		]);
@@ -436,7 +436,7 @@ describe("power rolls at targets", () => {
 			fixedDice(2, 2)
 		);
 		expect(t.lastFeed(2)).toEqual([
-			"Rook uses Reckless Swing on Goblin Warrior: [2, 2] +2 = 6 · tier 1 — 3 + M (2) = 5 damage. Effect: Strikes against Rook have an edge. (Goblin Warrior is 3 squares away; Melee 1)",
+			"Rook uses Reckless Swing on Goblin Warrior: [2, 2] +2 = 6 · tier 1 · 3 + M (2) = 5 damage. Effect: Strikes against Rook have an edge. (Goblin Warrior is 3 squares away; Melee 1)",
 			"Goblin Warrior takes 5 damage → 10/15",
 		]);
 	});
@@ -595,7 +595,7 @@ describe("a tier's damage, as printed", () => {
 		});
 		ok(t, GM, "/pr vex melee on goblin", fixedDice(5, 5));
 		expect(t.lastFeed(2)).toEqual([
-			"Vex uses Melee Free Strike on Goblin Warrior: [5, 5] +3 = 13 · tier 2 — 5 + M or A (3) = 8 damage",
+			"Vex uses Melee Free Strike on Goblin Warrior: [5, 5] +3 = 13 · tier 2 · 5 + M or A (3) = 8 damage",
 			"Goblin Warrior takes 8 damage → 7/15 · winded",
 		]);
 	});

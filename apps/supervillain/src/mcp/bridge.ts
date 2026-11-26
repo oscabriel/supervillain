@@ -6,7 +6,12 @@ import type { Readable, Writable } from "node:stream";
 
 import { Effect, Predicate, Schema } from "effect";
 
-import { checkPrivateDir, mcpSocketPath, privateDirOf } from "./socket.ts";
+import {
+	checkPrivateDir,
+	mcpSocketPath,
+	privateDirOf,
+	socketPlace,
+} from "./socket.ts";
 import type { SocketPlace } from "./socket.ts";
 
 export class McpBridgeError extends Schema.TaggedError<McpBridgeError>()(
@@ -118,7 +123,7 @@ export const bridgeMcp = Effect.fn("bridgeMcp")(function* (
 	options: BridgeOptions
 ) {
 	const dir = nodePath.resolve(options.campaignDir);
-	const path = mcpSocketPath(dir, options.place);
+	const path = mcpSocketPath(dir, options.place ?? (yield* socketPlace));
 	const privateDir = privateDirOf(path, dir);
 
 	if (privateDir !== undefined && (yield* exists(privateDir))) {

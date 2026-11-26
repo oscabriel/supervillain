@@ -1,5 +1,4 @@
-import { createHmac, randomBytes } from "node:crypto";
-import { EventEmitter } from "node:events";
+import { createHmac } from "node:crypto";
 import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 
@@ -8,9 +7,11 @@ import {
 	connectClient,
 	isRelayableActor,
 	loadHostKey,
+	messageOf,
 	normalizeAddress,
 	rateLimiter,
 	serve,
+	serverEvents,
 	TERMINAL_RESET,
 	tokenBuckets,
 } from "@supervillain/ssh";
@@ -40,6 +41,7 @@ import {
 	Semaphore,
 } from "effect";
 import type { FileSystem } from "effect";
+import { SecureRandom } from "effect/crypto";
 
 import {
 	addKey,
@@ -206,9 +208,6 @@ const SEAT_TIMEOUT = "10 seconds";
 
 const SHUTDOWN_NOTICE = "The relay is shutting down.";
 
-const messageOf = (cause: unknown) =>
-	cause instanceof Error ? cause.message : String(cause);
-
 const fullTableMessage = (address: string): string =>
 	`${address} is full right now.`;
 
@@ -265,7 +264,7 @@ interface GmLink {
 	asking: number;
 }
 
-export const lobbyAddress = (table: LobbyTable): string =>
+const lobbyAddress = (table: LobbyTable): string =>
 	addressText(table.handle, table.table);
 
 const tableLabel = (table: LobbyTable) =>
@@ -293,19 +292,15 @@ const listen = (
 			resume(Effect.fail(failure));
 		};
 
-		if (!(server instanceof EventEmitter)) {
-			fail(new RelayError({ message: `${where}: not a server` }));
-
-			return;
-		}
-
 		const onError = (cause: Error) => {
 			fail(new RelayError({ message: `${where}: ${cause.message}`, cause }));
 		};
 
-		server.once("error", onError);
+		const events = serverEvents(server);
+
+		events.once("error", onError);
 		server.listen(port, host, () => {
-			server.removeListener("error", onError);
+			events.removeListener("error", onError);
 			const address = server.address();
 
 			resume(
@@ -417,10 +412,11 @@ const make = (
 ): Effect.Effect<
 	RelayInfo,
 	RelayError | HandlesError | SshError,
-	Scope.Scope | RelayContext
+	Scope.Scope | RelayContext | SecureRandom.SecureRandom
 > =>
 	Effect.gen(function* () {
 		const path = yield* Path.Path;
+		const random = yield* SecureRandom.SecureRandom;
 		const handlesFile = path.join(options.dir, "handles.json");
 		const gmLimits = { ...GM_DEFAULTS, ...options.gm };
 		const sessionsPerTable = options.sessionsPerTable ?? SESSIONS_PER_TABLE;
@@ -452,7 +448,7 @@ const make = (
 		const claims = yield* Semaphore.make(1);
 		const claimRate = claimLimiter(gmLimits.claimRate, gmLimits.siteClaimRate);
 		const pairings = pairingCodes();
-		const bucketSecret = randomBytes(BUCKET_SECRET_BYTES);
+		const bucketSecret = yield* random.randomBytes(BUCKET_SECRET_BYTES);
 
 		const bucketOf = (address: string) =>
 			createHmac("sha256", bucketSecret)
@@ -1151,7 +1147,7 @@ const make = (
 				const channel = opened.success;
 				channel.stderr.resume();
 				channel.stream.end(
-					knowsQueryLine(actor, randomBytes(KNOWS_NONCE_BYTES))
+					knowsQueryLine(actor, yield* random.randomBytes(KNOWS_NONCE_BYTES))
 				);
 
 				const answer = parseKnowsAnswer(yield* answerOf(channel));
@@ -1920,7 +1916,9 @@ const make = (
 				return refused;
 			}
 
-			return pairings.mint(handle, by, randomBytes(PAIRING_BYTES), now);
+			const bytes = yield* random.randomBytes(PAIRING_BYTES);
+
+			return pairings.mint(handle, by, bytes, now);
 		});
 
 		const services = Context.omit(Scope.Scope)(
@@ -1969,6 +1967,9 @@ export class Relay extends Context.Service<Relay, RelayInfo>()(
 
 	static readonly layer = (
 		options: RelayOptions
-	): Layer.Layer<Relay, RelayError | HandlesError | SshError, RelayContext> =>
-		Layer.effect(Relay, Relay.make(options));
+	): Layer.Layer<
+		Relay,
+		RelayError | HandlesError | SshError,
+		RelayContext | SecureRandom.SecureRandom
+	> => Layer.effect(Relay, Relay.make(options));
 }

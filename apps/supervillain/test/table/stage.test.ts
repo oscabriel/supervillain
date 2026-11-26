@@ -223,7 +223,7 @@ describe("the stage's plan", () => {
 
 		expect(map.map?.width).toBe(10);
 		expect(map.mapRows).toBe(3 + 1 + 2);
-		expect(cardPlan(mara, 40).head).toBe("Old Mara — Ferry-keeper");
+		expect(cardPlan(mara, 40).head).toBe("Old Mara · Ferry-keeper");
 		expect(cardPlan(mara, 40).tags).toBe("local");
 	});
 

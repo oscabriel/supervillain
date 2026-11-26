@@ -7,7 +7,7 @@ import { shownAgainText } from "./panels.ts";
 import type { Panel } from "./panels.ts";
 import { color } from "./theme.ts";
 
-export const SHOWS_LEAD = " · show";
+const SHOWS_LEAD = " · show";
 
 export const showsWidth = (shows: ReadonlyArray<Panel>): number =>
 	shows.length === 0

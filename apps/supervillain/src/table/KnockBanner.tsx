@@ -5,7 +5,7 @@ import { isLeftButton } from "./mouse.ts";
 import { color } from "./theme.ts";
 import type { KnockShown } from "./view.ts";
 
-export const knockLead = (knock: KnockShown): string =>
+const knockLead = (knock: KnockShown): string =>
 	`⚑ ${knock.name} (${knock.short}) knocks · `;
 
 export const KnockBanner = (props: {

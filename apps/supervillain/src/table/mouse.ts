@@ -188,7 +188,7 @@ export interface MenuPiece {
 	readonly item?: number;
 }
 
-export const itemText = (label: string): string => ` ${label} `;
+const itemText = (label: string): string => ` ${label} `;
 
 export const menuRows = (
 	menu: Menu,
@@ -263,7 +263,7 @@ export const boxClick =
 		inside?.(col, row);
 	};
 
-export const WHEEL_LINES = 3;
+const WHEEL_LINES = 3;
 
 const linear = new LinearScrollAccel();
 

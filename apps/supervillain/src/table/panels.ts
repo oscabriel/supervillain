@@ -63,9 +63,11 @@ export const togglePanel = (
 
 	const shown = p.map && !(replyOpen && p.reply);
 
-	return shown
-		? { ...p, map: false }
-		: { ...p, map: true, reply: replyOpen ? false : p.reply };
+	if (shown) {
+		return { ...p, map: false };
+	}
+
+	return { ...p, map: true, reply: replyOpen ? false : p.reply };
 };
 
 export const viewPreset = (p: Panels, layout: Layout | "toggle"): Panels => {

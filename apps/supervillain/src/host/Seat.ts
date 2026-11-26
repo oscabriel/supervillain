@@ -494,13 +494,13 @@ const isActorId = Schema.is(ActorId);
 
 const TURNED_AWAY_MS = 4000;
 
-export const DENIED_TEXT =
+const DENIED_TEXT =
 	"The GM didn't let you in this time. You can knock again in 10 minutes.";
 
-export const EXPIRED_TEXT =
+const EXPIRED_TEXT =
 	"Nobody answered the door for 10 minutes; knock again when the GM is about.";
 
-export const SPENT_INVITE =
+const SPENT_INVITE =
 	"That invite has run out: knock instead, and the GM decides.";
 
 export const NAMING_TIMEOUT_MS = 2 * 60_000;

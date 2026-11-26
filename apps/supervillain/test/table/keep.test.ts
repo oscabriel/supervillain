@@ -12,6 +12,15 @@ const map = (x: number) => ({
 	],
 });
 
+interface Row {
+	readonly id: number;
+	readonly note?: string | undefined;
+}
+
+interface Rows {
+	readonly rows: ReadonlyArray<Row>;
+}
+
 describe("kept", () => {
 	test("a value that reads the same is last time's, so nothing is drawn again", () => {
 		const first = map(0);
@@ -44,6 +53,21 @@ describe("kept", () => {
 
 		expect(next.tokens[0]).toBe(kor);
 		expect(next.tokens[1]).toEqual({ id: "vex", x: 1, y: 0 });
+	});
+
+	test("an item that only prints the same is never swapped in for the new one", () => {
+		const first: Rows = {
+			rows: [{ id: 1, note: undefined }, { id: 2 }],
+		};
+
+		const next: Rows = {
+			rows: [{ id: 1 }, { id: 3 }],
+		};
+
+		const out = kept(first, next);
+
+		expect(out).toStrictEqual(next);
+		expect(Object.keys(must(out.rows[0]))).toEqual(["id"]);
 	});
 
 	test("a part gone or added is a change", () => {

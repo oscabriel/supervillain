@@ -23,9 +23,9 @@ export interface PartyRow {
 
 export const PARTY_FRAME = { width: 4, height: 2 } as const;
 
-export const PARTY_MIN = 3;
+const PARTY_MIN = 3;
 
-export const METER_CELLS = 8;
+const METER_CELLS = 8;
 
 const NAME_MOST = 24;
 

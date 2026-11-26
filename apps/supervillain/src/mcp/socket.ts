@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { EventEmitter } from "node:events";
 import {
 	chmod,
 	lstat,
@@ -15,13 +14,16 @@ import { tmpdir } from "node:os";
 import nodePath from "node:path";
 
 import { GM } from "@supervillain/domain";
+import { serverEvents } from "@supervillain/ssh";
 import {
+	Config,
 	Context,
 	Data,
 	Effect,
 	FiberSet,
 	Function,
 	Layer,
+	Option,
 	Predicate,
 	Schema,
 	Scope,
@@ -30,9 +32,9 @@ import {
 import type { McpServices } from "./seat.ts";
 import { mcpSession } from "./session.ts";
 
-export const SOCKET_FILE = "mcp.sock";
+const SOCKET_FILE = "mcp.sock";
 
-export const SOCKET_PATH_MOST = 100;
+const SOCKET_PATH_MOST = 100;
 
 const HASH_LENGTH = 16;
 
@@ -56,15 +58,23 @@ export interface SocketPlace {
 	readonly uid?: number | undefined;
 }
 
-const here = (): SocketPlace => ({
-	runtimeDir: process.env.XDG_RUNTIME_DIR,
-	tmp: tmpdir(),
-	uid: process.getuid?.(),
-});
+export const socketPlace = Effect.gen(function* () {
+	const runtimeDir = yield* Config.option(
+		Config.String("XDG_RUNTIME_DIR")
+	).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+	const place: SocketPlace = {
+		runtimeDir: Option.getOrUndefined(runtimeDir),
+		tmp: tmpdir(),
+		uid: process.getuid?.(),
+	};
+
+	return place;
+}).pipe(Effect.withSpan("McpSocket.socketPlace"));
 
 export const mcpSocketPath = (
 	campaignDir: string,
-	place: SocketPlace = here()
+	place: SocketPlace
 ): string => {
 	const resolved = nodePath.resolve(campaignDir);
 	const direct = nodePath.join(resolved, SOCKET_FILE);
@@ -234,20 +244,16 @@ const listen = (
 	path: string
 ): Effect.Effect<void, McpSocketError> =>
 	Effect.callback((resume) => {
-		if (!(server instanceof EventEmitter)) {
-			resume(Effect.fail(new McpSocketError({ message: "not a server" })));
-
-			return;
-		}
+		const events = serverEvents(server);
 
 		const onError = (cause: Error) => {
 			resume(Effect.fail(failed(`can't listen on ${path}`)(cause)));
 		};
 
-		server.once("error", onError);
+		events.once("error", onError);
 		server.listen(path, () => {
-			server.removeListener("error", onError);
-			server.on("error", Function.constVoid);
+			events.removeListener("error", onError);
+			events.on("error", Function.constVoid);
 			resume(Effect.void);
 		});
 	});
@@ -281,7 +287,10 @@ export class McpSocket extends Context.Service<McpSocket, AgentSocket>()(
 				yield* Effect.context<McpServices>()
 			);
 
-			const path = mcpSocketPath(options.campaignDir, options.place);
+			const path = mcpSocketPath(
+				options.campaignDir,
+				options.place ?? (yield* socketPlace)
+			);
 
 			const folder = nodePath.join(
 				nodePath.dirname(path),

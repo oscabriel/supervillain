@@ -107,7 +107,7 @@ describe("the campaign stage out of a fight", () => {
 		expect(frame).toContain(" read aloud ");
 		expect(frame).toContain("The Ford Road runs down to the water.");
 		expect(frame).toContain("• a ruined wall");
-		expect(frame).toContain("Old Mara — Ferry-keeper");
+		expect(frame).toContain("Old Mara · Ferry-keeper");
 		expect(frame).toContain("map · The Ford Road");
 		expect(frame).toContain("◑ The alarm ●●○○ 2/4");
 		expect(frame).toContain("• Mara waved, then didn't.");

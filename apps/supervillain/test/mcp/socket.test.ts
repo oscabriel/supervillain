@@ -12,6 +12,7 @@ import { PassThrough } from "node:stream";
 
 import {
 	Cause,
+	ConfigProvider,
 	Context,
 	Effect,
 	Exit,
@@ -23,7 +24,12 @@ import {
 
 import { TableServer } from "../../src/host/TableServer.ts";
 import { bridgeMcp } from "../../src/mcp/bridge.ts";
-import { agentsLine, McpSocket, mcpSocketPath } from "../../src/mcp/socket.ts";
+import {
+	agentsLine,
+	McpSocket,
+	mcpSocketPath,
+	socketPlace,
+} from "../../src/mcp/socket.ts";
 import type { McpSocketError, SocketPlace } from "../../src/mcp/socket.ts";
 import { cli, startHost } from "../e2e/cli.ts";
 import { effect, waitFor } from "../host/effect.ts";
@@ -122,7 +128,7 @@ describe("mcp.sock", () => {
 		"the socket sits in the campaign, or under a private runtime dir when that path is too long",
 		() =>
 			Effect.gen(function* () {
-				expect(mcpSocketPath("/srv/den")).toBe("/srv/den/mcp.sock");
+				expect(mcpSocketPath("/srv/den", {})).toBe("/srv/den/mcp.sock");
 
 				const long = path.join("/srv", LONG);
 				const place = { runtimeDir: "/run/user/1000", uid: 1000 };
@@ -148,7 +154,7 @@ describe("mcp.sock", () => {
 
 				expect(built._tag).toBe("Success");
 
-				const file = mcpSocketPath(dir);
+				const file = mcpSocketPath(dir, yield* socketPlace);
 				const info = yield* Effect.promise(async () => await stat(file));
 
 				expect(info.isSocket()).toBe(true);
@@ -196,7 +202,7 @@ describe("mcp.sock", () => {
 		() =>
 			Effect.gen(function* () {
 				const dir = yield* rulesCampaign("draw-steel");
-				const file = mcpSocketPath(dir);
+				const file = mcpSocketPath(dir, yield* socketPlace);
 				const table = yield* mcpTable(dir);
 
 				yield* Effect.promise(async () => {
@@ -224,7 +230,7 @@ describe("mcp.sock", () => {
 	effect("a plain file in the socket's place is left alone and named", () =>
 		Effect.gen(function* () {
 			const dir = yield* rulesCampaign("draw-steel");
-			const file = mcpSocketPath(dir);
+			const file = mcpSocketPath(dir, yield* socketPlace);
 			const table = yield* mcpTable(dir);
 
 			yield* Effect.promise(async () => {
@@ -288,11 +294,50 @@ describe("mcp.sock", () => {
 	);
 
 	effect(
+		"the runtime folder is read from configuration, not the process's own environment",
+		() =>
+			Effect.gen(function* () {
+				const base = yield* tempDir;
+				const runtimeDir = yield* tempDir;
+				const dir = path.join(base, LONG);
+
+				yield* Effect.promise(async () => {
+					await mkdir(dir, { recursive: true });
+					await writeFile(path.join(dir, "campaign.yaml"), "rules: freeform\n");
+				});
+
+				const configured = Effect.provideService(
+					ConfigProvider.ConfigProvider,
+					ConfigProvider.fromUnknown({ XDG_RUNTIME_DIR: runtimeDir })
+				);
+
+				const place = yield* socketPlace.pipe(configured);
+
+				expect(place.runtimeDir).toBe(runtimeDir);
+
+				const table = yield* mcpTable(dir);
+
+				const { built, scope } = yield* opened(table, dir).pipe(configured);
+
+				expect(built._tag).toBe("Success");
+
+				const file = mcpSocketPath(dir, place);
+
+				expect(path.dirname(path.dirname(file))).toBe(runtimeDir);
+				expect(yield* exists(file)).toBe(true);
+
+				yield* Scope.close(scope, Exit.void);
+				expect(yield* exists(file)).toBe(false);
+			}),
+		20_000
+	);
+
+	effect(
 		"a stale socket that answers with anything but ECONNREFUSED is left alone",
 		() =>
 			Effect.gen(function* () {
 				const dir = yield* rulesCampaign("draw-steel");
-				const file = mcpSocketPath(dir);
+				const file = mcpSocketPath(dir, yield* socketPlace);
 				const table = yield* mcpTable(dir);
 
 				yield* Effect.promise(async () => {
@@ -375,7 +420,7 @@ describe("mcp.sock", () => {
 		() =>
 			Effect.gen(function* () {
 				const dir = yield* rulesCampaign("draw-steel");
-				const file = mcpSocketPath(dir);
+				const file = mcpSocketPath(dir, yield* socketPlace);
 				const table = yield* mcpTable(dir);
 
 				yield* Effect.promise(async () => {
@@ -419,7 +464,7 @@ describe("mcp.sock", () => {
 		() =>
 			Effect.gen(function* () {
 				const dir = yield* rulesCampaign("draw-steel");
-				const file = mcpSocketPath(dir);
+				const file = mcpSocketPath(dir, yield* socketPlace);
 
 				yield* Effect.promise(async () => {
 					await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -463,7 +508,7 @@ describe("mcp.sock", () => {
 				expect(missing.stderr).toContain("no table is open");
 
 				const dir = yield* rulesCampaign("draw-steel");
-				const file = mcpSocketPath(dir);
+				const file = mcpSocketPath(dir, yield* socketPlace);
 				const host = yield* startHost([dir, "--headless"]);
 
 				yield* waitFor("the host's agent socket", () =>

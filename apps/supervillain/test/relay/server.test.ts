@@ -4,8 +4,10 @@ import path from "node:path";
 
 import { TERMINAL_RESET } from "@supervillain/ssh";
 import { Effect, Exit, Fiber, Schema, Scope } from "effect";
+import { SecureRandom } from "effect/crypto";
 
 import { forgetHandle } from "../../src/relay/handles.ts";
+import { codeOf, PAIRING_BYTES } from "../../src/relay/pairings.ts";
 import {
 	closedTableMessage,
 	JOIN_HINT,
@@ -76,6 +78,9 @@ const LEGACY_ROOMS = JSON.stringify({ den: `SHA256:${"A".repeat(43)}` });
 const GUEST_EXEC = /^exec guest:[A-Za-z0-9_-]{1,64} hi\n$/u;
 
 type Started = Effect.Success<ReturnType<typeof startRelay>>;
+
+const counting = (size: number) =>
+	Uint8Array.from({ length: size }, (_, at) => (at * 7 + 1) % 256);
 
 const linked = (relay: Started, address: string, up = true) =>
 	waitFor(`table ${address} ${up ? "linked" : "unlinked"}`, () =>
@@ -452,6 +457,28 @@ describe("relay: handles", () => {
 				expect(den.server.hostKeyFingerprint).not.toBe(
 					gmKey.server.hostKeyFingerprint
 				);
+			})
+	);
+
+	effect(
+		"a claim code is made from the random service's bytes, so a fixed source mints a known code",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay().pipe(
+					Effect.provideService(
+						SecureRandom.SecureRandom,
+						SecureRandom.make(counting)
+					)
+				);
+
+				const { gm } = yield* openTable(relay);
+
+				expect(
+					yield* relay.mintPairing("ana", gm.server.hostKeyFingerprint)
+				).toMatchObject({
+					kind: "minted",
+					code: codeOf(counting(PAIRING_BYTES)),
+				});
 			})
 	);
 

@@ -11,7 +11,9 @@ export const hanging = (text: string): ReadonlyArray<Hanging> =>
 		const lead = groups?.lead ?? "";
 		const rest = groups?.rest;
 
-		return rest === ""
-			? { lead: "", rest: line === "" ? " " : line }
-			: { lead, rest: rest ?? line };
+		if (rest === "") {
+			return { lead: "", rest: line === "" ? " " : line };
+		}
+
+		return { lead, rest: rest ?? line };
 	});

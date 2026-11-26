@@ -149,7 +149,7 @@ describe("supervillain new", () => {
 					"new",
 					path.join(root, "b"),
 					"--rules",
-					"pathfinder",
+					"chess",
 				]);
 
 				expect(unknown.exitCode).not.toBe(0);

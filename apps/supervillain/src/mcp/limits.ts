@@ -4,9 +4,9 @@ import { Clock, Context, Effect, Layer, Option, Semaphore } from "effect";
 
 import type { McpSeat } from "./seat.ts";
 
-export const AGENT_RATE: Rate = { burst: 20, perSecond: 2 };
+const AGENT_RATE: Rate = { burst: 20, perSecond: 2 };
 
-export const IN_FLIGHT_MOST = 4;
+const IN_FLIGHT_MOST = 4;
 
 export const LINE_MOST = 2048;
 
@@ -18,8 +18,7 @@ export const PARAM_MOST = 128;
 
 export const TOO_MANY = "Too many requests; wait a moment.";
 
-export const TOO_BUSY =
-	"Too many requests at once; wait for one to finish first.";
+const TOO_BUSY = "Too many requests at once; wait for one to finish first.";
 
 export const ONE_WAIT =
 	"You're already waiting with wait_for_change; one wait at a time.";

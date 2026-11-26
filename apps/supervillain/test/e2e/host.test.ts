@@ -274,7 +274,7 @@ describe("supervillain host --headless", () => {
 				const campaign = yield* campaignDir;
 				const file = path.join(campaign, "campaign.yaml");
 				yield* Effect.promise(async () => {
-					await writeFile(file, "rules: pathfinder\n");
+					await writeFile(file, "rules: chess\n");
 				});
 
 				const refused = yield* cli([
@@ -287,7 +287,7 @@ describe("supervillain host --headless", () => {
 
 				expect(refused.exitCode).toBe(1);
 				expect(refused.stderr.trim().split("\n")).toEqual([
-					`supervillain: ${file}: says rules: pathfinder, but a campaign plays draw-steel, set-world, pf2e or freeform`,
+					`supervillain: ${file}: says rules: chess, but a campaign plays draw-steel, set-world, pf2e or freeform`,
 				]);
 				expect(existsSync(path.join(campaign, "events.jsonl"))).toBe(false);
 			})

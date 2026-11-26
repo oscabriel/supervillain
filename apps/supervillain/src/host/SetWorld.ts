@@ -10,7 +10,7 @@ import { Effect, Option, Predicate, Schema } from "effect";
 import { SecureRandom } from "effect/crypto";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-export const ROLL_URL = "https://set.world/api/roll/character";
+const ROLL_URL = "https://set.world/api/roll/character";
 
 const TIMEOUT = "10 seconds";
 

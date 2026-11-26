@@ -15,9 +15,9 @@ import type { Duration } from "effect";
 
 import { TableRoom } from "./TableRoom.ts";
 
-export const AUTO_STEPS = 64;
+const AUTO_STEPS = 64;
 
-export const AUTO_PAUSE: Duration.Input = "150 millis";
+const AUTO_PAUSE: Duration.Input = "150 millis";
 
 export interface AutoFoesOptions {
 	readonly pause?: Duration.Input;

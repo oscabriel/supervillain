@@ -22,13 +22,13 @@ export type Peek = "stage" | "board";
 
 export const STAGE_FRAME = { width: 5, height: 2 } as const;
 
-export const CARD_FRAME = { width: 4, height: 2 } as const;
+const CARD_FRAME = { width: 4, height: 2 } as const;
 
-export const RECAP_SHOWN = 3;
+const RECAP_SHOWN = 3;
 
-export const PINNED_COLUMN_MIN = 38;
+const PINNED_COLUMN_MIN = 38;
 
-export const CARD_MAP_MOST = 14;
+const CARD_MAP_MOST = 14;
 
 export const hasStage = (stage: StageView | undefined): boolean =>
 	stage !== undefined &&
@@ -98,7 +98,7 @@ export const cardPlan = (
 	const head = clip(
 		card.subtitle === undefined
 			? card.title
-			: `${card.title} — ${card.subtitle}`,
+			: `${card.title} · ${card.subtitle}`,
 		inner
 	);
 
@@ -164,7 +164,7 @@ export const clockFace = (value: number, max: number): string => {
 	return QUARTERS[Math.round(share * 4)] ?? "○";
 };
 
-export const clockSegments = (value: number, max: number): string =>
+const clockSegments = (value: number, max: number): string =>
 	Array.from({ length: max }, (_, i) => (i < value ? "●" : "○")).join("");
 
 const SEGMENTS_MOST = 12;
@@ -212,10 +212,7 @@ export const trackerLines = (
 	return current === "" ? lines : [...lines, current];
 };
 
-export const recapLines = (
-	stage: StageView,
-	width: number
-): ReadonlyArray<string> =>
+const recapLines = (stage: StageView, width: number): ReadonlyArray<string> =>
 	stage.recap
 		.slice(-RECAP_SHOWN)
 		.flatMap((r) =>
@@ -288,7 +285,7 @@ const KIND_MARK: Readonly<Record<CodexEntry["kind"], string>> = {
 
 export const codexLabel = (entry: CodexEntry, width: number): string => {
 	const where = entry.tier === "on-table" ? "  on the table" : "";
-	const sub = entry.subtitle === undefined ? "" : ` — ${entry.subtitle}`;
+	const sub = entry.subtitle === undefined ? "" : ` · ${entry.subtitle}`;
 	const lead = `${KIND_MARK[entry.kind]} `;
 
 	return `${clip(`${lead}${entry.title}${sub}`, Math.max(1, width - Bun.stringWidth(where)))}${where}`;

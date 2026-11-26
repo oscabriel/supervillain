@@ -32,7 +32,7 @@ const generated = (
 			failed(Predicate.isError(cause) ? cause.message : String(cause)),
 	});
 
-export const mapWriter = Effect.gen(function* () {
+const mapWriter = Effect.gen(function* () {
 	const fs = yield* FileSystem.FileSystem;
 	const path = yield* Path.Path;
 

@@ -455,7 +455,7 @@ describe("freeform: undo, replay and views", () => {
 
 		expect(sheetOf(table.state, "rook", "freeform")).toBe(
 			[
-				"Rook — Disgraced duelist · of the party",
+				"Rook · Disgraced duelist · of the party",
 				"Stats: might 1, wits 2",
 				"Resources: hp 10/10",
 				"Checks roll d20 plus the stat.",

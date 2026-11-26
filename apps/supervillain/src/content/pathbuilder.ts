@@ -174,7 +174,7 @@ const modifierOf = (value: number): number =>
 const proficient = (rank: number, level: number): number =>
 	rank > 0 ? rank + level : 0;
 
-export const pathbuilderId = (name: string): string =>
+const pathbuilderId = (name: string): string =>
 	name
 		.normalize("NFKD")
 		.toLowerCase()
@@ -216,7 +216,8 @@ const strikesOf = (
 
 		const count = STRIKING.get(w.str ?? "") ?? 1;
 		const plus = Math.trunc(w.damageBonus ?? 0);
-		const flat = plus === 0 ? "" : `${plus > 0 ? "+" : ""}${plus}`;
+		const sign = plus > 0 ? "+" : "";
+		const flat = plus === 0 ? "" : `${sign}${plus}`;
 
 		if ((w.extraDamage ?? []).length > 0) {
 			skipped.push(`${name}: extra damage isn't converted`);

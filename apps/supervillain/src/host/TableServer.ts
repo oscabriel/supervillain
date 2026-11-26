@@ -100,7 +100,7 @@ export const knockBucketOf = (info: SessionInfo): string => {
 		: `relayed:${info.identity.actor}/${info.relayedBucket}`;
 };
 
-export const execRateKeyOf = (info: SessionInfo): string =>
+const execRateKeyOf = (info: SessionInfo): string =>
 	info.relayedActor === undefined
 		? `address:${addressBucket(info.remoteAddress)}`
 		: rateKeyOf(info);

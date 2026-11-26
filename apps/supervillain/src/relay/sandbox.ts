@@ -38,7 +38,7 @@ export interface SandboxLimits {
 
 export const SANDBOX_LIVE = 12;
 
-export const SANDBOX_DEFAULTS: SandboxLimits = {
+const SANDBOX_DEFAULTS: SandboxLimits = {
 	live: SANDBOX_LIVE,
 	perAddress: 1,
 	perKey: 1,
@@ -79,7 +79,7 @@ const IDLE_TICK_MS = 1000;
 export const SANDBOX_CLOSING =
 	"This sandbox table closes in a minute; nothing here is saved.";
 
-export const SANDBOX_HELP =
+const SANDBOX_HELP =
 	"This is a sandbox: a private Draw Steel table in the relay's memory. Nothing is saved, and it closes when you leave (Ctrl-C).";
 
 export const NO_SANDBOXES = "This relay offers no sandbox tables.";

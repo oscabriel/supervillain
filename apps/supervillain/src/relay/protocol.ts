@@ -135,7 +135,7 @@ const B64URL = (n: number) => new RegExp(`^[A-Za-z0-9_-]{${n}}$`, "u");
 
 const PROOF = B64URL(43);
 
-export const isClaimProof = (text: string): boolean => PROOF.test(text);
+const isClaimProof = (text: string): boolean => PROOF.test(text);
 
 export const claimProof = (code: string, fingerprint: string): string =>
 	createHmac("sha256", code).update(fingerprint).digest("base64url");

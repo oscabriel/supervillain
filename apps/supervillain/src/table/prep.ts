@@ -2,7 +2,7 @@ import { charsOf, formatSquare, ifDefined } from "@supervillain/domain";
 
 import type { MapView, PrepFigure, PrepItem, PrepView } from "./view.ts";
 
-export const PREP_WIDTH = { least: 26, most: 34 } as const;
+const PREP_WIDTH = { least: 26, most: 34 } as const;
 
 export const prepWidth = (cols: number): number =>
 	Math.min(PREP_WIDTH.most, Math.max(PREP_WIDTH.least, Math.floor(cols / 3)));

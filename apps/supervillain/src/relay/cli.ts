@@ -181,10 +181,12 @@ const run = relay.pipe(
 			yield* Console.log(
 				`host key ${info.hostKeyFingerprint} (what players' ssh sees)`
 			);
+			const sandboxTables = o.sandboxes === 1 ? "table" : "tables";
+
 			yield* Console.log(
 				o.sandboxes === 0
 					? "the lobby's Try a Table is off (--sandboxes 0)"
-					: `the lobby's Try a Table runs up to ${o.sandboxes} sandbox table${o.sandboxes === 1 ? "" : "s"} at once`
+					: `the lobby's Try a Table runs up to ${o.sandboxes} sandbox ${sandboxTables} at once`
 			);
 			yield* Console.log(
 				`a handle's claim lapses after ${o.claimDays} day${o.claimDays === 1 ? "" : "s"} with no GM linked`
@@ -231,19 +233,21 @@ const forget = Command.make(
 			const handles = path.join(folder, "handles.json");
 			const holder = yield* forgetHandle(handles, o.handle);
 
-			return yield* holder === undefined
-				? Console.log(
-						`supervillain: no GM holds the handle ${o.handle} in ${handles}`
-					)
-				: Console.log(
-						`supervillain: released the handle ${o.handle} in ${handles}, held by GM key${holder.length === 1 ? "" : "s"} ${holder.join(", ")}`
-					).pipe(
-						Effect.andThen(
-							Console.log(
-								"The next GM to link a table under it claims it; tables linked now stay open until they drop."
-							)
-						)
-					);
+			if (holder === undefined) {
+				return yield* Console.log(
+					`supervillain: no GM holds the handle ${o.handle} in ${handles}`
+				);
+			}
+
+			const keys = holder.length === 1 ? "key" : "keys";
+
+			yield* Console.log(
+				`supervillain: released the handle ${o.handle} in ${handles}, held by GM ${keys} ${holder.join(", ")}`
+			);
+
+			return yield* Console.log(
+				"The next GM to link a table under it claims it; tables linked now stay open until they drop."
+			);
 		}).pipe(Effect.catchTags({ RelayError: fail, HandlesError: fail }))
 ).pipe(
 	Command.withDescription(

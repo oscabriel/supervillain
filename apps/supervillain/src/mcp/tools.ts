@@ -47,9 +47,9 @@ import type { SeatView, ViewLine } from "./view.ts";
 
 export type ToolResult = McpSchema.CallToolResult;
 
-export const WAIT_MOST_MS = 30_000;
+const WAIT_MOST_MS = 30_000;
 
-export const BATCH_MOST = 32;
+const BATCH_MOST = 32;
 
 const STEP_GAP = "2 millis";
 
@@ -72,13 +72,13 @@ interface Problems {
 
 type Structured = Accepted | Changed | Problems | Batched | SeatView;
 
-export const toolOk = (said: string, structured?: Structured): ToolResult =>
+const toolOk = (said: string, structured?: Structured): ToolResult =>
 	new McpSchema.CallToolResult({
 		content: [text(said)],
 		...ifDefined(structured, (structuredContent) => ({ structuredContent })),
 	});
 
-export const toolFailed = (said: string, structured?: Structured): ToolResult =>
+const toolFailed = (said: string, structured?: Structured): ToolResult =>
 	new McpSchema.CallToolResult({
 		content: [text(said)],
 		isError: true,

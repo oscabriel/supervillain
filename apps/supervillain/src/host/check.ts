@@ -5,7 +5,13 @@ import { parseLog } from "@supervillain/platform-jsonl";
 const counted = (n: number, one: string, many: string) =>
 	`[${n} ${n === 1 ? one : many}]`;
 
-export const shownState = (state: TableState) => ({
+export interface ShownState extends Omit<TableState, "feed" | "undo" | "redo"> {
+	readonly feed: string;
+	readonly undo: string;
+	readonly redo: string;
+}
+
+export const shownState = (state: TableState): ShownState => ({
 	...state,
 	feed: `[${state.feed.length} lines]`,
 	undo: counted(state.undo.length, "batch", "batches"),

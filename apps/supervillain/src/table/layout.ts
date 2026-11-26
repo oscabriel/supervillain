@@ -4,19 +4,19 @@ import type { CombatView } from "./view.ts";
 
 export const BAND_FRAME = { width: 4, height: 2 } as const;
 
-export const FIXED_ROWS = 3;
+const FIXED_ROWS = 3;
 
-export const FEED_MIN = 5;
+const FEED_MIN = 5;
 
 export const BAND_MIN = 3;
 
-export const PANE_MIN = 8;
+const PANE_MIN = 8;
 
-export const MAP_MIN = 8;
+const MAP_MIN = 8;
 
-export const MAP_FLOOR = 5;
+const MAP_FLOOR = 5;
 
-export const BAND_FOLDED = 4;
+const BAND_FOLDED = 4;
 
 export interface Screen {
 	readonly width: number;
@@ -59,9 +59,8 @@ export const roomFor = (
 		(withNotice ? 1 : 0) -
 		screen.menuRows;
 
-	const cap = shown.feed
-		? Math.floor(screen.fighting ? (h * 2) / 3 : h / 2)
-		: room;
+	const share = screen.fighting ? (h * 2) / 3 : h / 2;
+	const cap = shown.feed ? Math.floor(share) : room;
 
 	return { room, cap };
 };
@@ -138,8 +137,10 @@ const paneWantedOf = (input: HeightsInput, room: number): number => {
 
 	const h = input.screen.height;
 
+	const band = input.shown.band ? BAND_MIN : 0;
+
 	const most = input.shown.feed
-		? Math.min(Math.floor(h / 2), room - (input.shown.band ? BAND_MIN : 0))
+		? Math.min(Math.floor(h / 2), room - band)
 		: room;
 
 	return Math.max(3, Math.min(input.paneRows + 2, most));

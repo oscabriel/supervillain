@@ -124,10 +124,13 @@ const match = (all: ReadonlyArray<Entry>, query: string): Entry | Several => {
 const isSeveral = (found: Entry | Several): found is Several =>
 	"several" in found;
 
-const have = (kind: Kind, all: ReadonlyArray<Entry>) =>
-	all.length === 0
-		? `it has no ${kind === "map" ? ".txt" : ".yaml"} files`
-		: `there are: ${all.map((e) => e.id).join(", ")}`;
+const have = (kind: Kind, all: ReadonlyArray<Entry>) => {
+	if (all.length === 0) {
+		return `it has no ${kind === "map" ? ".txt" : ".yaml"} files`;
+	}
+
+	return `there are: ${all.map((e) => e.id).join(", ")}`;
+};
 
 const find = (
 	kind: SheetKind,

@@ -73,7 +73,7 @@ const stepMark = (done: boolean, now: boolean) => {
 		: { glyph: "◇", fg: color.border, label: color.border };
 };
 
-export const fitName = (s: string, n: number) => {
+const fitName = (s: string, n: number) => {
 	const end = SHORT_END.exec(s)?.groups?.end;
 
 	if (Bun.stringWidth(s) <= n || end === undefined) {
@@ -251,6 +251,15 @@ export const Prep = (props: {
 		}
 	};
 
+	const itemChip = (item: PrepItem, label: string) =>
+		chip(
+			label,
+			() => {
+				sendItem(item);
+			},
+			item.lines === undefined ? color.bright : READY
+		);
+
 	const problems = () => props.problems ?? [];
 
 	const stageCard = (card: StageEntry) => {
@@ -289,13 +298,7 @@ export const Prep = (props: {
 
 									return item === undefined
 										? undefined
-										: chip(
-												labels[i] ?? item.label,
-												() => {
-													sendItem(item);
-												},
-												item.lines === undefined ? color.bright : READY
-											);
+										: itemChip(item, labels[i] ?? item.label);
 								}}
 							</For>
 						</box>

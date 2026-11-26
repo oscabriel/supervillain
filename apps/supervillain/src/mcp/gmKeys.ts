@@ -26,7 +26,7 @@ const none = (problem?: string): GmKeys =>
 		? { fingerprints: new Set() }
 		: { fingerprints: new Set(), problem };
 
-export const parseGmKeys = (text: string): ReadonlySet<string> =>
+const parseGmKeys = (text: string): ReadonlySet<string> =>
 	new Set(
 		text
 			.split("\n")

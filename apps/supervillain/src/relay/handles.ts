@@ -297,7 +297,7 @@ export type HandleVerdict =
 export const everLinked = (claim: HandleClaim): boolean =>
 	claim.seen > claim.claimed;
 
-export const lapsedClaim = (
+const lapsedClaim = (
 	handle: string,
 	claim: HandleClaim,
 	now: number,

@@ -67,7 +67,7 @@ const isFree = (dir: string) =>
 		)
 	);
 
-export const README_BODY = {
+const README_BODY = {
 	"draw-steel":
 		"A supervillain campaign playing Draw Steel (campaign.yaml says so): hero sheets go in heroes/<id>.yaml, monster stat blocks in monsters/<id>.yaml, text maps in maps/<id>.txt, and the host keeps the log in events.jsonl.",
 	"set-world":

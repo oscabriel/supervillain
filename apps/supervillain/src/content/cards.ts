@@ -42,7 +42,7 @@ export const cardKey = (kind: CardKind, id: string): string => `${kind}:${id}`;
 
 const TAB = /\t/gu;
 
-export const artLines = (text: string): ReadonlyArray<string> =>
+const artLines = (text: string): ReadonlyArray<string> =>
 	normalized(text)
 		.replace(/\n+$/u, "")
 		.split("\n")
@@ -59,7 +59,7 @@ export const artProblem = (lines: ReadonlyArray<string>): string | undefined =>
 		? `art is at most ${ART_LINES} lines of ${ART_COLUMNS} columns`
 		: undefined;
 
-export const ART_BYTES = 64 * 1024;
+const ART_BYTES = 64 * 1024;
 
 interface Part<A> {
 	readonly value?: A;
@@ -127,7 +127,7 @@ const readAloud = (sections: Sections) => {
 	return text === undefined ? undefined : proseOf(text);
 };
 
-export const gmNotesOf = (sections: Sections): string | undefined => {
+const gmNotesOf = (sections: Sections): string | undefined => {
 	const text = gmOnly(sections);
 
 	return text === "" ? undefined : text;

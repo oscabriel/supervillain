@@ -79,18 +79,23 @@ export const gmTable = (options: GmTableOptions = {}) =>
 		const asked = { count: 0 };
 		const { knows } = options;
 
+		const answer = (
+			session: RawSession,
+			known: NonNullable<GmTableOptions["knows"]>
+		) =>
+			Effect.suspend(() => {
+				asked.count += 1;
+
+				return known === "silent"
+					? Effect.never
+					: answerKnowing(session, known);
+			});
+
 		const relaySubsystems =
 			knows === undefined
 				? {}
 				: {
-						[KNOWS_SUBSYSTEM]: (session: RawSession) =>
-							Effect.suspend(() => {
-								asked.count += 1;
-
-								return knows === "silent"
-									? Effect.never
-									: answerKnowing(session, knows);
-							}),
+						[KNOWS_SUBSYSTEM]: (session: RawSession) => answer(session, knows),
 					};
 
 		const server = yield* serve({
@@ -156,11 +161,15 @@ const execTable = (session: RawSession, who: string, command: string) =>
 
 		session.stderr.write("note\n");
 
-		return yield* command === "wait"
-			? Effect.never
-			: Effect.sync(() => {
-					session.exit(command === "fail" ? 3 : 0);
-				});
+		if (command === "wait") {
+			return yield* Effect.never;
+		}
+
+		const code = command === "fail" ? 3 : 0;
+
+		return yield* Effect.sync(() => {
+			session.exit(code);
+		});
 	});
 
 const table = (session: RawSession, ended: Array<string>) =>

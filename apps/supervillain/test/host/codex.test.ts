@@ -44,7 +44,7 @@ describe("the codex over a hosted freeform table", () => {
 					const player = yield* runLine(vex, "/codex mara");
 
 					expect(textOf(player)).toContain(
-						"Mara Venn — Harbour-master · she/her"
+						"Mara Venn · Harbour-master · she/her"
 					);
 					expect(textOf(player)).not.toContain("GMSECRET");
 

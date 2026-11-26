@@ -26,8 +26,20 @@ const isText = (value: unknown): value is string => String(value) === value;
 
 const isRecord = (value: unknown): value is object => Object(value) === value;
 
+const isCallable = (value: unknown): value is object =>
+	Object.prototype.toString.call(value).endsWith("Function]");
+
 const isSolidPluginModule = (value: unknown): value is SolidPluginModule =>
-	isRecord(value) && "createSolidTransformPlugin" in value;
+	isRecord(value) &&
+	"createSolidTransformPlugin" in value &&
+	isCallable(value.createSolidTransformPlugin);
+
+const isBunPlugin = (value: unknown): value is BunPlugin =>
+	isRecord(value) &&
+	"name" in value &&
+	isText(value.name) &&
+	"setup" in value &&
+	isCallable(value.setup);
 
 const isPackageJson = (value: unknown): value is PackageJson =>
 	isRecord(value) && "version" in value && isText(value.version);
@@ -43,6 +55,18 @@ if (!isSolidPluginModule(solidPluginModule)) {
 }
 
 const { createSolidTransformPlugin } = solidPluginModule;
+
+const solidPlugin = (): BunPlugin => {
+	const plugin = createSolidTransformPlugin();
+
+	if (!isBunPlugin(plugin)) {
+		throw new Error(
+			"@opentui/solid/bun-plugin's createSolidTransformPlugin made no Bun plugin"
+		);
+	}
+
+	return plugin;
+};
 
 const coreDir = path.dirname(
 	Bun.resolveSync("@opentui/core/package.json", app)
@@ -132,12 +156,7 @@ const build = async (t: Target, outdir: string, version: string) => {
 
 	const result = await Bun.build({
 		entrypoints: [entry],
-		plugins: [
-			noPreload,
-			noSsh2Addons,
-			onlyNative(t),
-			createSolidTransformPlugin(),
-		],
+		plugins: [noPreload, noSsh2Addons, onlyNative(t), solidPlugin()],
 		minify: true,
 		sourcemap: "none",
 		define: defines(t, version),

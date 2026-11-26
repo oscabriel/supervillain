@@ -613,13 +613,15 @@ interface Failed {
 const idProblems = (sheet: StatBlock) => {
 	const problems = sheetProblems(sheet);
 
-	return problems.some((p) => p.field === "id")
-		? problems.map(({ field, problem }) =>
-				field === "id"
-					? `id ${show(sheet.id)} (made from the name) ${problem}`
-					: `${field} ${problem}`
-			)
-		: [];
+	if (!problems.some((p) => p.field === "id")) {
+		return [];
+	}
+
+	return problems.map(({ field, problem }) =>
+		field === "id"
+			? `id ${show(sheet.id)} (made from the name) ${problem}`
+			: `${field} ${problem}`
+	);
 };
 
 const headerOf = (source: string, skipped: ReadonlyArray<string>) => [

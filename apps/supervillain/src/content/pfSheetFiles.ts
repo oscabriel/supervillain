@@ -394,6 +394,11 @@ const abilityYaml = (a: PfAbility): YamlMap => ({
 	text: a.text,
 });
 
+const slotsYaml = (slots: NonNullable<PfSheet["spells"]>["slots"]) =>
+	slots === undefined
+		? undefined
+		: Object.fromEntries(slots.map((s) => [String(s.rank), s.count]));
+
 const spellYaml = (s: PfSpell) => ({
 	name: s.name,
 	rank: s.rank,
@@ -450,12 +455,7 @@ export const pfSheetYaml = (
 							tradition: sheet.spells.tradition,
 							dc: sheet.spells.dc,
 							attack: sheet.spells.attack,
-							slots:
-								sheet.spells.slots === undefined
-									? undefined
-									: Object.fromEntries(
-											sheet.spells.slots.map((s) => [String(s.rank), s.count])
-										),
+							slots: slotsYaml(sheet.spells.slots),
 							list: sheet.spells.list.map(spellYaml),
 						},
 			immunities:

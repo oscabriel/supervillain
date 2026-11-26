@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import type { Socket } from "node:net";
 
-import { isFingerprint } from "@supervillain/ssh";
+import { isFingerprint, messageOf } from "@supervillain/ssh";
 import type { AttachOptions } from "@supervillain/ssh";
 import {
 	Clock,
@@ -245,7 +245,7 @@ const pinSync = (
 
 		return undefined;
 	} catch (error) {
-		return error instanceof Error ? error.message : String(error);
+		return messageOf(error);
 	}
 };
 

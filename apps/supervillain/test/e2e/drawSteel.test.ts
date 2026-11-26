@@ -88,7 +88,7 @@ describe("a short Draw Steel encounter over real ssh", () => {
 				);
 				const blow = yield* asPlayer(port, alice, "/pr brann driving");
 				expect(blow).toMatch(
-					/^Brann uses Driving Blow: \[\d+, \d+\] \+2 = \d+.* · tier [123] — /u
+					/^Brann uses Driving Blow: \[\d+, \d+\] \+2 = \d+.* · tier [123] · /u
 				);
 				const rolled = must((yield* logOf(dir)).at(-1));
 				expect(rolled).toMatchObject({

@@ -397,7 +397,7 @@ export const checkWith = Effect.fn("validate.checkWith")(function* (
 	return checked;
 });
 
-export const checkIndex = Effect.fn("validate.checkIndex")(function* (
+const checkIndex = Effect.fn("validate.checkIndex")(function* (
 	index: ContentIndex
 ) {
 	return yield* checkWith(yield* filesOf, index);

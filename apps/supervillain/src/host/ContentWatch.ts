@@ -26,9 +26,9 @@ import { FOLDERS, TABLE_FILE } from "../content/kinds.ts";
 import { TableRoom } from "./TableRoom.ts";
 import type { View } from "./View.ts";
 
-export const DEBOUNCE = "250 millis";
+const DEBOUNCE = "250 millis";
 
-export const SYNC_RATE_KEY = "content-watch";
+const SYNC_RATE_KEY = "content-watch";
 
 const ROOT_FILES: ReadonlySet<string> = new Set([TABLE_FILE, "campaign.yaml"]);
 
@@ -69,7 +69,7 @@ export interface InPlaySheet {
 	readonly sheet: unknown;
 }
 
-export const sheetsInPlay = (
+const sheetsInPlay = (
 	state: TableState,
 	ruleset: RulesetName
 ): ReadonlyArray<InPlaySheet> => {
@@ -120,7 +120,7 @@ export const changedCards = (
 		return was !== undefined && !Equal.equals(was.card, card);
 	});
 
-export const heldBack = (
+const heldBack = (
 	before: ContentIndex,
 	after: ContentIndex,
 	keys: ReadonlyArray<string>

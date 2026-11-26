@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 
-import { loadHostKey } from "@supervillain/ssh";
+import { loadHostKey, messageOf } from "@supervillain/ssh";
 import { Config, Context, Effect, Layer, Option, Path, Schema } from "effect";
 
 const GM_KEY_FILE = "gm_key";
@@ -43,7 +43,7 @@ export class GmKey extends Context.Service<
 			try: async () => await loadHostKey(keyPath),
 			catch: (cause) =>
 				new GmKeyError({
-					message: `your GM key at ${keyPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+					message: `your GM key at ${keyPath}: ${messageOf(cause)}`,
 					cause,
 				}),
 		});

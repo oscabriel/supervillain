@@ -231,7 +231,7 @@ describe("heroic resources", () => {
 		});
 		expect(t.hero("vex").resource).toBe(1);
 		expect(t.lastFeed()).toEqual([
-			"Vex uses Judgment (3 Wrath → 1): [6, 5] +2 = 13 · tier 2 — 5 + P (2) = 7 holy damage",
+			"Vex uses Judgment (3 Wrath → 1): [6, 5] +2 = 13 · tier 2 · 5 + P (2) = 7 holy damage",
 		]);
 	});
 
@@ -263,7 +263,7 @@ describe("heroic resources", () => {
 		);
 		expect(t.ds.malice).toBe(3);
 		expect(t.lastFeed()).toEqual([
-			"Goblin Boss uses Rally (2 Malice → 3): [1, 1] +2 = 4 · tier 1 — a",
+			"Goblin Boss uses Rally (2 Malice → 3): [1, 1] +2 = 4 · tier 1 · a",
 		]);
 		t.run(GM, { type: "malice", by: -3, reason: "Get Them!" });
 		expect(t.lastFeed()).toEqual(["Malice -3 (Get Them!) → 0."]);
@@ -286,7 +286,7 @@ describe("heroic resources", () => {
 			fixedDice(3, 2)
 		);
 		expect(t.lastFeed()).toEqual([
-			"Vex uses Spinning Strike: [3, 2] +2 = 7 · tier 1 — 3 damage",
+			"Vex uses Spinning Strike: [3, 2] +2 = 7 · tier 1 · 3 damage",
 		]);
 
 		const SLAM: HeroSheet = {
@@ -307,7 +307,7 @@ describe("heroic resources", () => {
 			fixedDice(1, 1)
 		);
 		expect(t.lastFeed()).toEqual([
-			"Kor uses Slam: [1, 1] +2 = 4 · tier 1 — 2 + M (2) = 4 damage; A < 1 slowed",
+			"Kor uses Slam: [1, 1] +2 = 4 · tier 1 · 2 + M (2) = 4 damage; A < 1 slowed",
 		]);
 	});
 });

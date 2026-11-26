@@ -112,11 +112,11 @@ describe("campaign.yaml", () => {
 		"a ruleset or setting the table doesn't know stops the host, saying which",
 		() =>
 			Effect.gen(function* () {
-				const unknown = yield* campaign("rules: pathfinder\n");
+				const unknown = yield* campaign("rules: chess\n");
 				const refused = yield* Effect.flip(rulesetOf(unknown));
 				expect(refused).toBeInstanceOf(CampaignConfigInvalid);
 				expect(refused.message).toBe(
-					`${unknown}/campaign.yaml: says rules: pathfinder, but a campaign plays draw-steel, set-world, pf2e or freeform`
+					`${unknown}/campaign.yaml: says rules: chess, but a campaign plays draw-steel, set-world, pf2e or freeform`
 				);
 				const typo = yield* campaign("rule: set-world\n");
 				const typoExit = yield* Effect.exit(rulesetOf(typo));

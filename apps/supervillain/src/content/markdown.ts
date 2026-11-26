@@ -547,9 +547,8 @@ const blocksOf = (
 	return inBlock;
 };
 
-export const gmBlocks = (
-	sections: ReadonlyArray<Section>
-): ReadonlyArray<boolean> => blocksOf(sections, (s) => isGmHeading(s.heading));
+const gmBlocks = (sections: ReadonlyArray<Section>): ReadonlyArray<boolean> =>
+	blocksOf(sections, (s) => isGmHeading(s.heading));
 
 const rendered = (s: Section): string =>
 	`${"#".repeat(s.level)} ${s.heading}\n${s.text}`;
