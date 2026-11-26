@@ -5,8 +5,6 @@ import type { Message } from "./Model.ts";
 
 const MEKMODE = "https://mektxt.com/fonts/mekmode";
 
-const INITIAL = "https://www.flickr.com/photos/britishlibrary/11079035876";
-
 const ORC_LICENSE = "https://www.azoralaw.com/orclicense";
 
 const ORC_NOTICE = `${SOURCE}/blob/main/docs/ORC-NOTICE.md`;
@@ -42,17 +40,6 @@ export const acknowledgmentsView = (
 									"Picture mode's map tiles and character figures use the dings from ",
 									h.a([h.Href(MEKMODE)], ["MEKMODE"]),
 									" by Michael Micasso (MEK.txt), used with the author's permission.",
-								]
-							),
-							h.h2([h.Id("initial-mark")], ["Initial mark"]),
-							h.p(
-								[],
-								[
-									"The criblé initial S mark comes from page 366 of Louisa Parr's ",
-									h.em([], ["Dorothy Fox"]),
-									" (London, 1880), as scanned by the British Library for ",
-									h.a([h.Href(INITIAL)], ["Flickr Commons"]),
-									" with no known copyright restrictions.",
 								]
 							),
 							h.h2(
