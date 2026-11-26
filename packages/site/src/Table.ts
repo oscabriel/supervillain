@@ -358,22 +358,3 @@ export const suggestionsOf = (demo: Demo): Array<string> => {
 		"/dist B s",
 	];
 };
-
-export const hintOf = (demo: Demo): string => {
-	const { state } = fold(demo.log);
-
-	if (state.winner !== "") {
-		return "the fight is over · start over to play it again";
-	}
-
-	if (
-		demo.line.startsWith("/move brann") ||
-		demo.line.startsWith("/pr brann")
-	) {
-		return "Enter sends it";
-	}
-
-	return state.turn === HERO
-		? `your turn · ${movesLeft(state)} movement left${state.acted ? "" : " · main action ready"} · /done ends it`
-		: "";
-};

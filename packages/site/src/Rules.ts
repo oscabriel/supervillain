@@ -57,6 +57,7 @@ export const Happened = defineTaggedUnion({
 		targets: Schema.Array(Schema.Struct({ id: Id, apart: Schema.Int })),
 	},
 	Damaged: { id: Id, amount: Schema.Int, source: Schema.String },
+	Bled: { id: Id, roll: Schema.Int, level: Schema.Int },
 	ForceMoved: {
 		id: Id,
 		kind: Schema.Literal("push"),
@@ -125,6 +126,7 @@ export interface TableState {
 	readonly spent: number;
 	readonly allowance: number;
 	readonly acted: boolean;
+	readonly dashed: boolean;
 	readonly breathed: boolean;
 }
 
@@ -162,6 +164,7 @@ export const EMPTY: TableState = {
 	spent: 0,
 	allowance: 0,
 	acted: false,
+	dashed: false,
 	breathed: false,
 };
 
@@ -189,6 +192,7 @@ export const TYPES = {
 	Moved: "ds.moved",
 	PowerRolled: "ds.power-rolled",
 	Damaged: "ds.damaged",
+	Bled: "ds.bled",
 	ForceMoved: "ds.force-moved",
 	Recovered: "ds.recovered",
 	TurnEnded: "ds.turn-ended",
@@ -237,7 +241,7 @@ export const statusOf = (state: TableState, id: string): string => {
 		return "dying";
 	}
 
-	return stamina <= windedAt(fighter) ? "winded" : "";
+	return !fighter.minion && stamina <= windedAt(fighter) ? "winded" : "";
 };
 
 const whoAt = (state: TableState, square: Square): Body | undefined =>
@@ -257,6 +261,38 @@ const changeBody = (
 const lastOf = (path: ReadonlyArray<Square>, at: Square): Square =>
 	path.at(-1) ?? at;
 
+const staminaAfter = (id: string, stamina: number, loss: number): number =>
+	fighterOf(id).side === "heroes"
+		? stamina - loss
+		: Math.max(0, stamina - loss);
+
+const sumOf = (values: ReadonlyArray<number>): number =>
+	values.reduce((total, value) => total + value, 0);
+
+export const isNatural = (dice: ReadonlyArray<number>): boolean =>
+	sumOf(dice) >= 19;
+
+const afterMove = (
+	state: TableState,
+	event: typeof Happened.Moved.Type
+): TableState => {
+	const own = state.turn === event.id;
+	const dash = own && event.main && !state.dashed;
+
+	return {
+		...changeBody(state, event.id, (body) => ({
+			...body,
+			at: lastOf(event.path, body.at),
+		})),
+		spent: own ? state.spent + event.cost : state.spent,
+		allowance: dash
+			? state.allowance + fighterOf(event.id).speed
+			: state.allowance,
+		acted: state.acted || dash,
+		dashed: state.dashed || dash,
+	};
+};
+
 export const apply = (state: TableState, event: Happened): TableState =>
 	Happened.match(event, {
 		MapLoaded: ({ terrain }) => ({ ...state, terrain }),
@@ -275,36 +311,31 @@ export const apply = (state: TableState, event: Happened): TableState =>
 			spent: 0,
 			allowance: fighterOf(id).speed,
 			acted: false,
+			dashed: false,
 			breathed: false,
 		}),
-		Moved: ({ id, path, cost, main }) => ({
-			...changeBody(state, id, (body) => ({
-				...body,
-				at: lastOf(path, body.at),
-			})),
-			spent: state.turn === id ? state.spent + cost : state.spent,
-			allowance:
-				main && state.turn === id
-					? state.allowance + fighterOf(id).speed
-					: state.allowance,
-			acted: state.acted || (main && state.turn === id),
-		}),
-		PowerRolled: ({ id, cost }) => ({
+		Moved: (step) => afterMove(state, step),
+		PowerRolled: ({ id, cost, dice }) => ({
 			...state,
-			acted: state.acted || state.turn === id,
+			acted: state.acted || (state.turn === id && !isNatural(dice)),
 			wrath: id === HERO ? state.wrath - cost : state.wrath,
 		}),
 		Damaged: ({ id, amount }) =>
 			changeBody(state, id, (body) => ({
 				...body,
-				stamina: body.stamina - amount,
+				stamina: staminaAfter(id, body.stamina, amount),
+			})),
+		Bled: ({ id, roll, level }) =>
+			changeBody(state, id, (body) => ({
+				...body,
+				stamina: staminaAfter(id, body.stamina, roll + level),
 			})),
 		ForceMoved: ({ id, path }) =>
 			changeBody(state, id, (body) => ({ ...body, at: lastOf(path, body.at) })),
 		Recovered: ({ id, amount }) => ({
 			...changeBody(state, id, (body) => ({
 				...body,
-				stamina: Math.min(fighterOf(id).stamina, body.stamina + amount),
+				stamina: body.stamina + amount,
 			})),
 			recoveries: state.recoveries - 1,
 			breathed: true,
@@ -326,10 +357,12 @@ export const labelOf = (actor: string): string =>
 const nameOf = (id: string): string =>
 	FIGHTERS.find((fighter) => fighter.id === id)?.name ?? id;
 
-const movedText = (id: string, path: ReadonlyArray<Square>, cost: number) => {
-	const to = path.at(-1);
+const movedText = (event: typeof Happened.Moved.Type): string => {
+	const to = event.path.at(-1);
+	const where = to === undefined ? "where it stood" : nameOfSquare(to);
+	const how = event.main ? ", with the main action" : "";
 
-	return `${nameOf(id)} moves to ${to === undefined ? "where it stood" : nameOfSquare(to)} (${plural(cost, "square")} of movement).`;
+	return `${nameOf(event.id)} moves to ${where} (${plural(event.cost, "square")} of movement${how}).`;
 };
 
 const abilityOf = (fighter: Fighter, name: string): Ability | undefined =>
@@ -351,21 +384,40 @@ const effectText = (ability: Ability, tier: number): string => {
 	return `${sum}${pushed}${rider}`;
 };
 
-const staminaText = (state: TableState, id: string, amount: number): string => {
-	const before = bodyOf(state, id)?.stamina ?? 0;
-	const after = apply(state, Happened.Damaged({ id, amount, source: "" }));
-	const status = statusOf(after, id);
+const meterText = (state: TableState, id: string): string => {
+	const stamina = bodyOf(state, id)?.stamina ?? 0;
+	const status = statusOf(state, id);
+	const health = status === "" ? "" : ` · ${status}`;
 
-	return `${nameOf(id)} takes ${amount} damage → ${before - amount}/${fighterOf(id).stamina}${status === "" ? "" : ` · ${status}`}`;
+	return `${stamina}/${fighterOf(id).stamina}${health}`;
+};
+
+const staminaText = (state: TableState, id: string, amount: number): string => {
+	const hit = apply(state, Happened.Damaged({ id, amount, source: "" }));
+
+	return `${nameOf(id)} takes ${amount} damage → ${meterText(hit, id)}`;
+};
+
+const bledText = (
+	state: TableState,
+	event: typeof Happened.Bled.Type
+): string => {
+	const loss = event.roll + event.level;
+
+	return `${nameOf(event.id)} bleeds and loses ${loss} Stamina (1d6: ${event.roll}, + level ${event.level}) → ${meterText(apply(state, event), event.id)}`;
+};
+
+const intoText = (stopped: string): string => {
+	if (stopped === "" || stopped === "edge") {
+		return "";
+	}
+
+	return stopped === "wall" ? ", into a wall" : `, into ${nameOf(stopped)}`;
 };
 
 const pushText = (event: typeof Happened.ForceMoved.Type): string => {
 	const to = event.path.at(-1);
-
-	const into =
-		event.stopped === "" || event.stopped === "edge"
-			? ""
-			: `, into ${event.stopped === "wall" ? "a wall" : nameOf(event.stopped)}`;
+	const into = intoText(event.stopped);
 
 	if (to === undefined) {
 		return event.stopped === ""
@@ -374,6 +426,54 @@ const pushText = (event: typeof Happened.ForceMoved.Type): string => {
 	}
 
 	return `${nameOf(event.id)} is pushed ${plural(event.path.length, "square")} by ${nameOf(event.source)} to ${nameOfSquare(to)}${into}.`;
+};
+
+const naturalText = (
+	state: TableState,
+	event: typeof Happened.PowerRolled.Type
+): string => {
+	if (!isNatural(event.dice)) {
+		return "";
+	}
+
+	const natural = `, natural ${sumOf(event.dice)}`;
+
+	return state.turn === event.id ? `${natural}, extra main action` : natural;
+};
+
+const rollText = (
+	state: TableState,
+	event: typeof Happened.PowerRolled.Type
+): Array<string> => {
+	const fighter = fighterOf(event.id);
+	const used = abilityOf(fighter, event.ability);
+	const names = event.targets.map((target) => nameOf(target.id));
+	const on = names.length === 0 ? "" : ` on ${names.join(" and ")}`;
+	const spent = event.cost > 0 ? ` (${event.cost} wrath)` : "";
+	const effect = used === undefined ? "" : ` · ${effectText(used, event.tier)}`;
+
+	const natural = naturalText(state, event);
+
+	const far = event.targets.flatMap((target) =>
+		used !== undefined && target.apart > used.reach
+			? [
+					`${nameOf(target.id)} is ${plural(target.apart, "square")} away, past ${used.distance}.`,
+				]
+			: []
+	);
+
+	return [
+		`${fighter.name} uses ${event.ability}${spent}${on}: [${event.dice.join(", ")}] +${event.bonus} = ${event.total}${natural} · tier ${event.tier}${effect}`,
+		...far,
+	];
+};
+
+const modifierText = (modifier: number): string => {
+	if (modifier === 0) {
+		return "";
+	}
+
+	return modifier > 0 ? ` +${modifier}` : ` −${Math.abs(modifier)}`;
 };
 
 const describe = (state: TableState, entry: Entry): Array<string> =>
@@ -390,51 +490,20 @@ const describe = (state: TableState, entry: Entry): Array<string> =>
 				? `${nameOf(id)}'s turn. wrath +${gain} → ${state.wrath + gain}.`
 				: `${nameOf(id)}'s turn.`,
 		],
-		Moved: ({ id, path, cost, main }) => [
-			main
-				? movedText(id, path, cost).replace(
-						/\)\.$/u,
-						", with the main action)."
-					)
-				: movedText(id, path, cost),
-		],
-		PowerRolled: ({ id, ability, dice, bonus, total, tier, cost, targets }) => {
-			const fighter = fighterOf(id);
-			const used = abilityOf(fighter, ability);
-
-			const on =
-				targets.length === 0
-					? ""
-					: ` on ${targets.map((target) => nameOf(target.id)).join(" and ")}`;
-
-			const spent = cost > 0 ? ` (${cost} wrath)` : "";
-			const effect = used === undefined ? "" : ` — ${effectText(used, tier)}`;
-
-			const far = targets.flatMap((target) =>
-				used !== undefined && target.apart > used.reach
-					? [
-							`${nameOf(target.id)} is ${plural(target.apart, "square")} away, past ${used.distance}.`,
-						]
-					: []
-			);
-
-			return [
-				`${fighter.name} uses ${ability}${spent}${on}: [${dice.join(", ")}] +${bonus} = ${total} · tier ${tier}${effect}`,
-				...far,
-			];
-		},
+		Moved: (event) => [movedText(event)],
+		PowerRolled: (event) => rollText(state, event),
 		Damaged: ({ id, amount, source }) => [
 			source === "wall"
 				? `${staminaText(state, id, amount)} from the wall`
 				: staminaText(state, id, amount),
 		],
+		Bled: (event) => [bledText(state, event)],
 		ForceMoved: (event) => [pushText(event)],
 		Recovered: ({ id, amount }) => {
 			const before = bodyOf(state, id)?.stamina ?? 0;
-			const max = fighterOf(id).stamina;
 
 			return [
-				`${nameOf(id)} spends a Recovery and regains ${amount} Stamina → ${Math.min(max, before + amount)}/${max}.`,
+				`${nameOf(id)} spends a Recovery and regains ${amount} Stamina → ${before + amount}/${fighterOf(id).stamina}.`,
 			];
 		},
 		TurnEnded: ({ id }) => [`${nameOf(id)}'s turn ends.`],
@@ -445,7 +514,7 @@ const describe = (state: TableState, entry: Entry): Array<string> =>
 		],
 		ChatPosted: ({ text }) => [text],
 		DiceRolled: ({ notation, rolls, modifier, total }) => [
-			`rolls ${notation}: [${rolls.join(", ")}]${modifier === 0 ? "" : ` ${modifier > 0 ? "+" : "−"}${Math.abs(modifier)}`} = ${total}`,
+			`rolls ${notation}: [${rolls.join(", ")}]${modifierText(modifier)} = ${total}`,
 		],
 		Measured: ({ between, squares }) => [
 			`measures ${between.join(" to ")}: ${plural(squares, "square")}.`,
@@ -463,6 +532,7 @@ const KINDS = {
 	Moved: "move",
 	PowerRolled: "roll",
 	Damaged: "hit",
+	Bled: "hit",
 	ForceMoved: "move",
 	Recovered: "heal",
 	TurnEnded: "turn",
@@ -509,27 +579,30 @@ export const fold = (log: ReadonlyArray<Entry>): Folded => {
 };
 
 const STEPS: ReadonlyArray<Square> = [
-	{ x: -1, y: -1 },
 	{ x: 0, y: -1 },
-	{ x: 1, y: -1 },
-	{ x: -1, y: 0 },
 	{ x: 1, y: 0 },
-	{ x: -1, y: 1 },
 	{ x: 0, y: 1 },
+	{ x: -1, y: 0 },
+	{ x: 1, y: -1 },
 	{ x: 1, y: 1 },
+	{ x: -1, y: 1 },
+	{ x: -1, y: -1 },
 ];
 
 const isInside = (square: Square): boolean =>
 	square.x >= 0 && square.y >= 0 && square.x < COLUMNS && square.y < ROWS;
 
+const isStone = (state: TableState, square: Square): boolean =>
+	terrainAt(state.terrain, square) === "#";
+
 const isWall = (state: TableState, square: Square): boolean =>
-	!isInside(square) || terrainAt(state.terrain, square) === "#";
+	!isInside(square) || isStone(state, square);
 
 const cutsCorner = (state: TableState, from: Square, step: Square): boolean =>
 	step.x !== 0 &&
 	step.y !== 0 &&
-	(isWall(state, { x: from.x + step.x, y: from.y }) ||
-		isWall(state, { x: from.x, y: from.y + step.y }));
+	(isStone(state, { x: from.x + step.x, y: from.y }) ||
+		isStone(state, { x: from.x, y: from.y + step.y }));
 
 const indexOf = (square: Square): number => square.y * COLUMNS + square.x;
 
@@ -545,15 +618,21 @@ export interface Reach {
 
 const cheapestOpen = (
 	cost: ReadonlyArray<number>,
+	found: ReadonlyArray<number>,
 	done: ReadonlyArray<boolean>
 ): number => {
 	let best = -1;
 	let lowest = Infinity;
+	let earliest = Infinity;
 
 	for (const [index, price] of cost.entries()) {
-		if (!(done[index] ?? true) && price < lowest) {
+		const order = found[index] ?? Infinity;
+		const sooner = price < lowest || (price === lowest && order < earliest);
+
+		if (!(done[index] ?? true) && price < Infinity && sooner) {
 			best = index;
 			lowest = price;
+			earliest = order;
 		}
 	}
 
@@ -579,7 +658,7 @@ const priceOf = (
 
 	const rough = terrainAt(state.terrain, to) === "~";
 
-	return 1 + (rough ? 1 : 0) + (hostile ? 1 : 0);
+	return rough || hostile ? 2 : 1;
 };
 
 export const reachFrom = (state: TableState, id: string): Reach => {
@@ -588,11 +667,14 @@ export const reachFrom = (state: TableState, id: string): Reach => {
 	const size = COLUMNS * ROWS;
 	const cost = Array.from({ length: size }, () => Infinity);
 	const back = Array.from({ length: size }, () => -1);
+	const found = Array.from({ length: size }, () => Infinity);
 	const done = Array.from({ length: size }, () => false);
+	let order = 0;
 
 	cost[indexOf(start)] = 0;
+	found[indexOf(start)] = order;
 
-	let best = cheapestOpen(cost, done);
+	let best = cheapestOpen(cost, found, done);
 
 	while (best !== -1) {
 		done[best] = true;
@@ -605,12 +687,14 @@ export const reachFrom = (state: TableState, id: string): Reach => {
 			const through = here + priceOf(state, mover, from, step);
 
 			if (through < (cost[to] ?? Infinity)) {
+				order += 1;
 				cost[to] = through;
 				back[to] = best;
+				found[to] = order;
 			}
 		}
 
-		best = cheapestOpen(cost, done);
+		best = cheapestOpen(cost, found, done);
 	}
 
 	return { cost, back };
@@ -681,9 +765,6 @@ export const rollDice = (
 	return { rolls, seed: next };
 };
 
-const sumOf = (values: ReadonlyArray<number>): number =>
-	values.reduce((total, value) => total + value, 0);
-
 const refuse = (reason: string): Result.Result<Decision, string> =>
 	Result.fail(reason);
 
@@ -692,72 +773,122 @@ const accept = (
 	seed: number
 ): Result.Result<Decision, string> => Result.succeed({ events, seed });
 
-const wordsOf = (name: string): Array<string> =>
-	name.toLowerCase().split(/[\s-]+/u);
+const beginsWord = (key: string, query: string): boolean =>
+	Array.from(key, (_char, index) => index).some(
+		(index) =>
+			(index === 0 || key[index - 1] === " " || key[index - 1] === "-") &&
+			key.startsWith(query, index)
+	);
 
-const matches = (query: string, id: string, name: string): boolean =>
-	id.startsWith(query) ||
-	name.toLowerCase().startsWith(query) ||
-	wordsOf(name).some((word) => word.startsWith(query));
+const STAGES: ReadonlyArray<(key: string, query: string) => boolean> = [
+	(key, query) => key.startsWith(query),
+	beginsWord,
+];
+
+const begunBy = <T>(
+	items: ReadonlyArray<T>,
+	keysOf: (item: T) => ReadonlyArray<string>,
+	query: string
+): ReadonlyArray<T> => {
+	if (query === "") {
+		return [];
+	}
+
+	for (const stage of STAGES) {
+		const begun = items.filter((item) =>
+			keysOf(item).some((key) => stage(key.toLowerCase(), query))
+		);
+
+		if (begun.length > 0) {
+			return begun;
+		}
+	}
+
+	return [];
+};
+
+const orList = (names: ReadonlyArray<string>): string =>
+	names.length <= 1
+		? (names[0] ?? "")
+		: `${names.slice(0, -1).join(", ")} or ${names.at(-1) ?? ""}`;
 
 export const whoOf = (text: string): Result.Result<Fighter, string> => {
-	const marked = FIGHTERS.find((fighter) => fighter.mark === text);
-	const query = text.toLowerCase();
+	const query = text.trim().toLowerCase();
 
 	const exact = FIGHTERS.find(
 		(fighter) => fighter.id === query || fighter.name.toLowerCase() === query
 	);
 
-	const found = FIGHTERS.filter((fighter) =>
-		matches(query, fighter.id, fighter.name)
+	const marked = FIGHTERS.find((fighter) => fighter.mark === text.trim());
+
+	const begun = begunBy(
+		FIGHTERS,
+		(fighter) => [fighter.id, fighter.name],
+		query
 	);
 
-	const [only] = found;
+	const [only] = begun;
+	const found = exact ?? marked ?? (begun.length === 1 ? only : undefined);
 
-	if (marked !== undefined) {
-		return Result.succeed(marked);
-	}
-
-	if (exact !== undefined) {
-		return Result.succeed(exact);
-	}
-
-	if (found.length === 1 && only !== undefined) {
-		return Result.succeed(only);
+	if (found !== undefined) {
+		return Result.succeed(found);
 	}
 
 	return Result.fail(
-		found.length === 0
+		begun.length === 0
 			? `There's nobody called ${text} at this table.`
-			: `${text} could be ${found.map((fighter) => fighter.name).join(" or ")}.`
+			: `${text} could be ${orList(begun.map((fighter) => fighter.name))}.`
 	);
 };
+
+const CHARACTERISTICS: ReadonlyArray<string> = [
+	"Might",
+	"Agility",
+	"Reason",
+	"Intuition",
+	"Presence",
+];
 
 const abilityNamed = (
 	fighter: Fighter,
 	text: string
 ): Result.Result<Ability, string> => {
-	const query = text.toLowerCase();
+	const query = text.trim().toLowerCase();
 
-	const found = fighter.abilities.filter(
-		(ability) =>
-			ability.name.toLowerCase() === query ||
-			matches(query, ability.name.toLowerCase(), ability.name)
-	);
+	const names = [
+		...fighter.abilities.map((ability) => ability.name),
+		...CHARACTERISTICS,
+	];
 
-	const [only] = found;
+	const exact = names.find((name) => name.toLowerCase() === query);
 
-	return found.length === 1 && only !== undefined
-		? Result.succeed(only)
-		: Result.fail(
-				`${fighter.name} has no ability called ${text}; try ${fighter.abilities.map((ability) => ability.name).join(" or ")}.`
-			);
+	const begun =
+		exact === undefined ? begunBy(names, (name) => [name], query) : [exact];
+
+	const [only] = begun;
+
+	if (begun.length > 1) {
+		return Result.fail(`${text} could be ${orList(begun)}.`);
+	}
+
+	const found = fighter.abilities.find((ability) => ability.name === only);
+
+	return found === undefined
+		? Result.fail(
+				`${fighter.name} has no ability called ${text}; try ${orList(fighter.abilities.map((ability) => ability.name))}.`
+			)
+		: Result.succeed(found);
 };
+
+interface Place {
+	readonly at: Square;
+	readonly label: string;
+}
 
 const placeOf = (
 	state: TableState,
 	text: string
-): Result.Result<{ readonly at: Square; readonly label: string }, string> => {
+): Result.Result<Place, string> => {
 	const square = squareOfName(text);
 
 	if (square !== undefined && !FIGHTERS.some((f) => f.mark === text)) {
@@ -795,21 +926,83 @@ const mover = (
 		: Result.fail(blocked);
 };
 
+const after = (
+	state: TableState,
+	events: ReadonlyArray<Happened>
+): TableState => {
+	let now = state;
+
+	for (const event of events) {
+		now = apply(now, event);
+	}
+
+	return now;
+};
+
+const foesBeaten = (state: TableState): boolean =>
+	FIGHTERS.every(
+		(fighter) => fighter.side === "heroes" || isDead(state, fighter.id)
+	);
+
+const bleedOf = (state: TableState, fighter: Fighter, seed: number): Struck => {
+	if (statusOf(state, fighter.id) !== "dying") {
+		return { events: [], seed };
+	}
+
+	const { rolls, seed: next } = rollDice(seed, 1, 6);
+	const [roll = 1] = rolls;
+
+	return {
+		events: [Happened.Bled({ id: fighter.id, roll, level: fighter.level })],
+		seed: next,
+	};
+};
+
+const closed = (
+	state: TableState,
+	events: ReadonlyArray<Happened>
+): ReadonlyArray<Authored> => {
+	const ended = after(state, events);
+	const own = events.map((event) => ({ actor: YOU, event }));
+
+	if (foesBeaten(ended)) {
+		return [
+			...own,
+			{ actor: GM, event: Happened.CombatEnded({ winner: "heroes" }) },
+		];
+	}
+
+	return isDead(ended, HERO)
+		? [
+				...own,
+				{ actor: GM, event: Happened.CombatEnded({ winner: "director" }) },
+			]
+		: own;
+};
+
 const move = (
 	state: TableState,
 	args: ReadonlyArray<string>,
 	seed: number
 ): Result.Result<Decision, string> => {
-	const [who = "", where = "", flag = ""] = args;
+	const [who = "", where = "", flag = "", extra = ""] = args;
+	const word = flag.toLowerCase();
 
-	if (who === "" || where === "") {
+	if (who === "" || where === "" || extra !== "") {
 		return refuse("/move takes who and a square: /move brann g4.");
+	}
+
+	if (word !== "" && word !== "main") {
+		return refuse(
+			`/move takes main after the square, not ${flag}: /move brann g4 main.`
+		);
 	}
 
 	return Result.flatMap(mover(state, who), (fighter) => {
 		const to = squareOfName(where);
 		const from = bodyOf(state, fighter.id)?.at ?? fighter.start;
-		const main = flag === "main";
+		const main = state.dashed || word === "main";
+		const dash = main && !state.dashed;
 
 		if (to === undefined) {
 			return refuse(`${where} isn't a square on this map (a1 to n7).`);
@@ -829,13 +1022,13 @@ const move = (
 			);
 		}
 
-		if (main && state.acted) {
+		if (dash && state.acted) {
 			return refuse(`${fighter.name} has used its main action this turn.`);
 		}
 
 		const reach = reachFrom(state, fighter.id);
 		const cost = reach.cost[indexOf(to)] ?? Infinity;
-		const left = movesLeft(state) + (main ? fighter.speed : 0);
+		const left = movesLeft(state) + (dash ? fighter.speed : 0);
 
 		if (cost === Infinity) {
 			return refuse(`${fighter.name} can't reach ${nameOfSquare(to)}.`);
@@ -849,21 +1042,19 @@ const move = (
 			);
 		}
 
-		return accept(
-			[
-				{
-					actor: YOU,
-					event: Happened.Moved({
-						id: fighter.id,
-						path: pathTo(reach, to),
-						cost,
-						speed: fighter.speed,
-						main,
-					}),
-				},
-			],
-			seed
-		);
+		const stepped = Happened.Moved({
+			id: fighter.id,
+			path: pathTo(reach, to),
+			cost,
+			speed: fighter.speed,
+			main,
+		});
+
+		const bled: Struck = dash
+			? bleedOf(state, fighter, seed)
+			: { events: [], seed };
+
+		return accept(closed(state, [stepped, ...bled.events]), bled.seed);
 	});
 };
 
@@ -896,10 +1087,10 @@ const pushed = (
 		const next = { x: at.x + step.x, y: at.y + step.y };
 		const there = whoAt(state, next);
 
-		if (!isInside(next)) {
-			stopped = "edge";
-		} else if (isWall(state, next) || cutsCorner(state, at, step)) {
+		if (isStone(state, next) || cutsCorner(state, at, step)) {
 			stopped = "wall";
+		} else if (!isInside(next)) {
+			stopped = "edge";
 		} else if (there === undefined || there.id === target) {
 			path.push(next);
 			at = next;
@@ -937,19 +1128,6 @@ const pushed = (
 	return [moved];
 };
 
-const after = (
-	state: TableState,
-	events: ReadonlyArray<Happened>
-): TableState => {
-	let now = state;
-
-	for (const event of events) {
-		now = apply(now, event);
-	}
-
-	return now;
-};
-
 const strike = (
 	state: TableState,
 	fighter: Fighter,
@@ -984,21 +1162,20 @@ const strike = (
 		})
 	);
 
-	const struck = after(state, [rolled, ...hits]);
+	const bled = bleedOf(state, fighter, next);
+	const struck = after(state, [rolled, ...hits, ...bled.events]);
 
 	const pushes = targets.flatMap((target) =>
-		isDead(struck, target.id)
+		isDead(struck, target.id) || isDead(struck, fighter.id)
 			? []
 			: pushed(struck, fighter.id, target.id, pushOf(ability, tier))
 	);
 
-	return { events: [rolled, ...hits, ...pushes], seed: next };
+	return {
+		events: [rolled, ...hits, ...bled.events, ...pushes],
+		seed: bled.seed,
+	};
 };
-
-const foesBeaten = (state: TableState): boolean =>
-	FIGHTERS.every(
-		(fighter) => fighter.side === "heroes" || isDead(state, fighter.id)
-	);
 
 const powerRoll = (
 	state: TableState,
@@ -1006,11 +1183,11 @@ const powerRoll = (
 	seed: number
 ): Result.Result<Decision, string> => {
 	const [who = "", ...rest] = args;
-	const on = rest.indexOf("on");
+	const on = rest.findLastIndex((word) => word.toLowerCase() === "on");
 	const named = (on === -1 ? rest : rest.slice(0, on)).join(" ");
 	const aimed = on === -1 ? [] : rest.slice(on + 1);
 
-	if (who === "" || named === "") {
+	if (who === "" || named === "" || (on !== -1 && aimed.length === 0)) {
 		return refuse("/pr takes who and an ability: /pr brann driving on b.");
 	}
 
@@ -1056,21 +1233,8 @@ const powerRoll = (
 			}
 
 			const struck = strike(state, fighter, ability, targets, seed);
-			const ended = after(state, struck.events);
-			const events = struck.events.map((event) => ({ actor: YOU, event }));
 
-			return accept(
-				foesBeaten(ended)
-					? [
-							...events,
-							{
-								actor: GM,
-								event: Happened.CombatEnded({ winner: "heroes" }),
-							},
-						]
-					: events,
-				struck.seed
-			);
+			return accept(closed(state, struck.events), struck.seed);
 		})
 	);
 };
@@ -1080,9 +1244,9 @@ const recover = (
 	args: ReadonlyArray<string>,
 	seed: number
 ): Result.Result<Decision, string> => {
-	const [who = ""] = args;
+	const [who = "", extra = ""] = args;
 
-	if (who === "") {
+	if (who === "" || extra !== "") {
 		return refuse("/recover takes a hero: /recover brann.");
 	}
 
@@ -1111,7 +1275,10 @@ const recover = (
 			[
 				{
 					actor: YOU,
-					event: Happened.Recovered({ id: fighter.id, amount: RECOVERY_VALUE }),
+					event: Happened.Recovered({
+						id: fighter.id,
+						amount: Math.min(RECOVERY_VALUE, fighter.stamina - stamina),
+					}),
 				},
 			],
 			seed
@@ -1235,12 +1402,19 @@ const done = (
 const NOTATION =
 	/^(?<count>\d{0,2})d(?<sides>\d{1,3})(?<modifier>[+-]\d{1,3})?$/u;
 
+const signedText = (value: number): string => {
+	if (value === 0) {
+		return "";
+	}
+
+	return value > 0 ? `+${value}` : `${value}`;
+};
+
 const roll = (
 	args: ReadonlyArray<string>,
 	seed: number
 ): Result.Result<Decision, string> => {
-	const notation = args.join("").toLowerCase();
-	const found = NOTATION.exec(notation);
+	const found = NOTATION.exec(args.join("").toLowerCase());
 
 	const count = Number(
 		found?.groups?.count === "" ? "1" : (found?.groups?.count ?? "1")
@@ -1262,7 +1436,7 @@ const roll = (
 			{
 				actor: YOU,
 				event: Happened.DiceRolled({
-					notation,
+					notation: `${count}d${sides}${signedText(modifier)}`,
 					rolls,
 					modifier,
 					total: sumOf(rolls) + modifier,
@@ -1278,9 +1452,9 @@ const measure = (
 	args: ReadonlyArray<string>,
 	seed: number
 ): Result.Result<Decision, string> => {
-	const [one = "", other = ""] = args;
+	const [one = "", other = "", extra = ""] = args;
 
-	if (one === "" || other === "") {
+	if (one === "" || other === "" || extra !== "") {
 		return refuse("/dist takes two tokens or squares: /dist B b.");
 	}
 
@@ -1400,7 +1574,9 @@ export const decide = (
 		}
 
 		case "/undo": {
-			return undo(log, feed, seed);
+			return args.length === 0
+				? undo(log, feed, seed)
+				: refuse("/undo takes nothing here: it takes back your latest move.");
 		}
 
 		case "/fs": {

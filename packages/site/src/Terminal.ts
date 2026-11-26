@@ -426,6 +426,16 @@ const replyView = (h: HtmlBuilder<Message>, reply: Reply): Html =>
 		]
 	);
 
+const leadOf = (state: TableState): string => {
+	if (state.winner !== "") {
+		return "combat over";
+	}
+
+	const main = state.acted ? "main spent" : "main ready";
+
+	return `${movesLeft(state)} move · ${main}`;
+};
+
 const leadView = (
 	h: HtmlBuilder<Message>,
 	demo: Demo,
@@ -438,12 +448,10 @@ const leadView = (
 		);
 	}
 
-	const lead =
-		state.winner === ""
-			? `${movesLeft(state)} move · ${state.acted ? "main spent" : "main ready"}`
-			: "combat over";
-
-	return h.span([h.Class("tui-lead-badge"), h.AriaLive("polite")], [lead]);
+	return h.span(
+		[h.Class("tui-lead-badge"), h.AriaLive("polite")],
+		[leadOf(state)]
+	);
 };
 
 const quickLinesOf = (demo: Demo, state: TableState): ReadonlyArray<string> => {

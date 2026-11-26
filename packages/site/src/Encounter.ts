@@ -26,6 +26,8 @@ export interface Fighter {
 	readonly mark: string;
 	readonly side: Side;
 	readonly kind: string;
+	readonly level: number;
+	readonly minion: boolean;
 	readonly stamina: number;
 	readonly speed: number;
 	readonly stability: number;
@@ -55,6 +57,8 @@ export const BRANN: Fighter = {
 	mark: "B",
 	side: "heroes",
 	kind: "Censor, level 1 · might 2 · presence 2",
+	level: 1,
+	minion: false,
 	stamina: 24,
 	speed: 5,
 	stability: 1,
@@ -93,6 +97,8 @@ export const BRUISER: Fighter = {
 	mark: "b",
 	side: "director",
 	kind: "Brute, level 1 platoon",
+	level: 1,
+	minion: false,
 	stamina: 20,
 	speed: 5,
 	stability: 1,
@@ -119,6 +125,8 @@ export const SLINGER: Fighter = {
 	mark: "s",
 	side: "director",
 	kind: "Artillery, level 1 minion",
+	level: 1,
+	minion: true,
 	stamina: 3,
 	speed: 5,
 	stability: 0,
