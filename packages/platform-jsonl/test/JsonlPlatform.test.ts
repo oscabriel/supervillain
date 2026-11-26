@@ -28,7 +28,7 @@ import {
 import { diskTakes, sameDisk } from "./disk.ts";
 import { effect, readLog, tempDir, writeLog } from "./effect.ts";
 import { line, text } from "./lines.ts";
-import { Add, Double, Poison, Table, Tally } from "./toy.ts";
+import { Add, Double, Poison, Table, Tally, Triple } from "./toy.ts";
 
 const using = <ROut, E1, RIn, A, E2, R2>(
 	layer: Layer.Layer<ROut, E1, RIn>,
@@ -405,6 +405,49 @@ describe("JsonlPlatform", () => {
 				"Tally/table",
 			]);
 		})
+	);
+
+	effect(
+		"tails from any seq with the same events and command ids as the whole log",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				yield* withTable(dir, () =>
+					Effect.gen(function* () {
+						const tally = yield* Tally;
+
+						for (let turn = 0; turn < 20; turn += 1) {
+							yield* tally.send("table", add(turn));
+							yield* tally.send("table", new Triple({ actor: "gm", n: 1 }));
+						}
+					})
+				);
+
+				const total = 80;
+
+				const tails = yield* withTable(dir, (store) =>
+					Effect.forEach(
+						Array.from({ length: total }, (_, after) => after),
+						(after) =>
+							store
+								.tail("table", after)
+								.pipe(Stream.take(total - after), Stream.runCollect),
+						{ concurrency: 1 }
+					)
+				);
+
+				const [whole] = tails;
+				expect(whole?.map((stored) => stored.envelope.seq)).toEqual(
+					Array.from({ length: total }, (_, index) => index + 1)
+				);
+				expect(
+					whole?.slice(0, 5).map((stored) => stored.envelope.commandId)
+				).toEqual(["log:1", "log:2", "log:2", "log:2", "log:5"]);
+
+				for (const [after, tail] of tails.entries()) {
+					expect(tail).toEqual(whole?.slice(after) ?? []);
+				}
+			})
 	);
 
 	effect("refuses a command for another instance than its table", () =>

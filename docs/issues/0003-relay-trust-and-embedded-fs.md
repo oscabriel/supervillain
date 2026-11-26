@@ -1,4 +1,4 @@
-# Issue 0003: Relay Trust Model, `events.lock` Races, and Embedded FS
+# Issue 0003: Relay Trust Model, `events.lock` Takeover, and Embedded FS
 
 ## Status
 
@@ -15,11 +15,13 @@ A GM must run their own relay or use one they trust. True end-to-end encryption 
 
 The same trust covers agents (ADR 0020): a relayed `mcp-1@supervillain.sh` session acts as the key the relay names in `SV_ACTOR`, and a key in the host's `gm_keys` that the relay names is the GM. The host keeps the subsystem allowlist narrow so a relay's word is only ever taken where it has to be: `relaySubsystems` (`knows-1`) open only on a connection from a pinned relay key, `subsystems` (`mcp-1`) open on a direct connection as its own key or on a relayed one only with `SV_ACTOR` set, and every other name is refused. The relay's player-facing server registers `mcp-1` and nothing else, so a player can never ask the relay, or through it a host, for `knows-1`.
 
-## 2. Three-way stale `events.lock` takeover race
+## 2. A leftover `events.lock.takeover` needs a manual delete
 
-`packages/platform-jsonl` acquires `events.lock` via `link(2)` with the process PID, and renames stale locks aside when the recorded PID is dead. Under extreme contention (three hosts starting simultaneously against a stale lock), two hosts can briefly pass lock acquisition (~2 in 40 trials).
+`packages/platform-jsonl` acquires `events.lock` via `link(2)` with the process PID. A stale lock (dead PID) is removed only by a host holding an exclusive `events.lock.takeover` link, after it re-reads the lock's owner, so a live lock is never removed and two hosts never both pass acquisition.
 
-Data corruption is still prevented: before every append, `CampaignLog` verifies that the file size on disk matches its expected byte offset and halts the writer if another process appended first.
+A host killed in the few system calls while it holds `events.lock.takeover` leaves that file behind. The next host to meet a stale lock refuses to start and names the file to delete; nothing is written until someone does. A host that loses the race for the takeover link is told another host is taking over, not which PID.
+
+Before every append, `CampaignLog` still verifies that the file size on disk matches its expected byte offset and halts the writer if another process appended first.
 
 ## 3. `bun build --compile` embedded sample campaign
 

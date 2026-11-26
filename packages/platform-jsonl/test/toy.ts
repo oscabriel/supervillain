@@ -29,6 +29,13 @@ export class Double extends Domain.Command("Double", {
 	rejects: [Refused],
 }) {}
 
+export class Triple extends Domain.Command("Triple", {
+	target: Schema.String,
+	input: { actor: Schema.String, n: Schema.Int },
+	events: [Added],
+	rejects: [Refused],
+}) {}
+
 export class Poison extends Domain.Command("Poison", {
 	target: Schema.String,
 	input: { actor: Schema.String },
@@ -40,13 +47,18 @@ export class Tally extends Domain.Aggregate("Tally", {
 	id: Schema.String,
 	state: Schema.Struct({ total: Schema.Int }),
 	initial: { total: 0 },
-	commands: [Add, Double, Poison],
+	commands: [Add, Double, Triple, Poison],
 	decide: {
 		Add: (_state, command) =>
 			command.n < 0
 				? new Refused({ message: "not today" })
 				: [new Added({ actor: command.actor, n: command.n })],
 		Double: (_state, command) => [
+			new Added({ actor: command.actor, n: command.n }),
+			new Added({ actor: command.actor, n: command.n }),
+		],
+		Triple: (_state, command) => [
+			new Added({ actor: command.actor, n: command.n }),
 			new Added({ actor: command.actor, n: command.n }),
 			new Added({ actor: command.actor, n: command.n }),
 		],

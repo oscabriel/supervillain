@@ -30,7 +30,7 @@ import {
 
 import { CampaignLog, LogError } from "./CampaignLog.ts";
 import { batchesOf, decodeBatch, encodeLines, eventOf } from "./codec.ts";
-import type { Source } from "./codec.ts";
+import type { Batch, Source } from "./codec.ts";
 
 export class Unsupported extends Schema.TaggedError<Unsupported>()(
 	"Unsupported",
@@ -152,6 +152,23 @@ const prepare = Effect.fn("JsonlPlatform.prepare")(function* () {
 		{ concurrency: 1 }
 	);
 });
+
+const lastSeq = (batch: Batch) => batch.lines.at(-1)?.seq ?? 0;
+
+const batchesAfter = (
+	log: CampaignLog["Service"],
+	after: number,
+	back: number
+): Effect.Effect<ReadonlyArray<Batch>, LogError> =>
+	Effect.gen(function* () {
+		const floor = Math.max(0, after - back);
+		const batches = yield* batchesOf(yield* log.lines(floor));
+		const [first] = batches;
+
+		return floor > 0 && first !== undefined && lastSeq(first) > after
+			? yield* batchesAfter(log, after, back * 8)
+			: batches;
+	});
 
 const seedInput = (
 	tableId: string,
@@ -396,11 +413,12 @@ export class JsonlPlatform extends Context.Service<
 
 				const history = (after: number) =>
 					Effect.gen(function* () {
-						const written = yield* log.lines(0);
-						const batches = yield* batchesOf(written);
+						const batches = yield* batchesAfter(log, after, 1);
+
+						const wanted = batches.filter((batch) => lastSeq(batch) > after);
 
 						const decoded = yield* Effect.forEach(
-							batches,
+							wanted,
 							(batch) => decodeBatch(batch, source),
 							{ concurrency: 1 }
 						);
@@ -486,11 +504,10 @@ export class JsonlPlatform extends Context.Service<
 					),
 			};
 
-			const model = Effect.fn("JsonlPlatform.model")(function* () {
-				return host;
-			});
-
-			return { model };
+			return {
+				model: () =>
+					Effect.succeed(host).pipe(Effect.withSpan("JsonlPlatform.model")),
+			};
 		});
 
 	static readonly layer = (options: JsonlPlatformOptions) =>

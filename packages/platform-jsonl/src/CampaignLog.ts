@@ -1,9 +1,12 @@
+import { isUtf8 } from "node:buffer";
+
 import {
 	Clock,
 	Context,
 	Effect,
 	FileSystem,
 	Layer,
+	Option,
 	Path,
 	Predicate,
 	Schema,
@@ -14,6 +17,7 @@ import type { PlatformError, Scope } from "effect";
 import { LineJson } from "./envelope.ts";
 import type { Line } from "./envelope.ts";
 import { parseLog } from "./parseLog.ts";
+import type { ParsedLog } from "./parseLog.ts";
 
 export class LogError extends Schema.TaggedError<LogError>()("LogError", {
 	message: Schema.String,
@@ -38,12 +42,63 @@ const io =
 			(cause) => new LogError({ message: `${what}: ${cause.message}`, cause })
 		);
 
-const byteLength = (text: string) => Buffer.byteLength(text, "utf-8");
+const NEWLINE = 0x0a;
 
 const utf8Exact = new TextDecoder("utf-8", { ignoreBOM: true });
 
-const readExactText = (fs: FileSystem.FileSystem, path: string) =>
-	fs.readFile(path).pipe(Effect.map((bytes) => utf8Exact.decode(bytes)));
+interface ReadLog {
+	readonly parsed: ParsedLog;
+	readonly size: number;
+	readonly problem: LogError | undefined;
+}
+
+const garbledLine = (whole: Uint8Array): number | undefined => {
+	if (isUtf8(whole)) {
+		return undefined;
+	}
+
+	let line = 1;
+	let start = 0;
+
+	while (start < whole.length) {
+		const end = whole.indexOf(NEWLINE, start);
+
+		if (end === -1 || !isUtf8(whole.subarray(start, end))) {
+			return line;
+		}
+
+		start = end + 1;
+		line += 1;
+	}
+
+	return line;
+};
+
+const problemIn = (
+	path: string,
+	parsed: ParsedLog,
+	garbled: number | undefined
+) => {
+	const before = parsed.error?.line ?? Number.POSITIVE_INFINITY;
+
+	if (garbled !== undefined && garbled <= before) {
+		return new LogError({ message: `${path}:${garbled}: not valid UTF-8` });
+	}
+
+	return parsed.error === undefined
+		? undefined
+		: new LogError({
+				message: `${path}:${parsed.error.line}: ${parsed.error.message}`,
+			});
+};
+
+const readBytes = (path: string, bytes: Uint8Array): ReadLog => {
+	const size = bytes.lastIndexOf(NEWLINE) + 1;
+	const parsed = parseLog(utf8Exact.decode(bytes));
+	const garbled = garbledLine(bytes.subarray(0, size));
+
+	return { parsed, size, problem: problemIn(path, parsed, garbled) };
+};
 
 const escapeForLog = (text: string) => {
 	let out = "";
@@ -77,11 +132,16 @@ const lockOwner = (path: string) =>
 		const fs = yield* FileSystem.FileSystem;
 
 		return yield* fs.readFileString(path).pipe(
-			Effect.map((text) => Number(text.trim())),
+			Effect.map((text) => Option.some(Number(text.trim()))),
 			Effect.catchReason("PlatformError", "NotFound", () =>
-				Effect.succeed(Number.NaN)
+				Effect.succeed(Option.none<number>())
 			)
 		);
+	});
+
+const heldBy = (owner: number, path: string) =>
+	new LogError({
+		message: `lock campaign: another host (pid ${owner}) has this campaign open; if no host has it open, delete ${path} and start again`,
 	});
 
 const takeLock = (path: string) =>
@@ -89,55 +149,55 @@ const takeLock = (path: string) =>
 		const fs = yield* FileSystem.FileSystem;
 		const now = yield* Clock.currentTimeMillis;
 		const temporary = `${path}.${process.pid}.${now}.tmp`;
-		const aside = `${temporary}.stale`;
+		const takeover = `${path}.takeover`;
 
-		const linked = fs.link(temporary, path).pipe(
-			Effect.as(true),
-			Effect.catchReason("PlatformError", "AlreadyExists", () =>
-				Effect.succeed(false)
-			)
-		);
-
-		const moveAside = Effect.gen(function* () {
-			const moved = yield* fs.rename(path, aside).pipe(
+		const linked = (target: string) =>
+			fs.link(temporary, target).pipe(
 				Effect.as(true),
-				Effect.catchReason("PlatformError", "NotFound", () =>
+				Effect.catchReason("PlatformError", "AlreadyExists", () =>
 					Effect.succeed(false)
 				)
 			);
 
-			if (moved && live(yield* lockOwner(aside))) {
+		const refuseLive = (owner: Option.Option<number>) =>
+			Option.isSome(owner) && live(owner.value)
+				? Effect.fail(heldBy(owner.value, path))
+				: Effect.void;
+
+		const clearStale = Effect.gen(function* () {
+			const owner = yield* lockOwner(path);
+			yield* refuseLive(owner);
+
+			if (Option.isSome(owner)) {
 				yield* fs
-					.link(aside, path)
+					.remove(path)
 					.pipe(
-						Effect.catchReason(
-							"PlatformError",
-							"AlreadyExists",
-							() => Effect.void
-						)
+						Effect.catchReason("PlatformError", "NotFound", () => Effect.void)
 					);
 			}
-
-			if (moved) {
-				yield* fs.remove(aside);
-			}
 		});
 
-		const takeOver = Effect.gen(function* () {
-			const owner = yield* lockOwner(path);
-
-			if (live(owner)) {
-				return yield* new LogError({
-					message: `lock campaign: another host (pid ${owner}) has this campaign open; if no host has it open, delete ${path} and start again`,
-				});
-			}
-
-			return yield* moveAside;
-		});
+		const takeOver = Effect.acquireUseRelease(
+			linked(takeover),
+			(mine) =>
+				mine
+					? clearStale
+					: Effect.fail(
+							new LogError({
+								message: `lock campaign: another host is taking over this campaign's stale lock; if no host is, delete ${takeover} and start again`,
+							})
+						),
+			(mine) => (mine ? fs.remove(takeover).pipe(Effect.ignore) : Effect.void)
+		);
 
 		const acquire = Effect.gen(function* () {
-			while (!(yield* linked)) {
-				yield* takeOver;
+			while (!(yield* linked(path))) {
+				const owner = yield* lockOwner(path);
+				yield* refuseLive(owner);
+
+				if (Option.isSome(owner)) {
+					yield* takeOver;
+				}
 			}
 		});
 
@@ -158,7 +218,7 @@ const releaseLock = (path: string) =>
 		const fs = yield* FileSystem.FileSystem;
 		const owner = yield* lockOwner(path);
 
-		if (owner === process.pid) {
+		if (Option.contains(owner, process.pid)) {
 			yield* fs.remove(path);
 		}
 	}).pipe(Effect.ignore);
@@ -196,52 +256,46 @@ const diskLog = (dir: string) =>
 		);
 		const file = yield* fs.open(path, { flag: "a+" }).pipe(io("open log"));
 
-		const parsed = parseLog(
-			yield* readExactText(fs, path).pipe(io("read log"))
+		const read = fs.readFile(path).pipe(
+			io("read log"),
+			Effect.map((bytes) => readBytes(path, bytes))
 		);
 
-		if (parsed.torn !== undefined) {
-			yield* file
-				.truncate(byteLength(parsed.intact))
-				.pipe(io("cut half-written line"));
+		const opened = yield* read;
+
+		if (opened.parsed.torn !== undefined) {
+			yield* file.truncate(opened.size).pipe(io("cut half-written line"));
 			yield* Effect.logWarning(
-				`Cut a half-written last line from ${path}: ${escapeForLog(parsed.torn.slice(0, 80))}`
+				`Cut a half-written last line from ${path}: ${escapeForLog(opened.parsed.torn.slice(0, 80))}`
 			);
 		}
 
-		if (parsed.error !== undefined) {
-			return yield* new LogError({
-				message: `${path}:${parsed.error.line}: ${parsed.error.message}`,
-			});
+		if (opened.problem !== undefined) {
+			return yield* opened.problem;
 		}
 
 		const state = yield* SynchronizedRef.make<WriterState>({
-			seq: parsed.lines.length,
-			size: byteLength(parsed.intact),
-			tail: parsed.lines.slice(-TAIL_LIMIT),
+			seq: opened.parsed.lines.length,
+			size: opened.size,
+			tail: opened.parsed.lines.slice(-TAIL_LIMIT),
 		});
 
-		const readWritten = (written: WriterState) =>
-			Effect.gen(function* () {
-				const reread = parseLog(
-					yield* readExactText(fs, path).pipe(io("read log"))
-				);
-
-				if (reread.error !== undefined) {
-					return yield* new LogError({
-						message: `${path}:${reread.error.line}: ${reread.error.message}`,
-					});
-				}
-
-				return reread.lines.slice(0, written.seq);
-			});
-
 		const lines = Effect.fn("CampaignLog.lines")(function* (after: number) {
-			const written = yield* SynchronizedRef.modifyEffect(state, (current) =>
-				Effect.map(readWritten(current), (read) => [read, current] as const)
-			);
+			const written = yield* SynchronizedRef.get(state);
 
-			return written.filter((line) => line.seq > after);
+			if (written.seq - after <= written.tail.length) {
+				return written.tail.filter((line) => line.seq > after);
+			}
+
+			const reread = yield* read;
+
+			if (reread.problem !== undefined) {
+				return yield* reread.problem;
+			}
+
+			return reread.parsed.lines
+				.slice(0, written.seq)
+				.filter((line) => line.seq > after);
 		});
 
 		const recent = Effect.fn("CampaignLog.recent")(function* (count: number) {

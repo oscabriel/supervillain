@@ -1,13 +1,15 @@
 import { describe, expect } from "bun:test";
 
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Path, Predicate } from "effect";
 
 import { CampaignLog } from "../src/index.ts";
-import { diskTakes, sameDisk } from "./disk.ts";
+import { countingReads, diskTakes, sameDisk, takenMeanwhile } from "./disk.ts";
+import type { LockWatch, ReadCount } from "./disk.ts";
 import {
 	appendLog,
 	effect,
 	lockPath,
+	logPath,
 	readLog,
 	tempDir,
 	writeLog,
@@ -40,6 +42,22 @@ const withLog = <A, E, R>(
 ) => withLogOn(sameDisk, dir, body);
 
 const linesOf = (log: CampaignLog["Service"]) => log.lines(0);
+
+const bytesOf = (...parts: ReadonlyArray<string | number>) =>
+	Buffer.concat(
+		parts.map((part) =>
+			Predicate.isString(part)
+				? Buffer.from(part, "utf-8")
+				: Buffer.from([part])
+		)
+	);
+
+const deadPid = Effect.promise(async () => {
+	const gone = Bun.spawn(["true"]);
+	await gone.exited;
+
+	return gone.pid;
+});
 
 describe("CampaignLog", () => {
 	effect("reads back what it appended, one JSON object per line", () =>
@@ -81,6 +99,42 @@ describe("CampaignLog", () => {
 		})
 	);
 
+	effect(
+		"serves its last lines from memory, and reads the file only for older ones",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				const count: ReadCount = { reads: 0 };
+
+				const seventy = Array.from({ length: 70 }, (_, index) =>
+					line(index + 1, "added", { n: index })
+				);
+
+				const seen = yield* withLogOn(countingReads(count), dir, (log) =>
+					Effect.gen(function* () {
+						yield* log.append(seventy);
+						const opened = count.reads;
+						const none = yield* log.lines(70);
+						const last = yield* log.lines(69);
+						const ring = yield* log.lines(6);
+						const near = count.reads;
+						const older = yield* log.lines(5);
+						const all = yield* log.lines(0);
+
+						return { opened, none, last, ring, near, older, all };
+					})
+				);
+
+				expect(seen.none).toEqual([]);
+				expect(seen.last).toEqual(seventy.slice(69));
+				expect(seen.ring).toEqual(seventy.slice(6));
+				expect(seen.near).toBe(seen.opened);
+				expect(seen.older).toEqual(seventy.slice(5));
+				expect(seen.all).toEqual(seventy);
+				expect(count.reads).toBe(seen.opened + 2);
+			})
+	);
+
 	effect("cuts a half-written last line from the file when it opens", () =>
 		Effect.gen(function* () {
 			const dir = yield* tempDir;
@@ -112,6 +166,57 @@ describe("CampaignLog", () => {
 				expect(error._tag).toBe("LogError");
 				expect(error.message).toContain("events.jsonl:1:");
 				expect(raw).toBe(`\uFEFF${text(one)}`);
+			})
+	);
+
+	effect(
+		"cuts a last line torn inside a character at its exact byte, and opens",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				const fs = yield* FileSystem.FileSystem;
+				const path = yield* logPath(dir);
+				const one = line(1, "said", { text: "café" });
+
+				yield* fs.writeFile(
+					path,
+					bytesOf(text(one), '{"actor":"gm","payload":{"text":"caf', 0xc3)
+				);
+
+				const opened = yield* withLog(dir, (log) =>
+					Effect.gen(function* () {
+						yield* log.append([line(2, "added", { n: 1 })]);
+
+						return yield* log.lines(0);
+					})
+				);
+
+				expect(opened.map((entry) => entry.seq)).toEqual([1, 2]);
+				expect(yield* readLog(dir)).toBe(text(one, line(2, "added", { n: 1 })));
+			})
+	);
+
+	effect(
+		"halts on a whole line that isn't UTF-8, and still cuts the torn tail at its exact byte",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				const fs = yield* FileSystem.FileSystem;
+				const path = yield* logPath(dir);
+				const one = text(line(1, "added", { n: 1 }));
+				const two = text(line(2, "said", { text: "caf?" })).split("?");
+				const whole = bytesOf(one, two[0] ?? "", 0xff, two[1] ?? "");
+
+				yield* fs.writeFile(
+					path,
+					Buffer.concat([whole, bytesOf('{"actor":"gm","se')])
+				);
+
+				const error = yield* Effect.flip(withLog(dir, () => Effect.void));
+
+				expect(error._tag).toBe("LogError");
+				expect(error.message).toContain("events.jsonl:2: not valid UTF-8");
+				expect(Buffer.from(yield* fs.readFile(path)).equals(whole)).toBe(true);
 			})
 	);
 
@@ -153,12 +258,58 @@ describe("CampaignLog", () => {
 		Effect.gen(function* () {
 			const dir = yield* tempDir;
 			const fs = yield* FileSystem.FileSystem;
-			const gone = Bun.spawn(["true"]);
-			yield* Effect.promise(async () => await gone.exited);
-			yield* fs.writeFileString(yield* lockPath(dir), `${gone.pid}\n`);
+			yield* fs.writeFileString(yield* lockPath(dir), `${yield* deadPid}\n`);
 			yield* withLog(dir, (log) => log.append([line(1, "added", { n: 1 })]));
 			expect(yield* readLog(dir)).toBe(text(line(1, "added", { n: 1 })));
+			expect(yield* fs.readDirectory(dir)).toEqual(["events.jsonl"]);
 		})
+	);
+
+	effect(
+		"never moves a lock a live host took while it was taking over a stale one",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				const fs = yield* FileSystem.FileSystem;
+				const lock = yield* lockPath(dir);
+				const watch: LockWatch = { taken: false, gaps: 0 };
+				yield* fs.writeFileString(lock, `${yield* deadPid}\n`);
+
+				const error = yield* Effect.flip(
+					withLogOn(
+						takenMeanwhile(lock, process.pid, watch),
+						dir,
+						() => Effect.void
+					)
+				);
+
+				expect(error.message).toContain(`another host (pid ${process.pid})`);
+				expect(watch).toEqual({ taken: true, gaps: 0 });
+				expect(yield* fs.readFileString(lock)).toBe(`${process.pid}\n`);
+				expect((yield* fs.readDirectory(dir)).toSorted()).toEqual([
+					"events.lock",
+				]);
+			})
+	);
+
+	effect(
+		"stops at a takeover another host left half-done, and says what to delete",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				const fs = yield* FileSystem.FileSystem;
+				const lock = yield* lockPath(dir);
+				const gone = yield* deadPid;
+				yield* fs.writeFileString(lock, `${gone}\n`);
+				yield* fs.writeFileString(`${lock}.takeover`, `${gone}\n`);
+
+				const error = yield* Effect.flip(withLog(dir, () => Effect.void));
+
+				expect(error.message).toContain(
+					`delete ${lock}.takeover and start again`
+				);
+				expect(yield* fs.readFileString(lock)).toBe(`${gone}\n`);
+			})
 	);
 
 	effect("leaves a lock another host has taken since when it closes", () =>
