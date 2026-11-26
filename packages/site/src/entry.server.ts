@@ -1,9 +1,10 @@
-import { Effect, Option, Schema } from "effect";
+import { Effect, Option } from "effect";
 import { Server } from "foldkit/experimental";
 import { fromString } from "foldkit/url";
 
 import { DOCS, docHref } from "./Content.ts";
 import { init, routeOf, view } from "./Main.ts";
+import { headOf, SITE_ORIGIN } from "./Meta.ts";
 import {
 	acknowledgmentsRouter,
 	AppRoute,
@@ -12,52 +13,17 @@ import {
 	protocolRouter,
 } from "./Route.ts";
 
-const ABOUT =
-	"supervillain is a terminal-first virtual tabletop. Players type one ssh command to join a live campaign stage and tactical board, with nothing to install, no accounts, and MCP support for agents.";
+const SOURCE_STYLESHEET = "/src/style.css";
 
-const FONTS =
-	"https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap";
-
-const SiteEnv = Schema.Struct({
-	VITE_SITE_ORIGIN: Schema.optionalKey(Schema.String),
-});
-
-const originOf = (): string =>
-	Option.match(Schema.decodeUnknownOption(SiteEnv)(import.meta.env), {
-		onNone: () => "",
-		onSome: (env) => env.VITE_SITE_ORIGIN ?? "",
-	});
-
-const ogImageUrl = (): string => {
-	const origin = originOf();
-
-	return origin === "" ? "/og.png" : `${origin}/og.png`;
-};
-
-const OG_IMAGE = ogImageUrl();
-
-const HEAD = [
-	`<meta name="description" content="${ABOUT}" />`,
-	`<meta property="og:type" content="website" />`,
-	`<meta property="og:site_name" content="supervillain" />`,
-	`<meta property="og:description" content="${ABOUT}" />`,
-	`<meta property="og:image" content="${OG_IMAGE}" />`,
-	`<meta property="og:image:type" content="image/png" />`,
-	`<meta property="og:image:width" content="1200" />`,
-	`<meta property="og:image:height" content="630" />`,
-	`<meta property="og:image:alt" content="ssh supervillain.sh" />`,
-	`<meta name="twitter:card" content="summary_large_image" />`,
-	`<meta name="twitter:image" content="${OG_IMAGE}" />`,
-	`<meta name="color-scheme" content="dark" />`,
-	`<meta name="theme-color" content="#09090b" />`,
-	`<link rel="preconnect" href="https://fonts.googleapis.com" />`,
-	`<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />`,
-	`<link rel="stylesheet" href="${FONTS}" />`,
-	`<link rel="icon" href="/icon.svg" type="image/svg+xml" />`,
-].join("");
+const linkedAssets = (assets: Server.DocumentAssets): Server.DocumentAssets =>
+	import.meta.env.DEV
+		? { ...assets, stylesheets: [SOURCE_STYLESHEET] }
+		: assets;
 
 export const renderDocument: Server.DocumentRenderer = (application, assets) =>
-	Server.renderDocument(application, assets, { head: HEAD });
+	Server.renderDocument(application, linkedAssets(assets), {
+		head: headOf(application.title, SITE_ORIGIN),
+	});
 
 export const prerenderPaths: ReadonlyArray<string> = [
 	homeRouter(),

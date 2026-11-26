@@ -899,22 +899,31 @@ p {
 .g-editorial {
 	max-width: var(--max-width);
 	margin: 0 auto;
-	padding: 124px var(--gutter) 104px;
+	padding: 112px var(--gutter) 104px;
+}
+
+.g-intro {
+	max-width: 640px;
+	margin: 0 auto 80px;
+	display: grid;
+	gap: 14px;
+	text-align: center;
 }
 
 .g-statement {
-	max-width: 820px;
-	margin: 0 0 92px;
 	color: #f4f4f5;
-	font-size: clamp(1.55rem, 2.8vw, 2.25rem);
-	font-weight: 400;
-	line-height: 1.32;
-	letter-spacing: -0.025em;
-	text-wrap: pretty;
+	font-size: clamp(1.75rem, 3vw, 2.5rem);
+	font-weight: 500;
+	line-height: 1.12;
+	letter-spacing: -0.03em;
+	text-wrap: balance;
 }
 
-.g-statement span {
-	color: var(--zinc-500);
+.g-substatement {
+	color: var(--muted);
+	font-size: 1.05rem;
+	line-height: 1.6;
+	text-wrap: balance;
 }
 
 .g-rows {
@@ -1583,32 +1592,6 @@ details[open] > summary .summary-chevron {
 	line-height: 1.6;
 }
 
-.what-list {
-	margin: 0;
-	display: grid;
-	grid-template-columns: auto minmax(0, 1fr);
-	gap: 10px 18px;
-	padding: 14px 16px;
-	border: 1px solid var(--line);
-	background: var(--surface);
-	font-size: 13.5px;
-	line-height: 1.5;
-}
-
-.what-list dt {
-	color: var(--ink);
-	font-family: var(--mono);
-	font-size: 12.5px;
-	font-weight: 500;
-	white-space: nowrap;
-}
-
-.what-list dd {
-	margin: 0;
-	color: var(--ink-soft);
-}
-
-.what-section,
 .what-verify {
 	display: grid;
 	gap: 10px;
@@ -1636,16 +1619,6 @@ details[open] > summary .summary-chevron {
 	background: #141418;
 	color: #e4e4e7;
 	font-size: 0.88em;
-}
-
-.what-copy-actions {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-}
-
-.what-cmd-line {
-	color: var(--muted);
 }
 
 .what-verify-block pre {
@@ -2089,8 +2062,8 @@ details[open] > summary .summary-chevron {
 		padding: 80px var(--gutter) 64px;
 	}
 
-	.g-statement {
-		margin-bottom: 56px;
+	.g-intro {
+		margin-bottom: 52px;
 	}
 
 	.g-foot {
@@ -2188,17 +2161,10 @@ details[open] > summary .summary-chevron {
 		padding: 22px 18px 18px;
 	}
 
-	.what-list {
-		grid-template-columns: minmax(0, 1fr);
-		gap: 4px;
-	}
-
-	.what-list dd {
-		margin-bottom: 8px;
-	}
-
-	.what-list dd:last-child {
-		margin-bottom: 0;
+	.what-dialog .code-block {
+		margin: 0;
+		border-right: 1px solid var(--line);
+		border-left: 1px solid var(--line);
 	}
 }
 

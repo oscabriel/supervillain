@@ -23,7 +23,16 @@ ED25519 key fingerprint is SHA256:gkYn722z8+JIXdkwJa/9amF10Y2+zkGdElyWlj0LZHk.
 Are you sure you want to continue connecting (yes/no/[fingerprint])?
 ```
 
-Check that the fingerprint matches what your GM sent, then type `yes`. After that ssh remembers it. If ssh ever warns that the key changed, stop and ask your GM.
+Check that the fingerprint matches what your GM sent (or the one shown under **What is this?** on the [front page](/)), then type `yes`. After that ssh saves the host's public key in `~/.ssh/known_hosts` to protect future sessions against tampering. Run `cat ~/.ssh/known_hosts` anytime to inspect the saved key on your machine. If ssh ever warns that the key changed, stop and ask your GM.
+
+## The lobby
+
+Running `ssh supervillain.sh` with no table address opens the supervillain lobby (and installing the local binary and running `supervillain` opens the exact same screen on your own machine). Use `1` through `4`, `Tab`, or `←`/`→` to switch tabs, and `q` to leave:
+
+- **1 Tables:** lists every open table that knows your SSH key, plus `/` or `Enter` to type any `<handle>/<table>` address directly.
+- **2 Try a Table:** drops you into a private, in-memory Draw Steel sandbox encounter right in your terminal with nothing installed and nothing saved.
+- **3 Create a Table:** lets GMs claim a handle bound to their SSH key and get a one-line setup command (or create a local campaign folder when run from the CLI).
+- **4 Session:** shows your SSH key fingerprint, claimed GM handle, terminal info, and CLI quick reference.
 
 ### Knock at the door
 
@@ -36,11 +45,7 @@ Once admitted, your SSH key enters directly on every future session until the GM
 Once a table knows your key, two shortcuts work:
 
 - **Short name:** `ssh first-fight@supervillain.sh` takes you straight in if exactly one live table of that name knows your key. If two do, the lobby opens filtered to those two.
-- **Bare lobby:** `ssh supervillain.sh` opens the lobby (`1`–`4`, `Tab`, or `←`/`→` switch tabs; `q` leaves):
-  - **1 Tables** lists every open table that knows your key, plus `/` or `Enter` to type `<handle>/<table>` directly.
-  - **2 Try a Table** drops you into a private, in-memory Draw Steel sandbox table right over SSH so you can explore the interface with nothing installed and nothing saved.
-  - **3 Create a Table** lets future GMs claim a handle with their SSH key and get a one-line install and setup command for their own machine.
-  - **4 Session** shows your SSH key fingerprint, claimed GM handle, terminal info, and CLI quick reference whenever you need them.
+- **Lobby:** `ssh supervillain.sh` shows every live table that knows your key under **1 Tables**.
 
 ### When the table doesn't answer
 
@@ -119,7 +124,7 @@ Your GM stages scenes, adds foes and runs their side. You run your character.
 | `/recover brann` | Spend a Recovery |
 | `/undo`, `/redo` | Take back your latest change within 30 seconds, or put it back |
 
-The [front page](/) has a live Draw Steel skirmish you can try in the browser. For `set.world`, `pf2e` (ORC), and `freeform` commands, see [Rulesets](/docs/rulesets).
+The [front page](/) has a live Draw Steel skirmish you can try in the browser. For `set.world`, `pf2e` (ORC), and `freeform` commands, see [Rulesets](/guide/rulesets).
 
 ## The map
 
@@ -133,7 +138,7 @@ In terminals with kitty graphics (Ghostty, kitty or WezTerm, outside tmux), maps
 
 ## Bring an agent
 
-You don't have to memorize commands to play. You can attach Claude Code, Codex, Cursor or T3 Code directly to your seat over SSH with nothing installed, using the exact same SSH key and player permissions. See [Connect an agent](/docs/agents).
+You don't have to memorize commands to play. You can attach Claude Code, Codex, Cursor or T3 Code directly to your seat over SSH with nothing installed, using the exact same SSH key and player permissions. See [Connect an agent](/guide/agents).
 
 ## One command at a time
 

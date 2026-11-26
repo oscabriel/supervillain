@@ -12,6 +12,7 @@ import { docOf } from "./Content.ts";
 import { docsHubView, docView, protocolDocView } from "./Docs.ts";
 import { homeView, JOIN_COMMAND } from "./Home.ts";
 import { pageView } from "./Layout.ts";
+import { canonicalOf, SITE_ORIGIN } from "./Meta.ts";
 import { Message, ranLine } from "./Model.ts";
 import type { Key, Model } from "./Model.ts";
 import { PROTOCOL_TITLE } from "./Protocol.ts";
@@ -332,7 +333,7 @@ const notFoundView = (h: HtmlBuilder<Message>) => [
 	),
 ];
 
-export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
+const pageOf = (model: Model, h: HtmlBuilder<Message>): Document => {
 	const { route } = model;
 
 	if (AppRoute.guards.Protocol(route)) {
@@ -353,7 +354,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 
 	if (AppRoute.guards.Docs(route)) {
 		return {
-			title: "Docs · supervillain",
+			title: "Guide · supervillain",
 			body: pageView(route, h, docsHubView(h)),
 		};
 	}
@@ -374,4 +375,16 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 				title: "Not found · supervillain",
 				body: pageView(route, h, notFoundView(h)),
 			};
+};
+
+export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
+	const page = pageOf(model, h);
+
+	const canonical = canonicalOf(
+		model.route,
+		SITE_ORIGIN,
+		(slug) => docOf(slug) !== undefined
+	);
+
+	return canonical === undefined ? page : { ...page, canonical };
 };

@@ -14,7 +14,7 @@ const Website = Cloudflare.Website.Foldkit(
 		return {
 			domain: Option.getOrNull(domain),
 			assets: { htmlHandling: "drop-trailing-slash" as const },
-			dev: { host: "127.0.0.1", port: 3035, strictPort: true },
+			dev: { host: "127.0.0.1", port: 3026, strictPort: true },
 		};
 	})
 );

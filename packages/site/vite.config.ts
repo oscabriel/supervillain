@@ -21,16 +21,62 @@ const INSTALLER = `${import.meta.dirname}/../../scripts/install.sh`;
 
 const SNAPSHOT_FILE = `${import.meta.dirname}/src/ProtocolSnapshot.ts`;
 
-const protocolSnapshotPlugin = (): Plugin => ({
-	name: "supervillain-protocol-snapshot",
-	load(id) {
-		if (id !== SNAPSHOT_FILE) {
-			return null;
-		}
+const protocolSnapshotPlugin = (): Plugin => {
+	const buildOnly = [
+		new URL("../domain/", import.meta.url).pathname,
+		"/node_modules/@supervillain/domain/",
+		`${import.meta.dirname}/src/ProtocolData.ts`,
+	];
 
-		return `export const PROTOCOL_SNAPSHOT = ${JSON.stringify(buildProtocolSnapshot())};\n`;
-	},
-});
+	return {
+		name: "supervillain-protocol-snapshot",
+		load(id) {
+			const [file = ""] = id.split("?");
+
+			if (file !== SNAPSHOT_FILE) {
+				return null;
+			}
+
+			const snapshot = buildProtocolSnapshot();
+
+			const filled =
+				ALL_RULESETS.every(
+					(ruleset) => snapshot.commands[ruleset].length > 0
+				) &&
+				snapshot.metaTools.length > 0 &&
+				snapshot.resources.length > 0 &&
+				snapshot.campaignSchemas.length > 0 &&
+				snapshot.envelopeSchemaJson !== "";
+
+			if (!filled) {
+				this.error(
+					"The protocol snapshot is empty, so the protocol page would ship blank."
+				);
+			}
+
+			return `export const PROTOCOL_SNAPSHOT = ${JSON.stringify(snapshot)};\n`;
+		},
+		generateBundle(_options, bundle) {
+			if (this.environment.name !== "client") {
+				return;
+			}
+
+			const leaked = Object.values(bundle).flatMap((output) =>
+				output.type === "chunk"
+					? output.moduleIds.filter((id) =>
+							buildOnly.some((part) => id.includes(part))
+						)
+					: []
+			);
+
+			if (leaked.length > 0) {
+				this.error(
+					`The client bundle holds build-only modules: ${leaked.join(", ")}.`
+				);
+			}
+		},
+	};
+};
 
 const fingerprintOf = (rawKey: string): string => {
 	const parsed = parsePublicKey(rawKey);
@@ -77,7 +123,7 @@ const staticAssets = (): Plugin => ({
 	},
 });
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
 	const root = `${import.meta.dirname}/../..`;
 	const svEnv = loadEnv(mode, root, "SUPERVILLAIN_");
 	const named = svEnv.SUPERVILLAIN_SITE_DOMAIN ?? "";
@@ -89,7 +135,7 @@ export default defineConfig(({ mode }) => {
 
 	const server: ServerOptions = {
 		host: "127.0.0.1",
-		port: 3035,
+		port: 3026,
 		strictPort: true,
 	};
 
@@ -97,6 +143,24 @@ export default defineConfig(({ mode }) => {
 		server.allowedHosts = ["localhost", "127.0.0.1", host];
 		server.hmr = { clientPort: 443, host, protocol: "wss" };
 	}
+
+	const foldkitOptions =
+		command === "serve"
+			? {
+					buildId: "development",
+					ssr: {
+						serverEntry: "/src/entry.server.ts",
+						clientEntry: "/src/entry.ts",
+						build: { prerender: { origin: `https://${domain}` } },
+					},
+				}
+			: {
+					ssr: {
+						serverEntry: "/src/entry.server.ts",
+						clientEntry: "/src/entry.ts",
+						build: { prerender: { origin: `https://${domain}` } },
+					},
+				};
 
 	return {
 		define: {
@@ -106,15 +170,16 @@ export default defineConfig(({ mode }) => {
 			"import.meta.env.VITE_RELAY_FINGERPRINT":
 				JSON.stringify(relayFingerprint),
 		},
+		optimizeDeps: {
+			include: [
+				"@foldkit/markdown",
+				"effect/http",
+				"foldkit > @effect/platform-browser",
+			],
+		},
 		plugins: [
 			protocolSnapshotPlugin(),
-			foldkit({
-				ssr: {
-					serverEntry: "/src/entry.server.ts",
-					clientEntry: "/src/entry.ts",
-					build: { prerender: { origin: `https://${domain}` } },
-				},
-			}),
+			foldkit(foldkitOptions),
 			markdown({ frontmatter: Frontmatter }),
 			staticAssets(),
 		],

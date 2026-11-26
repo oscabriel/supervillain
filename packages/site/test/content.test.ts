@@ -30,11 +30,11 @@ const docs = written("docs");
 
 const paths = new Set([
 	"/",
-	"/docs",
-	"/docs/protocol",
+	"/guide",
+	"/guide/protocol",
 	"/acknowledgments",
 	"/install",
-	...docs.map(({ slug }) => `/docs/${slug}`),
+	...docs.map(({ slug }) => `/guide/${slug}`),
 ]);
 
 const linksIn = (source: string): Array<string> =>

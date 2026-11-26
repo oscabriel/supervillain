@@ -317,13 +317,13 @@ describe("the front page", () => {
 	test("explains itself below the fold", async () => {
 		const html = await htmlOf((model, h) => h.div([], homeView(model, h)));
 
-		expect(html).toContain("A virtual tabletop without the overhead.");
+		expect(html).toContain("Your terminal is the table.");
 		expect(html).toContain("Zero friction at game night");
-		expect(html).toContain("Campaign stage and battlemap");
-		expect(html).toContain("File over app, on your disk");
-		expect(html).toContain("Four rulesets out of the box");
+		expect(html).toContain("Stage and battlemap in one place");
+		expect(html).toContain("Plain files on the GM's disk");
+		expect(html).toContain("Four rulesets built in");
 		expect(html).toContain("Draw Steel · set.world · PF2e · Freeform");
-		expect(html).toContain("Bring your agent live");
+		expect(html).toContain("Bring an agent live");
 		expect(countOf(html, 'class="g-row"')).toBe(5);
 	});
 });

@@ -115,20 +115,18 @@ describe("the hero What is this? dialog and host key verification", () => {
 		expect(withKey).toContain('role="dialog"');
 		expect(withKey).toContain('aria-modal="true"');
 		expect(withKey).toContain("ssh supervillain.sh");
-		expect(withKey).toContain("Inside the lobby");
-		expect(withKey).toContain("Tab 1 · Tables");
-		expect(withKey).toContain("Tab 2 · Try a Table");
-		expect(withKey).toContain("Tab 3 · Create a Table");
-		expect(withKey).toContain("cat ~/.ssh/known_hosts");
+		expect(withKey).not.toContain("Inside the lobby");
+		expect(withKey).toContain('href="/guide/playing"');
 		expect(withKey).toContain("SHA256:TestFingerprintValue");
-		expect(withKey).toContain(`supervillain.sh ${sampleKey}`);
+		expect(withKey).toContain("Add this to ~/.ssh/known_hosts");
+		expect(withKey).toContain(`<code>supervillain.sh ${sampleKey}</code>`);
+		expect(withKey).not.toContain("mkdir -p");
 		expect(withKey).not.toContain("—");
 
 		const fallback = await htmlOf((_model, h) =>
 			whatIsDialogView("", h, relayInfoFrom("supervillain.sh", "", ""))
 		);
 
-		expect(fallback).toContain("cat ~/.ssh/known_hosts");
 		expect(fallback).toContain(
 			"ssh-keyscan -t ed25519 supervillain.sh | ssh-keygen -lf -"
 		);

@@ -434,7 +434,10 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 	};
 
 	const startLoop = (): void => {
-		if (!disposed && !reduced && !document.hidden && inView && frameId === 0) {
+		const idle = frameId === 0 && width > 0;
+		const showing = !document.hidden && inView;
+
+		if (idle && showing && !disposed && !reduced) {
 			frameId = window.requestAnimationFrame(tick);
 		}
 	};
@@ -466,6 +469,7 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 
 	const resizeObserver = new ResizeObserver(() => {
 		rebuild();
+		startLoop();
 	});
 
 	const intersectionObserver = new IntersectionObserver((entries) => {
@@ -478,7 +482,6 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 		}
 	});
 
-	rebuild();
 	resizeObserver.observe(surface);
 	intersectionObserver.observe(surface);
 	surface.addEventListener("pointerdown", onPointerDown, { passive: true });
@@ -493,7 +496,6 @@ const mountHeroWaves = (element: Element): (() => void) | undefined => {
 	};
 
 	void syncFonts();
-	startLoop();
 
 	return () => {
 		disposed = true;

@@ -22,22 +22,22 @@ const routeOf = (path: string) =>
 	);
 
 describe("the site's addresses", () => {
-	test("are the front page, the docs, protocol reference, a doc, and acknowledgments", () => {
+	test("are the front page, the guide, protocol reference, a guide page, and acknowledgments", () => {
 		expect(routeOf("/")).toStrictEqual(Option.some(AppRoute.Home()));
-		expect(routeOf("/docs")).toStrictEqual(Option.some(AppRoute.Docs()));
-		expect(routeOf("/docs/protocol")).toStrictEqual(
+		expect(routeOf("/guide")).toStrictEqual(Option.some(AppRoute.Docs()));
+		expect(routeOf("/guide/protocol")).toStrictEqual(
 			Option.some(AppRoute.Protocol())
 		);
-		expect(routeOf("/docs/protocol/")).toStrictEqual(
+		expect(routeOf("/guide/protocol/")).toStrictEqual(
 			Option.some(AppRoute.Protocol())
 		);
-		expect(routeOf("/docs/hosting")).toStrictEqual(
+		expect(routeOf("/guide/hosting")).toStrictEqual(
 			Option.some(AppRoute.Doc({ slug: "hosting" }))
 		);
 		expect(routeOf("/acknowledgments")).toStrictEqual(
 			Option.some(AppRoute.Acknowledgments())
 		);
-		expect(protocolRouter()).toBe("/docs/protocol");
+		expect(protocolRouter()).toBe("/guide/protocol");
 	});
 
 	test("send anything else to not found", () => {
@@ -53,13 +53,13 @@ describe("the site's addresses", () => {
 		expect(routeOf("/acknowledgments/")).toStrictEqual(
 			Option.some(AppRoute.Acknowledgments())
 		);
-		expect(routeOf("/docs/playing/")).toStrictEqual(
+		expect(routeOf("/guide/playing/")).toStrictEqual(
 			Option.some(AppRoute.Doc({ slug: "playing" }))
 		);
 	});
 
 	test("are written the way they are read", () => {
-		expect(docRouter({ slug: "rulesets" })).toBe("/docs/rulesets");
+		expect(docRouter({ slug: "rulesets" })).toBe("/guide/rulesets");
 		expect(acknowledgmentsRouter()).toBe("/acknowledgments");
 	});
 });

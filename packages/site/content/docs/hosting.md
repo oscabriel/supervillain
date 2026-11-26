@@ -4,7 +4,7 @@ summary: File over app. Install one binary, keep your campaign as typed Markdown
 order: 2
 ---
 
-Your machine is the table. Every campaign stays on your own disk as plain typed Markdown files, text maps and an append-only `events.jsonl` log. Players need only `ssh`; send them [Playing at a table](/docs/playing).
+Your machine is the table. Every campaign stays on your own disk as plain typed Markdown files, text maps and an append-only `events.jsonl` log. Players need only `ssh`; send them [Playing at a table](/guide/playing).
 
 ## Quick start (with a handle on supervillain.sh)
 
@@ -17,7 +17,7 @@ curl -fsSL https://supervillain.sh/install | sh
 supervillain
 ```
 
-The installer verifies `SHA256SUMS` (failing closed on any mismatch) and places `supervillain` in `~/.local/bin`. Running bare `supervillain` opens the local GM launcher: it scans `./` and `~/supervillain` for campaigns, walks you through creating a new table with a built-in wizard, and links your table to `supervillain.sh` under `<handle>/<table>` automatically (pass `--local` to stay off the relay).
+The installer verifies `SHA256SUMS` (failing closed on any mismatch) and places `supervillain` in `~/.local/bin`. Run `supervillain update` anytime to check for newer releases and update in place. Running bare `supervillain` opens the same four-tab screen as `ssh supervillain.sh`: **1 Tables** scans `./` and `~/supervillain` for campaigns, **2 Try a Table** runs an instant local sandbox, **3 Create a Table** walks you through creating a new campaign folder, and **4 Session** shows your handle, home path, and relay settings (pass `--local` to stay off the relay).
 
 You can also download any release binary and `SHA256SUMS` manually:
 
@@ -117,7 +117,7 @@ Press `Alt+5` or `/prep` on your GM seat to open the Prep column. From there (or
 
 ## Connecting an AI co-GM
 
-While your table is running, it opens an owner-only Unix socket (`mcp.sock`) so Claude Code, Codex, Cursor or T3 Code can connect with `supervillain mcp <campaign-dir>`, read your campaign schemas and GM notes, edit Markdown files, and drive the live table as you talk. See [Connect an agent](/docs/agents).
+While your table is running, it opens an owner-only Unix socket (`mcp.sock`) so Claude Code, Codex, Cursor or T3 Code can connect with `supervillain mcp <campaign-dir>`, read your campaign schemas and GM notes, edit Markdown files, and drive the live table as you talk. See [Connect an agent](/guide/agents).
 
 ## Reaching your players
 
@@ -146,4 +146,4 @@ Pass `--rules draw-steel` (default), `--rules set-world`, `--rules pf2e`, or `--
 - Import a Pathbuilder 2e JSON export into a `pf2e` PC sheet: `supervillain import pathbuilder <export.json> <dir>`
 - Generate a seeded MEKMODE battlemap: `supervillain map crossing <dir> --seed 7` (or `keep`)
 
-See [Rulesets](/docs/rulesets) for full mechanics.
+See [Rulesets](/guide/rulesets) for full mechanics.

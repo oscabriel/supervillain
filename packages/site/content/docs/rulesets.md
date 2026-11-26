@@ -86,4 +86,4 @@ Put characters in `party/*.md` and NPCs or threats in `monsters/*.md` with arbit
 
 ## Why one log holds every ruleset
 
-Each ruleset is a pure module of `decide` and `apply` functions whose events live in distinct namespaces (`core.*`, `ds.*`, `sw.*`, `pf.*`, `ff.*`). Commands can share natural names (`/move`, `/start`, `/end`) while every event stays unambiguous in `events.jsonl`. See [How it fits together](/docs/architecture).
+Each ruleset is a pure module of `decide` and `apply` functions whose events live in distinct namespaces (`core.*`, `ds.*`, `sw.*`, `pf.*`, `ff.*`). Commands can share natural names (`/move`, `/start`, `/end`) while every event stays unambiguous in `events.jsonl`. See [How it fits together](/guide/architecture).

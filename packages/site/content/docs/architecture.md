@@ -11,7 +11,7 @@ supervillain is one self-contained program. On the GM's machine it is the table:
         │
         v
   ┌──────────────── relay (optional VPS) ────────────────┐
-  │  handles.json · 3-tab lobby · ephemeral sandbox      │
+  │  handles.json · 4-tab lobby · ephemeral sandbox      │
   └────────────────────────┬─────────────────────────────┘
                            │ outbound GM link (gm_key)
                            v
@@ -78,4 +78,4 @@ The table UI is a single Solid app on OpenTUI rendering a pure, read-only `Table
 
 ## Agent MCP control plane
 
-`apps/supervillain/src/mcp/` builds on Effect's `effect/ai/McpServer` (supporting MCP protocols `2024-11-05` through `2025-11-25`) to expose every command for the campaign's ruleset as a typed JSON Schema tool, with host-fact keys stripped and rejected if forged. Local GM agents connect through an owner-only (`0600`) Unix socket via `supervillain mcp`; players and remote GMs connect over the `mcp-1@supervillain.sh` SSH subsystem. See [Connect an agent](/docs/agents).
+`apps/supervillain/src/mcp/` builds on Effect's `effect/ai/McpServer` (supporting MCP protocols `2024-11-05` through `2025-11-25`) to expose every command for the campaign's ruleset as a typed JSON Schema tool, with host-fact keys stripped and rejected if forged. Local GM agents connect through an owner-only (`0600`) Unix socket via `supervillain mcp`; players and remote GMs connect over the `mcp-1@supervillain.sh` SSH subsystem. See [Connect an agent](/guide/agents).

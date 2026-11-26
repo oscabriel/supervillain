@@ -14,47 +14,30 @@ export const JOIN_COMMAND = "ssh supervillain.sh";
 const ROWS: ReadonlyArray<readonly [string, string, string]> = [
 	[
 		"Zero friction at game night",
-		"Your players already have OpenSSH. Share one table address, let newcomers in at the door, and everyone sits at the same session with nothing to install and no account to make.",
+		"Players already have ssh. Share one address, let them in at the door, and play with nothing to install.",
 		"ssh handle/table@supervillain.sh",
 	],
 	[
-		"Campaign stage and battlemap",
-		"Keep every hero visible while you put scenes, NPCs, handouts, and trackers onto the table, then drop straight into tactical pixel-art or text combat without switching tools.",
+		"Stage and battlemap in one place",
+		"Pin scenes, NPCs, handouts, and trackers on the campaign stage, then drop straight into pixel-art or text combat.",
 		"/show · /move · /pr",
 	],
 	[
-		"File over app, on your disk",
-		"Your campaign is a plain folder of typed Markdown files, text maps, and an append-only JSONL log on the GM's machine. Open bare supervillain to launch tables or create new ones.",
+		"Plain files on the GM's disk",
+		"Your campaign is typed Markdown, text maps, and an append-only JSONL log. Run supervillain to host or create tables.",
 		"curl -fsSL https://supervillain.sh/install | sh",
 	],
 	[
-		"Four rulesets out of the box",
-		"Built-in support for Draw Steel, set.world, PF2e Remaster under the ORC License, and a lightweight freeform table, all sharing one log and campaign stage.",
+		"Four rulesets built in",
+		"Draw Steel, set.world, PF2e Remaster under the ORC License, and freeform, all sharing one log and stage.",
 		"Draw Steel · set.world · PF2e · Freeform",
 	],
 	[
-		"Bring your agent live",
-		"Connect Claude Code, Codex, Cursor, or T3 Code over MCP to dictate scene updates, rolls, and moves while everyone watches the table update in real time, with full /undo.",
+		"Bring an agent live",
+		"Attach Claude Code, Codex, Cursor, or T3 Code over MCP to run rolls, moves, and scenes in real time with /undo.",
 		"supervillain mcp · mcp-1@supervillain.sh",
 	],
 ];
-
-const LOBBY_ITEMS: ReadonlyArray<readonly [string, string]> = [
-	[
-		"Tab 1 · Tables",
-		"Sit down at open tables that know your SSH key, or enter any table's handle/table address.",
-	],
-	[
-		"Tab 2 · Try a Table",
-		"Open a private, in-memory Draw Steel sandbox encounter right in your terminal with nothing saved.",
-	],
-	[
-		"Tab 3 · Create a Table",
-		"Claim a GM handle bound to your SSH key and get a setup command to host campaigns from your machine.",
-	],
-];
-
-const KNOWN_HOSTS_CMD = "cat ~/.ssh/known_hosts";
 
 const copyFieldButton = (
 	h: HtmlBuilder<Message>,
@@ -102,7 +85,7 @@ const verifyBlockView = (
 						[
 							h.span(
 								[h.Class("code-block-lang")],
-								["ED25519 fingerprint · shown on first connect"]
+								["ED25519 fingerprint · compare with SSH prompt"]
 							),
 							copyFieldButton(
 								h,
@@ -124,44 +107,18 @@ const verifyBlockView = (
 						[
 							h.span(
 								[h.Class("code-block-lang")],
-								["Check saved key · ~/.ssh/known_hosts"]
+								["Add this to ~/.ssh/known_hosts"]
 							),
-							h.div(
-								[h.Class("what-copy-actions")],
-								[
-									copyFieldButton(
-										h,
-										"what-known-hosts-cmd",
-										KNOWN_HOSTS_CMD,
-										copiedBlock,
-										"cat known_hosts command",
-										"Copy cmd"
-									),
-									copyFieldButton(
-										h,
-										"what-known-hosts",
-										relay.knownHostsLine,
-										copiedBlock,
-										"known_hosts entry",
-										"Copy key"
-									),
-								]
+							copyFieldButton(
+								h,
+								"what-known-hosts",
+								relay.knownHostsLine,
+								copiedBlock,
+								"known_hosts line"
 							),
 						]
 					),
-					h.pre(
-						[],
-						[
-							h.code(
-								[],
-								[
-									h.span([h.Class("what-cmd-line")], [`$ ${KNOWN_HOSTS_CMD}`]),
-									"\n",
-									relay.knownHostsLine,
-								]
-							),
-						]
-					),
+					h.pre([], [h.code([], [relay.knownHostsLine])]),
 				]
 			),
 		];
@@ -170,28 +127,6 @@ const verifyBlockView = (
 	const scanCommand = `ssh-keyscan -t ed25519 ${relay.host} | ssh-keygen -lf -`;
 
 	return [
-		h.div(
-			[h.Class("code-block what-verify-block")],
-			[
-				h.div(
-					[h.Class("code-block-bar")],
-					[
-						h.span(
-							[h.Class("code-block-lang")],
-							["Check saved key · ~/.ssh/known_hosts"]
-						),
-						copyFieldButton(
-							h,
-							"what-known-hosts-cmd",
-							KNOWN_HOSTS_CMD,
-							copiedBlock,
-							"cat known_hosts command"
-						),
-					]
-				),
-				h.pre([], [h.code([], [KNOWN_HOSTS_CMD])]),
-			]
-		),
 		h.div(
 			[h.Class("code-block what-verify-block")],
 			[
@@ -269,44 +204,15 @@ export const whatIsDialogView = (
 						]
 					),
 					h.div(
-						[h.Class("what-section")],
-						[
-							h.h3([h.Class("what-subhead")], ["Inside the lobby"]),
-							h.p(
-								[h.Class("what-note")],
-								[
-									"On first launch you'll see three main tabs across the top of the screen. Press ",
-									h.code([], ["1"]),
-									", ",
-									h.code([], ["2"]),
-									", or ",
-									h.code([], ["3"]),
-									" to switch between them (and ",
-									h.code([], ["4"]),
-									" anytime to inspect your SSH session info):",
-								]
-							),
-							h.dl(
-								[h.Class("what-list")],
-								LOBBY_ITEMS.flatMap(([term, desc]) => [
-									h.dt([], [term]),
-									h.dd([], [desc]),
-								])
-							),
-						]
-					),
-					h.div(
 						[h.Class("what-verify")],
 						[
 							h.h3([h.Class("what-subhead")], ["Verify the host key"]),
 							h.p(
 								[h.Class("what-note")],
 								[
-									"The first time you connect, ssh shows this server's fingerprint so you can confirm you reached the real host, then saves the public key in ",
+									"The first time you connect, ssh shows this server's fingerprint so you can confirm you reached the real host. Compare it with the fingerprint below, or add the line to ",
 									h.code([], ["~/.ssh/known_hosts"]),
-									" to protect future sessions against tampering. Run ",
-									h.code([], [KNOWN_HOSTS_CMD]),
-									" anytime to inspect the saved key on your machine and check that it matches below:",
+									" before you connect:",
 								]
 							),
 							...verifyBlockView(relay, copiedBlock, h),
@@ -415,14 +321,14 @@ const editorialView = (h: HtmlBuilder<Message>): Html =>
 	h.section(
 		[h.Class("g-editorial")],
 		[
-			h.p(
-				[h.Class("g-statement")],
+			h.div(
+				[h.Class("g-intro")],
 				[
-					"A virtual tabletop without the overhead. ",
-					h.span(
-						[],
+					h.h2([h.Class("g-statement")], ["Your terminal is the table."]),
+					h.p(
+						[h.Class("g-substatement")],
 						[
-							"No browser tabs, no downloads for players, and no accounts to set up before game night. One SSH command puts everyone at the same campaign stage and tactical board.",
+							"No browser tabs, no downloads, no accounts. One ssh command puts everyone at the same campaign stage and board.",
 						]
 					),
 				]

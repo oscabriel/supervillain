@@ -16,16 +16,16 @@ export type AppRoute = typeof AppRoute.Type;
 
 export const homeRouter = pipe(Route.root, Route.mapTo(AppRoute.Home));
 
-export const docsRouter = pipe(literal("docs"), Route.mapTo(AppRoute.Docs));
+export const docsRouter = pipe(literal("guide"), Route.mapTo(AppRoute.Docs));
 
 export const protocolRouter = pipe(
-	literal("docs"),
+	literal("guide"),
 	slash(literal("protocol")),
 	Route.mapTo(AppRoute.Protocol)
 );
 
 export const docRouter = pipe(
-	literal("docs"),
+	literal("guide"),
 	slash(string("slug")),
 	Route.mapTo(AppRoute.Doc)
 );

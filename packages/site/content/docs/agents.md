@@ -140,7 +140,7 @@ Rules to follow:
 | State (`get_table_state`) | Strictly player-safe: `seq`, `ruleset`, `myName`, `present`, `party`, `stage` (only `on-table` and `revealed`), `band`, `map`, `feed` | Full GM state plus `prep`, `gmNotes`, `contentProblems`, `knocks`, `catalog`, and recent log envelopes |
 | Resources | `supervillain://help`, `supervillain://table/state`, `supervillain://sheet/{party-member}`, `supervillain://codex/{revealed-key}` | Everything players see, plus `supervillain://campaign/files`, `supervillain://campaign/{kind}/{id}`, `supervillain://schema/{kind}`, and any creature sheet |
 
-Browse every generated tool schema, command parameter, and resource URI in the interactive [Protocol & MCP reference](/docs/protocol).
+Browse every generated tool schema, command parameter, and resource URI in the interactive [Protocol & MCP reference](/guide/protocol).
 
 ## Safety
 
@@ -155,4 +155,4 @@ Browse every generated tool schema, command parameter, and resource URI in the i
 - **`Agents need an SSH key`:** generate one with `ssh-keygen -t ed25519`, knock at the table interactively once so your GM admits it, then reconnect your agent.
 - **`Knock first: the GM hasn't let you in.`:** join interactively first so your GM can admit your key.
 - **`no table open in <dir>`:** start your table locally (`supervillain` or `supervillain host <dir>`) before connecting `supervillain mcp`.
-- **`This table's host is too old to take agents.`:** ask your GM to upgrade with `curl -fsSL https://supervillain.sh/install | sh`.
+- **`This table's host is too old to take agents.`:** ask your GM to run `supervillain update` (or reinstall with `curl -fsSL https://supervillain.sh/install | sh`).

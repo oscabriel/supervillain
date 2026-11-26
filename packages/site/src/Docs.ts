@@ -80,12 +80,10 @@ export const docsHubView = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
 			h.div(
 				[h.Class("column wide")],
 				[
-					h.h1([], ["Sit down, host a table, connect an agent"]),
+					h.h1([], ["Guide"]),
 					h.p(
 						[h.Class("lede")],
-						[
-							"Players need a terminal and ssh. GMs keep their campaign in plain files and run one local binary. These guides cover sitting down, hosting, rulesets, agents, and the protocol reference.",
-						]
+						["Sit down over ssh, host from plain files, or connect an agent."]
 					),
 					h.ol(
 						[h.Class("hub")],
@@ -128,9 +126,9 @@ const shellDocView = (
 
 	const columns: Array<Html> = [
 		h.nav(
-			[h.Class("docs-list wide"), h.AriaLabel("Docs")],
+			[h.Class("docs-list wide"), h.AriaLabel("Guide")],
 			[
-				h.a([h.Href(docsRouter()), h.Class("rail-heading")], ["Documentation"]),
+				h.a([h.Href(docsRouter()), h.Class("rail-heading")], ["Guide"]),
 				listView(slug, h),
 			]
 		),
@@ -141,7 +139,7 @@ const shellDocView = (
 					[h.Class("rail-heading")],
 					[
 						h.span([h.Class("summary-chevron"), h.AriaHidden(true)], ["▸"]),
-						"All documentation",
+						"All guides",
 					]
 				),
 				listView(slug, h),
