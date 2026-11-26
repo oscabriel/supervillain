@@ -71,6 +71,10 @@ describe("the layout and acknowledgments", () => {
 		expect(html).toContain('class="g-brand"');
 		expect(html).toContain('src="/icon.svg"');
 		expect(html).toContain('alt="supervillain"');
+		expect(html).toContain(">Guide<");
+		expect(html).toContain(">Source<");
+		expect(html).not.toContain("Host a table");
+		expect(html).not.toContain('class="g-pill"');
 		expect(html).not.toContain("/blog");
 		expect(html).not.toContain("MIT License");
 		expect(html).not.toContain("DRAW STEEL Creator License");

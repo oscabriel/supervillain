@@ -4,14 +4,11 @@ import type { Message } from "./Model.ts";
 import {
 	acknowledgmentsRouter,
 	AppRoute,
-	docRouter,
 	docsRouter,
 	homeRouter,
 } from "./Route.ts";
 
 export const SOURCE = "https://github.com/oscabriel/supervillain";
-
-const HOSTING = docRouter({ slug: "hosting" });
 
 const isDocs = (route: AppRoute): boolean =>
 	AppRoute.guards.Docs(route) ||
@@ -47,13 +44,9 @@ const headView = (route: AppRoute, h: HtmlBuilder<Message>): Html =>
 					h.nav(
 						[h.Class("g-links"), h.AriaLabel("Site")],
 						[
-							linkView(h, docsRouter(), "Docs", isDocs(route)),
-							h.a([h.Href(SOURCE)], ["GitHub"]),
+							linkView(h, docsRouter(), "Guide", isDocs(route)),
+							h.a([h.Href(SOURCE)], ["Source"]),
 						]
-					),
-					h.div(
-						[h.Class("g-nav-right")],
-						[h.a([h.Href(HOSTING), h.Class("g-pill")], ["Host a table"])]
 					),
 				]
 			),

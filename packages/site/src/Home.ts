@@ -41,25 +41,28 @@ const ROWS: ReadonlyArray<readonly [string, string, string]> = [
 
 const LOBBY_ITEMS: ReadonlyArray<readonly [string, string]> = [
 	[
-		"1 Tables",
+		"Tab 1 · Tables",
 		"Sit down at open tables that know your SSH key, or enter any table's handle/table address.",
 	],
 	[
-		"2 Try a Table",
+		"Tab 2 · Try a Table",
 		"Open a private, in-memory Draw Steel sandbox encounter right in your terminal with nothing saved.",
 	],
 	[
-		"3 Create a Table",
+		"Tab 3 · Create a Table",
 		"Claim a GM handle bound to your SSH key and get a setup command to host campaigns from your machine.",
 	],
 ];
+
+const KNOWN_HOSTS_CMD = "cat ~/.ssh/known_hosts";
 
 const copyFieldButton = (
 	h: HtmlBuilder<Message>,
 	id: string,
 	text: string,
 	copiedBlock: string,
-	ariaLabel: string
+	ariaLabel: string,
+	label = "Copy"
 ): Html => {
 	const isCopied = copiedBlock === id;
 
@@ -74,7 +77,7 @@ const copyFieldButton = (
 		[
 			h.span(
 				[h.Class("copy-label copy-idle"), h.AriaHidden(isCopied)],
-				["Copy"]
+				[label]
 			),
 			h.span(
 				[h.Class("copy-label copy-done"), h.AriaHidden(!isCopied)],
@@ -97,7 +100,10 @@ const verifyBlockView = (
 					h.div(
 						[h.Class("code-block-bar")],
 						[
-							h.span([h.Class("code-block-lang")], ["ED25519 fingerprint"]),
+							h.span(
+								[h.Class("code-block-lang")],
+								["ED25519 fingerprint · shown on first connect"]
+							),
 							copyFieldButton(
 								h,
 								"what-fingerprint",
@@ -116,17 +122,46 @@ const verifyBlockView = (
 					h.div(
 						[h.Class("code-block-bar")],
 						[
-							h.span([h.Class("code-block-lang")], ["~/.ssh/known_hosts"]),
-							copyFieldButton(
-								h,
-								"what-known-hosts",
-								relay.knownHostsLine,
-								copiedBlock,
-								"known_hosts entry"
+							h.span(
+								[h.Class("code-block-lang")],
+								["Check saved key · ~/.ssh/known_hosts"]
+							),
+							h.div(
+								[h.Class("what-copy-actions")],
+								[
+									copyFieldButton(
+										h,
+										"what-known-hosts-cmd",
+										KNOWN_HOSTS_CMD,
+										copiedBlock,
+										"cat known_hosts command",
+										"Copy cmd"
+									),
+									copyFieldButton(
+										h,
+										"what-known-hosts",
+										relay.knownHostsLine,
+										copiedBlock,
+										"known_hosts entry",
+										"Copy key"
+									),
+								]
 							),
 						]
 					),
-					h.pre([], [h.code([], [relay.knownHostsLine])]),
+					h.pre(
+						[],
+						[
+							h.code(
+								[],
+								[
+									h.span([h.Class("what-cmd-line")], [`$ ${KNOWN_HOSTS_CMD}`]),
+									"\n",
+									relay.knownHostsLine,
+								]
+							),
+						]
+					),
 				]
 			),
 		];
@@ -141,7 +176,29 @@ const verifyBlockView = (
 				h.div(
 					[h.Class("code-block-bar")],
 					[
-						h.span([h.Class("code-block-lang")], ["Verify fingerprint"]),
+						h.span(
+							[h.Class("code-block-lang")],
+							["Check saved key · ~/.ssh/known_hosts"]
+						),
+						copyFieldButton(
+							h,
+							"what-known-hosts-cmd",
+							KNOWN_HOSTS_CMD,
+							copiedBlock,
+							"cat known_hosts command"
+						),
+					]
+				),
+				h.pre([], [h.code([], [KNOWN_HOSTS_CMD])]),
+			]
+		),
+		h.div(
+			[h.Class("code-block what-verify-block")],
+			[
+				h.div(
+					[h.Class("code-block-bar")],
+					[
+						h.span([h.Class("code-block-lang")], ["Check live fingerprint"]),
 						copyFieldButton(
 							h,
 							"what-keyscan",
@@ -211,12 +268,32 @@ export const whatIsDialogView = (
 							"Runs OpenSSH in your terminal and opens the supervillain lobby. Nothing is installed on your machine and no account is created.",
 						]
 					),
-					h.dl(
-						[h.Class("what-list")],
-						LOBBY_ITEMS.flatMap(([term, desc]) => [
-							h.dt([], [term]),
-							h.dd([], [desc]),
-						])
+					h.div(
+						[h.Class("what-section")],
+						[
+							h.h3([h.Class("what-subhead")], ["Inside the lobby"]),
+							h.p(
+								[h.Class("what-note")],
+								[
+									"On first launch you'll see three main tabs across the top of the screen. Press ",
+									h.code([], ["1"]),
+									", ",
+									h.code([], ["2"]),
+									", or ",
+									h.code([], ["3"]),
+									" to switch between them (and ",
+									h.code([], ["4"]),
+									" anytime to inspect your SSH session info):",
+								]
+							),
+							h.dl(
+								[h.Class("what-list")],
+								LOBBY_ITEMS.flatMap(([term, desc]) => [
+									h.dt([], [term]),
+									h.dd([], [desc]),
+								])
+							),
+						]
 					),
 					h.div(
 						[h.Class("what-verify")],
@@ -225,7 +302,11 @@ export const whatIsDialogView = (
 							h.p(
 								[h.Class("what-note")],
 								[
-									"The first time you connect, ssh asks you to confirm the server's ED25519 host key before continuing. Match it against the public key below:",
+									"The first time you connect, ssh shows this server's fingerprint so you can confirm you reached the real host, then saves the public key in ",
+									h.code([], ["~/.ssh/known_hosts"]),
+									" to protect future sessions against tampering. Run ",
+									h.code([], [KNOWN_HOSTS_CMD]),
+									" anytime to inspect the saved key on your machine and check that it matches below:",
 								]
 							),
 							...verifyBlockView(relay, copiedBlock, h),
