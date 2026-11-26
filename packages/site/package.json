@@ -10,6 +10,7 @@
 		"typecheck": "tsc --noEmit",
 		"plan": "bunx --bun alchemy plan --env-file ../../.env --stage prod",
 		"deploy": "bunx --bun alchemy deploy --env-file ../../.env --stage prod",
+		"deploy:ci": "bunx --bun alchemy deploy --stage prod --yes",
 		"destroy": "bunx --bun alchemy destroy --env-file ../../.env --stage prod"
 	},
 	"dependencies": {
