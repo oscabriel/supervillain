@@ -347,3 +347,51 @@ sudo systemctl restart supervillain-relay
 ```
 
 GMs' hosts redial on their own. Seated players get their terminal back, are told `The relay is shutting down.`, and connect again. On your own machine, stop the host, replace the binary the same way and start it again. The campaign folder stays as it is. Upgrade the relay and the hosts that use it to the same release.
+
+#### Automated deploys from GitHub Actions
+
+`.github/workflows/release.yml` calls `.github/workflows/relay-deploy.yml` after every non-prerelease `v*` release (and `relay-deploy.yml` can also be run manually from the Actions tab to deploy or roll back to any tag). The workflow downloads the attested binary from the release, verifies both `SHA256SUMS` and `gh attestation verify`, and streams a tar archive over SSH to a restricted forced-command script on the VPS. The VPS never needs a GitHub token, and the deploy key cannot open a shell or read `/var/lib/supervillain-relay`.
+
+One-time VPS setup:
+
+1. Install `scripts/deploy-relay.sh` as root:
+
+   ```sh
+   sudo install -m 0755 -o root -g root scripts/deploy-relay.sh /usr/local/sbin/deploy-supervillain-relay
+   ```
+
+2. Generate a dedicated deploy keypair, create a locked `deploy` user, and restrict its key to that single script:
+
+   ```sh
+   ssh-keygen -t ed25519 -N "" -C "supervillain-relay-deploy" -f /tmp/relay_deploy_key
+   sudo useradd --system --create-home --shell /bin/sh deploy
+   sudo install -d -m 0700 -o deploy -g deploy /home/deploy/.ssh
+   printf 'restrict,command="sudo -n /usr/bin/env bash /usr/local/sbin/deploy-supervillain-relay" %s\n' "$(cat /tmp/relay_deploy_key.pub)" \
+     | sudo tee /home/deploy/.ssh/authorized_keys >/dev/null
+   sudo chown deploy:deploy /home/deploy/.ssh/authorized_keys
+   sudo chmod 0600 /home/deploy/.ssh/authorized_keys
+   ```
+
+   If your `/etc/ssh/sshd_config` sets `AllowUsers`, add `deploy` to it and reload `sshd`.
+
+3. Allow `deploy` to run only that script via `sudo`:
+
+   ```sh
+   echo 'deploy ALL=(root) NOPASSWD: /usr/bin/env bash /usr/local/sbin/deploy-supervillain-relay' \
+     | sudo tee /etc/sudoers.d/supervillain-relay-deploy >/dev/null
+   sudo chmod 0440 /etc/sudoers.d/supervillain-relay-deploy
+   sudo visudo -cf /etc/sudoers.d/supervillain-relay-deploy
+   ```
+
+4. In GitHub → Settings → Environments, create an environment named `relay` (optionally enable Required reviewers if you ever want a manual approval pause before restarting the live relay) and set:
+
+   - **Secrets**:
+     - `RELAY_SSH_HOST`: the VPS hostname or IP
+     - `RELAY_SSH_KEY`: the private key from `/tmp/relay_deploy_key` (delete `/tmp/relay_deploy_key*` once saved)
+     - `RELAY_SSH_KNOWN_HOSTS`: output of `ssh-keyscan -p <sshd-port> <vps-host>`
+   - **Variables** (optional):
+     - `RELAY_SSH_PORT`: your VPS's sshd port (defaults to `22`)
+     - `RELAY_SSH_USER`: defaults to `deploy`
+     - `RELAY_ARCH`: `linux-x64` (default) or `linux-arm64`
+
+When a deploy runs, `/usr/local/sbin/deploy-supervillain-relay` verifies the archive, checksum, and `--version`, swaps `/usr/local/bin/supervillain` atomically, restarts `supervillain-relay`, and automatically rolls back to the previous binary if the service fails to stay active.

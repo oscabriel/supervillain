@@ -173,3 +173,14 @@ jobs:
             case "$TAG" in *-*) args+=(--prerelease) ;; esac
             gh release create "$TAG" "${assets[@]}" "${args[@]}"
           fi
+
+  deploy-relay:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    permissions:
+      contents: read
+      attestations: read
+    uses: ./.github/workflows/relay-deploy.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

@@ -1,0 +1,126 @@
+name: Deploy Relay
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to deploy (for example v0.6.3)
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to deploy or roll back to (leave empty for latest)
+        required: false
+        type: string
+      arch:
+        description: Target Linux architecture
+        required: false
+        type: choice
+        default: linux-x64
+        options:
+          - linux-x64
+          - linux-arm64
+
+permissions:
+  contents: read
+  attestations: read
+
+concurrency:
+  group: relay-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: relay
+    steps:
+      - name: Check relay deploy credentials
+        id: creds
+        env:
+          RELAY_SSH_HOST: ${{ secrets.RELAY_SSH_HOST }}
+          RELAY_SSH_KEY: ${{ secrets.RELAY_SSH_KEY }}
+          RELAY_SSH_KNOWN_HOSTS: ${{ secrets.RELAY_SSH_KNOWN_HOSTS }}
+        run: |
+          if [ -n "$RELAY_SSH_HOST" ] && [ -n "$RELAY_SSH_KEY" ] && [ -n "$RELAY_SSH_KNOWN_HOSTS" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "Missing RELAY_SSH_HOST, RELAY_SSH_KEY, or RELAY_SSH_KNOWN_HOSTS secrets in the 'relay' environment." >&2
+            exit 1
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping relay deploy: RELAY_SSH_HOST, RELAY_SSH_KEY, or RELAY_SSH_KNOWN_HOSTS secret not configured."
+          fi
+      - name: Resolve target release and architecture
+        if: steps.creds.outputs.ready == 'true'
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_ARCH: ${{ inputs.arch }}
+          VAR_ARCH: ${{ vars.RELAY_ARCH }}
+        run: |
+          tag="$INPUT_TAG"
+          if [ -z "$tag" ]; then
+            tag="$(gh release view --json tagName --jq .tagName)"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+          arch="${INPUT_ARCH:-${VAR_ARCH:-linux-x64}}"
+          case "$arch" in
+            linux-x64 | linux-arm64) ;;
+            *)
+              echo "Unsupported architecture: $arch" >&2
+              exit 1
+              ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "binary=supervillain-$arch" >> "$GITHUB_OUTPUT"
+      - name: Download and verify release binary
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.target.outputs.tag }}
+          BINARY: ${{ steps.target.outputs.binary }}
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" -p "$BINARY" -p SHA256SUMS -D dist --clobber
+          (cd dist && sha256sum --ignore-missing -c SHA256SUMS)
+          gh attestation verify "dist/$BINARY" -R "$GH_REPO"
+          printf '%s\n' "$TAG" > dist/RELEASE
+      - name: Deploy binary to relay VPS
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          BINARY: ${{ steps.target.outputs.binary }}
+          RELAY_SSH_HOST: ${{ secrets.RELAY_SSH_HOST }}
+          RELAY_SSH_KEY: ${{ secrets.RELAY_SSH_KEY }}
+          RELAY_SSH_KNOWN_HOSTS: ${{ secrets.RELAY_SSH_KNOWN_HOSTS }}
+          RELAY_SSH_USER: ${{ vars.RELAY_SSH_USER }}
+          RELAY_SSH_PORT: ${{ vars.RELAY_SSH_PORT }}
+        run: |
+          ssh_dir="$(mktemp -d)"
+          trap 'rm -rf "$ssh_dir"' EXIT
+          chmod 700 "$ssh_dir"
+          printf '%s\n' "$RELAY_SSH_KEY" | tr -d '\r' > "$ssh_dir/id_ed25519"
+          chmod 600 "$ssh_dir/id_ed25519"
+          printf '%s\n' "$RELAY_SSH_KNOWN_HOSTS" | tr -d '\r' > "$ssh_dir/known_hosts"
+          chmod 600 "$ssh_dir/known_hosts"
+          user="${RELAY_SSH_USER:-deploy}"
+          port="${RELAY_SSH_PORT:-22}"
+          tar -C dist -cf - RELEASE "$BINARY" SHA256SUMS | ssh \
+            -T \
+            -p "$port" \
+            -i "$ssh_dir/id_ed25519" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$ssh_dir/known_hosts" \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=10 \
+            -o ServerAliveCountMax=3 \
+            "$user@$RELAY_SSH_HOST"
