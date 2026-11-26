@@ -30,7 +30,7 @@ import {
 	isRelayableBucket,
 	isRelayableInvite,
 } from "./relay.ts";
-import { injectSocket, serverEvents } from "./ssh2Internals.ts";
+import { injectSocket } from "./ssh2Internals.ts";
 import {
 	rendererStreams,
 	sanitizePty,
@@ -1212,8 +1212,6 @@ export const serve = (
 			serveSocket(socket);
 		});
 
-		const listenerEvents = serverEvents(listener);
-
 		const port = yield* Effect.acquireRelease(
 			Effect.callback<number, SshError>((resume) => {
 				const onError = (e: Error) => {
@@ -1224,10 +1222,10 @@ export const serve = (
 					);
 				};
 
-				listenerEvents.once("error", onError);
+				listener.once("error", onError);
 				listener.listen(options.port, options.host, () => {
-					listenerEvents.removeListener("error", onError);
-					listenerEvents.on("error", (e: Error) => {
+					listener.removeListener("error", onError);
+					listener.on("error", (e: Error) => {
 						fork(Effect.logWarning(`ssh listener: ${e.message}`));
 					});
 					const address = listener.address();

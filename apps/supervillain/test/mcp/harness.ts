@@ -1,6 +1,6 @@
 import { appendFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { Duplex, PassThrough } from "node:stream";
+import { Duplex, PassThrough, Readable, Writable } from "node:stream";
 
 import { Context, Effect, Layer, Logger } from "effect";
 import type { FileSystem, Path } from "effect";
@@ -95,9 +95,9 @@ export const mcpTable = (dir: string) =>
 				const fromServer = new PassThrough();
 				const stderr = new PassThrough();
 
-				const stream = Duplex.from({
-					readable: toServer,
-					writable: fromServer,
+				const stream = Duplex.fromWeb({
+					readable: Readable.toWeb(toServer),
+					writable: Writable.toWeb(fromServer),
 				});
 
 				const closed = Promise.withResolvers<number>();

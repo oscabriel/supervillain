@@ -11,7 +11,6 @@ import {
 	normalizeAddress,
 	rateLimiter,
 	serve,
-	serverEvents,
 	TERMINAL_RESET,
 	tokenBuckets,
 } from "@supervillain/ssh";
@@ -296,11 +295,9 @@ const listen = (
 			fail(new RelayError({ message: `${where}: ${cause.message}`, cause }));
 		};
 
-		const events = serverEvents(server);
-
-		events.once("error", onError);
+		server.once("error", onError);
 		server.listen(port, host, () => {
-			events.removeListener("error", onError);
+			server.removeListener("error", onError);
 			const address = server.address();
 
 			resume(

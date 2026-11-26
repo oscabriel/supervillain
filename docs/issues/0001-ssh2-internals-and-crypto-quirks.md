@@ -31,17 +31,3 @@ To prevent a slow or malicious peer from exhausting host memory (unbounded write
 ## 5. `attach()` injects a pre-dialed socket into `ssh2.Server`
 
 The GM host dials out to `supervillain relay`, then serves SSH over that outbound socket via `attach()`. Because `ssh2.Server` expects to `listen()` on a net server, `packages/ssh` injects the connected socket directly using `ssh2`'s connection handler (`emit("connection", socket)`).
-
-## 6. `@types/ssh2` brings a second copy of Node's typings
-
-`@types/ssh2@1.15.6` depends on `@types/node@^18`, while the workspace compiles against the `@types/node@26` that `@types/bun` brings. Both copies declare the `net` and `events` modules, and TypeScript merges them, so every program that reaches `ssh2`'s types (`packages/ssh` and `apps/supervillain`) sees two things that are not true at runtime:
-
-- `node:events` loses `InternalEventEmitter` (the version 18 copy declares the module with `export =`), so `node:net`'s `Server` has no `on`, `once` or `removeListener` in the type checker, although every `net.Server` is an `EventEmitter`.
-- `ssh2`'s `Server.injectSocket()` takes the version 18 `net.Socket`, which the version 26 `net.Socket` every caller holds is not assignable to.
-
-`packages/ssh/src/ssh2Internals.ts` holds both workarounds, and nothing else in the workspace narrows for this reason:
-
-- `serverEvents(server)` returns a `net.Server` as its `EventEmitter` after an `instanceof EventEmitter` check, and throws if the check fails. The check is always true at runtime; it is there because the type checker cannot see it. `packages/ssh/src/server.ts`, `apps/supervillain/src/relay/server.ts` and `apps/supervillain/src/mcp/socket.ts` listen for a server's `error` event through it.
-- The `declare module "ssh2"` block adds an `injectSocket(socket: Socket)` overload that takes the workspace's `net.Socket`, beside the `Client.subsys` overload from §1a. `injectSocket()` in the same file is the one caller.
-
-Both go away when the workspace resolves a single `@types/node`: an `"@types/node"` entry under `overrides` in the root `package.json` that matches the version `@types/bun` uses, followed by `bun install`. Then `serverEvents` can return its argument unchecked and the `injectSocket` overload can be deleted.

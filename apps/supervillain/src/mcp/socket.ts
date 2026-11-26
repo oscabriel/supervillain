@@ -14,7 +14,6 @@ import { tmpdir } from "node:os";
 import nodePath from "node:path";
 
 import { GM } from "@supervillain/domain";
-import { serverEvents } from "@supervillain/ssh";
 import {
 	Config,
 	Context,
@@ -244,16 +243,14 @@ const listen = (
 	path: string
 ): Effect.Effect<void, McpSocketError> =>
 	Effect.callback((resume) => {
-		const events = serverEvents(server);
-
 		const onError = (cause: Error) => {
 			resume(Effect.fail(failed(`can't listen on ${path}`)(cause)));
 		};
 
-		events.once("error", onError);
+		server.once("error", onError);
 		server.listen(path, () => {
-			events.removeListener("error", onError);
-			events.on("error", Function.constVoid);
+			server.removeListener("error", onError);
+			server.on("error", Function.constVoid);
 			resume(Effect.void);
 		});
 	});

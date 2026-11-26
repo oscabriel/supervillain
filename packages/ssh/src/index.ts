@@ -30,8 +30,6 @@ export {
 
 export { messageOf, serve } from "./server.ts";
 
-export { serverEvents } from "./ssh2Internals.ts";
-
 export { TERMINAL_RESET } from "./terminal.ts";
 
 export type {
