@@ -122,7 +122,7 @@ Then, in the first ten minutes:
   - At 80×24 it shows a 5×5-tile window of the map with no indicator of what's off-screen.
   - Token letters are replaced by decorative pictograms (the `V` for Vex is not a V). Your own token is the same green as difficult terrain, and a goblin is the same colour as a door.
   - Switching to the text tier shows the honest ASCII map, pinned top-left in a mostly empty frame.
-- **The lobby greets every newcomer with an error.** Bare `ssh supervillain.app` always sends your local Unix username, so the first line is _"no table named 'oscargabriel' is registered here."_ Its "become a GM" screen also tells people to run `supervillain create <name>`, but the command takes a folder.
+- **The lobby greets every newcomer with an error.** Bare `ssh supervillain.app` always sends your local Unix username, so the first line is _"no table named '<your-username>' is registered here."_ Its "become a GM" screen also tells people to run `supervillain create <name>`, but the command takes a folder.
 - **The sidebar ignores the game's colours.** `chrome.ts:1092` joins the text runs and drops their styling, so Draw Steel's accents never reach the screen.
 - **The Feed rebuilds everything on every event.** Measured against the real renderer, adding one chat line costs **0.55 ms with 20 lines of history and 119 ms with 1,500**. That cost is per seat, on the gateway's single thread, and three hours of play gets there.
 
