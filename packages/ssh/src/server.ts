@@ -11,7 +11,7 @@ import {
 } from "@opentui/core";
 import type { CliRendererErrorEvent } from "@opentui/core";
 import { Cause, Deferred, Effect, Exit, FiberSet, Predicate } from "effect";
-import type { Scope } from "effect";
+import type { Scope, Types } from "effect";
 import ssh2 from "ssh2";
 import type { AuthContext, Connection, ServerChannel } from "ssh2";
 
@@ -25,7 +25,11 @@ import {
 	parseKey,
 } from "./keys.ts";
 import { rateLimiter } from "./rate.ts";
-import { isRelayableActor } from "./relay.ts";
+import {
+	isRelayableActor,
+	isRelayableBucket,
+	isRelayableInvite,
+} from "./relay.ts";
 import { injectSocket } from "./ssh2Internals.ts";
 import {
 	rendererStreams,
@@ -41,8 +45,10 @@ import type {
 	Identity,
 	RawExit,
 	RawRequest,
+	RawSession,
 	ServeOptions,
 	SessionInfo,
+	ShellSession,
 	SshServer,
 } from "./types.ts";
 
@@ -95,6 +101,19 @@ export const clientName = (text: string): string =>
 		.replace(/^SSH-[^-]*-/u, "")
 		.replaceAll(/[^\u0020-\u007E]/gu, "?")
 		.slice(0, CLIENT_CHARS_MAX) || "?";
+
+const valid =
+	(check: (text: string) => boolean) =>
+	(text: string): string | undefined =>
+		check(text) ? text : undefined;
+
+const RELAY_ENV: ReadonlyMap<string, (text: string) => string | undefined> =
+	new Map([
+		["SV_ACTOR", valid(isRelayableActor)],
+		["SV_INVITE", valid(isRelayableInvite)],
+		["SV_BUCKET", valid(isRelayableBucket)],
+		["SV_CLIENT", clientName],
+	]);
 
 const isEmitter = (value: NetServer | EventEmitter): value is EventEmitter =>
 	value instanceof EventEmitter;
@@ -577,8 +596,7 @@ export const serve = (
 				let pty: Pty = sanitizePty(undefined);
 				let hasPty = false;
 				const env: Record<string, string> = {};
-				let relayedActor: string | undefined;
-				let relayedClient: string | undefined;
+				const relayed = new Map<string, string>();
 				let resize: ((cols: number, rows: number) => void) | undefined;
 
 				session.on("pty", (accept, reject, info) => {
@@ -599,30 +617,17 @@ export const serve = (
 						return;
 					}
 
-					if (key === "SV_ACTOR") {
-						if (!relay || !isRelayableActor(val)) {
+					const relayedValue = RELAY_ENV.get(key);
+
+					if (relayedValue !== undefined) {
+						const taken = relay ? relayedValue(val) : undefined;
+
+						if (taken === undefined) {
 							reject?.();
-
-							return;
+						} else {
+							relayed.set(key, taken);
+							accept?.();
 						}
-
-						relayedActor = val;
-
-						accept?.();
-
-						return;
-					}
-
-					if (key === "SV_CLIENT") {
-						if (!relay) {
-							reject?.();
-
-							return;
-						}
-
-						relayedClient = clientName(val);
-
-						accept?.();
 
 						return;
 					}
@@ -641,7 +646,7 @@ export const serve = (
 				});
 
 				const info = (): SessionInfo => {
-					const base: SessionInfo = {
+					const base: Types.Mutable<SessionInfo> = {
 						identity: who,
 						user,
 						term: pty.term,
@@ -649,14 +654,30 @@ export const serve = (
 						rows: pty.rows,
 						env: { ...env },
 						remoteAddress,
-						client: relayedClient ?? link.client,
+						client: relayed.get("SV_CLIENT") ?? link.client,
 					};
 
-					return relayedActor === undefined ? base : { ...base, relayedActor };
+					const relayedActor = relayed.get("SV_ACTOR");
+
+					if (relayedActor !== undefined) {
+						base.relayedActor = relayedActor;
+						const relayedInvite = relayed.get("SV_INVITE");
+						const relayedBucket = relayed.get("SV_BUCKET");
+
+						if (relayedInvite !== undefined) {
+							base.relayedInvite = relayedInvite;
+						}
+
+						if (relayedBucket !== undefined) {
+							base.relayedBucket = relayedBucket;
+						}
+					}
+
+					return base;
 				};
 
 				const mayStart = () =>
-					accepting && !started && (!relay || relayedActor !== undefined);
+					accepting && !started && (!relay || relayed.has("SV_ACTOR"));
 
 				const onResize = (handler: (cols: number, rows: number) => void) => {
 					resize = handler;
@@ -713,7 +734,13 @@ export const serve = (
 					);
 				});
 				session.on("subsystem", (accept, reject, { name }) => {
-					const handler = relay ? options.relaySubsystems?.[name] : undefined;
+					const handler =
+						(relay && Object.hasOwn(options.relaySubsystems ?? {}, name)
+							? options.relaySubsystems?.[name]
+							: undefined) ??
+						(mayStart() && Object.hasOwn(options.subsystems ?? {}, name)
+							? options.subsystems?.[name]
+							: undefined);
 
 					if (!accepting || started || handler === undefined) {
 						reject?.();
@@ -812,44 +839,25 @@ export const serve = (
 			});
 		};
 
-		const shellSession = (
-			client: Connection,
+		type Watched = Effect.Success<ReturnType<typeof watchChannel>>;
+
+		const renderOn = (
 			channel: ServerChannel,
 			info: SessionInfo,
-			onShell: NonNullable<ServeOptions["onShell"]>,
-			onResize: (resize: (cols: number, rows: number) => void) => void
+			watched: Watched,
+			onResize: (resize: (cols: number, rows: number) => void) => void,
+			onShell: (
+				session: ShellSession
+			) => Effect.Effect<void, never, Scope.Scope>
 		): Effect.Effect<void, never, Scope.Scope> =>
 			Effect.gen(function* () {
-				const { ended, closed, end, state } = yield* watchChannel(
-					channel,
-					client
-				);
-
+				const { ended, end, state } = watched;
 				const streams = yield* streamsOf(channel, info.cols, info.rows);
 
 				const nativeSession = new NativeSession(channel);
 				yield* Effect.addFinalizer(() =>
-					Effect.suspend(() => {
+					Effect.sync(() => {
 						streams.detach();
-
-						if (state.gone) {
-							return Effect.void;
-						}
-
-						if (!accepting && options.shutdownNotice !== undefined) {
-							channel.write(crlf(`${options.shutdownNotice}\n`));
-						}
-
-						endChannel(channel, 0);
-
-						if (accepting) {
-							return Effect.void;
-						}
-
-						return Deferred.await(closed).pipe(
-							Effect.timeout(RESTORE_TIMEOUT_MS),
-							Effect.ignore
-						);
 					})
 				);
 				let rendering = false;
@@ -953,6 +961,43 @@ export const serve = (
 				);
 			});
 
+		const shellSession = (
+			client: Connection,
+			channel: ServerChannel,
+			info: SessionInfo,
+			onShell: NonNullable<ServeOptions["onShell"]>,
+			onResize: (resize: (cols: number, rows: number) => void) => void
+		): Effect.Effect<void, never, Scope.Scope> =>
+			Effect.gen(function* () {
+				const watched = yield* watchChannel(channel, client);
+				const { closed, state } = watched;
+
+				yield* Effect.addFinalizer(() =>
+					Effect.suspend(() => {
+						if (state.gone) {
+							return Effect.void;
+						}
+
+						if (!accepting && options.shutdownNotice !== undefined) {
+							channel.write(crlf(`${options.shutdownNotice}\n`));
+						}
+
+						endChannel(channel, 0);
+
+						if (accepting) {
+							return Effect.void;
+						}
+
+						return Deferred.await(closed).pipe(
+							Effect.timeout(RESTORE_TIMEOUT_MS),
+							Effect.ignore
+						);
+					})
+				);
+
+				yield* renderOn(channel, info, watched, onResize, onShell);
+			});
+
 		const rawSession = (
 			client: Connection,
 			channel: ServerChannel,
@@ -963,10 +1008,8 @@ export const serve = (
 			onResize: (resize: (cols: number, rows: number) => void) => void
 		): Effect.Effect<void, never, Scope.Scope> =>
 			Effect.gen(function* () {
-				const { ended, closed, end, state } = yield* watchChannel(
-					channel,
-					client
-				);
+				const watched = yield* watchChannel(channel, client);
+				const { ended, closed, end, state } = watched;
 
 				let exited = false;
 				let status: RawExit = 1;
@@ -999,11 +1042,19 @@ export const serve = (
 					})
 				);
 				const listeners = new Set<(cols: number, rows: number) => void>();
+				const size = { cols: info.cols, rows: info.rows };
 				onResize((cols, rows) => {
+					size.cols = cols;
+					size.rows = rows;
+
 					for (const listener of listeners) {
 						listener(cols, rows);
 					}
 				});
+
+				const listen = (listener: (cols: number, rows: number) => void) => {
+					listeners.add(listener);
+				};
 
 				const exit = (how: RawExit) => {
 					if (exited || state.gone) {
@@ -1015,18 +1066,33 @@ export const serve = (
 					end();
 				};
 
+				const raw: Types.Mutable<RawSession> = {
+					info,
+					request,
+					pty,
+					stream: channel,
+					stderr: channel.stderr,
+					onResize: listen,
+					exit,
+				};
+
+				if (pty) {
+					raw.asShell = (shell) =>
+						Effect.suspend(() => {
+							status = 0;
+
+							return renderOn(
+								channel,
+								{ ...info, cols: size.cols, rows: size.rows },
+								watched,
+								listen,
+								shell
+							);
+						});
+				}
+
 				yield* Effect.raceFirst(
-					onRaw({
-						info,
-						request,
-						pty,
-						stream: channel,
-						stderr: channel.stderr,
-						onResize: (listener) => {
-							listeners.add(listener);
-						},
-						exit,
-					}).pipe(
+					onRaw(raw).pipe(
 						Effect.map(() => {
 							status = 0;
 
@@ -1116,7 +1182,7 @@ export const serve = (
 
 			const ssh = new ssh2.Server(
 				{
-					hostKeys: [hostKey.pem],
+					hostKeys: [attachOptions.hostKey ?? hostKey.pem],
 					ident: IDENT,
 					algorithms: { kex: KEX, compress: COMPRESS },
 					keepaliveInterval: timeouts.keepaliveMs,

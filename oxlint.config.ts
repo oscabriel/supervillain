@@ -143,6 +143,12 @@ export default defineConfig({
 	},
 	overrides: [
 		{
+			files: ["apps/supervillain/src/mcp/**", "apps/supervillain/test/mcp/**"],
+			rules: {
+				"effecttsgo/unstable-api-usage": "off",
+			},
+		},
+		{
 			files: ["packages/domain/src/*.ts"],
 			rules: {
 				"no-restricted-imports": restrict(DOMAIN, PURE_DOMAIN),

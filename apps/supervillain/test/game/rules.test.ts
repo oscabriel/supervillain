@@ -12,6 +12,7 @@ import {
 import { Predicate } from "effect";
 
 import { fold, throughJson } from "./fold.ts";
+import { openRules } from "./open.ts";
 import {
 	ALICE,
 	BOB,
@@ -535,7 +536,7 @@ describe("labels", () => {
 			log.push(env(seq, "core.chat-posted", { text: `line ${seq}` }));
 		}
 
-		const { state } = fold(rules, log, { strict: true });
+		const { state } = fold(openRules, log, { strict: true });
 		expect(state.feed).toHaveLength(FEED_LIMIT);
 		expect(state.feed[0]?.seq).toBe(3);
 		expect(labelOf(state)(ALICE)).toBe("Vex");
@@ -686,10 +687,12 @@ describe("replay", () => {
 			],
 			undo: [],
 			redo: [],
-			core: { names: { [ALICE]: "Vex" } },
+			core: { names: { [ALICE]: "Vex" }, members: {}, door: "knock" },
 			ds: rules.initial.ds,
 			sw: rules.initial.sw,
 			pf: rules.initial.pf,
+			ff: rules.initial.ff,
+			stage: rules.initial.stage,
 		});
 	});
 

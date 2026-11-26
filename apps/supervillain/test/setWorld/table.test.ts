@@ -95,10 +95,12 @@ describe("the campaign's ruleset gates the commands", () => {
 			"Unknown command /attack."
 		);
 		expect(completeLine(rules.initial, GM, "/a", "set-world")).toEqual([
+			"/admit ",
 			"/attack ",
 			"/auto ",
 		]);
 		expect(completeLine(rules.initial, GM, "/a", "draw-steel")).toEqual([
+			"/admit ",
 			"/add ",
 		]);
 	});

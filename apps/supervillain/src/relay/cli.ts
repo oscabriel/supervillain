@@ -1,20 +1,26 @@
 import { isIP } from "node:net";
 import { homedir } from "node:os";
 
-import { Console, Effect, FileSystem, Path } from "effect";
+import { Console, Effect, FileSystem, Option, Path } from "effect";
+import type { Types } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
+import { checkRelayDir, forgetHandle, HANDLE_POLICY } from "./handles.ts";
 import {
 	DEFAULT_GM_PORT,
 	DEFAULT_PLAYER_PORT,
-	isRoomName,
+	DEFAULT_RELAY,
+	HANDLE_RULE,
+	isHandle,
+	parseRelayAddress,
 } from "./protocol.ts";
-import { checkRelayDir, forgetRoom } from "./rooms.ts";
+import { SANDBOX_LIVE } from "./sandbox.ts";
 import { Relay, RelayError } from "./server.ts";
+import type { RelayOptions } from "./server.ts";
 
 const DEFAULT_DIR = "~/.supervillain-relay";
 
-const DEFAULT_CLAIM_DAYS = 180;
+const DEFAULT_CLAIM_DAYS = HANDLE_POLICY.claimDays;
 
 const relayDir = (dir: string) =>
 	Effect.map(Path.Path, (path) => {
@@ -27,8 +33,8 @@ const relayDir = (dir: string) =>
 		);
 	});
 
-const notRoomName = (room: string) =>
-	`${JSON.stringify(room)} isn't a room name (1-32 of a-z, 0-9 and -, starting with a letter)`;
+const notHandle = (handle: string) =>
+	`${JSON.stringify(handle)} isn't a handle (${HANDLE_RULE})`;
 
 export const portProblem = (flag: string, port: number, lowest: 0 | 1 = 0) =>
 	port >= lowest && port <= 65_535
@@ -53,7 +59,7 @@ const relay = Command.make("relay", {
 	playerPort: Flag.Int("player-port").pipe(
 		Flag.withDefault(DEFAULT_PLAYER_PORT),
 		Flag.withDescription(
-			"SSH port for players: ssh -p <port> <room>@<this host> (0 picks one)"
+			"SSH port for players: ssh -p <port> <handle>/<table>@<this host> (0 picks one)"
 		)
 	),
 	gmPort: Flag.Int("gm-port").pipe(
@@ -64,10 +70,22 @@ const relay = Command.make("relay", {
 		Flag.withDefault("0.0.0.0"),
 		Flag.withDescription("Address to listen on, both ports")
 	),
+	sandboxes: Flag.Int("sandboxes").pipe(
+		Flag.withDefault(SANDBOX_LIVE),
+		Flag.withDescription(
+			"How many lobby visitors may try a sandbox table at once, each in the relay's memory (0 turns Try a Table off)"
+		)
+	),
 	claimDays: Flag.Int("claim-days").pipe(
 		Flag.withDefault(DEFAULT_CLAIM_DAYS),
 		Flag.withDescription(
-			"Days a room's claim lasts with no GM linked, before another GM may take it"
+			"Days a handle's claim lasts with no GM linked (30 if it never linked a table), before another GM may take it"
+		)
+	),
+	publicRelay: Flag.String("public-relay").pipe(
+		Flag.optional,
+		Flag.withDescription(
+			`The host:port GMs dial for this relay, shown in the lobby's Create a Table command as --relay when it isn't ${DEFAULT_RELAY}`
 		)
 	),
 }).pipe(
@@ -75,7 +93,7 @@ const relay = Command.make("relay", {
 		dir: Flag.String("dir").pipe(
 			Flag.withDefault(DEFAULT_DIR),
 			Flag.withDescription(
-				"Holds the relay's keys and rooms.json, which GM holds each room"
+				"Holds the relay's keys and handles.json, which GM keys hold each handle"
 			)
 		),
 	})
@@ -96,6 +114,23 @@ const run = relay.pipe(
 				return yield* new RelayError({ message: problem });
 			}
 
+			if (o.sandboxes < 0) {
+				return yield* new RelayError({
+					message: `--sandboxes takes a number from 0, not ${o.sandboxes}`,
+				});
+			}
+
+			const publicRelay = Option.getOrUndefined(o.publicRelay);
+
+			if (
+				publicRelay !== undefined &&
+				parseRelayAddress(publicRelay) === undefined
+			) {
+				return yield* new RelayError({
+					message: `--public-relay takes host:port, not ${publicRelay}`,
+				});
+			}
+
 			if (o.claimDays < 1) {
 				return yield* new RelayError({
 					message: `--claim-days takes a number of days from 1, not ${o.claimDays}`,
@@ -112,25 +147,32 @@ const run = relay.pipe(
 				)
 			);
 
-			const info = yield* Relay.make({
+			const relayOptions: Types.Mutable<RelayOptions> = {
 				dir,
 				playerPort: o.playerPort,
 				gmPort: o.gmPort,
 				bind: o.bind,
 				gm: { claimDays: o.claimDays },
-			});
+				sandbox: { live: o.sandboxes },
+			};
+
+			if (publicRelay !== undefined) {
+				relayOptions.publicRelay = publicRelay;
+			}
+
+			const info = yield* Relay.make(relayOptions);
 
 			const shown =
 				o.bind === "0.0.0.0" || o.bind === "::" ? "<this host>" : o.bind;
 
 			yield* Console.log(
-				`supervillain relay: keeping its keys and rooms in ${dir}`
+				`supervillain relay: keeping its keys and handles in ${dir}`
 			);
 			yield* Console.log(
-				`players join with: ssh -p ${info.playerPort} <room>@${shown}`
+				`players join with: ssh -p ${info.playerPort} <handle>/<table>@${shown}`
 			);
 			yield* Console.log(
-				`GMs dial ${o.bind}:${info.gmPort} (supervillain host --relay ${shown}:${info.gmPort})`
+				`GMs dial ${o.bind}:${info.gmPort} (supervillain host --handle <you> --relay ${shown}:${info.gmPort})`
 			);
 			yield* Console.log(`relay key ${info.relayKeyFingerprint}`);
 			yield* Console.log(
@@ -140,13 +182,18 @@ const run = relay.pipe(
 				`host key ${info.hostKeyFingerprint} (what players' ssh sees)`
 			);
 			yield* Console.log(
-				`a room's claim lapses after ${o.claimDays} day${o.claimDays === 1 ? "" : "s"} with no GM linked`
+				o.sandboxes === 0
+					? "the lobby's Try a Table is off (--sandboxes 0)"
+					: `the lobby's Try a Table runs up to ${o.sandboxes} sandbox table${o.sandboxes === 1 ? "" : "s"} at once`
+			);
+			yield* Console.log(
+				`a handle's claim lapses after ${o.claimDays} day${o.claimDays === 1 ? "" : "s"} with no GM linked`
 			);
 
 			return yield* Effect.never;
 		}).pipe(
 			Effect.scoped,
-			Effect.catchTags({ RelayError: fail, RoomsError: fail, SshError: fail })
+			Effect.catchTags({ RelayError: fail, HandlesError: fail, SshError: fail })
 		)
 	)
 );
@@ -154,8 +201,8 @@ const run = relay.pipe(
 const forget = Command.make(
 	"forget",
 	{
-		room: Argument.String("room").pipe(
-			Argument.withDescription("The room to release")
+		handle: Argument.String("handle").pipe(
+			Argument.withDescription("The handle to release")
 		),
 	},
 	(o) =>
@@ -164,8 +211,8 @@ const forget = Command.make(
 			const fs = yield* FileSystem.FileSystem;
 			const path = yield* Path.Path;
 
-			if (!isRoomName(o.room)) {
-				return yield* new RelayError({ message: notRoomName(o.room) });
+			if (!isHandle(o.handle)) {
+				return yield* new RelayError({ message: notHandle(o.handle) });
 			}
 
 			const folder = yield* relayDir(dir);
@@ -181,24 +228,26 @@ const forget = Command.make(
 			);
 
 			yield* checkRelayDir(folder);
-			const rooms = path.join(folder, "rooms.json");
-			const holder = yield* forgetRoom(rooms, o.room);
+			const handles = path.join(folder, "handles.json");
+			const holder = yield* forgetHandle(handles, o.handle);
 
 			return yield* holder === undefined
-				? Console.log(`supervillain: no GM holds room ${o.room} in ${rooms}`)
+				? Console.log(
+						`supervillain: no GM holds the handle ${o.handle} in ${handles}`
+					)
 				: Console.log(
-						`supervillain: released room ${o.room} in ${rooms}, held by GM host key ${holder}`
+						`supervillain: released the handle ${o.handle} in ${handles}, held by GM key${holder.length === 1 ? "" : "s"} ${holder.join(", ")}`
 					).pipe(
 						Effect.andThen(
 							Console.log(
-								"The next GM to link it claims it, and replaces the GM linked now, if one is."
+								"The next GM to link a table under it claims it; tables linked now stay open until they drop."
 							)
 						)
 					);
-		}).pipe(Effect.catchTags({ RelayError: fail, RoomsError: fail }))
+		}).pipe(Effect.catchTags({ RelayError: fail, HandlesError: fail }))
 ).pipe(
 	Command.withDescription(
-		"Release a room's claim, so another GM's host key can take it"
+		"Release a handle's claim, so another GM's key can take it"
 	)
 );
 

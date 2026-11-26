@@ -47,6 +47,7 @@ import {
 	BOB,
 	GM,
 	GUEST,
+	openDoor,
 	KOR,
 	seeded,
 	seedRolling,
@@ -74,6 +75,7 @@ describe("chat", () => {
 		"plain chat, an emote and the GM's narration each read their own way",
 		() =>
 			story(
+				openDoor,
 				seeded(1),
 				as(ALICE),
 				when(table, new Say({ text: "  hello   there " })),
@@ -91,6 +93,7 @@ describe("chat", () => {
 				),
 				state(table, (s) => {
 					expect(feedOf(s)).toEqual([
+						"The door is open: anyone who connects sits down.",
 						"abcdefgh: hello there",
 						"abcdefgh waves",
 						"Rain falls.",
@@ -101,6 +104,7 @@ describe("chat", () => {
 
 	effect("refuses nothing to say, too much, and a player's narration", () =>
 		story(
+			openDoor,
 			seeded(1),
 			as(ALICE),
 			when(table, new Say({ text: " \u0007 " })),
@@ -115,6 +119,7 @@ describe("chat", () => {
 
 	effect("terminal escapes never reach the feed", () =>
 		story(
+			openDoor,
 			seeded(1),
 			as(BOB),
 			when(table, new Say({ text: "\u001B[31mred\u001B[0m \u009B2Jalert" })),
@@ -128,6 +133,7 @@ describe("names", () => {
 		"a first name joins the table; a second renames, relabelling the feed",
 		() =>
 			story(
+				openDoor,
 				seeded(1),
 				as(ALICE),
 				when(table, new Say({ text: "hi" })),
@@ -138,6 +144,7 @@ describe("names", () => {
 				then(table, new NameSet({ actor: ALICE, name: "Al" })),
 				state(table, (s) => {
 					expect(feedOf(s)).toEqual([
+						"The door is open: anyone who connects sits down.",
 						"Al: hi",
 						"Alice joins the table.",
 						"Alice is now Al",
@@ -152,6 +159,7 @@ describe("names", () => {
 		"a name taken by someone else, or drawn to look like it, is refused",
 		() =>
 			story(
+				openDoor,
 				given(table, new NameSet({ actor: ALICE, name: "Alice" })),
 				seeded(1),
 				as(BOB),
@@ -175,6 +183,7 @@ describe("names", () => {
 
 	effect("a guest's name is held only while the guest is seated", () =>
 		story(
+			openDoor,
 			given(table, new NameSet({ actor: GUEST, name: "Wren" })),
 			seeded(1),
 			as(ALICE),
@@ -187,6 +196,7 @@ describe("names", () => {
 
 	effect("a name in play is taken: no line may read as a hero's", () =>
 		story(
+			openDoor,
 			seeded(1),
 			as(ALICE),
 			when(table, new SetName({ name: "vex", cast: ["Vex"] })),
@@ -204,6 +214,7 @@ describe("dice", () => {
 
 	effect("a roll carries its faces, so replay never rolls", () =>
 		story(
+			openDoor,
 			seeded(seed),
 			as(BOB),
 			when(table, new Roll({ notation: "2d10+3" })),
@@ -225,6 +236,7 @@ describe("dice", () => {
 
 	effect("notation the table can't roll is refused", () =>
 		story(
+			openDoor,
 			seeded(seed),
 			as(BOB),
 			when(table, new Roll({ notation: "0d6" })),
@@ -310,6 +322,7 @@ describe("undo", () => {
 
 	effect("a player takes back their own latest change within 30 seconds", () =>
 		story(
+			openDoor,
 			given(table, vexJoins),
 			advance("1 second"),
 			given(table, aliceTakesVex),
@@ -324,7 +337,7 @@ describe("undo", () => {
 				table,
 				new Retracted({
 					actor: ALICE,
-					seqs: [3],
+					seqs: [4],
 					undone: ["Vex gains 2 Wrath → 2."],
 				})
 			),
@@ -344,7 +357,7 @@ describe("undo", () => {
 				table,
 				new Retracted({
 					actor: GM,
-					seqs: [5],
+					seqs: [6],
 					undone: ["Vex gains 1 Wrath → 1."],
 				})
 			),
@@ -418,6 +431,7 @@ describe("undo", () => {
 
 	effect("a claim is never undone, and stands when a change before it is", () =>
 		story(
+			openDoor,
 			seeded(1),
 			asGm,
 			when(table, new DsJoinHero({ hero: "vex", sheet: VEX })),
@@ -437,7 +451,7 @@ describe("undo", () => {
 				table,
 				new Retracted({
 					actor: GM,
-					seqs: [3],
+					seqs: [4],
 					undone: ["Kor joins the party: Fury 1, 24 Stamina."],
 				})
 			),

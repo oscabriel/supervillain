@@ -1,72 +1,81 @@
 ---
 title: How it fits together
-summary: One binary on the GM's machine holds the rules, the SSH server and the log. A relay, when you use one, only carries bytes between players and that machine.
+summary: One binary on the GM's machine holds the rules, SSH server, typed Markdown content, MCP control plane and JSONL log. The relay forwards bytes and pins GM handles.
 order: 4
 ---
 
-supervillain is one program. On the GM's machine it is the table: the rules, an SSH server, every player's screen and the campaign log. On a VPS it can be a relay. Nothing else runs anywhere, and players run nothing at all.
+supervillain is one self-contained program. On the GM's machine it is the table: the rules, campaign content index, SSH server, local MCP control socket, every player's screen and the campaign log. On a VPS it runs as the relay. Players install nothing at all.
 
 ```text
- players' ssh ──> ┌──────────────── GM's machine ────────────────┐
-                  │  SSH server ─> seat ─> input line            │
-                  │                         │                    │
-                  │                         v                    │
-                  │  rules: decide ─> events ─> events.jsonl     │
-                  │         apply  <────────────┘                │
-                  │                         │                    │
-                  │  table view ─> every seat redraws            │
-                  └──────────────────────────────────────────────┘
+  players' ssh / agents (-s mcp-1)
+        │
+        v
+  ┌──────────────── relay (optional VPS) ────────────────┐
+  │  handles.json · 3-tab lobby · ephemeral sandbox      │
+  └────────────────────────┬─────────────────────────────┘
+                           │ outbound GM link (gm_key)
+                           v
+  ┌─────────────────── GM's machine ─────────────────────┐
+  │  SSH server + mcp.sock ─> intake + TableRoom         │
+  │                              │                       │
+  │                              v                       │
+  │  pure rules: decide ─> events ─> events.jsonl        │
+  │              apply  <────────────┘                   │
+  │                              │                       │
+  │  CampaignContent (typed .md) + TableView projection  │
+  │  every seat redraws · player views strip GM notes    │
+  └──────────────────────────────────────────────────────┘
 ```
 
-## The GM's machine is the authority
+## File over app, GM machine as authority
 
-Every seat, the GM's terminal included, sends lines of text. The host turns a line into a command, the rules decide it, and the events they return are appended to the log. Then every seat draws its screen again from the new state. Players never hold game state; their terminal shows frames and sends keys.
+Every input, whether typed at a seat, clicked with the mouse, sent via SSH exec, or called by an AI agent over MCP, flows through the same `intake` and `Table` aggregate on the GM's machine. Accepted events append to `events.jsonl`, and every connected seat redraws from the resulting `TableState`.
 
-That makes the host a single writer. Only one host at a time writes to a campaign (`events.lock` makes sure of it), and a host that finds the log changed under it halts rather than guess.
+`events.lock` guarantees a single writer per campaign. A failed append truncates back to its prior byte offset and halts further writes so the log is never half-written.
 
-## The rules are pure
+## Pure rules and deterministic replay
 
-A ruleset is a module of plain functions:
+`packages/domain` depends only on `effect` and `@alchemy.run/domain`: no Effect runtime, no filesystem, no network, no clock, and no `Math.random`.
 
-- `decide(state, actor, command, dice)` returns events, or a refusal with a reason the table shows the player.
-- `apply(state, envelope)` folds one event into the state.
+- `decide(state, actor, command, dice, now)` returns typed `Domain.Event` instances or a clean `Refused` rejection.
+- `apply(state, envelope)` folds one event deterministically.
 
-The rules have no Effect runtime, no I/O, no clock and no `Math.random`. Randomness and facts from outside, such as a hero's sheet, a generated map or a set.world roll, are gathered by the host before the command is decided and go into the event's payload. Replay never rolls and never reads a file, so the log alone rebuilds the table, and `supervillain check` can replay one while the table is running.
+External facts (validated sheets, maps, stage cards, set.world rolls, pending knocks, seated players) are loaded in `intake` through `ExternalSystem` ports before `decide` runs and embedded into event payloads. Replay never rolls dice or reads external files, so `events.jsonl` alone rebuilds the entire campaign.
 
-## The log is a text file
+## Typed Markdown content and visibility
 
-The campaign is `events.jsonl`, one JSON object per line:
+Campaign prep lives as typed Markdown files (`table.md`, `party/`, `npcs/`, `monsters/`, `scenes/`, `handouts/`, `items/`, plus custom ruleset folders) alongside `maps/*.txt`. Frontmatter is validated with Effect Schema and cross-checked across folders by `CampaignContent` and `supervillain check`.
 
-```json
-{"actor":"gm","seq":9,"timestamp":"2026-10-22T16:23:16.573Z","type":"ds.moved","payload":{"id":"brann","path":[{"x":2,"y":4},{"x":3,"y":4},{"x":4,"y":4},{"x":5,"y":4}],"cost":4,"speed":5}}
-```
+Visibility is enforced strictly on the host when projecting `TableView` and MCP views:
 
-The envelope is always `actor`, `seq`, `timestamp`, `type` and `payload`. The file is only ever appended to. An undo doesn't delete anything: it is an event of its own that names the changes it takes back, and the fold leaves them out. A reader skips an event type it doesn't know, loudly; the writer halts on one it can't apply.
-
-You can read your campaign with `cat`, search it with `grep`, back it up with `cp` and keep it in git.
-
-## A domain model over that file
-
-The table is an aggregate in [@alchemy.run/domain](https://github.com/alchemy-run/alchemy): its commands, its events and the decide and evolve functions that connect them. The storage under it is ours, `@supervillain/platform-jsonl`, which keeps the aggregate's stream in that one `events.jsonl` instead of a database. The domain layer gets typed commands and events and tests written as stories; the campaign stays a file a GM can read.
+- `## GM Notes` (and equivalent GM/Director/DM/Secret headings plus HTML comments) are stripped during Markdown parsing and never enter `TableState` or `events.jsonl`.
+- Cards have three tiers: `gm-only` (absent from state), `revealed` (browsable in `/codex`), and `on-table` (pinned to the Campaign Stage).
+- `ContentWatch` watches content folders while a table runs, keeping the last valid snapshot on broken edits and holding back auto-sync if GM notes shrink while player-visible text grows.
 
 ## Effect runs the edge
 
-[Effect 4](https://effect.website) owns everything that isn't rules: the log file and its single writer, the SSH server, each session's lifetime and the relay link. Each is a service with a layer, so a test can swap the real file or the real network for a fake one. When a player disconnects, their session's scope closes and everything it opened goes with it.
+[Effect 4](https://effect.website) manages every side effect as a `Context.Service` with composable layers: `CampaignLog` and `JsonlPlatform`, `TableRoom`, `Presence`, `Knocks`, `CampaignContent`, `ContentWatch`, `TableServer`, `RelayLink`, `GmKey`, `McpSocket`, and `Relay`. When a player disconnects, their session scope closes and releases every resource cleanly.
 
-## SSH that expects strangers
+## Defensive SSH and post-quantum key exchange
 
-The SSH server is our own, on [ssh2](https://github.com/mscdex/ssh2). It is open to strangers, so it is built defensively:
+`packages/ssh` wraps [ssh2](https://github.com/mscdex/ssh2) with a small patch adding post-quantum hybrid key exchange (`mlkem768x25519-sha256`, backed by `@noble/post-quantum`) first, plus environment forwarding on SSH subsystems for `mcp-1@supervillain.sh`.
 
-- It offers only elliptic-curve key exchange, with ML-KEM's post-quantum hybrid (`mlkem768x25519-sha256`) first. Stock ssh2 lacks that hybrid, so supervillain patches it in, with ML-KEM from `@noble/post-quantum`.
-- It caps connections and sessions per address and in all, rate-limits new sessions, times out logins and idle sessions, and cuts peers that stop reading or rekey too often.
-- A key is an identity. A client with no key can come in as a guest.
+- Strict public-key verification (`Object.is(key.verify(...), true)`), elliptic-curve only, no compression.
+- Per-address and global connection/session caps, session rate limits, login and idle timeouts, keepalive cutoffs, rekey caps, and a 4 MiB backpressure ceiling.
+- Knock-to-join membership (`core.member-admitted`) gates both interactive seats and agent sessions, with per-address knock caps and 10-minute deny cooldowns enforced even through a relay via opaque `SV_BUCKET` hashes.
 
-## One app for every seat
+## One UI app for every seat
 
-The table's screen is one Solid app on OpenTUI, rendered once for the GM's terminal and once for each SSH seat. It sees only a read-only view of the table, never the room, the log or Effect. In terminals with kitty graphics, the map is drawn by default as pictures from MEKMODE's tiles, sent to that seat as small PNGs (with `/view text` to switch to text).
+The table UI is a single Solid app on OpenTUI rendering a pure, read-only `TableView`. It switches cleanly between the Campaign Stage (party strip, active scene, pinned cards, trackers, recap, Codex) and the tactical Battlemap (combat band plus text or kitty-graphics MEKMODE pixel tiles). Clicks never mutate state directly: they submit the exact slash command typing would send.
 
-## The relay
+## The relay and lobby
 
-`supervillain relay` renders nothing and keeps no record of play. A GM's host dials out to it and holds a link open; the relay takes players' SSH connections on its public port and passes each one down that link. The host pins the relay's key, so nobody else can pretend to be the relay. The relay's own state is two keys and `rooms.json`, a list of which GM host key holds which room name.
+`supervillain relay` stores zero campaign data. Its disk state is two SSH keys and `handles.json` mapping short GM handles (`ana`) to GM key fingerprints (`~/.config/supervillain/gm_key`).
 
-Because players' SSH ends at the relay, the relay sees play in the clear and vouches for which key each player holds. A GM runs their own relay or uses one they trust.
+- GMs dial out and present their GM key as the link host key; claim codes from the lobby's **Create a Table** tab are proven via `HMAC-SHA256(code, gmKeyFingerprint)` so codes never travel in cleartext.
+- Returning players get privacy-preserving lobby discovery and short-name routing (`ssh first-fight@supervillain.sh`) via `knows-1@supervillain.sh` nonce+HMAC probes against live linked hosts.
+- The **Try a Table** lobby tab runs a strictly capped, in-memory sandbox (`CampaignLog` memory layer, zero disk writes, zero outbound HTTP) so first-time visitors can explore a live table with nothing installed.
+
+## Agent MCP control plane
+
+`apps/supervillain/src/mcp/` builds on Effect's `effect/ai/McpServer` (supporting MCP protocols `2024-11-05` through `2025-11-25`) to expose every command for the campaign's ruleset as a typed JSON Schema tool, with host-fact keys stripped and rejected if forged. Local GM agents connect through an owner-only (`0600`) Unix socket via `supervillain mcp`; players and remote GMs connect over the `mcp-1@supervillain.sh` SSH subsystem. See [Connect an agent](/docs/agents).

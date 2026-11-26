@@ -75,7 +75,8 @@ const identity = (key: ClientKey | undefined) =>
 const args = (
 	port: number,
 	key: ClientKey | undefined,
-	flags: ReadonlyArray<string> = []
+	flags: ReadonlyArray<string> = [],
+	user = "den"
 ) => [
 	"ssh",
 	...flags,
@@ -94,11 +95,18 @@ const args = (
 	"-o",
 	"IdentitiesOnly=yes",
 	...identity(key),
-	"den@127.0.0.1",
+	`${user}@127.0.0.1`,
 ];
 
-export const sshExec = (port: number, command: string, key?: ClientKey) =>
-	Effect.promise(async () => await run([...args(port, key), command]));
+export const sshExec = (
+	port: number,
+	command: string,
+	key?: ClientKey,
+	user?: string
+) =>
+	Effect.promise(
+		async () => await run([...args(port, key, [], user), command])
+	);
 
 export interface Terminal {
 	readonly text: () => string;
@@ -108,13 +116,13 @@ export interface Terminal {
 	readonly exited: Promise<number>;
 }
 
-export const sshShell = (port: number, key?: ClientKey) =>
+export const sshShell = (port: number, key?: ClientKey, user?: string) =>
 	Effect.acquireRelease(
 		Effect.sync(() => {
 			let output = "";
 			const decoder = new TextDecoder();
 
-			const proc = Bun.spawn(args(port, key, ["-tt"]), {
+			const proc = Bun.spawn(args(port, key, ["-tt"], user), {
 				env: { ...env(), TERM: "xterm-256color" },
 				terminal: {
 					cols: 100,

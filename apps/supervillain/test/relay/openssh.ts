@@ -108,7 +108,7 @@ const baseArgs = (
 	"IdentitiesOnly=yes",
 	...identity(options.key),
 	"-l",
-	options.user ?? "den",
+	options.user ?? "ana/den",
 	"127.0.0.1",
 ];
 

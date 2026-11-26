@@ -32,6 +32,10 @@ export const color = {
 	directorBody: "#3a2442",
 	youBody: "#2c3a24",
 	deadBody: "#2a2a2a",
+	readAloud: "#d19a66",
+	tierTable: "#98c379",
+	tierCodex: "#61afef",
+	tracker: "#56b6c2",
 } as const;
 
 export interface FeedStyle extends FeedFormat {

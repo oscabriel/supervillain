@@ -34,6 +34,20 @@ export class SheetAmbiguous extends Schema.TaggedError<SheetAmbiguous>()(
 	}
 ) {}
 
+export class CardNotFound extends Schema.TaggedError<CardNotFound>()(
+	"CardNotFound",
+	{ query: Schema.String, message: Schema.String }
+) {}
+
+export class CardAmbiguous extends Schema.TaggedError<CardAmbiguous>()(
+	"CardAmbiguous",
+	{
+		query: Schema.String,
+		matches: Schema.Array(Schema.String),
+		message: Schema.String,
+	}
+) {}
+
 export class ContentReadError extends Schema.TaggedError<ContentReadError>()(
 	"ContentReadError",
 	{ message: Schema.String, cause: Schema.optionalKey(Schema.Defect()) }
@@ -92,8 +106,35 @@ export const PrepEntrySchema = Schema.Struct({
 	name: Schema.String,
 });
 
+export const PrepEncounterSchema = Schema.Struct({
+	map: Schema.optionalKey(Schema.String),
+	monsters: Schema.Array(
+		Schema.Struct({ id: Schema.String, count: Schema.optionalKey(Schema.Int) })
+	),
+});
+
+export const PrepSceneSchema = Schema.Struct({
+	id: Schema.String,
+	name: Schema.String,
+	encounter: Schema.optionalKey(PrepEncounterSchema),
+});
+
+export const PrepTrackerSchema = Schema.Struct({
+	id: Schema.String,
+	label: Schema.String,
+	kind: Schema.Literals(["clock", "counter", "quest"]),
+	max: Schema.optionalKey(Schema.Int),
+	value: Schema.optionalKey(Schema.Int),
+	scene: Schema.optionalKey(Schema.String),
+});
+
 export const PrepCatalogSchema = Schema.Struct({
 	heroes: Schema.Array(PrepEntrySchema),
 	monsters: Schema.Array(PrepEntrySchema),
 	maps: Schema.Array(PrepEntrySchema),
+	scenes: Schema.optionalKey(Schema.Array(PrepSceneSchema)),
+	npcs: Schema.optionalKey(Schema.Array(PrepEntrySchema)),
+	handouts: Schema.optionalKey(Schema.Array(PrepEntrySchema)),
+	items: Schema.optionalKey(Schema.Array(PrepEntrySchema)),
+	trackers: Schema.optionalKey(Schema.Array(PrepTrackerSchema)),
 });

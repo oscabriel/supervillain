@@ -8,7 +8,7 @@ import { must } from "../game/must.ts";
 import { effect, waitFor } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
 import { clientKey, sshExec, sshShell } from "../relay/openssh.ts";
-import { campaignDir } from "./cli.ts";
+import { campaignDir, CONFIG_HOME, plainEnv } from "./cli.ts";
 import { logOf, pollFor, readLog } from "./log.ts";
 
 const main = nodePath.join(import.meta.dir, "../../src/main.ts");
@@ -20,11 +20,15 @@ interface Child {
 	readonly stop: (signal?: NodeJS.Signals) => Promise<number>;
 }
 
-const supervillain = (args: ReadonlyArray<string>) =>
+const supervillain = (
+	args: ReadonlyArray<string>,
+	configHome: string = CONFIG_HOME
+) =>
 	Effect.acquireRelease(
 		Effect.sync(() => {
 			const proc = Bun.spawn(["bun", main, ...args], {
 				cwd: root,
+				env: { ...plainEnv(), XDG_CONFIG_HOME: configHome },
 				stdout: "pipe",
 				stderr: "pipe",
 			});
@@ -120,21 +124,29 @@ const startRelay = (dir: string, ports: Ports) =>
 const startHost = (
 	campaign: string,
 	gmPort: number,
-	extra: ReadonlyArray<string> = []
+	extra: ReadonlyArray<string> = [],
+	configHome: string = CONFIG_HOME
 ) =>
 	Effect.gen(function* () {
-		const host = yield* supervillain([
-			"host",
-			campaign,
-			"--headless",
-			"--port",
-			"0",
-			"--room",
-			"den",
-			"--relay",
-			`127.0.0.1:${gmPort}`,
-			...extra,
-		]);
+		const host = yield* supervillain(
+			[
+				"host",
+				campaign,
+				"--headless",
+				"--port",
+				"0",
+				"--table",
+				"den",
+				"--handle",
+				"ana",
+				"--door",
+				"open",
+				"--relay",
+				`127.0.0.1:${gmPort}`,
+				...extra,
+			],
+			configHome
+		);
 
 		yield* waitFor(
 			"the host to start",
@@ -146,31 +158,41 @@ const startHost = (
 			host.output()
 		)?.groups?.key;
 
-		return { ...host, hostKey: must(hostKey) };
+		const gmKey = /your GM key (?<key>SHA256:[A-Za-z0-9+/]{43})/u.exec(
+			host.output()
+		)?.groups?.key;
+
+		return { ...host, hostKey: must(hostKey), gmKey: must(gmKey) };
 	});
 
 const links = (host: Child) =>
-	host.output().split('linked as room "den"').length - 1;
+	host.output().split("linked as ana/den").length - 1;
 
-const Rooms = Schema.fromJsonString(
+const Handles = Schema.fromJsonString(
 	Schema.Record(
 		Schema.String,
-		Schema.Struct({ key: Schema.String, linked: Schema.String })
+		Schema.Struct({
+			keys: Schema.Array(Schema.String),
+			claimed: Schema.String,
+			seen: Schema.String,
+		})
 	)
 );
 
-const decodeRooms = Schema.decodeUnknownSync(Rooms);
+const decodeHandles = Schema.decodeUnknownSync(Handles);
 
-const roomsOf = (relayDir: string) =>
+const handlesOf = (relayDir: string) =>
 	Effect.promise(async () =>
-		decodeRooms(await readFile(nodePath.join(relayDir, "rooms.json"), "utf-8"))
+		decodeHandles(
+			await readFile(nodePath.join(relayDir, "handles.json"), "utf-8")
+		)
 	);
 
-const roomKeys = (
-	rooms: Readonly<Record<string, { readonly key: string }>>
-): Readonly<Record<string, string>> =>
+const handleKeys = (
+	handles: Readonly<Record<string, { readonly keys: ReadonlyArray<string> }>>
+): Readonly<Record<string, ReadonlyArray<string>>> =>
 	Object.fromEntries(
-		Object.entries(rooms).map(([room, { key }]) => [room, key])
+		Object.entries(handles).map(([handle, { keys }]) => [handle, keys])
 	);
 
 describe("supervillain host --relay, through supervillain relay", () => {
@@ -205,14 +227,15 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				expect(known.trim()).toBe(relay.key);
 				yield* waitFor(
 					"the claim",
-					() => relay.output().includes("room den: claimed by GM host key"),
+					() => relay.output().includes("handle ana: claimed by GM key"),
 					10_000
 				);
-				expect(roomKeys(yield* roomsOf(relayDir))).toEqual({
-					den: host.hostKey,
+				expect(handleKeys(yield* handlesOf(relayDir))).toEqual({
+					ana: [host.gmKey],
 				});
+				expect(host.gmKey).not.toBe(host.hostKey);
 				expect(host.output()).toContain(
-					`players join with: ssh -p ${ports.player} den@127.0.0.1`
+					`players join with: ssh -p ${ports.player} ana/den@127.0.0.1`
 				);
 				expect(host.output()).toContain(
 					"players' ssh sees the relay's host key"
@@ -238,7 +261,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
 
 				const rolled = yield* sshExec(ports.player, ["roll", "2d6"], {
 					key: vex,
-					user: "den",
+					user: "ana/den",
 				});
 
 				expect(rolled.exitCode).toBe(0);
@@ -249,7 +272,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				const terminal = yield* sshShell(
 					ports.player,
 					{ cols: 100, rows: 30 },
-					{ key: kai, user: "den" }
+					{ key: kai, user: "ana/den" }
 				);
 
 				yield* waitFor("the name prompt", () =>
@@ -276,6 +299,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				);
 				const log = yield* logOf(campaign);
 				expect(log.map((e) => [e.actor, e.type])).toEqual([
+					["gm", "core.door-set"],
 					[`key:${vex.fingerprint}`, "core.dice-rolled"],
 					[`key:${kai.fingerprint}`, "core.name-set"],
 				]);
@@ -284,30 +308,34 @@ describe("supervillain host --relay, through supervillain relay", () => {
 
 				const offered = yield* sshExec(ports.player, ["roll", "1d2"], {
 					key: vex,
-					user: "den",
+					user: "ana/den",
 					flags: ["-i", rsa.path],
 				});
 
 				expect(offered.exitCode).toBe(0);
 				expect(offered.stdout).toMatch(/rolled 1d2/u);
 
-				const usurper = yield* startHost(yield* campaignDir, ports.gm);
+				const usurper = yield* startHost(
+					yield* campaignDir,
+					ports.gm,
+					[],
+					yield* tempDir
+				);
+
 				yield* waitFor(
 					"the relay to refuse the second GM",
 					() =>
-						relay
-							.output()
-							.includes(`refused a GM with host key ${usurper.hostKey}`),
+						relay.output().includes(`refused a GM with key ${usurper.gmKey}`),
 					10_000
 				);
 				expect(links(usurper)).toBe(0);
 				yield* waitFor("the usurper's warning", () =>
 					usurper
 						.output()
-						.includes("another GM's host key may hold room den there")
+						.includes("another GM's key may hold the handle ana there")
 				);
-				expect(roomKeys(yield* roomsOf(relayDir))).toEqual({
-					den: host.hostKey,
+				expect(handleKeys(yield* handlesOf(relayDir))).toEqual({
+					ana: [host.gmKey],
 				});
 				yield* Effect.promise(async () => await usurper.stop());
 
@@ -326,7 +354,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
 
 				const again = yield* sshExec(ports.player, ["/name Vex"], {
 					key: vex,
-					user: "den",
+					user: "ana/den",
 				});
 
 				expect(again).toMatchObject({
@@ -341,7 +369,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				const seated = yield* sshShell(
 					ports.player,
 					{ cols: 100, rows: 30 },
-					{ key: kai, user: "den" }
+					{ key: kai, user: "ana/den" }
 				);
 
 				yield* waitFor("Kai's seat", () =>
@@ -356,17 +384,17 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				);
 				yield* Effect.promise(async () => await seated.exited);
 				yield* waitFor("the relay to see the link go", () =>
-					back.output().includes("room den: GM link closed")
+					back.output().includes("table ana/den: GM link closed")
 				);
 
 				const closed = yield* sshExec(ports.player, ["help"], {
 					key: vex,
-					user: "den",
+					user: "ana/den",
 				});
 
 				expect(closed).toMatchObject({
 					exitCode: 1,
-					stderr: "The table den isn't open right now.\n",
+					stderr: "ana/den isn't open right now.\n",
 				});
 			}),
 		90_000
@@ -391,7 +419,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				expect(
 					(yield* sshExec(ports.player, ["roll", "1d6"], {
 						key: vex,
-						user: "den",
+						user: "ana/den",
 					})).exitCode
 				).toBe(0);
 
@@ -401,7 +429,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				});
 
 				expect(stranger.stderr).toBe(
-					"To join a table, put its room's name before the @ (ssh <room>@…). Your GM has it.\n"
+					"To join a table, put its name before the @ (ssh <handle>/<table>@…). Your GM has it.\n"
 				);
 
 				const terminal = yield* sshShell(
@@ -411,9 +439,9 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				);
 
 				yield* waitFor("the lobby", () =>
-					Bun.stripANSI(terminal.output()).includes("Enter sits at den")
+					Bun.stripANSI(terminal.output()).includes("Enter sits at ana/den")
 				);
-				expect(Bun.stripANSI(terminal.output())).toMatch(/1 {2}den +○ 0/u);
+				expect(Bun.stripANSI(terminal.output())).toMatch(/1 {2}ana\/den +○ 0/u);
 				terminal.write("\r");
 				yield* waitFor(
 					"the name prompt",
@@ -461,7 +489,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				const terminal = yield* sshShell(
 					ports.player,
 					{ cols: 100, rows: 30 },
-					{ key: kai, user: "den" }
+					{ key: kai, user: "ana/den" }
 				);
 
 				yield* waitFor("the name prompt", () =>
@@ -500,7 +528,7 @@ describe("supervillain host --relay, through supervillain relay", () => {
 				const terminal = yield* sshShell(
 					ports.player,
 					{ cols: 100, rows: 30 },
-					{ key: kai, user: "den" }
+					{ key: kai, user: "ana/den" }
 				);
 
 				yield* waitFor("the name prompt", () =>
@@ -558,13 +586,11 @@ describe("supervillain host --relay, through supervillain relay", () => {
 
 				const turnedAway = yield* sshExec(fakePorts.player, ["help"], {
 					key: vex,
-					user: "den",
+					user: "ana/den",
 				});
 
 				expect(turnedAway.exitCode).toBe(1);
-				expect(turnedAway.stderr).toMatch(
-					/^There's no table called den here\.\n/u
-				);
+				expect(turnedAway.stderr).toBe("ana/den isn't open right now.\n");
 
 				expect(yield* Effect.promise(async () => await host.stop())).toBe(0);
 

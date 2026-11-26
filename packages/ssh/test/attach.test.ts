@@ -1,9 +1,11 @@
 import { describe, expect } from "bun:test";
 import { connect } from "node:net";
 import type { Socket } from "node:net";
+import path from "node:path";
 
 import { Deferred, Effect } from "effect";
 
+import { fingerprintOf, loadHostKey } from "../src/index.ts";
 import type { AttachOptions } from "../src/index.ts";
 import { effect } from "./effect.ts";
 import { nextEvent } from "./events.ts";
@@ -53,6 +55,42 @@ const whoami = {
 };
 
 describe("attach", () => {
+	effect(
+		"a link attached with its own host key shows that key on it, and the server's elsewhere",
+		() =>
+			Effect.gen(function* () {
+				const keys = yield* tempDir;
+				const key = yield* clientKey(keys, "alice");
+				const server = yield* testServer(whoami);
+
+				const gmKey = yield* Effect.promise(
+					async () => await loadHostKey(path.join(keys, "gm_key"))
+				);
+
+				expect(gmKey.fingerprint).not.toBe(server.hostKeyFingerprint);
+
+				const seen: Array<string> = [];
+
+				const sawHost = (shown: Buffer) => {
+					seen.push(fingerprintOf(shown));
+				};
+
+				const link = yield* dialed(server)({ hostKey: gmKey.pem });
+
+				yield* ssh2Client({ sock: link, key, onHostKey: sawHost });
+				yield* ssh2Client({ port: server.port, key, onHostKey: sawHost });
+
+				const plain = yield* dialed(server)();
+				yield* ssh2Client({ sock: plain, key, onHostKey: sawHost });
+
+				expect(seen).toEqual([
+					gmKey.fingerprint,
+					server.hostKeyFingerprint,
+					server.hostKeyFingerprint,
+				]);
+			})
+	);
+
 	effect(
 		"a socket the server dialed out serves SSH to whoever is on the far end",
 		() =>

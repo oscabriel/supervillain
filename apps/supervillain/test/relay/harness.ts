@@ -2,12 +2,13 @@ import { connect } from "node:net";
 import type { Socket } from "node:net";
 import path from "node:path";
 
-import { serve } from "@supervillain/ssh";
+import { pemFingerprint, serve } from "@supervillain/ssh";
 import type { AttachOptions, RawSession } from "@supervillain/ssh";
 import { Effect, Logger } from "effect";
 
 import { answerKnows } from "../../src/host/lobby.ts";
 import {
+	claimProof,
 	helloLine,
 	KNOWS_SUBSYSTEM,
 	knowsAnswerLine,
@@ -140,7 +141,19 @@ const execTable = (session: RawSession, who: string, command: string) =>
 		}
 
 		session.stream.resume();
-		session.stream.write(`exec ${who} ${command}\n`);
+
+		session.stream.write(
+			command === "invite"
+				? `invite ${session.info.relayedInvite ?? "-"}\n`
+				: `exec ${who} ${command}\n`
+		);
+
+		if (command === "invite") {
+			return yield* Effect.sync(() => {
+				session.exit(0);
+			});
+		}
+
 		session.stderr.write("note\n");
 
 		return yield* command === "wait"
@@ -222,20 +235,36 @@ export const socketClosed = (socket: Socket): Effect.Effect<void> =>
 		socket.resume();
 	});
 
+export const HANDLE = "ana";
+
 export const linkGm = (
 	gm: {
 		readonly server: {
 			readonly attach: (s: Socket, o?: AttachOptions) => void;
+			readonly hostKeyFingerprint: string;
 		};
+		readonly hostKey?: Buffer;
 	},
 	gmPort: number,
-	room: string,
-	relayKey: string
+	tableName: string,
+	relayKey: string,
+	handle: string = HANDLE,
+	claim?: string,
+	boundTo?: string
 ) =>
 	Effect.acquireRelease(
 		Effect.gen(function* () {
 			const { socket, closed } = yield* dial(gmPort);
-			socket.write(helloLine(room));
+
+			const own =
+				gm.hostKey === undefined
+					? gm.server.hostKeyFingerprint
+					: (pemFingerprint(gm.hostKey) ?? gm.server.hostKeyFingerprint);
+
+			const proof =
+				claim === undefined ? undefined : claimProof(claim, boundTo ?? own);
+
+			socket.write(helloLine(handle, tableName, proof));
 
 			const answer = yield* readLine(socket).pipe(
 				Effect.catchTag("LineError", (failure) =>
@@ -244,10 +273,16 @@ export const linkGm = (
 			);
 
 			if (answer === "OK") {
-				gm.server.attach(socket, {
-					admitRelay: (fp) => fp === relayKey,
-					persistent: true,
-				});
+				gm.server.attach(
+					socket,
+					gm.hostKey === undefined
+						? { admitRelay: (fp) => fp === relayKey, persistent: true }
+						: {
+								admitRelay: (fp) => fp === relayKey,
+								persistent: true,
+								hostKey: gm.hostKey,
+							}
+				);
 			}
 
 			const link: GmLink = { answer, socket, closed };

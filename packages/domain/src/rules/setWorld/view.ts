@@ -1,7 +1,9 @@
 import type { TokenAction } from "../../actions.ts";
+import { playerOf } from "../../party.ts";
+import type { EncounterSpec, PartyMember } from "../../party.ts";
 import { partyFirst, prepMaps, prepSteps } from "../../prep.ts";
 import type { PrepCatalog, PrepView } from "../../prep.ts";
-import { ifDefined, listIf, when } from "../../present.ts";
+import { ifDefined, listIf, listIfDefined, when } from "../../present.ts";
 import { moverWalk, reachable } from "../board/movement.ts";
 import type { MapToken, MapView } from "../board/view.ts";
 import type { Combatant, CombatView } from "../drawSteel/view.ts";
@@ -296,3 +298,37 @@ export const setWorldPrep = (
 				: { note: "the fight is on" },
 	};
 };
+
+export const setParty = (
+	slice: SetState,
+	actor: string,
+	label: (actor: string) => string
+): ReadonlyArray<PartyMember> =>
+	slice.fighters
+		.filter((f) => f.side === "party")
+		.map((f): PartyMember => ({
+			id: f.id,
+			name: f.name,
+			...playerOf(f.player, actor, label),
+			mine: f.player === actor,
+			free: f.player === undefined && !isDown(f),
+			down: isDown(f),
+			health: {
+				label: "health",
+				value: Math.max(0, f.health),
+				max: maxHealth(f.character),
+			},
+			summary: `${f.character.className}, ${f.character.mainhand} · stamina ${shownStamina(f)}/${maxStamina(f.character)}`,
+			tags: [],
+		}));
+
+export const setFightLines = (
+	encounter: EncounterSpec
+): ReadonlyArray<string> => [
+	...listIfDefined(encounter.map, (id) => [`/map ${id}`]),
+	...encounter.monsters.flatMap((m) =>
+		Array.from({ length: Math.max(1, m.count ?? 1) }, (_, i) =>
+			i === 0 ? `/foe ${m.id}` : `/foe ${m.id}-${i + 1}`
+		)
+	),
+];

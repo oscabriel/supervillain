@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
 
+import { TextRenderable } from "@opentui/core";
 import { Deferred, Effect, Exit, Scope } from "effect";
 import type ssh2 from "ssh2";
 
@@ -55,6 +56,63 @@ const execEnding = (
 	});
 
 describe("raw sessions", () => {
+	effect(
+		"a raw shell with a pty can become a rendered shell, at the size its terminal is now",
+		() =>
+			Effect.gen(function* () {
+				const key = yield* clientKey(yield* tempDir, "alice");
+				const shown: Array<string> = [];
+
+				const server = yield* testServer({
+					onRaw: (session) =>
+						Effect.gen(function* () {
+							const { asShell } = session;
+
+							if (asShell === undefined) {
+								session.stream.write("no shell here\n");
+								session.exit(3);
+
+								return;
+							}
+
+							session.stream.write("raw first|");
+
+							yield* asShell((shell) =>
+								Effect.gen(function* () {
+									shown.push(
+										`${shell.info.cols}x${shell.info.rows} ${shell.info.identity.actor}`
+									);
+									shell.renderer.root.add(
+										new TextRenderable(shell.renderer, {
+											content: "MOUNTED_ON_RAW",
+										})
+									);
+
+									return yield* Effect.never;
+								})
+							);
+						}),
+				});
+
+				const terminal = yield* sshShell(
+					server.port,
+					{ cols: 90, rows: 25 },
+					{ key }
+				);
+
+				yield* waitFor("the raw bytes", () =>
+					terminal.output().includes("raw first|")
+				);
+				yield* waitFor("the rendered shell", () =>
+					terminal.output().includes("MOUNTED_ON_RAW")
+				);
+				expect(shown).toEqual([`90x25 key:${key.fingerprint}`]);
+
+				const plain = yield* sshExec(server.port, ["anything"], { key });
+				expect(plain).toMatchObject({ stdout: "no shell here\n", exitCode: 3 });
+			})
+	);
+
 	effect(
 		"an exec arrives as bytes both ways: stdin to EOF, stdout, stderr, exit status",
 		() =>

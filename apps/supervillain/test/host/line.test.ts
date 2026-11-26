@@ -13,7 +13,11 @@ import { Presence } from "../../src/host/Presence.ts";
 import { tableServices } from "../../src/host/services.ts";
 import type { TableServices } from "../../src/host/services.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
-import { sampleCampaign } from "./campaign.ts";
+import {
+	openCampaign,
+	openSampleCampaign,
+	sampleCampaign,
+} from "./campaign.ts";
 import { effect, must } from "./effect.ts";
 import type { Platform } from "./effect.ts";
 import { tempDir } from "./tempDir.ts";
@@ -39,11 +43,29 @@ const atTable = <A, E>(body: Effect.Effect<A, E, TableServices | Platform>) =>
 		return yield* using(tableServices(dir), body);
 	});
 
+const atOpenTable = <A, E>(
+	body: Effect.Effect<A, E, TableServices | Platform>
+) =>
+	Effect.gen(function* () {
+		const dir = yield* openCampaign;
+
+		return yield* using(tableServices(dir), body);
+	});
+
 const atSampleTable = <A, E>(
 	body: (dir: string) => Effect.Effect<A, E, TableServices | Platform>
 ) =>
 	Effect.gen(function* () {
 		const dir = yield* sampleCampaign;
+
+		return yield* using(tableServices(dir), body(dir));
+	});
+
+const atOpenSampleTable = <A, E>(
+	body: (dir: string) => Effect.Effect<A, E, TableServices | Platform>
+) =>
+	Effect.gen(function* () {
+		const dir = yield* openSampleCampaign;
 
 		return yield* using(tableServices(dir), body(dir));
 	});
@@ -99,13 +121,13 @@ describe("runLine", () => {
 	effect(
 		"plain text is chat, and the reply is the feed line it made, labelled now",
 		() =>
-			atTable(
+			atOpenTable(
 				Effect.gen(function* () {
 					expect(yield* runLine("gm", "hello there")).toEqual({
 						kind: "done",
 						lines: [
 							{
-								seq: 1,
+								seq: 2,
 								who: "GM",
 								kind: "chat",
 								text: "hello there",
@@ -123,7 +145,7 @@ describe("runLine", () => {
 	);
 
 	effect("refusals from parsing and from the rules come back as refusals", () =>
-		atTable(
+		atOpenTable(
 			Effect.gen(function* () {
 				expect(yield* runLine(vex, "/roll")).toEqual({
 					kind: "refusal",
@@ -196,7 +218,7 @@ describe("runLine", () => {
 			Effect.gen(function* () {
 				const help = yield* runLine(vex, "/help", "exec");
 				expect(help.kind === "message" && help.text).toStartWith(
-					"Plain text is chat. Commands start with /; roll, dist, undo, redo, help and sheet work without it here."
+					"Plain text is chat. Commands start with /; roll, dist, undo, redo, help, sheet and codex work without it here."
 				);
 				expect(help.kind === "message" && help.text).not.toContain("/quit");
 				expect(yield* runLine(vex, "/quit", "exec")).toMatchObject({
@@ -209,7 +231,7 @@ describe("runLine", () => {
 	effect(
 		"a guest's name is held while they are seated, and free once they go",
 		() =>
-			atTable(
+			atOpenTable(
 				Effect.gen(function* () {
 					const guest = "guest:wrenWREN";
 					const seat = yield* Scope.make();
@@ -232,7 +254,7 @@ describe("runLine with Draw Steel", () => {
 	effect(
 		"a guest who drops and comes back as a new guest takes their hero back",
 		() =>
-			atSampleTable(() =>
+			atOpenSampleTable(() =>
 				Effect.gen(function* () {
 					const [first, again] = ["guest:daveDAVE1", "guest:daveDAVE2"];
 					yield* runLine("gm", "/hero wren");
@@ -297,7 +319,7 @@ describe("runLine with Draw Steel", () => {
 	effect(
 		"a name can't be a hero's or a creature's in play, so no line reads as theirs",
 		() =>
-			atSampleTable(() =>
+			atOpenSampleTable(() =>
 				Effect.gen(function* () {
 					yield* runLine("gm", "/hero brann");
 					yield* runLine("gm", "/add bandit-cut");
@@ -314,7 +336,7 @@ describe("runLine with Draw Steel", () => {
 	effect(
 		"a sheet that's missing or wrong is refused, naming the file and the field",
 		() =>
-			atSampleTable((dir) =>
+			atOpenSampleTable((dir) =>
 				Effect.gen(function* () {
 					expect(said(yield* runLine("gm", "/hero nobody"))).toBe(
 						'no hero "nobody" in heroes/ (there are: brann, ilsa, kesh, wren)'
@@ -350,7 +372,7 @@ describe("runLine with Draw Steel", () => {
 					expect(said(yield* runLine(vex, "/add dragon"))).toBe(
 						"Only the GM can use /add."
 					);
-					expect((yield* stateNow).seq).toBe(0);
+					expect((yield* stateNow).seq).toBe(1);
 				})
 			)
 	);
@@ -468,7 +490,7 @@ describe("runLine with Draw Steel", () => {
 	effect(
 		"a player who plays a hero is labelled with it; the GM gives a hero by label",
 		() =>
-			atSampleTable(() =>
+			atOpenSampleTable(() =>
 				Effect.gen(function* () {
 					yield* runLine(vex, "/name Vex");
 					yield* runLine(bob, "/name Bob");
@@ -511,7 +533,7 @@ describe("runLine with Draw Steel", () => {
 	effect(
 		"a guest who has left answers to no name: the key who has it now does",
 		() =>
-			atSampleTable(() =>
+			atOpenSampleTable(() =>
 				Effect.gen(function* () {
 					const guest = "guest:robinROBIN";
 					const seat = yield* Scope.make();
@@ -590,7 +612,7 @@ describe("runLine with the map and undo", () => {
 	effect(
 		"a map that's missing or wrong is refused naming the file; a player's /map reads none",
 		() =>
-			atSampleTable((dir) =>
+			atOpenSampleTable((dir) =>
 				Effect.gen(function* () {
 					expect(said(yield* runLine("gm", "/map cave"))).toBe(
 						'no map "cave" in maps/ (there are: ford-road)'
@@ -604,7 +626,7 @@ describe("runLine with the map and undo", () => {
 					expect(said(yield* runLine(vex, "/map cave"))).toBe(
 						"Only the GM can use /map."
 					);
-					expect((yield* stateNow).seq).toBe(0);
+					expect((yield* stateNow).seq).toBe(1);
 				})
 			)
 	);
@@ -614,7 +636,7 @@ describe("runLine with the map and undo", () => {
 		() =>
 			using(
 				TestClock.layer(),
-				atSampleTable(() =>
+				atOpenSampleTable(() =>
 					Effect.gen(function* () {
 						yield* runLine(vex, "/name Vex");
 						yield* runLine("gm", "/hero brann");
@@ -640,7 +662,7 @@ describe("runLine with the map and undo", () => {
 	effect(
 		"the GM takes back one person's change by their name, and the host finds who that is",
 		() =>
-			atSampleTable(() =>
+			atOpenSampleTable(() =>
 				Effect.gen(function* () {
 					yield* runLine(vex, "/name Vex");
 					yield* runLine("gm", "/hero brann");

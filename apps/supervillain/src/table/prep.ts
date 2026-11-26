@@ -1,4 +1,4 @@
-import { charsOf, formatSquare } from "@supervillain/domain";
+import { charsOf, formatSquare, ifDefined } from "@supervillain/domain";
 
 import type { MapView, PrepFigure, PrepItem, PrepView } from "./view.ts";
 
@@ -211,4 +211,93 @@ export const figureText = (glyph: string | undefined): [string, string] => {
 		}).join("");
 
 	return [row(0), row(1)];
+};
+
+export interface StageEntry {
+	readonly key: string;
+	readonly name: string;
+	readonly tier?: "on-table" | "in-codex";
+	readonly items: ReadonlyArray<PrepItem>;
+}
+
+const CARD_LINE = /^\/(?:show|reveal|hide) (?<key>\S+)$/u;
+
+const FIRST_WORD = /^(?<word>\S+)\s+(?<rest>.*)$/u;
+
+const tierOf = (note: string | undefined): StageEntry["tier"] => {
+	if (note === "on the table") {
+		return "on-table";
+	}
+
+	return note === "in the codex" ? "in-codex" : undefined;
+};
+
+const entryName = (item: PrepItem): string =>
+	FIRST_WORD.exec(item.label)?.groups?.rest ?? item.label;
+
+export const stageEntries = (
+	listed: ReadonlyArray<PrepItem>
+): ReadonlyArray<StageEntry> => {
+	const entries: Array<StageEntry> = [];
+
+	for (const item of listed) {
+		const key = CARD_LINE.exec(item.line)?.groups?.key;
+		const last = entries.at(-1);
+
+		if (key !== undefined && last?.key === key) {
+			const tier = last.tier ?? tierOf(item.note);
+			entries[entries.length - 1] = {
+				...last,
+				...ifDefined(tier, (value) => ({ tier: value })),
+				items: [...last.items, item],
+			};
+		} else if (
+			key === undefined &&
+			item.lines !== undefined &&
+			last !== undefined
+		) {
+			entries[entries.length - 1] = { ...last, items: [...last.items, item] };
+		} else {
+			const tier = tierOf(item.note);
+			entries.push({
+				key: key ?? item.line,
+				name: entryName(item),
+				...ifDefined(tier, (value) => ({ tier: value })),
+				items: [item],
+			});
+		}
+	}
+
+	return entries;
+};
+
+export const chipLabel = (item: PrepItem): string => {
+	if (item.lines !== undefined) {
+		return "▶ fight";
+	}
+
+	return FIRST_WORD.exec(item.label)?.groups?.word ?? item.label;
+};
+
+export const chipRows = (
+	labels: ReadonlyArray<string>,
+	width: number
+): ReadonlyArray<ReadonlyArray<number>> => {
+	const rows: Array<Array<number>> = [];
+	let used = 0;
+
+	for (const [i, label] of labels.entries()) {
+		const w = Bun.stringWidth(label) + 3;
+		const row = rows.at(-1);
+
+		if (row === undefined || used + w > width) {
+			rows.push([i]);
+			used = w;
+		} else {
+			row.push(i);
+			used += w;
+		}
+	}
+
+	return rows;
 };

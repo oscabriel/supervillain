@@ -57,6 +57,7 @@ import {
 	seedRolling,
 	story,
 	table,
+	openDoor,
 } from "./fixtures.ts";
 
 const { advance, given, rejected, state, then, when } = Story;
@@ -121,6 +122,7 @@ const setUp = [
 describe("fighters", () => {
 	effect("are rolled at set.world, then recruited or sent as foes", () =>
 		story(
+			openDoor,
 			seeded(1),
 			asGm,
 			when(table, new SwRecruit({ name: "Ada", seed: 1 })),
@@ -155,6 +157,7 @@ describe("the fight", () => {
 		"turns follow initiative on the clock; attacks dodge, crit and fell",
 		() =>
 			story(
+				openDoor,
 				...setUp,
 				seeded(1),
 				asGm,

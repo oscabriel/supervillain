@@ -6,6 +6,7 @@ import type { Accessor } from "solid-js";
 import { bandLayout, whoAt } from "./band.ts";
 import type { Segment, Tone } from "./band.ts";
 import { kept } from "./keep.ts";
+import { BAND_FRAME } from "./layout.ts";
 import { boxClick } from "./mouse.ts";
 import { marked } from "./panels.ts";
 import { color, people, personColor, personLabel } from "./theme.ts";
@@ -23,8 +24,6 @@ const TONES: Readonly<Record<Tone, string>> = {
 	dead: color.dim,
 	temp: color.dice,
 };
-
-export const BAND_FRAME = { width: 4, height: 2 } as const;
 
 interface Clicks {
 	onWho?: ((id: string) => void) | undefined;

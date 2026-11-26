@@ -24,6 +24,8 @@ export interface SessionInfo {
 	readonly remoteAddress: string;
 	readonly client: string;
 	readonly relayedActor?: string;
+	readonly relayedInvite?: string;
+	readonly relayedBucket?: string;
 }
 
 export interface ShellSession {
@@ -60,6 +62,9 @@ export interface RawSession {
 	readonly stderr: Writable;
 	readonly onResize: (listener: (cols: number, rows: number) => void) => void;
 	readonly exit: (how: RawExit) => void;
+	readonly asShell?: (
+		onShell: (session: ShellSession) => Effect.Effect<void, never, Scope.Scope>
+	) => Effect.Effect<void, never, Scope.Scope>;
 }
 
 export interface Limits {
@@ -105,9 +110,16 @@ export interface ServeOptions {
 			(session: RawSession) => Effect.Effect<void, never, Scope.Scope>
 		>
 	>;
+	readonly subsystems?: Readonly<
+		Record<
+			string,
+			(session: RawSession) => Effect.Effect<void, never, Scope.Scope>
+		>
+	>;
 }
 
 export interface AttachOptions {
+	readonly hostKey?: Buffer;
 	readonly trustedRelayKeys?: ReadonlyArray<string>;
 	readonly admitRelay?: (fingerprint: string) => boolean;
 	readonly persistent?: boolean;

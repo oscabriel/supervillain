@@ -34,6 +34,7 @@ fail() {
 step() { echo "smoke: $*"; }
 
 cd "$work"
+export XDG_CONFIG_HOME="$work/config"
 cp "$bin" ./supervillain
 chmod +x ./supervillain
 
@@ -47,7 +48,7 @@ if [ ! -f camp/heroes/brann.yaml ] || [ ! -f camp/maps/ford-road.txt ]; then
   fail "the sample campaign wasn't copied"
 fi
 
-./supervillain host ./camp --headless --port 0 >host.out 2>&1 &
+./supervillain host ./camp --headless --port 0 --door open >host.out 2>&1 &
 host_pid=$!
 port=""
 for _ in $(seq 1 100); do
@@ -149,15 +150,16 @@ done
 [ -n "$player_port" ] && [ -n "$gm_port" ] || fail "the relay never printed its ports"
 step "relay: players on $player_port, GMs on $gm_port"
 
-./supervillain host ./camp --headless --port 0 --relay "127.0.0.1:$gm_port" \
+./supervillain host ./camp --headless --port 0 --handle smoke --relay "127.0.0.1:$gm_port" \
   --relay-player-port "$player_port" >host.out 2>&1 &
 host_pid=$!
 for _ in $(seq 1 100); do
-  grep -q 'linked as room "camp"' host.out && break
+  grep -q 'linked as smoke/camp' host.out && break
   kill -0 "$host_pid" 2>/dev/null || fail "the host exited before it linked"
   sleep 0.1
 done
-grep -q 'linked as room "camp"' host.out || fail "the host never linked to the relay"
+grep -q 'linked as smoke/camp' host.out || fail "the host never linked to the relay"
+[ -f "$XDG_CONFIG_HOME/supervillain/gm_key" ] || fail "the host didn't make its GM key"
 grep -q "trusted relay key SHA256:.* on first use" host.out || fail "the host didn't pin the relay key"
 step "the host linked to the relay and pinned its key in relay_known"
 
@@ -165,7 +167,7 @@ cat >>"$work/ssh_config" <<EOF
 Host relayed
   HostName 127.0.0.1
   Port $player_port
-  User camp
+  User smoke/camp
   IdentityFile $work/player_key
   IdentitiesOnly yes
   UserKnownHostsFile $work/known_hosts_relay
@@ -178,6 +180,11 @@ out="$(ssh -F "$work/ssh_config" relayed "/roll 1d6" 2>/dev/null)" || fail "ssh 
 case "$out" in
 *"Smoke rolled 1d6"*) step "ssh relayed '/roll 1d6' -> $out" ;;
 *) fail "ssh through the relay printed '$out', not 'Smoke rolled 1d6'" ;;
+esac
+out="$(ssh -F "$work/ssh_config" -l camp relayed "/roll 1d4" 2>/dev/null)" || fail "the shorthand through the relay exited $?: $out"
+case "$out" in
+*"Smoke rolled 1d4"*) step "ssh camp@relay '/roll 1d4' -> $out (a returning player's shorthand)" ;;
+*) fail "the shorthand through the relay printed '$out', not 'Smoke rolled 1d4'" ;;
 esac
 
 kill -TERM "$host_pid"

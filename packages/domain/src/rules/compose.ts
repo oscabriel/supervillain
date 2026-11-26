@@ -2,7 +2,7 @@ import { DateTime, Option } from "effect";
 
 import { orEmpty } from "../present.ts";
 import { hasTerminalControls, quote } from "../text.ts";
-import { core, CorePayloads, labelOf } from "./core/core.ts";
+import { core, CorePayloads, isMember, labelOf } from "./core/core.ts";
 import type { CoreCommand, CoreState } from "./core/core.ts";
 import {
 	DEFAULT_FORMAT,
@@ -26,11 +26,25 @@ import type {
 	UndoBatchOf,
 	UndoCommand,
 } from "./core/module.ts";
+import {
+	afterCombat,
+	applyStage,
+	decideStage,
+	initialStage,
+	isStageCommandType,
+	STAGE_EVENTS as STAGE_EVENT_TYPES,
+	stageCommands,
+	stageFormats,
+} from "./core/stage.ts";
+import type { StageCommand, StageState } from "./core/stage.ts";
 import { drawSteel } from "./drawSteel/index.ts";
 import type { DsCommand } from "./drawSteel/index.ts";
 import type { DrawSteelState } from "./drawSteel/state.ts";
 import { decodePayload, isRefused, messageOf, refuse } from "./engine.ts";
 import type { Decision, Dice, Envelope, Refused, Rules } from "./engine.ts";
+import type { FfCommand } from "./freeform/commands.ts";
+import { freeform } from "./freeform/index.ts";
+import type { FfState } from "./freeform/state.ts";
 import type { PfCommand } from "./pf2e/commands.ts";
 import { pf2e } from "./pf2e/index.ts";
 import type { PfState } from "./pf2e/state.ts";
@@ -42,6 +56,7 @@ export interface Slices {
 	readonly ds: DrawSteelState;
 	readonly sw: SetState;
 	readonly pf: PfState;
+	readonly ff: FfState;
 }
 
 export type UndoBatch = UndoBatchOf<Slices>;
@@ -53,6 +68,8 @@ export interface TableState extends TableBase<Slices> {
 	readonly ds: DrawSteelState;
 	readonly sw: SetState;
 	readonly pf: PfState;
+	readonly ff: FfState;
+	readonly stage: StageState;
 }
 
 export type Command =
@@ -60,6 +77,8 @@ export type Command =
 	| DsCommand
 	| SetCommand
 	| PfCommand
+	| FfCommand
+	| StageCommand
 	| UndoCommand
 	| RedoCommand;
 
@@ -89,10 +108,15 @@ const SW_EVENTS: ReadonlySet<string> = new Set(setWorld.events);
 
 const PF_EVENTS: ReadonlySet<string> = new Set(pf2e.events);
 
+const FF_EVENTS: ReadonlySet<string> = new Set(freeform.events);
+
+const STAGE_EVENTS: ReadonlySet<string> = new Set(STAGE_EVENT_TYPES);
+
 const RETRACTABLE: ReadonlySet<string> = new Set([
 	...drawSteel.retractable,
 	...setWorld.retractable,
 	...pf2e.retractable,
+	...freeform.retractable,
 ]);
 
 export const isCoreCommand = (command: Command): command is CoreCommand =>
@@ -106,6 +130,18 @@ export const isSetCommand = (command: Command): command is SetCommand =>
 
 export const isPfCommand = (command: Command): command is PfCommand =>
 	Object.hasOwn(pf2e.commands, command.type);
+
+export const isFfCommand = (command: Command): command is FfCommand =>
+	Object.hasOwn(freeform.commands, command.type);
+
+export const isStageCommand = (command: Command): command is StageCommand =>
+	isStageCommandType(command.type);
+
+export const inCombatAny = (slices: Slices): boolean =>
+	slices.ds.combat.active ||
+	slices.sw.fight !== undefined ||
+	slices.pf.combat !== undefined ||
+	slices.ff.order !== undefined;
 
 const joinLines = (lines: ReadonlyArray<string>): string =>
 	lines
@@ -194,6 +230,16 @@ export const commands: ReadonlyArray<TableSpec> = [
 		(state) => state.pf,
 		pf2e.ruleset
 	),
+	...specsOf<FfState, FfCommand>(
+		freeform.commands,
+		(state) => state.ff,
+		freeform.ruleset
+	),
+	...specsOf<StageState, StageCommand>(
+		stageCommands,
+		(state) => state.stage,
+		undefined
+	),
 	UNDO_SPEC,
 	REDO_SPEC,
 ];
@@ -209,6 +255,8 @@ const FORMATS: ReadonlyMap<string, FeedFormat> = new Map([
 	...Object.entries(drawSteel.formats),
 	...Object.entries(setWorld.formats),
 	...Object.entries(pf2e.formats),
+	...Object.entries(freeform.formats),
+	...Object.entries(stageFormats),
 ]);
 
 export const feedFormat = (kind: string): FeedFormat =>
@@ -218,6 +266,7 @@ const snapshot = (state: TableState): Slices => ({
 	ds: state.ds,
 	sw: state.sw,
 	pf: state.pf,
+	ff: state.ff,
 });
 
 const rolls = (envelope: Envelope): boolean => {
@@ -227,6 +276,10 @@ const rolls = (envelope: Envelope): boolean => {
 
 	if (SW_EVENTS.has(envelope.type)) {
 		return setWorld.rolled(envelope);
+	}
+
+	if (FF_EVENTS.has(envelope.type)) {
+		return freeform.rolled(envelope);
 	}
 
 	return PF_EVENTS.has(envelope.type) && pf2e.rolled(envelope);
@@ -266,6 +319,16 @@ const applySlice = (slices: Slices, envelope: Envelope): SliceApplied => {
 			slices: { ...slices, pf: applied.slice },
 			feed: applied.feed,
 			changed: applied.slice !== slices.pf,
+		};
+	}
+
+	if (FF_EVENTS.has(envelope.type)) {
+		const applied = freeform.apply(slices.ff, envelope);
+
+		return {
+			slices: { ...slices, ff: applied.slice },
+			feed: applied.feed,
+			changed: applied.slice !== slices.ff,
 		};
 	}
 
@@ -787,6 +850,12 @@ const foldOne = (state: TableState, envelope: Envelope): Folded => {
 		return { next: { ...state, core: applied.slice }, feed: applied.feed };
 	}
 
+	if (STAGE_EVENTS.has(envelope.type)) {
+		const applied = applyStage(state.stage, envelope, inCombatAny(state));
+
+		return { next: { ...state, stage: applied.slice }, feed: applied.feed };
+	}
+
 	return foldSlice(state, envelope);
 };
 
@@ -796,7 +865,9 @@ const knows = (type: string): boolean =>
 	CORE_EVENTS.has(type) ||
 	DS_EVENTS.has(type) ||
 	SW_EVENTS.has(type) ||
-	PF_EVENTS.has(type);
+	PF_EVENTS.has(type) ||
+	FF_EVENTS.has(type) ||
+	STAGE_EVENTS.has(type);
 
 const entryOf = (envelope: Envelope, feed: FeedNote): FeedEntry => {
 	const entry: FeedEntry = {
@@ -831,7 +902,13 @@ const apply = (state: TableState, envelope: Envelope): TableState => {
 			? state.feed
 			: [...state.feed, entryOf(envelope, feed)].slice(-FEED_LIMIT);
 
-	return { ...next, seq: envelope.seq, actors, feed: entries };
+	return {
+		...next,
+		stage: afterCombat(next.stage, inCombatAny(next)),
+		seq: envelope.seq,
+		actors,
+		feed: entries,
+	};
 };
 
 const skip = (state: TableState, envelope: Envelope): TableState => {
@@ -855,6 +932,8 @@ const skip = (state: TableState, envelope: Envelope): TableState => {
 	return { ...state, undo, seq: Math.max(state.seq, envelope.seq) };
 };
 
+export const KNOCK_FIRST = "Knock first: the GM hasn't let you in.";
+
 const decide = (
 	state: TableState,
 	actor: string,
@@ -862,6 +941,10 @@ const decide = (
 	dice: Dice,
 	now: number
 ): Decision => {
+	if (!isMember(state, actor)) {
+		return refuse(KNOCK_FIRST);
+	}
+
 	if (command.type === "undo") {
 		return decideUndo(state, actor, command, now);
 	}
@@ -902,6 +985,14 @@ const decide = (
 		return pf2e.decide(state.pf, shared, actor, command, dice);
 	}
 
+	if (isFfCommand(command)) {
+		return freeform.decide(state.ff, shared, actor, command, dice);
+	}
+
+	if (isStageCommand(command)) {
+		return decideStage(state.stage, inCombatAny(state), command);
+	}
+
 	return refuse(`There is no "${spec.type}" command.`);
 };
 
@@ -915,6 +1006,8 @@ export const initial: TableState = {
 	ds: drawSteel.initial,
 	sw: setWorld.initial,
 	pf: pf2e.initial,
+	ff: freeform.initial,
+	stage: initialStage,
 };
 
 export const rules: Rules<TableState, Command> = {

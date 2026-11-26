@@ -14,17 +14,16 @@ import type { TableServices, SetWorldPort } from "../../src/host/services.ts";
 import { decodeRoll } from "../../src/host/SetWorld.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
 import { FIXTURES, recordedAnswer } from "../setWorld/harness.ts";
-import { SAMPLE } from "./campaign.ts";
+import { openCampaign, SAMPLE } from "./campaign.ts";
 import { effect } from "./effect.ts";
 import type { Platform } from "./effect.ts";
 import { answering, unreachable } from "./setWorld.ts";
-import { tempDir } from "./tempDir.ts";
 
 const alice = "key:SHA256:aliceALICEaliceKEY";
 
 const campaign = (text: string | undefined) =>
 	Effect.gen(function* () {
-		const dir = yield* tempDir;
+		const dir = yield* openCampaign;
 		yield* Effect.promise(async () => {
 			if (text !== undefined) {
 				await writeFile(path.join(dir, "campaign.yaml"), text);
@@ -117,7 +116,7 @@ describe("campaign.yaml", () => {
 				const refused = yield* Effect.flip(rulesetOf(unknown));
 				expect(refused).toBeInstanceOf(CampaignConfigInvalid);
 				expect(refused.message).toBe(
-					`${unknown}/campaign.yaml: says rules: pathfinder, but a campaign plays draw-steel, set-world or pf2e`
+					`${unknown}/campaign.yaml: says rules: pathfinder, but a campaign plays draw-steel, set-world, pf2e or freeform`
 				);
 				const typo = yield* campaign("rule: set-world\n");
 				const typoExit = yield* Effect.exit(rulesetOf(typo));
@@ -228,7 +227,7 @@ describe("rolling at set.world, a host fact", () => {
 				);
 
 				const joined = yield* Schema.decodeEffect(Logged)(
-					log.split("\n")[0] ?? ""
+					log.split("\n")[1] ?? ""
 				);
 
 				expect(joined).toMatchObject({
@@ -308,7 +307,7 @@ describe("rolling at set.world, a host fact", () => {
 							text: "No roll from set.world for seed 5: set.world answered 404.",
 						});
 						expect((yield* Effect.flatMap(TableRoom, (r) => r.state)).seq).toBe(
-							0
+							1
 						);
 					})
 				);

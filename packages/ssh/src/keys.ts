@@ -49,6 +49,12 @@ export const parseKey = (input: string | Buffer): ParsedKey | undefined => {
 	}
 };
 
+export const pemFingerprint = (pem: Buffer): string | undefined => {
+	const key = parseKey(pem);
+
+	return key === undefined ? undefined : fingerprintOf(key.getPublicSSH());
+};
+
 interface HostKey {
 	readonly pem: Buffer;
 	readonly fingerprint: string;

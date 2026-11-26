@@ -25,8 +25,7 @@ import {
 } from "solid-js";
 import type { Accessor } from "solid-js";
 
-import { bandLayout } from "./band.ts";
-import { BAND_FRAME, Band } from "./Band.tsx";
+import { Band } from "./Band.tsx";
 import { Feed } from "./Feed.tsx";
 import { hanging } from "./hanging.ts";
 import { Header } from "./Header.tsx";
@@ -64,8 +63,17 @@ import type {
 	LineEditKind,
 	Look,
 	LineState,
+	Slot,
 } from "./input.ts";
 import { InputLine } from "./InputLine.tsx";
+import { KnockBanner } from "./KnockBanner.tsx";
+import {
+	bandRows,
+	heights as layoutHeights,
+	mapHeights,
+	roomFor,
+} from "./layout.ts";
+import type { BandWant, Screen } from "./layout.ts";
 import {
 	focusOf,
 	followed,
@@ -100,6 +108,8 @@ import {
 	viewPreset,
 } from "./panels.ts";
 import type { Panel, Panels } from "./panels.ts";
+import { partyWanted, sheetLine } from "./party.ts";
+import { Party } from "./Party.tsx";
 import {
 	GUTTER,
 	LABEL_ROWS,
@@ -118,8 +128,24 @@ import {
 } from "./prep.ts";
 import type { PrepArmed } from "./prep.ts";
 import { Prep } from "./Prep.tsx";
+import {
+	campaignShown,
+	codexFind,
+	codexWanted,
+	stagePlan,
+	stageWanted,
+} from "./stage.ts";
+import type { CodexState, Peek, StagePlan } from "./stage.ts";
+import { Stage } from "./Stage.tsx";
 import { color, people } from "./theme.ts";
-import type { CombatView, MapView, PrepView, TableView } from "./view.ts";
+import type {
+	KnockShown,
+	MapView,
+	PartyMember,
+	PrepView,
+	StageView,
+	TableView,
+} from "./view.ts";
 
 const panelHint = (keys: string) => `${keys} show or hide panels`;
 
@@ -185,23 +211,28 @@ const CONFIRM_LEAVE =
 
 const PAGE = 0.8;
 
-const FIXED_ROWS = 3;
-
-const FEED_MIN = 5;
-
-const BAND_MIN = 3;
-
-const PANE_MIN = 8;
-
 const MIN_SEAT = { width: 72, height: 20 } as const;
 
-const MAP_MIN = 8;
-
-const MAP_FLOOR = 5;
-
-const BAND_FOLDED = 4;
-
 const NO_MAP = "no map is loaded; the layout applies once one is";
+
+const NO_BOARD = "no map is loaded, so there is no board to look at";
+
+const NO_STAGE = "this table has no campaign stage";
+
+const PEEKS: Readonly<Record<Slot, string>> = {
+	stage: "you're looking at the stage · /view board goes back",
+	board: "you're looking at the board · /view stage goes back",
+};
+
+const problemAlert = (problems: ReadonlyArray<string>): string | undefined => {
+	if (problems.length === 0) {
+		return undefined;
+	}
+
+	return problems.length === 1
+		? "a campaign file has a problem · /prep shows it"
+		: `campaign files have ${problems.length} problems · /prep shows them`;
+};
 
 const NO_REPLY = "no reply is open; /sheet or /help opens one";
 
@@ -213,8 +244,6 @@ const MOUSE_OFF =
 
 const said = (cause: unknown) =>
 	cause instanceof Error ? cause.message : String(cause);
-
-const drawn = (rows: number) => (rows < MAP_FLOOR ? 0 : rows);
 
 const LINE_EDITS = {
 	historyUp,
@@ -248,6 +277,8 @@ const Undrawn = (props: {
 				view.combat?.(),
 				view.map?.(),
 				view.prep?.view(),
+				view.stage?.(),
+				view.party?.(),
 			],
 			() => {
 				props.reset();
@@ -285,6 +316,8 @@ export const App = (props: { view: TableView }) => {
 	const [mouse, setMouse] = createSignal(true);
 	const [selection, setSelection] = createSignal<Selection>();
 	const [armed, setArmed] = createSignal<PrepArmed>();
+	const [peek, setPeek] = createSignal<Peek>();
+	const [codex, setCodex] = createSignal<CodexState>();
 
 	const [adding, setAdding] = createSignal<{
 		readonly figure: string;
@@ -304,6 +337,7 @@ export const App = (props: { view: TableView }) => {
 	let pane: ScrollBoxRenderable | undefined;
 	let debug: ScrollBoxRenderable | undefined;
 	let prepBox: ScrollBoxRenderable | undefined;
+	let stageBox: ScrollBoxRenderable | undefined;
 	const keys = panelKeys(view.prep !== undefined);
 
 	const mode = () => modeFor(view.me, view.myName());
@@ -439,9 +473,11 @@ export const App = (props: { view: TableView }) => {
 
 		const rows = mapHeight();
 		const mapFirst = viewPreset(panels(), "map");
-		const { room, cap } = roomFor(mapFirst, false);
+		const { room, cap } = roomFor(screen(), mapFirst, false);
 
-		if (mapHeights(map, view.combat?.(), room, cap, mapFirst).map <= rows) {
+		const band = bandRows(view.combat?.(), size().width, cap);
+
+		if (mapHeights(mapWanted(map), band, room, mapFirst).map <= rows) {
 			return false;
 		}
 
@@ -480,7 +516,11 @@ export const App = (props: { view: TableView }) => {
 	const shownMap = (): MapView | undefined => {
 		const map = view.map?.();
 
-		return map !== undefined && panels().map && !paneOpen() && !small()
+		return map !== undefined &&
+			!campaign() &&
+			panels().map &&
+			!paneOpen() &&
+			!small()
 			? map
 			: undefined;
 	};
@@ -558,7 +598,7 @@ export const App = (props: { view: TableView }) => {
 			return;
 		}
 
-		if (panel === "map" && view.map?.() === undefined) {
+		if (panel === "map" && view.map?.() === undefined && !campaign()) {
 			if (!multiline()) {
 				setPanels({ ...panels(), map: !panels().map });
 				setNotice(NO_MAP);
@@ -683,6 +723,34 @@ export const App = (props: { view: TableView }) => {
 			return;
 		}
 
+		if (intent.kind === "peek") {
+			peekAt(intent.at);
+
+			return;
+		}
+
+		if (intent.kind === "codex") {
+			const stage = view.stage?.();
+
+			const found =
+				intent.ref === undefined || stage === undefined
+					? undefined
+					: codexFind(stage.codex, intent.ref);
+
+			if (
+				stage !== undefined &&
+				(intent.ref === undefined || found !== undefined)
+			) {
+				openCodex(found?.key);
+
+				return;
+			}
+
+			await deliver(intent.line);
+
+			return;
+		}
+
 		if (intent.kind === "hint") {
 			setNotice(intent.text);
 
@@ -709,6 +777,12 @@ export const App = (props: { view: TableView }) => {
 		}
 
 		await deliver(intent.line);
+	};
+
+	const knocking = () => view.knocks?.() ?? [];
+
+	const decideKnock = (knock: KnockShown, verdict: "admit" | "deny") => {
+		background(deliver(`/${verdict} ${knock.actor}`));
 	};
 
 	const deliver = async (text: string): Promise<string | undefined> => {
@@ -770,6 +844,12 @@ export const App = (props: { view: TableView }) => {
 
 		if (armed() !== undefined) {
 			setArmed(undefined);
+
+			return;
+		}
+
+		if (codex() !== undefined) {
+			closeCodex();
 
 			return;
 		}
@@ -940,6 +1020,105 @@ export const App = (props: { view: TableView }) => {
 	const prepOpen = () => prepView() !== undefined;
 	const prepColumns = () => (prepOpen() ? prepWidth(size().width) : 0);
 
+	const campaign = createMemo(() =>
+		campaignShown({
+			stage: view.stage?.(),
+			mapLoaded: view.map?.() !== undefined,
+			peek: peek(),
+			prepping: prepOpen(),
+		})
+	);
+
+	createEffect(
+		on(
+			() => view.stage?.()?.mode,
+			() => {
+				setPeek(undefined);
+			},
+			{ defer: true }
+		)
+	);
+
+	const shownStage = (): StageView | undefined => {
+		const stage = view.stage?.();
+
+		return stage !== undefined &&
+			campaign() &&
+			panels().map &&
+			!paneOpen() &&
+			!small()
+			? stage
+			: undefined;
+	};
+
+	const stageWidth = () => size().width - prepColumns();
+
+	const planned = createMemo((): StagePlan | undefined => {
+		const stage = shownStage();
+
+		return stage === undefined
+			? undefined
+			: stagePlan(stage, stageWidth(), view.gmNotes);
+	});
+
+	const partyShown = (): ReadonlyArray<PartyMember> | undefined => {
+		const members = view.party?.() ?? [];
+
+		return campaign() && members.length > 0 && panels().band && !small()
+			? members
+			: undefined;
+	};
+
+	const partyWant = (): BandWant | undefined => {
+		const members = partyShown();
+
+		if (members === undefined) {
+			return undefined;
+		}
+
+		const wanted = partyWanted(members);
+
+		return { wanted, keep: wanted };
+	};
+
+	const closeCodex = () => {
+		setCodex(undefined);
+	};
+
+	const openCodex = (key?: string) => {
+		setCodex(key === undefined ? {} : { key });
+
+		if (!campaign()) {
+			setPeek("stage");
+		}
+
+		if (!panels().map) {
+			setPanels({ ...panels(), map: true });
+		}
+	};
+
+	const peekAt = (at: Slot) => {
+		if (at === "stage" && view.stage === undefined) {
+			setNotice(NO_STAGE);
+
+			return;
+		}
+
+		if (at === "board" && view.map?.() === undefined) {
+			setNotice(NO_BOARD);
+
+			return;
+		}
+
+		closeCodex();
+		setPeek(at);
+		setNotice(PEEKS[at]);
+
+		if (!panels().map) {
+			setPanels({ ...panels(), map: true });
+		}
+	};
+
 	const prepUp = createMemo(() => {
 		const v = prepView();
 
@@ -1027,9 +1206,23 @@ export const App = (props: { view: TableView }) => {
 		}
 	};
 
+	const sendInTurn = async (lines: ReadonlyArray<string>): Promise<void> => {
+		const [first, ...rest] = lines;
+
+		if (first === undefined) {
+			return;
+		}
+
+		const answer = await sendClicked(first);
+
+		if (answer === undefined) {
+			await sendInTurn(rest);
+		}
+	};
+
 	const sendAllFromPrep = (lines: ReadonlyArray<string>) => {
-		for (const text of lines) {
-			sendFromPrep(text);
+		if (mouse()) {
+			background(sendInTurn(lines));
 		}
 	};
 
@@ -1111,6 +1304,10 @@ export const App = (props: { view: TableView }) => {
 			return feed;
 		}
 
+		if (shownStage() !== undefined) {
+			return stageBox;
+		}
+
 		return prepOpen() ? prepBox : undefined;
 	};
 
@@ -1133,6 +1330,16 @@ export const App = (props: { view: TableView }) => {
 
 			case "panel": {
 				toggle(action.panel);
+				break;
+			}
+
+			case "knock": {
+				const [oldest] = knocking();
+
+				if (oldest !== undefined) {
+					decideKnock(oldest, action.verdict);
+				}
+
 				break;
 			}
 
@@ -1198,76 +1405,16 @@ export const App = (props: { view: TableView }) => {
 		edit((s) => insert(s, decodePasteBytes(event.bytes)));
 	});
 
-	const roomFor = (shown: Panels, withNotice: boolean) => {
-		const h = size().height;
+	const screen = (): Screen => ({
+		width: size().width,
+		height: size().height,
+		knocks: knocking().length > 0,
+		menuRows: menuLines().length,
+		fighting: view.combat?.()?.active === true,
+	});
 
-		const room =
-			h -
-			FIXED_ROWS -
-			(shown.feed ? FEED_MIN : 0) -
-			(withNotice ? 1 : 0) -
-			menuLines().length;
-
-		const cap = shown.feed
-			? Math.floor(view.combat?.()?.active === true ? (h * 2) / 3 : h / 2)
-			: room;
-
-		return { room, cap };
-	};
-
-	const mapHeights = (
-		map: MapView,
-		combat: CombatView | undefined,
-		room: number,
-		cap: number,
-		shown: Panels
-	) => {
-		const wanted = pictures() ? pictureRowsWanted(map) : mapRowsWanted(map);
-
-		if (!shown.band) {
-			return { band: 0, map: drawn(Math.min(wanted, room)) };
-		}
-
-		const band = bandRows(combat, cap);
-
-		if (shown.mapFirst) {
-			const folded = Math.min(band.wanted, BAND_FOLDED);
-			const mapH = Math.min(wanted, room - folded);
-
-			return { band: Math.max(folded, room - mapH), map: drawn(mapH) };
-		}
-
-		const share = Math.min(wanted, Math.max(MAP_MIN, Math.floor(room / 2)));
-
-		const bandH = Math.min(
-			room,
-			Math.max(band.keep, Math.min(band.wanted, room - share))
-		);
-
-		return { band: bandH, map: drawn(Math.min(wanted, room - bandH)) };
-	};
-
-	const bandRows = (combat: CombatView | undefined, cap: number) => {
-		if (combat === undefined) {
-			return { wanted: BAND_MIN, keep: BAND_MIN };
-		}
-
-		const layout = bandLayout(
-			combat,
-			size().width - BAND_FRAME.width,
-			cap - BAND_FRAME.height
-		);
-
-		const wanted = Math.max(BAND_MIN, layout.lines.length + BAND_FRAME.height);
-
-		return {
-			wanted,
-			keep: Math.min(
-				wanted,
-				Math.max(BAND_MIN, layout.livingLines + BAND_FRAME.height)
-			),
-		};
-	};
+	const mapWanted = (map: MapView) =>
+		pictures() ? pictureRowsWanted(map) : mapRowsWanted(map);
 
 	const paneRows = (text: string): number => {
 		const width = Math.max(10, size().width - 4);
@@ -1282,81 +1429,40 @@ export const App = (props: { view: TableView }) => {
 		return rows;
 	};
 
-	const heights = createMemo(() => {
-		const h = size().height;
-		const shown = panels();
-		const combat = view.combat?.();
-		const { room, cap } = roomFor(shown, noticeLine());
-
-		const paneWanted = paneOpen()
-			? Math.max(
-					3,
-					Math.min(
-						paneRows(notice() ?? "") + 2,
-						shown.feed
-							? Math.min(Math.floor(h / 2), room - (shown.band ? BAND_MIN : 0))
-							: room
-					)
-				)
-			: 0;
-
-		if (small()) {
-			return {
-				band: 0,
-				pane: paneOpen() ? Math.max(3, Math.min(paneWanted, room)) : 0,
-				map: 0,
-			};
-		}
-
+	const slotWanted = (): number | undefined => {
 		const map = shownMap();
 
 		if (map !== undefined) {
-			return { ...mapHeights(map, combat, room, cap, shown), pane: 0 };
+			return mapWanted(map);
 		}
 
-		if (!shown.band) {
-			return {
-				band: 0,
-				pane: paneOpen() ? Math.min(paneWanted, room) : 0,
-				map: 0,
-			};
+		const stage = shownStage();
+		const plan = planned();
+
+		if (stage === undefined || plan === undefined) {
+			return undefined;
 		}
 
-		if (combat === undefined || !combat.active) {
-			const band = Math.max(BAND_MIN, Math.min(cap, room - paneWanted));
+		const open = codex();
 
-			return { band, pane: paneWanted, map: 0 };
-		}
+		return open === undefined
+			? stageWanted(plan)
+			: codexWanted(stage, open, stageWidth(), view.gmNotes);
+	};
 
-		const layout = bandLayout(
-			combat,
-			size().width - BAND_FRAME.width,
-			cap - BAND_FRAME.height,
-			{
-				heroesWhole: paneOpen(),
-			}
-		);
-
-		const wanted = layout.lines.length + BAND_FRAME.height;
-
-		if (!paneOpen()) {
-			return {
-				band: Math.max(BAND_MIN, Math.min(wanted, room)),
-				pane: 0,
-				map: 0,
-			};
-		}
-
-		const paneMin = Math.min(paneWanted, Math.max(PANE_MIN, Math.floor(h / 3)));
-		const keep = Math.min(layout.keepLines + BAND_FRAME.height, room - 3);
-		const band = Math.max(BAND_MIN, keep, Math.min(wanted, room - paneMin));
-
-		return {
-			band,
-			pane: Math.max(3, Math.min(paneWanted, room - band)),
-			map: 0,
-		};
-	});
+	const heights = createMemo(() =>
+		layoutHeights({
+			screen: screen(),
+			shown: panels(),
+			combat: view.combat?.(),
+			noticeLine: noticeLine(),
+			paneOpen: paneOpen(),
+			paneRows: paneOpen() ? paneRows(notice() ?? "") : 0,
+			small: small(),
+			mapWanted: slotWanted(),
+			...ifDefined(partyWant(), (party) => ({ party })),
+		})
+	);
 
 	const nothingShown = () =>
 		!small() &&
@@ -1370,7 +1476,7 @@ export const App = (props: { view: TableView }) => {
 	const available = () =>
 		panelsOf(view.prep !== undefined).filter(
 			(p) =>
-				(p !== "map" || view.map?.() !== undefined) &&
+				(p !== "map" || view.map?.() !== undefined || campaign()) &&
 				(p !== "reply" || multiline())
 		);
 
@@ -1404,28 +1510,50 @@ export const App = (props: { view: TableView }) => {
 					room={view.room}
 					me={view.me}
 					present={view.present()}
-					alert={view.alert?.()}
+					alert={view.alert?.() ?? problemAlert(view.contentProblems?.() ?? [])}
 				/>
+				<KnockBanner knocks={knocking()} onDecide={decideKnock} />
 				<ErrorBoundary
 					fallback={(cause: unknown, reset: () => void) => (
 						<Undrawn error={cause} reset={reset} view={view} />
 					)}
 				>
 					<Show when={!small() && panels().band}>
-						<Band
-							me={view.me}
-							present={view.present()}
-							joinHint={view.joinHint}
-							joinNote={view.joinNote?.()}
-							combat={view.combat?.()}
-							maxHeight={bandHeight()}
-							heroesWhole={paneOpen()}
-							mark={panelMark("band")}
-							onWho={onWho}
-							onTitle={() => {
-								toggle("band");
-							}}
-						/>
+						<Show
+							when={partyShown()}
+							fallback={
+								<Band
+									me={view.me}
+									present={view.present()}
+									joinHint={view.joinHint}
+									joinNote={view.joinNote?.()}
+									combat={view.combat?.()}
+									maxHeight={bandHeight()}
+									heroesWhole={paneOpen()}
+									mark={panelMark("band")}
+									onWho={onWho}
+									onTitle={() => {
+										toggle("band");
+									}}
+								/>
+							}
+						>
+							{(members: Accessor<ReadonlyArray<PartyMember>>) => (
+								<Party
+									members={members()}
+									height={bandHeight()}
+									mark={panelMark("band")}
+									onPick={(id) => {
+										if (mouse()) {
+											background(sendClicked(sheetLine(id)));
+										}
+									}}
+									onTitle={() => {
+										toggle("band");
+									}}
+								/>
+							)}
+						</Show>
 					</Show>
 
 					<box
@@ -1464,6 +1592,37 @@ export const App = (props: { view: TableView }) => {
 												toggle("map");
 											}}
 										/>
+									</Show>
+								)}
+							</Show>
+
+							<Show when={mapHeight() > 0 ? shownStage() : undefined}>
+								{(stage: Accessor<StageView>) => (
+									<Show when={planned()}>
+										{(plan: Accessor<StagePlan>) => (
+											<Stage
+												stage={stage()}
+												plan={plan()}
+												height={mapHeight()}
+												width={stageWidth()}
+												notes={view.gmNotes}
+												codex={codex()}
+												mark={panelMark("map")}
+												onCodex={(next) => {
+													if (next === undefined) {
+														closeCodex();
+													} else {
+														openCodex(next.key);
+													}
+												}}
+												onTitle={() => {
+													toggle("map");
+												}}
+												ref={(el) => {
+													stageBox = el;
+												}}
+											/>
+										)}
 									</Show>
 								)}
 							</Show>
@@ -1567,6 +1726,9 @@ export const App = (props: { view: TableView }) => {
 										}
 									}}
 									onAll={sendAllFromPrep}
+									stage={view.prep?.stage?.() ?? []}
+									sync={view.prep?.sync?.()}
+									problems={view.contentProblems?.() ?? []}
 									onArm={(a) => {
 										if (mouse()) {
 											setArmed(a);

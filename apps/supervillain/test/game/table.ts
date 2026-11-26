@@ -5,9 +5,9 @@ import type {
 	Command,
 	TableState,
 } from "@supervillain/domain";
-import { rules } from "@supervillain/domain";
 
 import { fold } from "./fold.ts";
+import { openRules } from "./open.ts";
 
 export const GM = "gm";
 
@@ -39,7 +39,7 @@ export const noDice: Dice = () => {
 };
 
 export class Table {
-	readonly rules: Rules<TableState, Command> = rules;
+	readonly rules: Rules<TableState, Command> = openRules;
 	readonly envelopes: Array<Envelope> = [];
 	private clock = Date.parse(START);
 

@@ -1,13 +1,13 @@
 # supervillain
 
-A terminal-first virtual tabletop. Players type `ssh <room>@<host>` and are sitting at a live table, with nothing to install and no account to make. The GM's machine is the authority, and the campaign is a plain append-only JSONL log on the GM's disk. A campaign plays Draw Steel (default), `set.world`, or PF2e Remaster under the ORC License (`rules: pf2e`).
+A terminal-first virtual tabletop. Players type `ssh <handle>/<table>@<host>` and knock, the GM lets them in, and they are sitting at a live table, with nothing to install and no account to make. The GM's machine is the authority, and the campaign is a plain append-only JSONL log on the GM's disk. A campaign plays Draw Steel (default), `set.world`, PF2e Remaster under the ORC License (`rules: pf2e`), or a rules-light `freeform` table, and its prep is typed Markdown the table shows players through the campaign stage without ever showing them the GM's notes.
 
 ## Where things stand
 
 We rebuilt small from a cleared tree, then re-architected the domain and hardened the entire workspace to strict Effect 4 + zero-comment + zero-assertion standards. `ASSESSMENT.md` holds the original plan and §9 is the living record of play decisions; canonical design records now live in `docs/adr/`, `docs/issues/`, `docs/how-it-works.md`, `docs/rulesets/`, `GLOSSARY.md`, `NOTICE`, and `docs/ORC-NOTICE.md`.
 
 - The previous build is tagged `archive/2026-09-exploration`; Spikes A and B live at `archive/2026-09-spikes`; Spikes C and D live in `spikes/` (skipped by root lint and format).
-- All three rulesets (`draw-steel`, `set-world`, `pf2e`), the `@alchemy.run/domain` + `@supervillain/platform-jsonl` engine, the post-quantum SSH server, the OpenTUI table (text + kitty picture map + mouse + GM prep panel), the relay + lobby, release binaries, and the public Foldkit site (`packages/site`) are built and green.
+- All four rulesets (`draw-steel`, `set-world`, `pf2e`, `freeform`), typed Markdown campaign content with `supervillain check` and `supervillain schema`, the campaign stage domain (cards, codex, trackers, recap; ADRs 0017–0019), the `@alchemy.run/domain` + `@supervillain/platform-jsonl` engine, the post-quantum SSH server, the OpenTUI table (text + kitty picture map + mouse + GM prep panel), the relay + lobby, the agent MCP control plane (local `mcp.sock` + `supervillain mcp`, the `mcp-1@supervillain.sh` SSH subsystem, remote GMs in `gm_keys`; ADR 0020), release binaries, and the public Foldkit site (`packages/site`) are built and green.
 - The public site and the public relay are deployed (the relay runs on a Linux VPS with players on port 22, auto-upgraded on every stable `v*` release; the public site auto-deploys on pushes to `main` touching `packages/site/**`).
 - Next is Session Zero at a live table (ASSESSMENT §8).
 
@@ -26,8 +26,9 @@ We rebuilt small from a cleared tree, then re-architected the domain and hardene
 ## Engine invariants
 
 - The log envelope is `{actor, seq, timestamp, type, payload}`, one JSON object per line (`events.jsonl`).
-- Randomness and derived external facts (sheets, maps, set.world rolls, clock timestamps) go in the command/event payload when accepted. Replay never rolls and never reads files.
+- Randomness and derived external facts (sheets, maps, stage cards, set.world rolls, clock timestamps) go in the command/event payload when accepted. Replay never rolls and never reads files.
 - The single writer (`events.lock`) halts on an event it can't apply or an unexpected file length; lenient readers (`supervillain check`, `readLog`) skip unknown events loudly.
+- Agents go through the same `intake` as a typed line: an MCP tool's arguments never carry a command's host-fact keys (`HOST_FACT_KEYS`), and a player's MCP state holds only what their seat draws.
 - Your SSH key is your identity: one key, one identity. Display names are separate (`ASSESSMENT.md` Q9).
 
 ## Stack & Workspace Layout
@@ -40,17 +41,19 @@ Bun 1.4.5 workspaces (pinned versions in root `package.json` `workspaces.catalog
 
 Packages:
 
-- `packages/domain`: the `@alchemy.run/domain` `Table` aggregate and `Supervillain` model, opaque identity `TableStateSchema`, `CurrentActor` and `Entropy` (`diceOf` 64-bit mixer), `ExternalSystem` ports (`Sheets`, `Catalog`, `SetWorld`, `MapForge`, `Seating`), `intake`, lenient `readLog`, shared multi-square `rules/board/`, and the always-composed closure-erased `RULESETS` registry (`core`, `drawSteel`, `setWorld`, `pf2e`).
-- `packages/platform-jsonl`: generic `Domain.Platform` implementation over `CampaignLog` (`events.jsonl`, `events.lock`, UTF-8 `ignoreBOM`, 64-line tail ring, torn-line truncation, defect-safe single-writer `send`, 1,024-entry LRU receipt cache, scoped `PubSub` shutdown).
-- `packages/ssh`: our SSH server and client on `ssh2@1.17.0` with `patches/ssh2@1.17.0.patch` adding `mlkem768x25519-sha256` via `@noble/post-quantum`. Key auth (strict `Object.is(key.verify(...), true)`) and keyless guests, per-session Effect scopes, raw mode for the relay, `relaySubsystems`, outbound `attach()` + `connectClient()`, and stranger bounds (per-address and global connection/session caps, session/connect rate limits, login and idle timeouts, keepalives, rekey caps, 4 MiB socket/channel backpressure caps).
+- `packages/domain`: the `@alchemy.run/domain` `Table` aggregate and `Supervillain` model, opaque identity `TableStateSchema`, `CurrentActor` and `Entropy` (`diceOf` 64-bit mixer), `ExternalSystem` ports (`Sheets`, `Catalog`, `SetWorld`, `MapForge`, `Seating`, `Knocks`), `intake`, lenient `readLog`, shared multi-square `rules/board/`, `prose.ts` (`ProseSchema`), the campaign stage (`rules/core/stage.ts` for its commands and events, `stage.ts` for `stageOf`, `prep.ts` for `prepStage`), `party.ts`, `commandInput.ts` (`COMMAND_CLASSES`, `HOST_FACT_KEYS`, `commandFromInput` for agents), and the always-composed closure-erased `RULESETS` registry (`core`, `drawSteel`, `setWorld`, `pf2e`, `freeform`).
+- `packages/platform-jsonl`: generic `Domain.Platform` implementation over `CampaignLog` (`events.jsonl`, `events.lock`, or a capped in-memory log via `layerMemory`, UTF-8 `ignoreBOM`, 64-line tail ring, torn-line truncation, defect-safe single-writer `send`, 1,024-entry LRU receipt cache, scoped `PubSub` shutdown).
+- `packages/ssh`: our SSH server and client on `ssh2@1.17.0` with `patches/ssh2@1.17.0.patch` adding `mlkem768x25519-sha256` via `@noble/post-quantum` and an `env` option on `Client.subsys`. Key auth (strict `Object.is(key.verify(...), true)`) and keyless guests, per-session Effect scopes, raw mode for the relay, `relaySubsystems` (pinned relays only) and actor-bearing `subsystems` (a relayed one needs `SV_ACTOR`), outbound `attach()` + `connectClient()`, and stranger bounds (per-address and global connection/session caps, session/connect rate limits, login and idle timeouts, keepalives, rekey caps, 4 MiB socket/channel backpressure caps).
 - `apps/supervillain`: the one binary (`src/main.ts`, `effect/cli`):
-  - `content/`: `campaign.yaml` (`rules: draw-steel | set-world | pf2e`), hero/PC/monster/map YAML loaders on Effect `FileSystem`/`Path`, `CampaignContent` catalog, Steel Compendium bestiary import, Pathbuilder JSON import, and seeded map generator (`mapgen.ts`, `newMap.ts`).
+  - `content/`: `campaign.yaml` (`rules: draw-steel | set-world | pf2e | freeform`, or `rules` in `table.md`), typed Markdown (`markdown.ts` frontmatter and GM-note splitting, `prose.ts`, `frontmatter.ts` Schemas, `kinds.ts`, `ContentIndex.ts` `loadIndex`, `validate.ts` `crossCheck` and `validateCampaign`, `cards.ts` player-safe cards and freeform sheets, `jsonSchema.ts` for `supervillain schema`), hero/PC/monster/map YAML loaders on Effect `FileSystem`/`Path`, `CampaignContent` catalog, Steel Compendium bestiary import, Pathbuilder JSON import, seeded map generator (`mapgen.ts`, `newMap.ts`), and `newCampaign.ts` (`makeCampaign` and the embedded `examplePath`, shared by `new` and the launcher).
   - `table/`: Solid + OpenTUI 0.9.7 UI (`view.ts`, `keep.ts`, `panels.ts`, `band.ts`, text `MapPane.tsx`, kitty-graphics `PictureMap.tsx` with MEKMODE `atlas/`, `mouse.ts`, and GM `Prep.tsx`).
-  - `host/`: Effect edge (`TableRoom`, `Presence`, `SetWorld` on `HttpClient`, `AutoFoes` for set.world `/auto foes`, `tableServices`, `line.ts`, `Seat`, `TableServer`, `lobby.ts`, `RelayLink` with synchronous `relay_known` pinning, `LocalSeat`, and `check`).
-  - `relay/`: `supervillain relay` (`protocol.ts` with `knows-1@supervillain.sh` lobby MAC, `rooms.ts`, `lobby.ts`, `server.ts`).
+  - `host/`: Effect edge (`TableRoom`, `Presence`, `Knocks` for knocks and invites, `GmKey`, `SetWorld` on `HttpClient`, `AutoFoes` for set.world `/auto foes`, `tableServices` and the in-memory `sandboxServices` (`memoryPorts.ts`), `line.ts`, `Seat` with the knock seat, `TableServer` (also serving `mcp-1@supervillain.sh`), `lobby.ts`, `RelayLink` with synchronous `relay_known` pinning, `LocalSeat`, and `check`).
+  - `mcp/`: agents on Effect's `effect/ai/McpServer` (ADR 0020): `session.ts` (`mcpSession`, a fresh `McpServer.layerStdio` per session), `stdio.ts` (`duplexStdio`), `schema.ts` (tool JSON Schemas from command classes), `tools.ts`, `resources.ts`, `view.ts` (player-safe and GM state), `socket.ts` (`McpSocket`, `mcp.sock`), `bridge.ts` (`supervillain mcp`), and `gmKeys.ts`.
+  - `relay/`: `supervillain relay` (`protocol.ts` v2 with `parseAddress` and the `knows-1@supervillain.sh` lobby MAC, `handles.ts`, `pairings.ts`, the three-tab `lobby/` (`frame.ts`, `keys.ts`, `create.ts`, `osc52.ts`), `sandbox.ts` for Try a Table, and `server.ts`, which also routes players' `mcp-1@supervillain.sh` agents).
+  - `launcher/`: bare `supervillain` in a terminal (`GmConfig.ts` for `gm.json`, `scan.ts`, the pure `wizard.ts`, and the Solid `Launcher.tsx`).
 - `packages/site`: the Foldkit + `@foldkit/markdown` + `@alchemy.run/cloudflare` static site, docs, acknowledgments, and playable Draw Steel front-page terminal demo.
 - `tools/oxlint/`: vendored `anti-slop` plugin and local `supervillain/` plugin (`no-comments` + `comments.ts` checker).
-- `scripts/`: `build.ts` (`bun build --compile` with embedded sample campaign), `smoke.sh` (tmux TTY smoke harness), and `deploy-relay.sh` (forced-command VPS deployer with checksum, version, atomic swap, and rollback); `.github/workflows/{ci,release,relay-deploy,site-deploy}.yml`.
+- `scripts/`: `build.ts` (`bun build --compile` with embedded sample campaign), `smoke.sh` (tmux TTY smoke harness), `deploy-relay.sh` (forced-command VPS deployer with checksum, version, atomic swap, and rollback), and `install.sh` (the POSIX installer the site serves at `/install`); `.github/workflows/{ci,release,relay-deploy,site-deploy}.yml`.
 - `examples/campaign`: the sample Draw Steel campaign copied by `supervillain new --example` and exercised by end-to-end tests.
 
 ## Commands & CI/CD
@@ -61,6 +64,7 @@ Packages:
 - `bun run build` — `tsc -b` across the workspace
 - `bun test` / `bun run test` — run all tests from the repo root (`bun run test` runs `bun test --parallel`; preloads Solid JSX transform via `bunfig.toml`)
 - `bun supervillain host` — run the CLI from source
+- `bun supervillain mcp <campaign-dir>` — connect an MCP agent's stdio to a table open on this machine, as its GM
 - `bun --filter @supervillain/site build` — build and prerender the static site
 - `bun run release:build` / `bun run release:smoke dist/supervillain-<os>-<arch>` — compile and smoke-test the standalone binary
 

@@ -1,33 +1,54 @@
 import {
+	CardAmbiguous,
+	CardNotFound,
 	Catalog,
 	ContentReadError,
+	ffSheetProblem,
 	ID,
 	MAP_WORDS,
+	MapInvalid,
 	MapNotFound,
 	SheetAmbiguous,
 	SheetNotFound,
 	Sheets,
 } from "@supervillain/domain";
 import type {
+	FfSheet,
 	HeroSheet,
 	MapGrid,
-	MapInvalid,
 	PfSheet,
 	PrepCatalog,
 	PrepEntry,
 	RulesetName,
 	SheetInvalid,
 	SheetKind,
+	StageCard,
 	StatBlock,
 } from "@supervillain/domain";
-import { Context, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Context, Effect, FileSystem, Layer, Option, Path, Ref } from "effect";
 import type { PlatformError } from "effect";
 
+import { readBounded, utf8Of } from "./bounded.ts";
 import { readCampaignConfig } from "./campaignFile.ts";
+import {
+	ffSheetOf,
+	findDoc,
+	gmNotesFor,
+	keyedDocs,
+	sheetFields,
+	yamlText,
+} from "./cards.ts";
+import type { Found } from "./cards.ts";
+import { indexWith } from "./ContentIndex.ts";
+import type { ContentIndex, Files, SheetDoc } from "./ContentIndex.ts";
 import type { CampaignConfigInvalid } from "./errors.ts";
+import { MD_BYTES } from "./kinds.ts";
 import { decodeMap, MAP_BYTES, tooBig } from "./mapFiles.ts";
 import { decodePfSheetFile } from "./pfSheetFiles.ts";
-import { decodeHero, decodeMonster, idOf } from "./sheetFiles.ts";
+import { decodeHero, decodeMonster, idOf, invalid } from "./sheetFiles.ts";
+import { stageCatalog } from "./stageCatalog.ts";
+import { checkWith, contentInvalid } from "./validate.ts";
+import type { Checked, ContentInvalid } from "./validate.ts";
 
 export type LoadError =
 	| SheetNotFound
@@ -55,6 +76,8 @@ const EXTENSIONS: Readonly<Record<Kind, ReadonlyArray<RegExp>>> = {
 	monster: [/\.yaml$/iu, /\.yml$/iu],
 	map: [/\.txt$/iu],
 };
+
+const MARKDOWN = /\.md$/iu;
 
 interface Entry {
 	readonly id: string;
@@ -144,6 +167,26 @@ const pfName = (e: Entry, bytes: Uint8Array) =>
 
 const ids = (all: ReadonlyArray<Entry>) => all.map((e) => e.id);
 
+const cardRefusal = (
+	query: string,
+	found: Found
+): CardNotFound | CardAmbiguous =>
+	"matches" in found && found.matches.length > 1
+		? new CardAmbiguous({
+				query,
+				matches: [...found.matches],
+				message: `"${query}" could be any of these cards: ${found.matches.join(", ")}`,
+			})
+		: new CardNotFound({
+				query,
+				message: `no card "${query}" in the campaign's scenes, npcs, handouts, items, ancestries, classes, abilities, party or monsters`,
+			});
+
+const markdownDocs = (
+	fresh: ContentIndex,
+	kind: SheetKind
+): ReadonlyArray<SheetDoc> => (kind === "hero" ? fresh.party : fresh.monsters);
+
 export class CampaignContent extends Context.Service<
 	CampaignContent,
 	{
@@ -158,6 +201,18 @@ export class CampaignContent extends Context.Service<
 		readonly maps: Effect.Effect<ReadonlyArray<string>, ContentReadError>;
 		readonly map: (query: string) => Effect.Effect<LoadedMap, MapLoadError>;
 		readonly catalog: Effect.Effect<PrepCatalog, ContentReadError>;
+		readonly ffHero: (query: string) => Effect.Effect<FfSheet, LoadError>;
+		readonly ffMonster: (query: string) => Effect.Effect<FfSheet, LoadError>;
+		readonly index: Effect.Effect<ContentIndex>;
+		readonly read: Effect.Effect<Checked>;
+		readonly accept: (checked: Checked) => Effect.Effect<boolean>;
+		readonly card: (
+			query: string
+		) => Effect.Effect<StageCard, CardNotFound | CardAmbiguous>;
+		readonly cards: (
+			keys: ReadonlyArray<string>
+		) => Effect.Effect<ReadonlyArray<StageCard>>;
+		readonly gmNotes: (key: string) => Effect.Effect<string | undefined>;
 	}
 >()("supervillain/content/CampaignContent") {
 	static readonly make = Effect.fn("CampaignContent.make")(function* (
@@ -166,6 +221,34 @@ export class CampaignContent extends Context.Service<
 		const fs = yield* FileSystem.FileSystem;
 		const path = yield* Path.Path;
 		const config = yield* readCampaignConfig(dir);
+		const files: Files = { fs, path };
+
+		const fromDisk = indexWith(files, dir, config.rules).pipe(
+			Effect.flatMap((fresh) => checkWith(files, fresh)),
+			Effect.withSpan("CampaignContent.read")
+		);
+
+		const first = yield* fromDisk;
+
+		if (first.problems.length > 0) {
+			return yield* contentInvalid(dir, first.problems);
+		}
+
+		const snapshot = yield* Ref.make(first);
+		const current = Ref.get(snapshot);
+		const index = Effect.map(current, (checked) => checked.index);
+
+		const accept = Effect.fn("CampaignContent.accept")(function* (
+			checked: Checked
+		) {
+			if (checked.problems.length > 0) {
+				return false;
+			}
+
+			yield* Ref.set(snapshot, checked);
+
+			return true;
+		});
 
 		const names = (kind: Kind) =>
 			fs.readDirectoryEntries(path.join(dir, FOLDER[kind])).pipe(
@@ -189,17 +272,24 @@ export class CampaignContent extends Context.Service<
 			kind: Kind
 		) {
 			const listed = yield* names(kind);
+			const fresh = yield* index;
 			const seen = new Map<string, Entry>();
 
 			const inOrder = EXTENSIONS[kind].flatMap((x) =>
 				listed.filter((name) => x.test(name))
 			);
 
-			for (const name of inOrder) {
-				const id = idOf(name);
+			const markdown =
+				kind === "map" ? [] : markdownDocs(fresh, kind).map((d) => d.file);
+
+			for (const file of [
+				...inOrder.map((name) => `${FOLDER[kind]}/${name}`),
+				...markdown,
+			]) {
+				const id = idOf(file);
 
 				if (!seen.has(id)) {
-					seen.set(id, { id, file: `${FOLDER[kind]}/${name}` });
+					seen.set(id, { id, file });
 				}
 			}
 
@@ -244,6 +334,14 @@ export class CampaignContent extends Context.Service<
 			const full = path.join(dir, file);
 			const unreadable = readError(`can't read ${file}`);
 			const info = yield* fs.stat(full).pipe(Effect.mapError(unreadable));
+
+			if (info.type !== "File") {
+				return yield* new MapInvalid({
+					file,
+					message: `${file} isn't a plain file.`,
+				});
+			}
+
 			const big = tooBig(file, Number(info.size));
 
 			if (big !== undefined) {
@@ -257,36 +355,126 @@ export class CampaignContent extends Context.Service<
 			return loaded;
 		});
 
+		const markdownDoc = Effect.fn("CampaignContent.markdownDoc")(function* (
+			kind: SheetKind,
+			entry: Entry
+		) {
+			const fresh = yield* index;
+			const doc = markdownDocs(fresh, kind).find((d) => d.file === entry.file);
+
+			if (doc === undefined) {
+				return yield* invalid(entry.file, [
+					"isn't in the campaign's last good files",
+				]);
+			}
+
+			return { fresh, doc };
+		});
+
+		const yamlFile = Effect.fn("CampaignContent.yamlFile")(function* (
+			entry: Entry
+		) {
+			const read = yield* readBounded(fs, path.join(dir, entry.file), MD_BYTES);
+			const text = read.ok ? utf8Of(read.bytes) : undefined;
+
+			if (text === undefined) {
+				return yield* new ContentReadError({
+					message: `can't read ${entry.file}: ${read.ok ? "it isn't UTF-8 text" : read.problem}`,
+				});
+			}
+
+			return text;
+		});
+
 		const load =
 			<A>(
 				kind: SheetKind,
-				decode: (file: string, text: string) => Effect.Effect<A, SheetInvalid>
+				decode: (file: string, text: string) => Effect.Effect<A, SheetInvalid>,
+				rules: "draw-steel" | "pf2e" = "draw-steel"
 			) =>
 			(query: string) =>
 				Effect.gen(function* () {
 					const entry = yield* find(kind, yield* entries(kind), query);
 
-					const text = yield* fs
-						.readFileString(path.join(dir, entry.file))
-						.pipe(Effect.mapError(readError(`can't read ${entry.file}`)));
+					if (!MARKDOWN.test(entry.file)) {
+						return yield* decode(entry.file, yield* yamlFile(entry));
+					}
 
-					return yield* decode(entry.file, text);
+					const { fresh, doc } = yield* markdownDoc(kind, entry);
+
+					return yield* decode(
+						entry.file,
+						yamlText(sheetFields(fresh, doc, rules))
+					);
 				}).pipe(Effect.withSpan(`CampaignContent.${kind}`));
 
-		const bytesOf = (entry: Entry, maxBytes: number | undefined) =>
-			Effect.gen(function* () {
-				const full = path.join(dir, entry.file);
+		const loadFf = (kind: SheetKind) =>
+			Effect.fn(`CampaignContent.ff.${kind}`)(function* (query: string) {
+				const entry = yield* find(
+					kind,
+					(yield* entries(kind)).filter((e) => MARKDOWN.test(e.file)),
+					query
+				);
 
-				if (maxBytes !== undefined) {
-					const info = yield* fs.stat(full);
+				const { doc } = yield* markdownDoc(kind, entry);
+				const sheet = ffSheetOf(doc);
 
-					if (Number(info.size) > maxBytes) {
-						return Option.none<Uint8Array>();
-					}
+				if (sheet === undefined) {
+					return yield* invalid(entry.file, [
+						"isn't a freeform sheet: name it and give it stats like `stats: { might: 2 }`",
+					]);
 				}
 
-				return Option.some(yield* fs.readFile(full));
+				const problem = ffSheetProblem(sheet);
+
+				return problem === undefined
+					? sheet
+					: yield* invalid(entry.file, [problem]);
 			});
+
+		const card = Effect.fn("CampaignContent.card")(function* (query: string) {
+			const checked = yield* current;
+			const found = findDoc(checked.index, query);
+
+			if ("matches" in found) {
+				return yield* cardRefusal(query, found);
+			}
+
+			const built = checked.cards.get(found.found.key);
+
+			if (built === undefined) {
+				return yield* cardRefusal(query, { matches: [] });
+			}
+
+			return built;
+		});
+
+		const cards = Effect.fn("CampaignContent.cards")(function* (
+			keys: ReadonlyArray<string>
+		) {
+			const checked = yield* current;
+
+			return keyedDocs(checked.index).flatMap((k) => {
+				const built = keys.includes(k.key)
+					? checked.cards.get(k.key)
+					: undefined;
+
+				return built === undefined ? [] : [built];
+			});
+		});
+
+		const gmNotes = Effect.fn("CampaignContent.gmNotes")(function* (
+			key: string
+		) {
+			return gmNotesFor(yield* index, key);
+		});
+
+		const bytesOf = (entry: Entry, maxBytes: number) =>
+			Effect.map(
+				readBounded(fs, path.join(dir, entry.file), maxBytes),
+				(read) =>
+					read.ok ? Option.some(read.bytes) : Option.none<Uint8Array>()
+			);
 
 		const named = (
 			all: ReadonlyArray<Entry>,
@@ -294,7 +482,7 @@ export class CampaignContent extends Context.Service<
 				entry: Entry,
 				bytes: Uint8Array
 			) => Effect.Effect<string, SheetInvalid | MapInvalid>,
-			maxBytes?: number
+			maxBytes = MD_BYTES
 		) =>
 			Effect.forEach(
 				all,
@@ -316,18 +504,47 @@ export class CampaignContent extends Context.Service<
 
 		const pf = config.rules === "pf2e";
 
+		const sheetEntries = (
+			fresh: ContentIndex,
+			kind: SheetKind,
+			all: ReadonlyArray<Entry>,
+			yamlName: (
+				e: Entry,
+				bytes: Uint8Array
+			) => Effect.Effect<string, SheetInvalid>
+		) =>
+			Effect.gen(function* () {
+				const docs = markdownDocs(fresh, kind);
+
+				const yaml = yield* named(
+					all.filter((e) => !MARKDOWN.test(e.file)),
+					yamlName
+				);
+
+				const markdown = all.flatMap((e): ReadonlyArray<PrepEntry> => {
+					const doc = docs.find((d) => d.file === e.file);
+
+					return doc === undefined ? [] : [{ id: e.id, name: doc.name }];
+				});
+
+				return [...yaml, ...markdown].toSorted((a, b) =>
+					byId({ id: a.id, file: "" }, { id: b.id, file: "" })
+				);
+			});
+
 		const catalog = Effect.gen(function* () {
+			const fresh = yield* index;
 			const heroes = yield* entries("hero");
 			const monsters = yield* entries("monster");
 			const { usable: maps } = yield* mapEntries();
 
 			const listed: PrepCatalog = {
-				heroes: yield* named(heroes, (e, bytes) =>
+				heroes: yield* sheetEntries(fresh, "hero", heroes, (e, bytes) =>
 					pf
 						? pfName(e, bytes)
 						: Effect.map(decodeHero(e.file, textOf(bytes)), (h) => h.name)
 				),
-				monsters: yield* named(monsters, (e, bytes) =>
+				monsters: yield* sheetEntries(fresh, "monster", monsters, (e, bytes) =>
 					pf
 						? pfName(e, bytes)
 						: Effect.map(decodeMonster(e.file, textOf(bytes)), (m) => m.name)
@@ -338,6 +555,7 @@ export class CampaignContent extends Context.Service<
 						Effect.map(decodeMap(e.file, e.id, bytes), (g) => g.name),
 					MAP_BYTES
 				),
+				...stageCatalog(fresh),
 			};
 
 			return listed;
@@ -350,8 +568,16 @@ export class CampaignContent extends Context.Service<
 			monsters: Effect.map(entries("monster"), ids),
 			hero: load("hero", decodeHero),
 			monster: load("monster", decodeMonster),
-			pfHero: load("hero", decodePfSheetFile),
-			pfMonster: load("monster", decodePfSheetFile),
+			pfHero: load("hero", decodePfSheetFile, "pf2e"),
+			pfMonster: load("monster", decodePfSheetFile, "pf2e"),
+			ffHero: loadFf("hero"),
+			ffMonster: loadFf("monster"),
+			index,
+			read: fromDisk,
+			accept,
+			card,
+			cards,
+			gmNotes,
 			maps: Effect.map(mapEntries(), ({ usable }) => ids(usable)),
 			map,
 			catalog,
@@ -362,7 +588,7 @@ export class CampaignContent extends Context.Service<
 		campaignDir: string
 	): Layer.Layer<
 		CampaignContent,
-		CampaignConfigInvalid | ContentReadError,
+		CampaignConfigInvalid | ContentReadError | ContentInvalid,
 		FileSystem.FileSystem | Path.Path
 	> => Layer.effect(CampaignContent, CampaignContent.make(campaignDir));
 }
@@ -406,6 +632,34 @@ export const SheetsLive = Sheets.toLayer(
 				readonly query: string;
 			}) {
 				return yield* content.map(query);
+			}),
+			ffHero: Effect.fn("Sheets.ffHero")(function* ({
+				query,
+			}: {
+				readonly query: string;
+			}) {
+				return yield* content.ffHero(query);
+			}),
+			ffMonster: Effect.fn("Sheets.ffMonster")(function* ({
+				query,
+			}: {
+				readonly query: string;
+			}) {
+				return yield* content.ffMonster(query);
+			}),
+			card: Effect.fn("Sheets.card")(function* ({
+				query,
+			}: {
+				readonly query: string;
+			}) {
+				return yield* content.card(query);
+			}),
+			cards: Effect.fn("Sheets.cards")(function* ({
+				keys,
+			}: {
+				readonly keys: ReadonlyArray<string>;
+			}) {
+				return yield* content.cards(keys);
 			}),
 		};
 	})

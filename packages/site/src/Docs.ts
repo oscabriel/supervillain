@@ -50,11 +50,11 @@ export const docsHubView = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
 			h.div(
 				[h.Class("column wide")],
 				[
-					h.h1([], ["Sit down, host a table, read the rules"]),
+					h.h1([], ["Sit down, host a table, connect an agent"]),
 					h.p(
 						[h.Class("lede")],
 						[
-							"Players need a terminal and ssh. GMs need one binary and a folder. These pages cover both, the rulesets a campaign can play, and how the pieces fit.",
+							"Players need a terminal and ssh. GMs keep their campaign in plain files and run one local binary. These guides cover sitting down, hosting, rulesets, agents, and how the pieces fit.",
 						]
 					),
 					h.ol(

@@ -22,16 +22,21 @@ import {
 	Schema,
 	SubscriptionRef,
 } from "effect";
+import type { Types } from "effect";
 
 import {
-	DEFAULT_GM_PORT,
-	DEFAULT_PLAYER_PORT,
+	addressText,
+	DEFAULT_RELAY_PLAYER_PORT,
+	claimProof,
 	helloLine,
+	parseRelayAddress,
 	MAX_LINE_BYTES,
 	parseAnswer,
 } from "../relay/protocol.ts";
 import type { Answer } from "../relay/protocol.ts";
 import type { View } from "./View.ts";
+
+export { parseRelayAddress };
 
 const RELAY_KNOWN_FILE = "relay_known";
 
@@ -59,9 +64,14 @@ const sameStatus = Schema.toEquivalence(RelayStatus);
 export interface RelayLinkOptions {
 	readonly host: string;
 	readonly port: number;
-	readonly room: string;
+	readonly handle: string;
+	readonly table: string;
+	readonly claim?: string;
+	readonly hostKey?: Buffer;
+	readonly hostKeyFingerprint: string;
 	readonly playerPort?: number;
 	readonly campaignDir: string;
+	readonly knownPath?: string;
 	readonly relayKey?: string;
 	readonly attach: (socket: Socket, options: AttachOptions) => void;
 	readonly timeouts?: {
@@ -93,9 +103,6 @@ const DEFAULT_CONNECT_MS = 10_000;
 
 const DEFAULT_REPLY_MS = 10_000;
 
-const RELAY_ADDRESS =
-	/^(?:\[(?<v6>[0-9A-Fa-f:.]+)\]|(?<name>[^\s:[\]]+))(?::(?<port>\d{1,5}))?$/u;
-
 const NOT_SLUG = /[^a-z0-9]+/gu;
 
 const LEADING_NON_LETTERS = /^[^a-z]+/u;
@@ -125,22 +132,6 @@ export const redialDelay = Effect.fn("RelayLink.redialDelay")(function* (
 	return Duration.millis(Math.round(Duration.toMillis(delay)));
 });
 
-export const parseRelayAddress = (
-	text: string
-): { readonly host: string; readonly port: number } | undefined => {
-	const groups = RELAY_ADDRESS.exec(text)?.groups;
-	const host = groups?.v6 ?? groups?.name;
-
-	if (host === undefined) {
-		return undefined;
-	}
-
-	const port =
-		groups?.port === undefined ? DEFAULT_GM_PORT : Number(groups.port);
-
-	return port < 1 || port > 65_535 ? undefined : { host, port };
-};
-
 export const roomSlug = (name: string): string => {
 	const slug = name
 		.toLowerCase()
@@ -153,11 +144,11 @@ export const roomSlug = (name: string): string => {
 };
 
 export const relayJoinCommand = (
-	room: string,
+	name: string,
 	host: string,
-	playerPort: number = DEFAULT_PLAYER_PORT
+	playerPort: number = DEFAULT_RELAY_PLAYER_PORT
 ): string =>
-	`ssh ${playerPort === 22 ? "" : `-p ${playerPort} `}${room}@${host}`;
+	`ssh ${playerPort === 22 ? "" : `-p ${playerPort} `}${name}@${host}`;
 
 export const joinNote = (status: RelayStatus, joinCommand: string): string =>
 	Match.value(status).pipe(
@@ -416,7 +407,17 @@ export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
 		const fs = yield* FileSystem.FileSystem;
 		const path = yield* Path.Path;
 		const where = `${options.host}:${options.port}`;
-		const knownPath = path.join(options.campaignDir, RELAY_KNOWN_FILE);
+
+		const knownPath =
+			options.knownPath ?? path.join(options.campaignDir, RELAY_KNOWN_FILE);
+
+		const named = addressText(options.handle, options.table);
+
+		const proof =
+			options.claim === undefined
+				? undefined
+				: claimProof(options.claim, options.hostKeyFingerprint);
+
 		const connectMs = options.timeouts?.connectMs ?? DEFAULT_CONNECT_MS;
 		const replyMs = options.timeouts?.replyMs ?? DEFAULT_REPLY_MS;
 
@@ -435,7 +436,7 @@ export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
 								),
 					connected: (connected) =>
 						Effect.logInfo(
-							`relay ${where}: linked as room "${options.room}", relay key ${connected.relayKey}`
+							`relay ${where}: linked as ${named}, relay key ${connected.relayKey}`
 						).pipe(
 							Effect.andThen(
 								connected.firstUse
@@ -534,7 +535,7 @@ export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
 			);
 
 			socket.setNoDelay(true);
-			socket.write(helloLine(options.room));
+			socket.write(helloLine(options.handle, options.table, proof));
 
 			const reply = yield* readReply(socket).pipe(
 				Effect.timeoutOrElse({
@@ -560,7 +561,7 @@ export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
 			const refusal = yield* Deferred.make<Refused>();
 			attached = true;
 
-			options.attach(socket, {
+			const attachOptions: Types.Mutable<AttachOptions> = {
 				persistent: true,
 				admitRelay: (fingerprint) => {
 					const decision = decide(trusted, knownPath, fingerprint);
@@ -601,7 +602,13 @@ export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
 
 					return false;
 				},
-			});
+			};
+
+			if (options.hostKey !== undefined) {
+				attachOptions.hostKey = options.hostKey;
+			}
+
+			options.attach(socket, attachOptions);
 
 			const up = yield* Effect.raceFirst(
 				Deferred.await(admitted).pipe(Effect.asSome),
@@ -622,7 +629,7 @@ export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
 				}
 
 				return Outcome.failed({
-					error: `the link closed before the relay logged in; if this keeps up, another GM's host key may hold room ${options.room} there`,
+					error: `the link closed before the relay logged in; if this keeps up, another GM's key may hold the handle ${options.handle} there (a claim code from a machine that holds it adds this one)`,
 				});
 			}
 
@@ -728,11 +735,7 @@ export class RelayLink extends Context.Service<RelayLink, RelayLinkService>()(
 				get: SubscriptionRef.get(status),
 				changes: SubscriptionRef.changes(status),
 			},
-			joinCommand: relayJoinCommand(
-				options.room,
-				options.host,
-				options.playerPort
-			),
+			joinCommand: relayJoinCommand(named, options.host, options.playerPort),
 		};
 
 		return service;

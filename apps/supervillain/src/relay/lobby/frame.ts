@@ -1,13 +1,35 @@
-import { DINGS_ATLAS } from "../table/atlas/dings.ts";
-import { TEXT_ATLAS } from "../table/atlas/text.ts";
-import { color } from "../table/theme.ts";
+import { RULESET_NAMES } from "@supervillain/domain";
+
+import { DINGS_ATLAS } from "../../table/atlas/dings.ts";
+import { TEXT_ATLAS } from "../../table/atlas/text.ts";
+import { color } from "../../table/theme.ts";
+import { HANDLE_RULE } from "../protocol.ts";
+import { commandsOf, createForm, KEYLESS_CREATE } from "./create.ts";
+import type { CreateForm } from "./create.ts";
+import { TABS } from "./keys.ts";
+import type { LobbyTab } from "./keys.ts";
 
 export interface LobbyTable {
-	readonly room: string;
+	readonly handle: string;
+	readonly table: string;
 	readonly seated: number;
 }
 
+export const tableAddress = (table: LobbyTable): string =>
+	`${table.handle}/${table.table}`;
+
+export interface SandboxNote {
+	readonly open: boolean;
+	readonly cols: number;
+	readonly rows: number;
+	readonly idleMinutes: number;
+	readonly maxMinutes: number;
+}
+
 export interface LobbyScreen {
+	readonly tab?: LobbyTab;
+	readonly create?: CreateForm;
+	readonly sandbox?: SandboxNote;
 	readonly tables: ReadonlyArray<LobbyTable>;
 	readonly picked: number;
 	readonly typed: string;
@@ -291,6 +313,11 @@ const pill = (text: string, bg: string, fg: string): Seg => ({
 	bold: true,
 });
 
+const tabOf = (screen: LobbyScreen): LobbyTab => screen.tab ?? "tables";
+
+const formOf = (screen: LobbyScreen): CreateForm =>
+	screen.create ?? createForm(screen.you.key === undefined, undefined);
+
 const isTypingName = (typed: string): boolean =>
 	typed !== "" && !/^\d+$/u.test(typed);
 
@@ -484,7 +511,7 @@ const tableListRows = (
 		const num = String(i + 1).padStart(digits);
 		const seated = `${t.seated > 0 ? "●" : "○"} ${t.seated}`;
 		const nameW = Math.max(4, w - digits - 5 - width(seated));
-		const room = pad(cut(t.room, nameW), nameW);
+		const room = pad(cut(tableAddress(t), nameW), nameW);
 
 		if (on && !typingOther) {
 			rows.push([
@@ -544,7 +571,7 @@ const emptyLeftRows = (screen: LobbyScreen, w: number): Array<Row> => {
 				[],
 				...words("Tables need an ssh key to remember your seat.", color.dim, w),
 				[],
-				...words("Ask your GM for a room name.", color.text, w),
+				...words("Ask your GM for the table's name.", color.text, w),
 			]
 		: [
 				section("tables", w),
@@ -559,7 +586,7 @@ const emptyLeftRows = (screen: LobbyScreen, w: number): Array<Row> => {
 					w
 				),
 				[],
-				...words("Ask your GM for a room name.", color.text, w),
+				...words("Ask your GM for the table's name.", color.text, w),
 			];
 };
 
@@ -601,7 +628,7 @@ const detailRows = (screen: LobbyScreen, w: number): Array<Row> => {
 			section(screen.typed, w, color.bright, true),
 			[
 				{ text: "◈ ", fg: color.brand },
-				{ text: "joining by room name", fg: color.text },
+				{ text: "joining by table name", fg: color.text },
 			],
 			[],
 			[
@@ -629,7 +656,7 @@ const detailRows = (screen: LobbyScreen, w: number): Array<Row> => {
 					];
 
 		return [
-			section(current.room, w, color.bright, true),
+			section(tableAddress(current), w, color.bright, true),
 			live,
 			[],
 			[
@@ -638,7 +665,7 @@ const detailRows = (screen: LobbyScreen, w: number): Array<Row> => {
 			],
 			[],
 			field("direct", [
-				{ text: cut(`ssh ${current.room}@…`, w - 10), fg: color.dice },
+				{ text: cut(`ssh ${tableAddress(current)}@…`, w - 10), fg: color.dice },
 			]),
 			...identityFields(screen, w),
 		];
@@ -649,10 +676,12 @@ const detailRows = (screen: LobbyScreen, w: number): Array<Row> => {
 		...identityFields(screen, w),
 		[],
 		section("commands", w),
-		field("direct", [{ text: cut("ssh <room>@…", w - 10), fg: color.dice }]),
+		field("direct", [
+			{ text: cut("ssh <handle>/<table>@…", w - 10), fg: color.dice },
+		]),
 		field("host", [
 			{
-				text: cut("supervillain host --room <name>", w - 10),
+				text: cut("supervillain host --handle <you> --relay", w - 10),
 				fg: color.director,
 			},
 		]),
@@ -663,11 +692,11 @@ const detailRows = (screen: LobbyScreen, w: number): Array<Row> => {
 };
 
 const asking = (screen: LobbyScreen): string => {
-	const room = screen.tables[screen.picked]?.room;
+	const current = screen.tables[screen.picked];
 
-	return room === undefined
-		? "type your table's room name"
-		: `Enter sits at ${room}, or type another room`;
+	return current === undefined
+		? "type your table's name"
+		: `Enter sits at ${tableAddress(current)}, or type another table`;
 };
 
 const hint = (k: string, what: string): Array<Seg> => [
@@ -678,20 +707,24 @@ const hint = (k: string, what: string): Array<Seg> => [
 const joinHints = (parts: ReadonlyArray<Array<Seg>>): Row =>
 	parts.flatMap((p, i) => (i === 0 ? p : [{ text: "   " }, ...p]));
 
-const footerParts = (n: number): ReadonlyArray<Array<Seg>> => {
+const MORE_TABS = hint("tab", "more");
+
+const tableFooter = (n: number): ReadonlyArray<Array<Seg>> => {
 	if (n === 0) {
 		return [
-			hint("a-z", "room name"),
+			hint("a-z", "table name"),
 			hint("enter", "sit down"),
 			hint("ctrl-c", "quit"),
+			MORE_TABS,
 		];
 	}
 
 	if (n === 1) {
 		return [
 			hint("enter", "sit down"),
-			hint("a-z", "another room"),
+			hint("a-z", "another table"),
 			hint("ctrl-c", "quit"),
+			MORE_TABS,
 		];
 	}
 
@@ -700,20 +733,62 @@ const footerParts = (n: number): ReadonlyArray<Array<Seg>> => {
 		hint(`1-${n}`, "jump"),
 		hint("enter", "sit down"),
 		hint("ctrl-c", "quit"),
+		MORE_TABS,
 	];
 };
 
+const createFooter = (form: CreateForm): ReadonlyArray<Array<Seg>> => {
+	if (form.guest || form.step === "ready") {
+		return [hint("tab", "other tabs"), hint("ctrl-c", "quit")];
+	}
+
+	if (form.step === "handle") {
+		return form.held === undefined
+			? [
+					hint("a-z", "handle"),
+					hint("enter", "claim it"),
+					hint("tab", "other tabs"),
+					hint("ctrl-c", "quit"),
+				]
+			: [
+					hint("enter", "next"),
+					hint("tab", "other tabs"),
+					hint("ctrl-c", "quit"),
+				];
+	}
+
+	return [
+		hint("a-z", "table name"),
+		hint("←/→", "rules"),
+		hint("enter", "make the code"),
+		hint("ctrl-c", "quit"),
+	];
+};
+
+const footerParts = (screen: LobbyScreen): ReadonlyArray<Array<Seg>> => {
+	const tab = tabOf(screen);
+
+	if (tab === "try") {
+		return [
+			hint("enter", "try a table"),
+			hint("tab", "other tabs"),
+			hint("ctrl-c", "quit"),
+		];
+	}
+
+	return tab === "create"
+		? createFooter(formOf(screen))
+		: tableFooter(screen.tables.length);
+};
+
 const footerRow = (screen: LobbyScreen, w: number): Row => {
-	const full = joinHints(footerParts(screen.tables.length));
+	const full = joinHints(footerParts(screen));
 
 	if (rowWidth(full) <= w) {
 		return centred(full, w);
 	}
 
-	const compact = joinHints([
-		hint("enter", "sit down"),
-		hint("ctrl-c", "quit"),
-	]);
+	const compact = joinHints([hint("tab", "tabs"), hint("ctrl-c", "quit")]);
 
 	return centred(fitRow(compact, w), w);
 };
@@ -726,65 +801,383 @@ const columnGap = (w: number): number => {
 	return w >= 82 ? 4 : 3;
 };
 
+const TAB_TITLES: Readonly<Record<LobbyTab, string>> = {
+	tables: "Tables",
+	try: "Try a Table",
+	create: "Create a Table",
+};
+
+const tabBar = (tab: LobbyTab, w: number): Row => {
+	const parts = TABS.flatMap((each, i): Row => {
+		const label = ` ${i + 1} ${TAB_TITLES[each]} `;
+		const gap: Row = i === 0 ? [] : [{ text: " " }];
+
+		return each === tab
+			? [
+					...gap,
+					{ text: label, fg: color.cursorFg, bg: color.brand, bold: true },
+				]
+			: [...gap, { text: label, fg: color.text, bg: color.mineBg }];
+	});
+
+	return fitRow(parts, w);
+};
+
+const tablesBody = (screen: LobbyScreen, w: number, rows: number) => {
+	const n = screen.tables.length;
+	const maxList = Math.max(4, Math.min(n, Math.max(BODY_ROWS - 1, rows - 17)));
+
+	if (w < WIDE_SPLIT) {
+		return n === 0
+			? emptyLeftRows(screen, w)
+			: tableListRows(screen, w, maxList);
+	}
+
+	const gap = columnGap(w);
+	const rightW = Math.min(52, Math.max(50, Math.floor((w - gap) * 0.6)));
+	const leftW = w - gap - rightW;
+
+	const left =
+		n === 0
+			? emptyLeftRows(screen, leftW)
+			: tableListRows(screen, leftW, maxList);
+
+	const right = detailRows(screen, rightW);
+	const height = Math.max(left.length, right.length, BODY_ROWS);
+	const body: Array<Row> = [];
+
+	for (let i = 0; i < height; i += 1) {
+		const leftRow = left[i] ?? [];
+		const rightRow = right[i] ?? [];
+
+		body.push([
+			...padRow(leftRow, leftW),
+			{ text: " ".repeat(gap) },
+			...rightRow,
+		]);
+	}
+
+	return body;
+};
+
+const tryBody = (screen: LobbyScreen, w: number): Array<Row> => {
+	const { sandbox } = screen;
+
+	const action: Row =
+		sandbox?.open === true
+			? [
+					pill("try a table", color.brand, color.cursorFg),
+					{ text: "  enter", fg: color.dim },
+				]
+			: [
+					{ text: "○ ", fg: color.dim },
+					{
+						text: cut("this relay offers no sandbox tables", w - 2),
+						fg: color.dim,
+					},
+				];
+
+	const limits: Array<Row> =
+		sandbox === undefined
+			? []
+			: [
+					field("needs", [
+						{
+							text: cut(
+								`a terminal of ${sandbox.cols}×${sandbox.rows} or more`,
+								w - 10
+							),
+							fg: color.text,
+						},
+					]),
+					field("closes", [
+						{
+							text: cut(
+								`after ${sandbox.idleMinutes} min idle, ${sandbox.maxMinutes} min in all`,
+								w - 10
+							),
+							fg: color.text,
+						},
+					]),
+				];
+
+	return [
+		section("try a table", w),
+		[
+			{ text: "◆ ", fg: color.brand },
+			{
+				text: cut("a Draw Steel table to play by yourself", w - 2),
+				fg: color.bright,
+				bold: true,
+			},
+		],
+		[],
+		...words(
+			"You sit as the GM of the sample encounter: Brann and Ilsa on the Ford Road against the bandits. Roll, move tokens and run the fight; /help lists the commands.",
+			color.text,
+			w
+		),
+		[],
+		...words(
+			"Nothing is saved: the table lives in the relay's memory and is gone when you leave.",
+			color.dim,
+			w
+		),
+		[],
+		action,
+		[],
+		...limits,
+	];
+};
+
+const stepsRow = (form: CreateForm, w: number): Row => {
+	const steps: ReadonlyArray<readonly [CreateForm["step"], string]> = [
+		["handle", "1 handle"],
+		["table", "2 table & rules"],
+		["ready", "3 ready"],
+	];
+
+	return fitRow(
+		steps.flatMap(([step, label], i): Row => {
+			const on = step === form.step;
+			const sep: Row = i === 0 ? [] : [{ text: " › ", fg: color.dim }];
+
+			return [
+				...sep,
+				{ text: label, fg: on ? color.bright : color.dim, bold: on },
+			];
+		}),
+		w
+	);
+};
+
+export const shellLines = (command: string, w: number): Array<string> => {
+	if (width(command) <= w) {
+		return [command];
+	}
+
+	const lines: Array<string> = [];
+	let line = "";
+
+	for (const word of command.split(" ")) {
+		const room = lines.length === 0 ? w - 2 : w - 4;
+
+		if (line !== "" && width(line) + 1 + width(word) > room) {
+			lines.push(line);
+			line = word;
+		} else {
+			line = line === "" ? word : `${line} ${word}`;
+		}
+	}
+
+	lines.push(line);
+
+	return lines.map((text, i) => {
+		const lead = i === 0 ? "" : "  ";
+
+		return i === lines.length - 1 ? `${lead}${text}` : `${lead}${text} \\`;
+	});
+};
+
+const rulesRow = (form: CreateForm, choosing: boolean): Row =>
+	choosing
+		? RULESET_NAMES.flatMap((name, i): Row => {
+				const gap: Row = i === 0 ? [] : [{ text: "  " }];
+
+				return name === form.rules
+					? [...gap, { text: `‹ ${name} ›`, fg: color.bright, bold: true }]
+					: [...gap, { text: name, fg: color.dim }];
+			})
+		: [{ text: form.rules, fg: color.text }];
+
+const chosenFields = (form: CreateForm, w: number): Array<Row> => [
+	field("handle", [{ text: cut(form.handle, w - 10), fg: color.bright }]),
+	field("table", [
+		{
+			text: cut(form.table === "" ? "…" : form.table, w - 10),
+			fg: form.table === "" ? color.dim : color.bright,
+		},
+	]),
+	fitRow(field("rules", rulesRow(form, form.step === "table")), w),
+];
+
+const createBody = (screen: LobbyScreen, w: number): Array<Row> => {
+	const form = formOf(screen);
+
+	if (form.guest) {
+		return [
+			section("create a table", w),
+			[
+				{ text: "○ ", fg: color.gm },
+				{ text: cut("needs an ssh key", w - 2), fg: color.text },
+			],
+			[],
+			...words(KEYLESS_CREATE, color.text, w),
+			[],
+			field("make one", [
+				{ text: cut("ssh-keygen -t ed25519", w - 10), fg: color.bright },
+			]),
+		];
+	}
+
+	const head = [section("create a table", w), stepsRow(form, w), []];
+
+	if (form.step === "handle") {
+		return form.held === undefined
+			? [
+					...head,
+					...words(
+						"Pick your GM handle. Players type it before your table's name, and it belongs to this SSH key.",
+						color.text,
+						w
+					),
+					[],
+					field("handle", [
+						{
+							text: cut(form.handle === "" ? "…" : form.handle, w - 10),
+							fg: form.handle === "" ? color.dim : color.bright,
+						},
+					]),
+					field("rule", [{ text: cut(HANDLE_RULE, w - 10), fg: color.dim }]),
+				]
+			: [
+					...head,
+					[
+						{ text: "● ", fg: color.healthy },
+						{ text: "You hold ", fg: color.text },
+						{ text: cut(form.held, w - 11), fg: color.bright, bold: true },
+					],
+					...words(
+						`Players will join with ssh ${form.held}/<table>@…`,
+						color.dim,
+						w
+					),
+					[],
+					[
+						pill("next", color.brand, color.cursorFg),
+						{ text: "  enter", fg: color.dim },
+					],
+				];
+	}
+
+	if (form.step === "table" || form.ready === undefined) {
+		return [
+			...head,
+			...chosenFields(form, w),
+			[],
+			...words(
+				"Enter makes a pairing code that lets your own computer's GM key host under this handle.",
+				color.dim,
+				w
+			),
+		];
+	}
+
+	const commands = commandsOf(form, form.ready);
+
+	const shell = [commands.install, commands.create].flatMap((command) =>
+		shellLines(command, w).map((line): Row => [{ text: line, fg: color.dice }])
+	);
+
+	return [
+		...head,
+		section("run on your computer", w, color.bright, true),
+		...shell,
+		[],
+		...words(
+			"The code works once, for 15 minutes. It's on your clipboard too, if your terminal allows it.",
+			color.dim,
+			w
+		),
+		[],
+		...chosenFields(form, w),
+	];
+};
+
+interface PromptText {
+	readonly typed: string;
+	readonly asked: string;
+}
+
+const createPrompt = (form: CreateForm): PromptText => {
+	if (form.guest) {
+		return { typed: "", asked: "run ssh-keygen -t ed25519, then reconnect" };
+	}
+
+	if (form.step === "handle") {
+		return form.held === undefined
+			? { typed: form.handle, asked: "type the handle you want" }
+			: { typed: "", asked: `Enter keeps ${form.held}` };
+	}
+
+	return form.step === "table"
+		? { typed: form.table, asked: "type your table's name" }
+		: { typed: "", asked: "copy the commands above; Ctrl-C leaves" };
+};
+
+const promptOf = (screen: LobbyScreen): PromptText => {
+	const tab = tabOf(screen);
+
+	if (tab === "try") {
+		return {
+			typed: "",
+			asked:
+				screen.sandbox?.open === true
+					? "Enter opens your sandbox table"
+					: "Tab for another tab",
+		};
+	}
+
+	return tab === "create"
+		? createPrompt(formOf(screen))
+		: { typed: screen.typed, asked: asking(screen) };
+};
+
+const saidOf = (screen: LobbyScreen): string | undefined =>
+	tabOf(screen) === "create" ? formOf(screen).said : screen.said;
+
+const bodyOf = (screen: LobbyScreen, w: number, rows: number): Array<Row> => {
+	const tab = tabOf(screen);
+
+	if (tab === "try") {
+		return tryBody(screen, w);
+	}
+
+	return tab === "create" ? createBody(screen, w) : tablesBody(screen, w, rows);
+};
+
+const FIXED_ROWS = 3 + 1 + 1 + 1 + 1 + 1 + 1;
+
 const layout = (screen: LobbyScreen, cols: number, rows: number) => {
 	const w = Math.max(24, Math.min(cols - 4, MAX_STAGE_WIDTH));
 	const art = banner(cols);
-	const n = screen.tables.length;
-	const twoCol = w >= WIDE_SPLIT;
-	const maxList = Math.max(4, Math.min(n, Math.max(BODY_ROWS - 1, rows - 16)));
-
-	const bodyH = twoCol
-		? Math.max(BODY_ROWS, Math.min(n, maxList) + (n > maxList ? 2 : 1))
-		: Math.max(6, Math.min(n, maxList) + 2);
-
-	const coreHeight = 3 + 1 + bodyH + 1 + 1 + 1 + 1;
+	const whole = bodyOf(screen, w, rows);
+	const body = whole.slice(0, Math.max(1, rows - FIXED_ROWS));
+	const coreHeight = FIXED_ROWS + body.length;
 	const showArt = art.length > 0 && art.length + 1 + coreHeight <= rows;
-	const stage: Array<Row> = [...topBar(screen, w, cols, rows, showArt), []];
 
-	if (twoCol) {
-		const gap = columnGap(w);
-		const rightW = Math.min(52, Math.max(50, Math.floor((w - gap) * 0.6)));
-		const leftW = w - gap - rightW;
+	const stage: Array<Row> = [
+		...topBar(screen, w, cols, rows, showArt),
+		tabBar(tabOf(screen), w),
+		[],
+		...body,
+	];
 
-		const left =
-			n === 0
-				? emptyLeftRows(screen, leftW)
-				: tableListRows(screen, leftW, maxList);
-
-		const right = detailRows(screen, rightW);
-		const height = Math.max(left.length, right.length, BODY_ROWS);
-
-		for (let i = 0; i < height; i += 1) {
-			const rightRow = right[i] ?? [];
-
-			stage.push([
-				...padRow(left[i] ?? [], leftW),
-				{ text: " ".repeat(gap) },
-				...rightRow,
-			]);
-		}
-	} else {
-		const narrowBody =
-			n === 0 ? emptyLeftRows(screen, w) : tableListRows(screen, w, maxList);
-
-		stage.push(...narrowBody);
-	}
+	const said = saidOf(screen);
 
 	const feedback: Row =
-		screen.said === undefined
+		said === undefined
 			? []
-			: [{ text: `› ${cut(screen.said, w - 2)}`, fg: color.notice }];
+			: [{ text: `› ${cut(said, w - 2)}`, fg: color.notice }];
 
 	const prompt: Row = [{ text: "> ", fg: color.brand, bold: true }];
 	const promptIndex = stage.length + 1;
+	const { typed, asked } = promptOf(screen);
 
 	const promptRow: Row =
-		screen.typed === ""
-			? [...prompt, { text: cut(asking(screen), w - 2), fg: color.dim }]
-			: [
-					...prompt,
-					{ text: cut(screen.typed, w - 2), fg: color.bright, bold: true },
-				];
+		typed === ""
+			? [...prompt, { text: cut(asked, w - 2), fg: color.dim }]
+			: [...prompt, { text: cut(typed, w - 2), fg: color.bright, bold: true }];
 
 	stage.push(
 		feedback,
@@ -814,7 +1207,7 @@ const layout = (screen: LobbyScreen, cols: number, rows: number) => {
 	];
 
 	const cursorRow = topPad + positionedArt.length + promptIndex + 1;
-	const cursorCol = stageLeft + 2 + width(cut(screen.typed, w - 2));
+	const cursorCol = stageLeft + 2 + width(cut(typed, w - 2));
 
 	return {
 		rows: out,

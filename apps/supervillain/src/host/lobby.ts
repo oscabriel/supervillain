@@ -1,3 +1,4 @@
+import { isMember } from "@supervillain/domain";
 import type { RawSession } from "@supervillain/ssh";
 import { Effect, Option } from "effect";
 import type { Scope } from "effect";
@@ -44,14 +45,17 @@ export const knowsSession =
 
 			session.stream.resume();
 			const here = yield* (yield* Presence).here.get;
-			const logged = yield* (yield* TableRoom).actors;
+			const state = yield* (yield* TableRoom).state;
 
-			const { answer, actor } = answerKnows(
-				line,
-				[...logged, ...here],
-				here.length,
-				lobby
-			);
+			const members = [
+				...new Set([
+					...state.actors,
+					...Object.keys(state.core.members),
+					...here,
+				]),
+			].filter((actor) => isMember(state, actor));
+
+			const { answer, actor } = answerKnows(line, members, here.length, lobby);
 
 			if (actor !== undefined) {
 				yield* Effect.logInfo(

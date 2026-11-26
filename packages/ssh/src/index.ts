@@ -8,7 +8,12 @@ export {
 	connectClient,
 } from "./client.ts";
 
-export { fingerprintOf, isFingerprint, loadHostKey } from "./keys.ts";
+export {
+	fingerprintOf,
+	isFingerprint,
+	loadHostKey,
+	pemFingerprint,
+} from "./keys.ts";
 
 export {
 	type Rate,
@@ -17,7 +22,11 @@ export {
 	tokenBuckets,
 } from "./rate.ts";
 
-export { isRelayableActor } from "./relay.ts";
+export {
+	isRelayableActor,
+	isRelayableBucket,
+	isRelayableInvite,
+} from "./relay.ts";
 
 export { serve } from "./server.ts";
 

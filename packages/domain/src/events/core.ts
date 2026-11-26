@@ -28,12 +28,38 @@ export class Redone extends Domain.Event("core.redone", {
 	...CorePayloads["core.redone"].fields,
 }) {}
 
+export class MemberAdmitted extends Domain.Event("core.member-admitted", {
+	actor: ActorId,
+	...CorePayloads["core.member-admitted"].fields,
+}) {}
+
+export class MemberRemoved extends Domain.Event("core.member-removed", {
+	actor: ActorId,
+	...CorePayloads["core.member-removed"].fields,
+}) {}
+
+export class DoorSet extends Domain.Event("core.door-set", {
+	actor: ActorId,
+	...CorePayloads["core.door-set"].fields,
+}) {}
+
 export const CORE_EVENTS = [
 	ChatPosted,
 	NameSet,
 	DiceRolled,
 	Retracted,
 	Redone,
+	MemberAdmitted,
+	MemberRemoved,
+	DoorSet,
 ] as const;
 
-export type CoreEvent = ChatPosted | NameSet | DiceRolled | Retracted | Redone;
+export type CoreEvent =
+	| ChatPosted
+	| NameSet
+	| DiceRolled
+	| Retracted
+	| Redone
+	| MemberAdmitted
+	| MemberRemoved
+	| DoorSet;

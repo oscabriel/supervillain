@@ -41,7 +41,9 @@ export {
 export {
 	setActions,
 	setBand,
+	setFightLines,
 	setMap,
+	setParty,
 	setSheet,
 	setWorldPrep,
 	withFighters,

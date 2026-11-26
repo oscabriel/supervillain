@@ -100,6 +100,7 @@ import {
 	story,
 	table,
 	VEX,
+	openDoor,
 } from "./fixtures.ts";
 
 const { advance, given, rejected, state, then, when } = Story;
@@ -169,6 +170,7 @@ describe("the party", () => {
 		"heroes join from the sheets the host loads, and players take them",
 		() =>
 			story(
+				openDoor,
 				seeded(1),
 				asGm,
 				when(table, new DsJoinHero({ hero: "vex" })),
@@ -228,6 +230,7 @@ describe("the party", () => {
 describe("creatures", () => {
 	effect("come numbered from one stat block, and minions in squads", () =>
 		story(
+			openDoor,
 			seeded(1),
 			asGm,
 			when(

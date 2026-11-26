@@ -5,6 +5,7 @@ import type { Module } from "@supervillain/domain/rules/core/module";
 
 import { VEX } from "../drawSteel/harness.ts";
 import { fold } from "./fold.ts";
+import { openInitial } from "./open.ts";
 import { ALICE, env, fixedDice, GM } from "./table.ts";
 
 type CounterCommand =
@@ -37,6 +38,9 @@ describe("the table's rules", () => {
 			["narrate", true],
 			["name", false],
 			["roll", false],
+			["admit", true],
+			["kick", true],
+			["door", true],
 			["hero", true],
 			["play", false],
 			["unplay", false],
@@ -68,6 +72,15 @@ describe("the table's rules", () => {
 			["push", false],
 			["pull", false],
 			["slide", false],
+			["stage", true],
+			["show", true],
+			["unpin", true],
+			["reveal", true],
+			["hide", true],
+			["tracker", true],
+			["tick", true],
+			["recap", true],
+			["sync", true],
 			["undo", false],
 			["redo", false],
 		]);
@@ -82,6 +95,9 @@ describe("the table's rules", () => {
 			["narrate", "narrate", true],
 			["name", "name", false],
 			["roll", "roll", false],
+			["admit", "admit", true],
+			["kick", "kick", true],
+			["door", "door", true],
 			["map", "set-map", true],
 			["recruit", "set-recruit", true],
 			["foe", "set-foe", true],
@@ -93,6 +109,15 @@ describe("the table's rules", () => {
 			["attack", "set-attack", false],
 			["done", "set-done", false],
 			["end", "set-end", true],
+			["stage", "stage", true],
+			["show", "show", true],
+			["unpin", "unpin", true],
+			["reveal", "reveal", true],
+			["hide", "hide", true],
+			["tracker", "tracker", true],
+			["tick", "tick", true],
+			["recap", "recap", true],
+			["sync", "sync", true],
 			["undo", "undo", false],
 			["redo", "redo", false],
 		]);
@@ -104,6 +129,7 @@ describe("the table's rules", () => {
 			["map", "draw-steel"],
 			["set-map", "set-world"],
 			["pf-map", "pf2e"],
+			["ff-map", "freeform"],
 		]);
 	});
 
@@ -118,8 +144,10 @@ describe("the table's rules", () => {
 			"ds",
 			"sw",
 			"pf",
+			"ff",
+			"stage",
 		]);
-		const start = rules.initial;
+		const start = openInitial;
 		expect(
 			rules.decide(
 				start,
@@ -142,7 +170,11 @@ describe("the table's rules", () => {
 		const { state } = fold(rules, log, { strict: true });
 		expect(state.seq).toBe(3);
 		expect(state.actors).toEqual([GM, ALICE]);
-		expect(state.core).toEqual({ names: { [ALICE]: "Vex" } });
+		expect(state.core).toEqual({
+			names: { [ALICE]: "Vex" },
+			members: {},
+			door: "knock",
+		});
 		expect(state.ds.malice).toBe(5);
 		expect(state.ds.heroes.map((h) => h.id)).toEqual(["vex"]);
 		expect(state.sw).toEqual(rules.initial.sw);

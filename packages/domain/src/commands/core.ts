@@ -4,6 +4,9 @@ import { Schema } from "effect";
 import {
 	ChatPosted,
 	DiceRolled,
+	DoorSet,
+	MemberAdmitted,
+	MemberRemoved,
 	NameSet,
 	Redone,
 	Retracted,
@@ -105,6 +108,50 @@ export class Redo extends Domain.Command(
 	{ description: "Put back what the latest undo took, with the same dice." }
 ) {}
 
+export class Admit extends Domain.Command(
+	"admit",
+	{
+		target: TableId,
+		middleware: [Session, Roller],
+		input: {
+			who: Schema.String,
+			member: Schema.optionalKey(Schema.String),
+			name: Schema.optionalKey(Schema.String),
+			by: Schema.optionalKey(Schema.Literals(["gm", "invite"])),
+		},
+		events: [MemberAdmitted],
+		rejects: [Refused],
+	},
+	{ description: "Let a player who is knocking sit at the table." }
+) {}
+
+export class Remove extends Domain.Command(
+	"kick",
+	{
+		target: TableId,
+		middleware: [Session, Roller],
+		input: { who: Schema.String },
+		events: [MemberRemoved],
+		rejects: [Refused],
+	},
+	{ description: "Remove a player from the table." }
+) {}
+
+export class SetDoor extends Domain.Command(
+	"door",
+	{
+		target: TableId,
+		middleware: [Session, Roller],
+		input: { door: Schema.Literals(["knock", "open"]) },
+		events: [DoorSet],
+		rejects: [Refused],
+	},
+	{
+		description:
+			"Set the door: knock makes newcomers wait for the GM, open seats anyone.",
+	}
+) {}
+
 export const CORE_COMMANDS = [
 	Say,
 	Emote,
@@ -113,6 +160,9 @@ export const CORE_COMMANDS = [
 	Roll,
 	Undo,
 	Redo,
+	Admit,
+	Remove,
+	SetDoor,
 ] as const;
 
 export type CoreTableCommand =
@@ -122,4 +172,7 @@ export type CoreTableCommand =
 	| SetName
 	| Roll
 	| Undo
-	| Redo;
+	| Redo
+	| Admit
+	| Remove
+	| SetDoor;

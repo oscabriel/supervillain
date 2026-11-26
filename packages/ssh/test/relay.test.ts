@@ -109,6 +109,100 @@ describe("relay trust", () => {
 			})
 	);
 
+	effect(
+		"SV_INVITE from a trusted relay rides beside the player; a bad one, or one from any other key, is dropped",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				const relayKey = yield* clientKey(dir, "relay");
+				const mallory = yield* clientKey(dir, "mallory");
+
+				const server = yield* testServer({
+					trustedRelayKeys: [relayKey.fingerprint],
+					onExec: (session) =>
+						Effect.sync(() => {
+							session.write(
+								`${session.info.relayedActor ?? "-"} ${session.info.relayedInvite ?? "-"}`
+							);
+
+							return 0;
+						}),
+				});
+
+				const relay = yield* ssh2Client({ port: server.port, key: relayKey });
+
+				const asked = (env: Record<string, string>) =>
+					ssh2Exec(relay, "who", env).pipe(
+						Effect.map((r) => r.stdout),
+						Effect.orElseSucceed(() => "refused")
+					);
+
+				expect(yield* asked({ SV_ACTOR: PLAYER, SV_INVITE: "k3y9-x_1" })).toBe(
+					`${PLAYER} k3y9-x_1`
+				);
+				expect(yield* asked({ SV_ACTOR: PLAYER })).toBe(`${PLAYER} -`);
+
+				for (const bad of ["", "has space", "x".repeat(65), "semi;colon"]) {
+					expect(yield* asked({ SV_ACTOR: PLAYER, SV_INVITE: bad })).toBe(
+						`${PLAYER} -`
+					);
+				}
+
+				const direct = yield* ssh2Client({ port: server.port, key: mallory });
+
+				expect(
+					(yield* ssh2Exec(direct, "who", { SV_INVITE: "k3y9" })).stdout
+				).toBe("- -");
+			})
+	);
+
+	effect(
+		"SV_BUCKET from a trusted relay rides beside the player; a bad one, or one from any other key, is dropped",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				const relayKey = yield* clientKey(dir, "relay");
+				const mallory = yield* clientKey(dir, "mallory");
+				const bucket = "Ab3_-".padEnd(43, "x");
+
+				const server = yield* testServer({
+					trustedRelayKeys: [relayKey.fingerprint],
+					onExec: (session) =>
+						Effect.sync(() => {
+							session.write(
+								`${session.info.relayedActor ?? "-"} ${session.info.relayedBucket ?? "-"}`
+							);
+
+							return 0;
+						}),
+				});
+
+				const relay = yield* ssh2Client({ port: server.port, key: relayKey });
+
+				const asked = (env: Record<string, string>) =>
+					ssh2Exec(relay, "who", env).pipe(
+						Effect.map((r) => r.stdout),
+						Effect.orElseSucceed(() => "refused")
+					);
+
+				expect(yield* asked({ SV_ACTOR: PLAYER, SV_BUCKET: bucket })).toBe(
+					`${PLAYER} ${bucket}`
+				);
+
+				for (const bad of ["", "short", "x".repeat(44), `${"x".repeat(42)};`]) {
+					expect(yield* asked({ SV_ACTOR: PLAYER, SV_BUCKET: bad })).toBe(
+						`${PLAYER} -`
+					);
+				}
+
+				const direct = yield* ssh2Client({ port: server.port, key: mallory });
+
+				expect(
+					(yield* ssh2Exec(direct, "who", { SV_BUCKET: bucket })).stdout
+				).toBe("- -");
+			})
+	);
+
 	effect("SV_ACTOR from any other key is ignored", () =>
 		Effect.gen(function* () {
 			const dir = yield* tempDir;

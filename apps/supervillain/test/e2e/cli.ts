@@ -1,4 +1,6 @@
+import { mkdtempSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { Effect } from "effect";
@@ -19,14 +21,16 @@ export const campaignDir = Effect.tap(tempDir, (dir) =>
 	})
 );
 
-const plainEnv = () => {
+export const CONFIG_HOME = mkdtempSync(path.join(tmpdir(), "sv-config-"));
+
+export const plainEnv = () => {
 	const {
 		CLICOLOR_FORCE: _clicolor,
 		FORCE_COLOR: _force,
 		...rest
 	} = process.env;
 
-	return { ...rest, NO_COLOR: "1" };
+	return { ...rest, NO_COLOR: "1", XDG_CONFIG_HOME: CONFIG_HOME };
 };
 
 export const cli = (args: ReadonlyArray<string>, cwd = root) =>

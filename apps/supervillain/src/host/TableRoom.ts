@@ -35,7 +35,7 @@ import {
 import type { FileSystem, Path, Stream } from "effect";
 import { SecureRandom } from "effect/crypto";
 
-const PLAYER_RATE: Rate = { burst: 10, perSecond: 2 };
+export const PLAYER_RATE: Rate = { burst: 10, perSecond: 2 };
 
 const SEED_TOP = 0xff_ff_ff_ff;
 
@@ -44,8 +44,12 @@ export class Refusal extends Schema.TaggedError<Refusal>()("Refusal", {
 	cause: Schema.optionalKey(Schema.Defect()),
 }) {}
 
+export const SANDBOX_LOG_CAP = 2000;
+
 export interface TableRoomOptions {
 	readonly playerRate?: Rate;
+	readonly sandbox?: boolean;
+	readonly logCap?: number;
 }
 
 export interface Accepted {
@@ -95,7 +99,9 @@ export class TableRoom extends Context.Service<
 			) {
 				const now = yield* Clock.currentTimeMillis;
 
-				return yield* actor !== GM && !take(rateKey, now)
+				const limited = actor !== GM || options.sandbox === true;
+
+				return yield* limited && !take(rateKey, now)
 					? Effect.fail(
 							new Refusal({
 								message: "You're sending lines too fast; wait a moment.",
@@ -176,7 +182,12 @@ export class TableRoom extends Context.Service<
 			Layer.provide(
 				Supervillain.layer(Layer.empty).pipe(
 					Layer.provideMerge(
-						JsonlPlatform.layer({ dir: campaignDir, tableId: THE_TABLE })
+						options.sandbox === true
+							? JsonlPlatform.layerMemory({
+									tableId: THE_TABLE,
+									cap: options.logCap ?? SANDBOX_LOG_CAP,
+								})
+							: JsonlPlatform.layer({ dir: campaignDir, tableId: THE_TABLE })
 					),
 					Layer.provideMerge(SecureRandom.layerWebCrypto)
 				)

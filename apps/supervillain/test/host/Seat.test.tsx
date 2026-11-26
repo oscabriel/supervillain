@@ -10,19 +10,33 @@ import {
 	Exit,
 	Layer,
 	Logger,
+	Schema,
 	Scope,
 	SubscriptionRef,
 } from "effect";
+import { TestClock } from "effect/testing";
 
 import { CampaignContent } from "../../src/content/index.ts";
-import { mountTable, openSeat } from "../../src/host/Seat.ts";
+import { runLine } from "../../src/host/line.ts";
+import {
+	knockSeat,
+	mountTable,
+	NAMING_TIMEOUT_MS,
+	NAMING_TIMEOUT_TEXT,
+	openSeat,
+} from "../../src/host/Seat.ts";
 import { tableServices } from "../../src/host/services.ts";
 import type { TableServices } from "../../src/host/services.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
 import type { TableView } from "../../src/table/view.ts";
+import { campaignOf, FULL } from "../content/files.ts";
 import { combatant, fight, vex } from "../table/combat.ts";
 import { fakeView } from "../table/fakeView.ts";
-import { sampleCampaign } from "./campaign.ts";
+import {
+	DOOR_OPEN_LINE,
+	openSampleCampaign,
+	sampleCampaign,
+} from "./campaign.ts";
 import { effect, must, waitFor } from "./effect.ts";
 import type { Platform } from "./effect.ts";
 
@@ -43,6 +57,15 @@ const using = <ROut, E1, RIn, A, E2, R2>(
 const atTable = <A, E>(body: Effect.Effect<A, E, TableServices | Platform>) =>
 	Effect.gen(function* () {
 		const dir = yield* sampleCampaign;
+
+		return yield* using(tableServices(dir), body);
+	});
+
+const atOpenTable = <A, E>(
+	body: Effect.Effect<A, E, TableServices | Platform>
+) =>
+	Effect.gen(function* () {
+		const dir = yield* openSampleCampaign;
 
 		return yield* using(tableServices(dir), body);
 	});
@@ -202,7 +225,7 @@ describe("a seat over a real room", () => {
 	);
 
 	effect("asks a new player's name, then chat reaches every seat's feed", () =>
-		atTable(
+		atOpenTable(
 			Effect.gen(function* () {
 				const a = yield* seat(alice);
 				const b = yield* seat(bob);
@@ -229,7 +252,7 @@ describe("a seat over a real room", () => {
 	);
 
 	effect("labels every line by the speaker's current name", () =>
-		atTable(
+		atOpenTable(
 			Effect.gen(function* () {
 				const a = yield* seat(alice);
 				const b = yield* seat(bob);
@@ -241,7 +264,11 @@ describe("a seat over a real room", () => {
 				yield* frameWhere(b, "the relabelled line", (f) =>
 					f.includes("Alice: hi before my name")
 				);
-				expect(b.view.feed().map((l) => l.who)).toEqual(["Alice", "Alice"]);
+				expect(b.view.feed().map((l) => l.who)).toEqual([
+					"GM",
+					"Alice",
+					"Alice",
+				]);
 			})
 		)
 	);
@@ -266,7 +293,7 @@ describe("a seat over a real room", () => {
 	effect(
 		"answers /help to this seat only, and Ctrl-C leaves without writing",
 		() =>
-			atTable(
+			atOpenTable(
 				Effect.gen(function* () {
 					const g = yield* seat("gm");
 					const b = yield* seat(bob);
@@ -285,7 +312,7 @@ describe("a seat over a real room", () => {
 					b.t.mockInput.pressCtrlC();
 					expect(b.left()).toBe(1);
 					expect((yield* Effect.flatMap(TableRoom, (r) => r.state)).seq).toBe(
-						2
+						3
 					);
 				})
 			)
@@ -294,7 +321,7 @@ describe("a seat over a real room", () => {
 	effect(
 		"keeps each feed row's object across unrelated appends, and relabels on a rename",
 		() =>
-			atTable(
+			atOpenTable(
 				Effect.gen(function* () {
 					const a = yield* seat(alice);
 					yield* type(a, "Alice");
@@ -311,19 +338,20 @@ describe("a seat over a real room", () => {
 						f.includes("Alice: second")
 					);
 					const after = a.view.feed();
-					expect(after).toHaveLength(3);
+					expect(after).toHaveLength(4);
 					expect(after[0]).toBe(before[0]);
 					expect(after[1]).toBe(before[1]);
+					expect(after[2]).toBe(before[2]);
 					yield* type(a, "/name Vex");
 					yield* frameWhere(a, "the rename", (f) => f.includes("Vex: first"));
-					expect(a.view.feed()[1]).not.toBe(before[1]);
-					expect(a.view.feed()[1]).toMatchObject({ who: "Vex", text: "first" });
+					expect(a.view.feed()[2]).not.toBe(before[2]);
+					expect(a.view.feed()[2]).toMatchObject({ who: "Vex", text: "first" });
 				})
 			)
 	);
 
 	effect("refusals show on the seat that sent them", () =>
-		atTable(
+		atOpenTable(
 			Effect.gen(function* () {
 				const b = yield* seat(bob);
 				yield* type(b, "Bob");
@@ -339,7 +367,7 @@ describe("a seat over a real room", () => {
 	effect(
 		"draws the band from the room: the party, each seat's own hero, then the fight",
 		() =>
-			atTable(
+			atOpenTable(
 				Effect.gen(function* () {
 					const g = yield* seat("gm");
 					const a = yield* seat(alice);
@@ -636,7 +664,7 @@ describe("a seat over a real room", () => {
 	effect(
 		"draws the map from the room, with each seat's own hero and where it can reach",
 		() =>
-			atTable(
+			atOpenTable(
 				Effect.gen(function* () {
 					const g = yield* seat("gm");
 					const a = yield* seat(alice);
@@ -694,5 +722,158 @@ describe("a seat over a real room", () => {
 					expect(g.view.map?.()?.reach).toEqual([]);
 				})
 			)
+	);
+
+	effect(
+		"a stranger who names nobody at the door for 2 minutes is told so and sent off",
+		() =>
+			atTable(
+				using(
+					TestClock.layer(),
+					Effect.gen(function* () {
+						let left = 0;
+
+						const t = yield* Effect.acquireRelease(
+							Effect.promise(
+								async () =>
+									await createTestRenderer({
+										width: 100,
+										height: 30,
+										exitOnCtrlC: false,
+									})
+							),
+							(setup) =>
+								Effect.sync(() => {
+									setup.renderer.destroy();
+								})
+						);
+
+						yield* knockSeat(t.renderer, {
+							actor: alice,
+							room: "den",
+							fingerprint: "SHA256:aliceAAAAkeyfingerprint",
+							bucket: "address:203.0.113.7",
+							leave: () => {
+								left += 1;
+							},
+						}).pipe(Effect.forkScoped);
+
+						const seated = { t };
+						yield* frameWhere(seated, "the door", (f) =>
+							f.includes("knocking")
+						);
+						yield* TestClock.adjust(NAMING_TIMEOUT_MS - 1000);
+						expect(left).toBe(0);
+						yield* TestClock.adjust("1 second");
+						yield* frameWhere(seated, "the closed door", (f) =>
+							f.includes("Nobody knocked for 2 minutes")
+						);
+						expect(NAMING_TIMEOUT_TEXT).toContain(
+							"Nobody knocked for 2 minutes"
+						);
+						yield* TestClock.adjust("4 seconds");
+						yield* waitFor("the seat to leave", () => left === 1);
+					})
+				)
+			)
+	);
+});
+
+const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const shown = (view: TableView) =>
+	json({
+		stage: view.stage?.(),
+		party: view.party?.(),
+		feed: view.feed(),
+		present: view.present(),
+		prep: view.prep?.view(),
+		prepStage: view.prep?.stage?.(),
+		gmNotes: view.gmNotes === undefined ? "none" : "some",
+		problems: view.contentProblems?.(),
+		debug: view.debug(),
+	});
+
+describe("GM notes at a seat", () => {
+	const SECRET = "GMSECRET";
+
+	effect(
+		"a player's view of the stage, party and feed never holds a GM note; the GM's does",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* campaignOf({
+					...FULL,
+					"events.jsonl": `${DOOR_OPEN_LINE}\n`,
+				});
+
+				yield* using(
+					tableServices(dir),
+					Effect.gen(function* () {
+						for (const line of [
+							"/show market",
+							"/show mara",
+							"/reveal ledger",
+							"/show brass-key",
+							"/pc rook",
+							"/tracker alarm clock 4 The alarm",
+							"/tracker alarm show",
+							"/recap Rook came to the market.",
+						]) {
+							expect([line, (yield* runLine("gm", line)).kind]).toEqual([
+								line,
+								"done",
+							]);
+						}
+
+						const player = yield* seat(alice);
+						const gm = yield* seat("gm");
+
+						yield* waitFor(
+							"the stage at both seats",
+							() =>
+								player.view.stage?.()?.scene?.key === "scene:market" &&
+								gm.view.stage?.()?.pinned.length === 2 &&
+								gm.view.prep !== undefined
+						);
+						yield* reload(gm.view);
+
+						const theirs = shown(player.view);
+
+						expect(theirs).toContain("The Drowned Market");
+						expect(theirs).toContain("Water laps at the boards.");
+						expect(theirs).toContain("Mara Venn");
+						expect(theirs).toContain("A torn ledger page");
+						expect(theirs).toContain("Rook");
+						expect(theirs).not.toContain(SECRET);
+						expect(player.view.prep).toBeUndefined();
+						expect(player.view.gmNotes).toBeUndefined();
+						expect(player.view.contentProblems).toBeUndefined();
+						expect(player.view.party?.().map((m) => m.name)).toEqual(["Rook"]);
+
+						const frame = yield* Effect.promise(async () => {
+							await player.t.renderOnce();
+
+							return player.t.captureCharFrame();
+						});
+
+						expect(frame).toContain("The Drowned Market");
+						expect(frame).not.toContain(SECRET);
+
+						const notes = gm.view.gmNotes;
+
+						expect(json(notes?.("scene:market"))).toContain(
+							"GMSECRET the ledger is forged."
+						);
+						expect(json(notes?.("npc:mara"))).toContain(
+							"GMSECRET she runs the smugglers."
+						);
+						expect(notes?.("handout:nowhere")).toBeUndefined();
+						expect(
+							(gm.view.prep?.stage?.() ?? []).map((section) => section.title)
+						).toEqual(["scenes", "npcs", "handouts", "items"]);
+					})
+				);
+			}),
+		15_000
 	);
 });

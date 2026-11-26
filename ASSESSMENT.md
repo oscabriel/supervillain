@@ -1,6 +1,8 @@
 # supervillain: an honest assessment
 
-_Written 2026-09-25 against `main` at `a713cee`, which is 8 commits ahead of `origin/main`. Nothing was treated as settled, including the product definition that `AGENTS.md` says never to reopen. This document reopens it on purpose._
+_Sections 1–6 and 10–12 are the review as written on 2026-09-25 against `main` at `a713cee`. The build they describe is at the tag `archive/2026-09-exploration`; `main` has since been rebuilt from a cleared tree. Section 7 holds the questions and their tests, §8 the plan and where it stands, and §9 the living record of what is built and what play has still to settle._
+
+_The review treated nothing as settled, including the product definition that the `AGENTS.md` of the time said never to reopen. It reopened it on purpose._
 
 **How I examined it:**
 
@@ -61,7 +63,7 @@ A sixth is a strong pitch that costs nothing to build: plain files mean any codi
 **The plan:**
 
 1. **Freeze.** Archive the current tree.
-2. **Hill-climb eleven basic questions** until each is settled: who plays first, how they get in, how the keyboard works, who renders, how much Draw Steel, what's on screen, what the map is, undo, names, the log contract, reachability. Settle them with cheap throwaway prototypes and play, not with ADRs and not by patching the archived build.
+2. **Hill-climb ten basic questions** until each is settled: how they get in, how the keyboard works, who renders, how much Draw Steel, what's on screen, what the map is, undo, names, the log contract, reachability. Settle them with cheap throwaway prototypes and play, not with ADRs and not by patching the archived build.
 3. **Rebuild small:** one game, one layout, one relay, roughly a quarter of today's code.
 4. **Play every week.** Earn every platform feature back only when a real table asks for it.
 
@@ -307,21 +309,15 @@ PROPOSED
 
 ## 7. Hill-climbing: the basic details to settle first
 
-Each question below comes with my current recommendation and a concrete test. **Settle them by building throwaway prototypes and playing, not by writing ADRs.** Work top to bottom; later questions depend on earlier ones.
+Each question below comes with a recommendation and a concrete test, numbered Q2 to Q11. **Settle them by building throwaway prototypes and playing, not by writing ADRs.** Work top to bottom; later questions depend on earlier ones.
 
-"Dead-set" means the test was run with real people and passed. Record the outcome in §9 of this file in one or two sentences, replacing the recommendation.
-
-**Q1. Who is the first table, and what is the first session?**
-
-- **Recommendation:** your own Draw Steel group, or any three to five friends, for one real, combat-heavy session of about three hours. Everything else serves this.
-- **Test:** a date on the calendar and a named group.
-- **Dead-set when:** that's scheduled.
+"Dead-set" means the test was run with real people and passed. Each question's entry in §9 says what is still to settle and what is built; when a test passes, record the outcome there with its date and what happened at the table.
 
 **Q2. What does a player type, and what do they see in the first ten seconds?**
 
-- **Recommendation:** `ssh <room>@<host>`. The first run asks "what should the table call you?", the name is remembered by key, and then you're at the table. No lobby on the direct path.
-- **Test:** three non-terminal friends and a stopwatch.
-- **Dead-set when:** all three are seated in under 60 seconds without help.
+- **Recommendation:** the GM gives a short intro and the room's name, and the player types one command into their terminal of choice: `ssh <room>@supervillain.sh`. The first run asks "what should the table call you?", the name is remembered by key, and then they're at the table. No lobby on the direct path.
+- **Test:** the first session's players, with nothing but that intro.
+- **Dead-set when:** each is seated from the intro and the one command.
 
 **Q3. How does the keyboard work?**
 
@@ -331,7 +327,8 @@ Each question below comes with my current recommendation and a concrete test. **
   - Panes scroll with PgUp/PgDn and the mouse.
   - Single-letter hotkeys exist only behind an explicit leader key (Esc, or Ctrl-Space).
   - Panels become displays first and controls second.
-- **Test:** a clickable prototype and the same three friends.
+  - A mouse click does what a typed command would, and the GM guides anyone who is stuck.
+- **Test:** the first session's players.
 - **Dead-set when:** a full session produces zero accidental commands.
 
 **Q4. Who renders?**
@@ -412,8 +409,8 @@ Each question below comes with my current recommendation and a concrete test. **
 
 **Q11. How does the first table reach the GM?**
 
-- **Recommendation:** for prototype sessions, a tunnel (Tailscale, `bore`, or `ssh -R`). For Session Zero, the §6 relay on a small VPS behind a real DNS name.
-- **Dead-set when:** the friends reached the table without the GM on the phone walking them through it.
+- **Recommendation:** for prototype sessions, a tunnel (Tailscale, `bore`, or `ssh -R`). For Session Zero, the public relay: `ssh <room>@supervillain.sh`.
+- **Dead-set when:** the friends reached the table with the GM's short intro and that one command, and nobody walked them through it.
 
 **Explicitly deferred, with the trigger that reopens each:**
 
@@ -421,97 +418,235 @@ Each question below comes with my current recommendation and a concrete test. **
 | --- | --- |
 | Sharing or publishing | A player asks to share a sheet or a recap |
 | Multi-device keys | A GM hosts from two machines |
-| Public self-hosting docs | Someone asks |
 | Hosted persistence and a paid tier | Tables regularly fail because the GM's machine is off |
-| A second game | Draw Steel is deep enough that its players stop asking for things |
-| A website beyond one static page | There's something to launch |
+
+Three things this list deferred were built before their triggers fired, at the owner's request, and none has been played at a table: a second and a third game (`set-world` and `pf2e`, §9 Q7), public self-hosting docs (`docs/HOSTING.md`), and a website beyond one static page (`packages/site`).
 
 ---
 
 ## 8. The plan
 
-**Phase 0: stop and archive (a day)**
+**Phase 0: stop and archive — done**
 
-- Push the 8 unpushed commits. Tag the current `main` as `archive/2026-09-exploration`; nothing is lost.
-- Freeze the backlog: close or label every open issue `frozen`. Stop writing ADRs and research.
-- Rewrite `AGENTS.md` as one page:
+- The old tree is at the tag `archive/2026-09-exploration` (tagged and pushed 2026-09-27); nothing is lost.
+- `AGENTS.md` is one page:
   - docs describe the present and get rewritten freely, since git holds the history;
   - no ADR without code in the same change;
   - product decisions come from play;
   - commit subjects are at most 72 characters;
   - a red CI gets fixed or the rule gets turned off the same day.
+- The backlog is closed (2026-11-25): the 22 issues left open from the archived build were closed as not planned. New issues are filed against the current tree.
 
-_Status (2026-09-27): commits pushed and `archive/2026-09-exploration` tagged and pushed; `AGENTS.md` rewritten. Backlog freeze pending._
+**Phase 1: hill-climb — spikes run, no test yet run with people**
 
-**Phase 1: hill-climb (about two weeks)**
+- **Spike A**, the render location (Q4), and **Spike B**, chat-first input plus the one-layout mock (Q2, Q3, Q6), import the archived packages. They live at the tag `archive/2026-09-spikes` and run from a worktree of it (`git worktree add ../supervillain-spikes archive/2026-09-spikes`).
+- **Spike C**, Draw Steel combat on paper (Q5), is in `spikes/c-draw-steel-paper/`.
+- **Spike D**, the Effect single-writer table and the SSH-in-SSH relay, is in `spikes/d-effect-table/`.
+- Their results are in §9. None of §7's tests has been run with real players, so no question is dead-set.
+- A scratch session that patched the archived build was dropped on 2026-09-27: four patches worked end to end but cost about 1,240 lines across 21 files, which is editing the old code. Its design lessons are in Q5, Q8 and Q9 of §7.
 
-- **1a. Spike A**, the render location (Q4). Throwaway code.
-- **1b. Spike B**, chat-first input plus the one-layout mock, clicked through by two or three people (Q2, Q3, Q6).
-- **1c. Spike C**, Draw Steel combat on paper, producing a command list and data sources (Q5).
-- **Output:** §9 below, filled in and dead-set. No other documents.
+**Phase 2: rebuild small — built, not yet played**
 
-_Spikes A and B import the archived packages, so they live at tag `archive/2026-09-spikes` and run from a worktree of it (`git worktree add ../supervillain-spikes archive/2026-09-spikes`). Spike C is paper only and stays in `spikes/`._
+- Started 2026-10-21 from a cleared tree, in parallel with Phase 1 rather than after it. The domain was re-architected onto `@alchemy.run/domain` and the workspace hardened on 2026-11-22 and 23. The latest release is v0.6.1 (2026-11-24).
+- **What's there:** `packages/domain` (the rules and the `Table` aggregate), `packages/platform-jsonl` (the log and the single writer), `packages/ssh` (our SSH server), `apps/supervillain` (the one binary: table, host edge, relay, content) and `packages/site`. `AGENTS.md` and `docs/how-it-works.md` hold the layout.
+- **Past the plan:** three rulesets where the plan had one, the picture map, the mouse, the GM's prep panel, the relay's lobby and the public site. Each was built at the owner's request (§9) and none has been played at a table.
+- **Size (2026-11-25):** about 51k lines of non-test TypeScript under `packages/*/src` and `apps/*/src`, and about 34k lines of tests. The plan's rough target was 6–8k, against about 26k in the archived build.
+- **Tooling:** Bun, TypeScript 7 with `tsc -b`, strict `oxlint`, `oxfmt`, and `bun test`. CI runs build, test and check; the release pipeline builds the standalone binaries.
 
-_Dropped (2026-09-27): a scratch session on the archived build. Four patches (input-line focus, `/name`, `/dmg` and `/heal`, GM `/undo`) worked end to end but cost about 1,240 lines across 21 files plus about 30 rewritten tests. That is editing the old code, which this plan exists to stop. The design lessons are folded into Q5, Q8 and Q9. The code is in `git stash` as "phase-1a scratch patches (dropped 2026-09-27)"._
+**Milestone, Session Zero — next**
 
-**Phase 2: rebuild small (about three to five weeks, a guess)**
+A group of friends plays a real Draw Steel session on the rebuilt table, reaching it at `ssh <room>@supervillain.sh` after a short intro from the GM, with no paper and no one walking anyone through setup. The relay it needs is deployed. One thing is owed before it: a real-network latency run through the relay (Q4).
 
-_Status (2026-10-21): started, in parallel with Phase 1 rather than after it. The tree on `main` was cleared to a fresh skeleton; the first milestone is a table friends can sit at, not the product. It has fewer packages than the sketch below: `packages/engine`, `packages/ssh` (our SSH server on ssh2) and `apps/supervillain`, with the table, Draw Steel and the relay as folders in the app until a boundary hurts. The architecture is the one Spike D tested (§9). Slices 1 to 6 are done, test-first: the engine (the log reader, the fold, `CampaignLog` and the single-writer `Room`); the SSH table with names and chat (`supervillain host`, with exec for one command at a time); the chat-first input and layout; minimum Draw Steel (sheets, import, combat and the band); undo and the text map; and the relay (`supervillain relay`, `host --relay`) with release binaries for Linux and macOS (`scripts/`, `.github/workflows/release.yml`) and the player and host guides in `docs/`. Session Zero now needs people and a date (Q1), a small VPS with a DNS name running the relay (Q11), and one real-network latency run through it (Q4)._
+**Phase 3: play every week — not started**
 
-A starting sketch, to be revised by Phase 1:
-
-```
-packages/
-  engine/       envelope, log append/replay, room reducer {core, game},
-                host loop, core commands as a module     (target ≈ 800 lines)
-  draw-steel/   rules as decide/apply + its panels, one package, no entry-point lattice
-  table/        OpenTUI UI as components over one store; text map; chat-first input
-apps/
-  supervillain/ one binary: create (host + render + dial the relay), export, check
-  relay/        dumb SSH relay, ≈ 300–500 lines (or `supervillain relay` in the same binary)
-```
-
-- **Tooling:** Bun, TypeScript 7, `tsc -b`, oxlint and oxfmt on defaults, `bun test`. CI on one OS: build, test, lint. Keep the existing release pipeline.
-- **Size:** a rough target of 6–8k lines, against about 26k today, with more game in it.
-- **Milestone, Session Zero:** the group from Q1 plays a real Draw Steel session on the rebuilt table, reaching it at `ssh <room>@<relay>`, with no paper and no one walking anyone through setup.
-
-**Phase 3: play every week**
-
-A standing session. After each one, fix what the table hit, and keep a short "what we learned" list in §9. Features get built because a session needed them.
+A standing session. After each one, fix what the table hit, and record what was learned in §9. Features get built because a session needed them.
 
 **Phase 4: earn the platform back, only on triggers**
 
-In likely order:
-
-1. The public relay at supervillain.sh and a one-page static site.
-2. `supervillain export` to HTML or Markdown recaps.
+1. The public relay and the public site. **Done, ahead of any trigger:** both are deployed, and the relay runs v0.6.1 on a Linux VPS with players on port 22 (recorded 2026-11-25).
+2. `supervillain export` to HTML or Markdown recaps. Not built.
 3. Everything in §7's deferred list, each when its trigger fires.
 
 ---
 
 ## 9. Decisions (living; fill in as each question is settled)
 
-_Each entry: the question, what was decided, and the evidence (a date and what happened at the table). Rewrite entries in place when evidence changes them; don't append corrections._
+_Each entry: the question, what is still to settle, and what is built with its evidence (a date and what happened). "Not play" means no table of real people has used it. Rewrite entries in place when evidence changes them; don't append corrections. How the build works is in `docs/how-it-works.md` and `docs/rulesets/`, and each ruleset's intended limits are in `docs/issues/0004-rulesets-v1-known-limits.md`._
 
-- Architecture — **decided.**
-  - Rules are pure `decide`/`apply` functions composed inside a single `@alchemy.run/domain` `Table` aggregate (`packages/domain`) with an opaque identity `TableStateSchema` (~23.8k cmd/s) and typed `ExternalSystem` ports (`Sheets`, `Catalog`, `SetWorld`, `MapForge`, `Seating`). One always-composed closure-erased `RULESETS` registry serves `draw-steel`, `set-world`, and `pf2e` (ORC Remaster), and one command registry drives parsing, completion and help on every surface.
-  - `@supervillain/platform-jsonl` implements `Domain.Platform` over the fixed `events.jsonl` envelope (`{actor, seq, timestamp, type, payload}`), with `events.lock`, `ignoreBOM` UTF-8 byte offsets, 64-line tail ring, torn-line truncation, and 1,024-entry LRU receipts.
-  - Effect 4.1.5 (exact catalog pin) runs the host edge: the log file, the single writer, HTTP client, and one scope per SSH session. Solid and OpenTUI 0.9.7 render one App on the GM's terminal and every SSH seat.
-  - Workspace quality (2026-11-22): strict `oxlint` (`typeAware: true`, `denyWarnings: true`, 616 rules including Ultracite, `@effect/tsgo`, vendored `anti-slop`, and `supervillain/no-comments`) + `oxfmt` + `tsc -b` (`exactOptionalPropertyTypes`, `verbatimModuleSyntax`). Zero comments and zero non-`as const` type assertions across all tracked source, test, config, YAML, CSS, HTML and shell files; durable rationale lives in `docs/adr/`, workarounds in `docs/issues/`, terms in `GLOSSARY.md`, and attributions in `NOTICE` / `docs/ORC-NOTICE.md`.
-  - Evidence (2026-10-20, 2026-11-22): Spike D (`spikes/d-effect-table/`) settled the single-writer Effect edge; a 240,000-line differential fuzzer confirmed zero divergence between the original fold and the `@alchemy.run/domain` + `platform-jsonl` aggregate; the strict audit caught a fail-open `ssh2` `key.verify()` bug (fixed with `!Object.is(..., true)` + off-curve ECDSA test).
-  - The relay's trust handshake, Spike D's open question, is built (see Q4 and Q11): no trust comes from plaintext, the relay pins each room's GM host key and the GM pins the relay's key synchronously before admission. Our SSH server (`packages/ssh`, on `ssh2@1.17.0` with `patches/ssh2@1.17.0.patch` adding `mlkem768x25519-sha256`) bounds what a stranger can cost the host: connections and sessions per address and in all, 20 session starts per address then 1 a second, timed-out logins and idle sessions, and a cut for a connection that rekeys too often or leaves more than 4 MiB unread on its socket or any one channel (2026-11-09, from tests: a flood that held 954 MB holds a flat 119 MB).
-  - Relay hosting vs. Cloudflare TCP (2026-11-22): the static Foldkit site (`packages/site`) deploys to Cloudflare via `@alchemy.run/cloudflare`, while `supervillain relay` runs on a $5–6/mo Linux VPS (Cloudflare Inbound TCP Workers via Spectrum require Pro $20/mo+ and cap at 1 TCP port per zone vs. our 2 ports, `workerd` cannot run `ssh2` natively, DO sockets face eviction windows, and 24/7 Containers cost $15–30/mo).
-- Q1 — _open_
-- Q2 — _open._ Built so far (2026-10-22, from tests, not yet play): through a relay, a player with a key who comes without a room (a bare `ssh`, or `lobby@`) is listed the open tables whose log already holds their key, numbered, and Enter seats them as `<room>@` would; the list is a screen in the table's style (2026-11-02, from a prototype with made-up tables, now drawn from what the relay knows): the title in MEKMODE Text, a framed `¹ tables` pane with the pick marked and moved by ↑↓ or a number, and a `² you` pane with the player's key. The list comes without a word about the name a bare `ssh` sent, most likely the player's own username. With nothing to list (a guest, or a key no open table knows) the same screen says how to sit down instead, and its prompt takes a room's name, from anyone, which seats them as `<room>@` would; a name that isn't open is answered in place, and the fifth gets the join hint and the door (2026-11-24, from tests and a relay run by hand, after a bare `ssh` was named as the product's front door). Without a terminal the answers are text: the list, or `There's no table called <name> here.` and the join hint. A GM can stay off the list with `--no-lobby`. The relay asks each linked host over its link with a nonce and a MAC of the key, never the key itself. A direct host still has no lobby: it serves one table whatever the username. Still to do: whether returning players use it, and whether first-timers find the prompt and are seated in time.
-- Q3 — _open._ The mouse goes past this recommendation: a click on a token or band row opens a menu of what the rules offer and sends the very line typing would, and `/mouse off` turns it off per seat. Built 2026-10-22 at the owner's request after the owner's live test of v0.4.0; not yet played at a table.
-- Q4 — _open._ Local run (2026-09-27): rendering on the GM machine adds about 2–4 ms over the network round trip. Performance run on this build (2026-10-21, 8 seats at 120x40 with the ford map loaded, direct and through the relay alike): 8 seats chatting once a second cost 93.5 KB/s of GM upload, and with a combat running 105–107 KB/s (0.86 Mbit/s; 1 s p95 129–132 KB/s). Per event per seat that's about 1.6 KB for chat and 2.4 KB for a combat event on the ford map; on a 60x40 map at 120x40, 364 B for chat and 616–810 B for a move. One text seat at 100x30 over the sample campaign (2026-11-09, every byte counted) takes 11–13 KB for its first frame and about 1.1 KB a chat line, since every feed row is drawn again as the feed scrolls. A realistic 1–2 events a second with 8 seats is about 15–40 KB/s. Host time per seat per event, after the band and the map stopped being rebuilt on every change (bench, 8 seats at 120x40, 60x40 map, 30 tokens, in combat): about 2 ms for a chat line and 4 ms for a move, against 11 ms for either before; steady RSS in that bench fell from about 820 MB to 350 MB. Spike D's SSH-in-SSH relay (2026-10-20) adds about 0.5–2 ms per hop on loopback. Built so far (2026-10-21, from tests and live runs, not yet play): the GM's binary renders every seat, and `supervillain relay` only carries bytes. Each player's session is a channel on the room's one GM link, with the player's key as `SV_ACTOR`, their pty, window changes, data both ways, EOF and exit status. End-to-end tests run a real relay, a headless host and OpenSSH players (exec and a pty) as separate processes, and the compiled linux-x64 binary did the same by hand. The real-network run is still to do; see `spikes/a-render-location/README.md` at tag `archive/2026-09-spikes`.
-- Q5 — _open._ Built so far (2026-10-21, from a three-round live run of the sample fight and a read of the rules text, not yet play with friends): `/end` loses unspent heroic resources, surges and Malice, and ends temporary Stamina and every condition (Combat, "End of Combat"); a respite (`/rest`) skips the dead and turns Victories into XP; an ability's cost is spent with its power roll, from the hero's resource or the Malice pool, and an ability with no roll is used through `/pr` (its cost spent, its effect told); the roll's line carries the ability's effect, and `/pr … on <targets>` deals the tier's damage to each target and names one past the ability's reach (the rehearsal's scribe tally counted about 45 copies of a roll into `/dmg` across two encounters); bleeding (a dying hero's included) costs 1d6 + level Stamina after a main action (`/move … main` included), a triggered action or a Might or Agility roll, rolled into a `ds.bled` event; a creature's half-Stamina trait is quoted when it gets there; XP is kept per hero and shown on `/sheet`; a hero who dies loses their conditions, and Victories go to the living; a resource goes below 0 only where the sheet sets `resource.min`; a squad's minions free strike together with `/fs … xN`, typed if the GM names a type; a tier's `5 + M or A` adds the best of them, and damage with dice in it is left to `/dmg` (2026-11-09). Not modelled yet: splitting a squad's free strike across targets, opportunity attacks, an effect's mechanics (Form Up's shift, an edge on the next strike), a squad's captain (its `withCaptain` text shows on `/sheet`, the GM applies it), "immunity all" from imports, and a squad's minions as separate tokens (see Q7).
-- Q6 — _open._ Built so far (2026-10-21, from the Session Zero rehearsal at 80x24 and the tests): when the band is short of room, creatures' names shorten, then heroes' Recoveries go, then each hero keeps one row (its last conditions or resource cut with `…`, all of it on `/sheet`), then the `dead:` line (dead heroes too) goes before any living row; beside the map, the map gives up rows before a living enemy is hidden, so at 80x24 the sample fight (four heroes, the chief, two bruisers and two squads) shows every living combatant's Stamina, healthy or mid-fight, with the feed's three rows (the rehearsal had hidden up to every creature, the chief included). A cropped map names the rows and columns it shows in its title. The smallest seat is 72x20, where the sample fight still shows every living row (tests, 2026-11-09); below it the hint row names the short side. §5 said one layout; each seat now shows or hides its panels btop style (Alt+1-4, `/view`), built 2026-10-22 at the owner's request after the owner's live test of v0.4.0, not yet played at a table. The GM's prep panel (2026-11-02, chosen from four prototypes on the real table, each recorded preparing the same fight; not yet play) is a column right of the map and the feed, 26 to 34 columns: the steps to a fight, what the next free square clicked does, drawn as its token, and under it what is left (who waits for a square, heroes not in play, every monster), each leaving the list as it is placed or chosen, then Fight. The same fight took 14 clicks and about 9,000 pixels of pointer travel in it, against 25 clicks and 15,000 in the panel under the feed it replaces; a strip of portraits under the map took 17 and 6,900, a brush that stamps the map 11 and 6,200, and one card that places everyone by itself 8 and 2,500. The GM liked the strip best but found its portraits too big and missing what is next (for a hero especially) and what is left, and asked for it as this column: small tokens with their names, gone from the list once placed or chosen.
-- Q7 — _open._ Built so far (2026-10-21, from review, the tests and live runs of the sample map and a 50x30 keep at 100x30 and 80x24 with a GM and players, not yet play): maps are text files (`maps/<id>.txt`, the file name a lower-case id: `.` floor, `#` wall, `~` difficult, space outside and nothing else, so no square passes for a token; up to 60x40), loaded by the host into the event; replay checks only a grid's shape, not today's limits. Squares are typed `c5`, columns `a`… then `aa`, labelled on two rows past `z`. Cells are two columns wide; heroes, the Director's creatures and your own hero have their own colours, terrain only greys and olive; reach is a tint plus `•`, or `≈` on difficult terrain. Marks are names: commands take `b1` or `B` (case-sensitive), a placed token's mark wins over the square it spells in `/dist`, and the band shows each placed combatant's mark; a creature's mark starts with the initial of its name's last word, so a block keeps its mark between fights (the rehearsal saw the same squad as `bA` in one fight and `cA` in the next); past 9 it is that initial and the number's last digit, if free. Movement costs 1 a square, diagonals too, with difficult terrain and enemies' squares +1; only walls fill a corner. In combat a player moves only on their hero's turn, up to its speed over the whole turn, twice that with `main` (the main action as a move, Combat, "Main Actions"); the event stores what the turn has spent, and the reach shows what's left. Push, pull and slide take stability off and slam per the rules text; a player force moves only with their hero, on its turn in a fight, the GM at any time (2026-11-09); nobody force moves themselves; a pull without `to` takes the straight line that ends closest; `to` a wall or creature (a pull's own source included) slams with everything left; the map's edge stops it and the feed says so; range isn't checked, but the feed names the source, and how far it or a free striker stood when not adjacent. Rulings and gaps: a diagonal past one wall square is a slam ("completely fills the corner" read as one wall square on either side); who holds a grabbed creature and size (Combat, "Big Versus Little") aren't modelled; a minion squad is one token on one square, so a push moves the squad and a slam hits its pool once, unlike the rules' one creature per minion (Combat, "Size and Space"). The map stacks between band and feed and edges give rows to markers only toward tokens past them; a big map follows the acting creature, else the seat's hero, else the spot showing the most tokens, and `/view <square|who>` centres it until the turn passes; `/view map` folds the band to two lines. At 80x24 the sample fight shows 4 of the ford's 10 rows beside a full band, which takes the rows its living combatants need first (tests, 2026-10-21), with no blank marker rows, and 9 in `/view map` (live run, 2026-10-21); on a 50x30 keep the GM sees the heroes' cluster between turns, other tokens named with arrows in the bottom border. Pictures and generated maps (2026-10-22, built from three prototypes on the `prototype/map-art`, `prototype/set-world` and `prototype/map-gen` branches): §5 froze the picture tiers and MEKMODE; they came back at the owner's request, shipped in v0.4.0, and haven't been played at a table. A seat in a terminal with kitty graphics, outside a multiplexer, may draw the map in MEKMODE's pictures (`/view pictures`), squares four columns by two, tokens a figure in their side's colour with their mark; elsewhere the map stays text, since the prototype's block fallback made marks unreadable. Each seat's picture is painted at its terminal's cell size in pixels, when the terminal says it, so the terminal doesn't scale MEKMODE's pixels blurry; until it does, and on an SSH seat at the 300x100 size cap, a square is 36 pixels as in the prototype. It goes as a PNG, each row stored against the one above: counting every byte a real seat wrote (2026-11-09), a move costs about 5 KB on the ford at 36 pixels a square and 11 KB at HiDPI's 20x40 cells, and 8 and 17 KB on a generated crossing (15, 43, 40 and 101 KB before), and an event that leaves the map as it was sends no picture. Maps may be written in MEKMODE's Ding Mode letters (`style: mekmode`), which the legend turns into the rules' terrain, the letters riding in the map event for the pictures; `supervillain map crossing|keep` generates one from a seed. MEKMODE (MEK.txt) is used with MEK's permission, given to Oscar (recorded 2026-10-22). Set.world's characters and rules, tried on the `prototype/set-world` branch as a game beside Draw Steel (turns offer only move, hit or rest, and a fight would run past a hundred turns by hand), are now a ruleset a campaign chooses in its `campaign.yaml` (`rules: set-world`), though §5 deferred a second game: built 2026-10-22 at the owner's request after the owner's live test of v0.4.0, not yet played at a table; every module is always composed so any log replays, the ruleset picks the commands, band, map and `/sheet`, the shared acts keep Draw Steel's words, and the host fetches each roll and puts it in the event.
-- Q8 — _open._ Built so far (2026-10-21, from review, the tests and live runs, not yet play): `/undo` writes `core.retracted` naming one batch, and the fold restores the slices from before it and folds every later batch again on top, 20 batches deep. Every later batch must come out exactly as it did (the same feed lines), or the undo is refused, naming them ("A later change depends on it: GM's \"Vex takes 6 damage (5 to temporary Stamina) → 10/21 · winded\". Undo that first, or ask the GM."), and the fold halts on a retraction that would change one, so the feed, the band and replay never disagree and nobody's undo rewrites someone else's result. `/redo` is held to more: it puts a batch back only onto the game its undo left (the batch was the latest, and nothing, a claim included, has changed since), and only if it reads as it did (2026-11-10, from an audit whose redo of an older change put a condition back on a dead hero). The GM takes back the latest batch or, with `/undo <who>`, that person's latest (a `/undo <who>` naming nobody at the table is refused, a player's too); a player takes back their own latest within 30 seconds of the host's clock (which the host puts in the command), even with others' changes after it. A batch with dice in it (power rolls, saves, combat's start, a turn that rolled for its resource or saves) is the GM's alone to take back, so a player can't roll again by undoing. `/redo` writes `core.redone` and puts back the latest undone batch's own events, dice and all; a player redoes only their own undo, and a new change ends the redo. Chat, names, `/roll`, measurements and hero claims are never taken back: a batch keeps the claims that followed it, and an undo folds them again in log order, skipping one only while its hero is gone, which a `/redo` of the batch that brought the hero restores (2026-11-09, from two cases a review found dropping a player's hero). A batch is a run of retractable events with one actor and timestamp; the room stamps every submission later than the one before, so two submissions never share one. A forced move stores where its target stood, so a slam that went nowhere still depends on the move that put the target there (the rehearsal undid such a move and kept the slam's damage).
-- Q9 — _open._ Built so far (2026-10-21, from review, not yet play): a key's name is held for good; a guest's only while that guest is seated, since a guest is a new actor every connection; the default label of anyone seated is held too. Names are stored in NFKC form, refuse invisible and control characters, brackets and the feed's marks (↶ ↷ → ·), and are compared on what they look like (case, Cyrillic and Greek lookalikes, 0 and 1 for o and l, any i for l, rn for m, spaces and punctuation ignored: the rehearsal let "AIice" sit beside "Alice", and a review "ALICE" and "Ilsa" beside "Alice" and "ilsa"); a name that looks like a hero, creature or fighter in play is taken (2026-11-09). The GM's label is always drawn in the GM's colour. A first name reads "Alice joins the table." rather than naming the fingerprint. A hero whose guest has left is free to take, since a guest is a new actor every connection (the rehearsal's guests needed the GM after every drop).
-- Q10 — _open._ The room stamps each submission's envelopes with one timestamp, a millisecond after the last if the clock hasn't moved or went back, so a submission is its actor and timestamp. A lenient reader tells the rules what it skipped, so a retraction naming a skipped event still applies. Engine tests (2026-10-20, `packages/engine`) pass for both automated halves: a host killed with `kill -9` mid-append reopens cleanly (a real child process; about a third of kills leave a half-written line, which is cut on open), and a rule that throws writes nothing. A failed append (a short write, a full disk) is cut back to the log's length before it, so it leaves nothing, and the room halts (2026-11-09, tests faking a nearly full disk). The campaign lock is linked into place with its pid; a stale one (a dead pid, or the host's own left by an earlier process, as in a restarted container) is renamed aside to be taken over, so two hosts racing on it no longer both get in (5 trials in 60 before), though three still can (2 in 40). Still to do: read a real session's log by eye and with `jq`.
-- Q11 — _open._ Built so far (2026-10-21, from tests and live runs, not yet play): all three routes exist. Same network or Tailscale with `--bind 0.0.0.0`; a tunnel (bore or `ssh -R`, in `docs/HOSTING.md`); and the relay: the GM's host dials `supervillain relay` (`host --relay table.example --room den`) and players type `ssh -p 2222 den@table.example`. The first GM host key to link a room claims it in the relay's `rooms.json`, and another key is refused (`relay forget <room>` releases it). The host trusts the relay's key from `--relay-key` or `<campaign>/relay_known`, which the first link fills; a different key is refused loudly and not redialed until the GM fixes the file. A dropped link is redialed with backoff from 1 s to 30 s, and players on it are told "The table closed.". The end-to-end tests cover each of these: a relay restart with the host redialing, a second GM refused, and a relay with the wrong key refused. Release binaries need nothing else installed. The relay sees play in the clear and vouches for every relayed player's key, so a GM runs one or uses one they trust; an `ssh -J`-style relay that forwards only TCP would end that, and isn't built. Claims cost only a link: one address (an IPv6 /64) claims 3 rooms, then one an hour, and an IPv6 /48 10, then 4 an hour, counted only when a claim is made after the login proves the host key, so failed logins don't use up the burst. A claim no GM has linked for 180 days (`--claim-days`) lapses, a default chosen so a monthly group or one taking a season off keeps its room's name, built so far and not decided by play; and a relay holds at most 1024, a full one dropping the claim linked longest ago, never one with a GM linked now. A claim too fast, a full registry and the relay's most links are answered on the hello line with ERR and the reason, before any login, so the host's band names it and its redial backs off; a link that can't be kept claims nothing. A host started with `--relay-key` writes it to `relay_known` when there's none, so a later start without the flag stays pinned. Still to do: a VPS and a DNS name, and friends reaching it without help.
+**Architecture — decided.**
+
+- Rules are pure `decide`/`apply` functions composed inside a single `@alchemy.run/domain` `Table` aggregate (`packages/domain`) with an opaque identity `TableStateSchema` (~23.8k cmd/s) and typed `ExternalSystem` ports (`Sheets`, `Catalog`, `SetWorld`, `MapForge`, `Seating`, `Knocks`). One always-composed closure-erased `RULESETS` registry serves `draw-steel`, `set-world`, `pf2e` (ORC Remaster), and `freeform`, alongside the Campaign Stage (`rules/core/stage.ts`), and one command registry drives parsing, completion, help, and MCP tools on every surface.
+- **Model A (file over app), handles, knock-to-join, typed Markdown, Campaign Stage, and live MCP agents (2026-11-26, built, not yet play):**
+  - Campaign files stay 100% on the GM's disk (`table.md`, typed Markdown `party/`, `npcs/`, `monsters/`, `scenes/`, `handouts/`, `items/`, custom ruleset folders, `maps/*.txt`, `events.jsonl`) with Effect Schema validation, cross-reference checking (`supervillain check`), JSON Schema emission (`supervillain schema`), automatic `## GM Notes` stripping, and safe live hot-reload (`ContentWatch`; ADRs 0017–0019).
+  - The relay stores zero campaign data — only `handles.json` mapping short GM handles (`<handle>/<table>`) to GM link keys (`~/.config/supervillain/gm_key`), HMAC-bound claim codes, returning-player short-name resolution via `knows-1@supervillain.sh`, a 3-tab lobby (**Tables**, ephemeral in-memory **Try a Table** sandbox, **Create a Table**), and knock-to-join membership (`core.member-admitted`, `/admit`, `/deny`, `/kick`, `/door`, `/invite`, relayed `SV_BUCKET`; ADRs 0015–0016).
+  - Bare `supervillain` launches the interactive local GM launcher + New Table wizard, and `https://supervillain.sh/install` serves a fail-closed POSIX installer (`scripts/install.sh`).
+  - Live agent MCP control plane (`apps/supervillain/src/mcp/` on `effect/ai/McpServer`, ADR 0020): owner-only `mcp.sock` + `supervillain mcp` for local GMs, zero-install `mcp-1@supervillain.sh` SSH subsystem for players and `gm_keys` remote GMs, host-fact rejection, strict player-view isolation, and per-player rate/concurrency/length bounds.
+- `@supervillain/platform-jsonl` implements `Domain.Platform` over the fixed `events.jsonl` envelope (`{actor, seq, timestamp, type, payload}`), with `events.lock`, `ignoreBOM` UTF-8 byte offsets, 64-line tail ring, torn-line truncation, and 1,024-entry LRU receipts.
+- Effect 4.1.5 (exact catalog pin) runs the host edge: the log file, the single writer, HTTP client, and one scope per SSH session. Solid and OpenTUI 0.9.7 render one App on the GM's terminal and every SSH seat.
+- Workspace quality (2026-11-22): strict `oxlint` (`typeAware: true`, `denyWarnings: true`, 616 rules including Ultracite, `@effect/tsgo`, vendored `anti-slop`, and `supervillain/no-comments`) + `oxfmt` + `tsc -b` (`exactOptionalPropertyTypes`, `verbatimModuleSyntax`). Zero comments and zero non-`as const` type assertions across all tracked source, test, config, YAML, CSS, HTML and shell files; durable rationale lives in `docs/adr/`, workarounds in `docs/issues/`, terms in `GLOSSARY.md`, and attributions in `NOTICE` / `docs/ORC-NOTICE.md`.
+- Evidence (2026-10-20, 2026-11-22): Spike D (`spikes/d-effect-table/`) settled the single-writer Effect edge; a 240,000-line differential fuzzer confirmed zero divergence between the original fold and the `@alchemy.run/domain` + `platform-jsonl` aggregate; the strict audit caught a fail-open `ssh2` `key.verify()` bug (fixed with `!Object.is(..., true)` + off-curve ECDSA test).
+- The relay's trust handshake, Spike D's open question, is built (see Q4 and Q11): no trust comes from plaintext, the relay pins each room's GM host key and the GM pins the relay's key synchronously before admission. Our SSH server (`packages/ssh`, on `ssh2@1.17.0` with `patches/ssh2@1.17.0.patch` adding `mlkem768x25519-sha256`) bounds what a stranger can cost the host: connections and sessions per address and in all, 20 session starts per address then 1 a second, timed-out logins and idle sessions, and a cut for a connection that rekeys too often or leaves more than 4 MiB unread on its socket or any one channel (2026-11-09, from tests: a flood that held 954 MB holds a flat 119 MB).
+- Relay hosting vs. Cloudflare TCP (2026-11-22): the static Foldkit site (`packages/site`) deploys to Cloudflare via `@alchemy.run/cloudflare`, while `supervillain relay` runs on a $5–6/mo Linux VPS (Cloudflare Inbound TCP Workers via Spectrum require Pro $20/mo+ and cap at 1 TCP port per zone vs. our 2 ports, `workerd` cannot run `ssh2` natively, DO sockets face eviction windows, and 24/7 Containers cost $15–30/mo).
+
+**Q2. What does a player type, and what do they see in the first ten seconds? — open.**
+
+- **Decided by the owner** (2026-11-25, not yet play): the GM gives players a short intro and the room's name. All a player needs going in is one command, typed into their terminal of choice: `ssh <room>@supervillain.sh`. From there the table works with mouse clicks and text commands, with completion in the input line and guidance from their GM.
+- **To settle:**
+  - whether each player is seated from that intro and the one command;
+  - whether returning players use the lobby;
+  - whether first-timers who land in the lobby find its prompt.
+- **Built** (from tests, a prototype and a relay run by hand; not play):
+  - A direct host has no lobby: it serves one table whatever the username.
+  - Through a relay, a player with a key who comes without a room (a bare `ssh`, or `lobby@`) is listed the open tables whose log already holds their key, numbered, and Enter seats them as `<room>@` would (2026-10-22).
+  - The list is a screen of its own (2026-11-25, from tests): a status bar with the count of open tables and the seat's terminal and size, the tables on the left with the pick moved by ↑↓ or a number, and on the right the picked table's details and its direct `ssh` command. The list comes without a word about the name a bare `ssh` sent, most likely the player's own username.
+  - With nothing to list (a guest, or a key no open table knows) the right column shows the player's key and how to sit down instead, and the prompt takes a room's name, from anyone, which seats them as `<room>@` would; a name that isn't open is answered in place, and the fifth gets the join hint and the door (2026-11-24, from tests and a relay run by hand, after a bare `ssh` was named as the product's front door).
+  - Without a terminal the answers are text: the list, or `There's no table called <name> here.` and the join hint.
+  - A GM can stay off the list with `--no-lobby`.
+  - The relay asks each linked host over its link with a nonce and a MAC of the key, never the key itself.
+
+**Q3. How does the keyboard work? — open.**
+
+- **Decided by the owner** (2026-11-25, not yet play): the table is worked with mouse clicks and text commands, with completion in the input line and guidance from the GM. A player is told nothing about the keyboard beforehand.
+- **To settle:**
+  - a full session that produces zero accidental commands;
+  - whether the mouse, the menus and completion are enough with only the GM's guidance.
+- **Built** (not play):
+  - Chat first: the input line owns the keyboard and everything is a `/command`, with one registry behind parsing, completion and help. Tab and Shift-Tab complete a command or a name.
+  - The mouse: a click on a token or band row opens a menu of what the rules offer and sends the very line typing would, and `/mouse off` turns it off per seat (2026-10-22, at the owner's request after the owner's live test of v0.4.0).
+
+**Q4. Who renders? — decided: the GM's machine (`docs/adr/0012-gm-renders-vps-relay-pins-keys.md`). One measurement is owed.**
+
+- **To settle:** the real-network run. Keystroke-echo latency from two real networks through the deployed relay, dead-set when p95 is under 150 ms. The method is in `spikes/a-render-location/README.md` at tag `archive/2026-09-spikes`.
+- **Built** (2026-10-21, from tests and live runs, not play):
+  - The GM's binary renders every seat, and `supervillain relay` only carries bytes.
+  - Each player's session is a channel on the room's one GM link, with the player's key as `SV_ACTOR`, their pty, window changes, data both ways, EOF and exit status.
+  - End-to-end tests run a real relay, a headless host and OpenSSH players (exec and a pty) as separate processes, and the compiled linux-x64 binary did the same by hand.
+- **Measured** (all on loopback or one machine, and all before the 2026-11-23 engine rebuild):
+  - Local run (2026-09-27): rendering on the GM machine adds about 2–4 ms over the network round trip.
+  - Spike D's SSH-in-SSH relay (2026-10-20) adds about 0.5–2 ms per hop on loopback.
+  - GM upload (2026-10-21, 8 seats at 120x40 with the ford map loaded, direct and through the relay alike): 8 seats chatting once a second cost 93.5 KB/s, and with a combat running 105–107 KB/s (0.86 Mbit/s; 1 s p95 129–132 KB/s). Per event per seat that's about 1.6 KB for chat and 2.4 KB for a combat event on the ford map; on a 60x40 map at 120x40, 364 B for chat and 616–810 B for a move. A realistic 1–2 events a second with 8 seats is about 15–40 KB/s.
+  - One text seat at 100x30 over the sample campaign (2026-11-09, every byte counted) takes 11–13 KB for its first frame and about 1.1 KB a chat line, since every feed row is drawn again as the feed scrolls.
+  - Host time per seat per event, after the band and the map stopped being rebuilt on every change (bench, 8 seats at 120x40, 60x40 map, 30 tokens, in combat): about 2 ms for a chat line and 4 ms for a move, against 11 ms for either before; steady RSS in that bench fell from about 820 MB to 350 MB.
+
+**Q5. What is the minimum Draw Steel that runs a real combat? — open.**
+
+- **To settle:** a published Draw Steel encounter run start to finish with friends and the tool as the only state, dead-set when nobody reaches for paper (Spike C's second pass).
+- **Built** (2026-10-21, from a three-round live run of the sample fight and a read of the rules text; not play with friends):
+  - `/end` loses unspent heroic resources, surges and Malice, and ends temporary Stamina and every condition (Combat, "End of Combat").
+  - A respite (`/rest`) skips the dead and turns Victories into XP. XP is kept per hero and shown on `/sheet`.
+  - An ability's cost is spent with its power roll, from the hero's resource or the Malice pool, and an ability with no roll is used through `/pr` (its cost spent, its effect told).
+  - The roll's line carries the ability's effect, and `/pr … on <targets>` deals the tier's damage to each target and names one past the ability's reach (the rehearsal's scribe tally counted about 45 copies of a roll into `/dmg` across two encounters).
+  - Bleeding (a dying hero's included) costs 1d6 + level Stamina after a main action (`/move … main` included), a triggered action or a Might or Agility roll, rolled into a `ds.bled` event.
+  - A creature's half-Stamina trait is quoted when it gets there.
+  - A hero who dies loses their conditions, and Victories go to the living.
+  - A resource goes below 0 only where the sheet sets `resource.min`.
+  - A squad's minions free strike together with `/fs … xN`, typed if the GM names a type; a tier's `5 + M or A` adds the best of them, and damage with dice in it is left to `/dmg` (2026-11-09).
+  - Per-turn action budgets, automatic condition edges and banes on `/pr`, the grab holder, and `immunity all` from imports (2026-11-23, from tests).
+- **Left to the GM:** splitting a squad's free strike across targets, opportunity attacks, an effect's mechanics (Form Up's shift, an edge on the next strike), a squad's captain (its `withCaptain` text shows on `/sheet`, the GM applies it), and a squad's minions as separate tokens (see Q7).
+
+**Q6. What is on screen? — open.**
+
+- **To settle:**
+  - at a real table, every combatant's state is visible without navigating anywhere;
+  - whether the per-seat panels and the GM's prep column hold up in play, since §5 said one layout.
+- **Built** (2026-10-21, from the Session Zero rehearsal at 80x24 and the tests; not play):
+  - When the band is short of room, creatures' names shorten, then heroes' Recoveries go, then each hero keeps one row (its last conditions or resource cut with `…`, all of it on `/sheet`), then the `dead:` line (dead heroes too) goes before any living row.
+  - Beside the map, the map gives up rows before a living enemy is hidden, so at 80x24 the sample fight (four heroes, the chief, two bruisers and two squads) shows every living combatant's Stamina, healthy or mid-fight, with the feed's three rows (the rehearsal had hidden up to every creature, the chief included).
+  - A cropped map names the rows and columns it shows in its title.
+  - The smallest seat is 72x20, where the sample fight still shows every living row (tests, 2026-11-09); below it the hint row names the short side.
+  - Each seat shows or hides its panels btop style (Alt+1-4, `/view`), built 2026-10-22 at the owner's request after the owner's live test of v0.4.0.
+- **The GM's prep panel** (2026-11-02, chosen from four prototypes on the real table, each recorded preparing the same fight; not play):
+  - It is a column right of the map and the feed, 26 to 34 columns: the steps to a fight, what the next free square clicked does, drawn as its token, and under it what is left (who waits for a square, heroes not in play, every monster), each leaving the list as it is placed or chosen, then Fight.
+  - The same fight took 14 clicks and about 9,000 pixels of pointer travel in it, against 25 clicks and 15,000 in the panel under the feed it replaces; a strip of portraits under the map took 17 and 6,900, a brush that stamps the map 11 and 6,200, and one card that places everyone by itself 8 and 2,500.
+  - The GM liked the strip best but found its portraits too big and missing what is next (for a hero especially) and what is left, and asked for it as this column: small tokens with their names, gone from the list once placed or chosen.
+
+**Q7. What is the map, minimally? — open.**
+
+- **To settle:**
+  - in the playtest encounter, players answer "can I reach him?" from the screen;
+  - whether the pictures, the generated maps and the two other rulesets earn their place, since §5 froze the first and deferred the last and none has been played.
+- **Built: the text map** (2026-10-21, from review, the tests and live runs of the sample map and a 50x30 keep at 100x30 and 80x24 with a GM and players; not play):
+  - Maps are text files (`maps/<id>.txt`, the file name a lower-case id: `.` floor, `#` wall, `~` difficult, space outside and nothing else, so no square passes for a token; up to 60x40), loaded by the host into the event; replay checks only a grid's shape, not today's limits.
+  - Squares are typed `c5`, columns `a`… then `aa`, labelled on two rows past `z`.
+  - Cells are two columns wide; heroes, the Director's creatures and your own hero have their own colours, terrain only greys and olive; reach is a tint plus `•`, or `≈` on difficult terrain.
+  - Marks are names: commands take `b1` or `B` (case-sensitive), a placed token's mark wins over the square it spells in `/dist`, and the band shows each placed combatant's mark. A creature's mark starts with the initial of its name's last word, so a block keeps its mark between fights (the rehearsal saw the same squad as `bA` in one fight and `cA` in the next); past 9 it is that initial and the number's last digit, if free.
+  - The map stacks between band and feed and edges give rows to markers only toward tokens past them. A big map follows the acting creature, else the seat's hero, else the spot showing the most tokens, and `/view <square|who>` centres it until the turn passes; `/view map` folds the band to two lines.
+  - At 80x24 the sample fight shows 4 of the ford's 10 rows beside a full band, which takes the rows its living combatants need first (tests, 2026-10-21), with no blank marker rows, and 9 in `/view map` (live run, 2026-10-21); on a 50x30 keep the GM sees the heroes' cluster between turns, other tokens named with arrows in the bottom border.
+- **Built: movement** (same evidence):
+  - Movement costs 1 a square, diagonals too, with difficult terrain and enemies' squares +1; only walls fill a corner.
+  - In combat a player moves only on their hero's turn, up to its speed over the whole turn, twice that with `main` (the main action as a move, Combat, "Main Actions"); the event stores what the turn has spent, and the reach shows what's left.
+  - Push, pull and slide take stability off and slam per the rules text; a player force moves only with their hero, on its turn in a fight, the GM at any time (2026-11-09); nobody force moves themselves.
+  - A pull without `to` takes the straight line that ends closest; `to` a wall or creature (a pull's own source included) slams with everything left; the map's edge stops it and the feed says so; range isn't checked, but the feed names the source, and how far it or a free striker stood when not adjacent.
+  - A creature's size is a footprint of 1×1 to 4×4 squares, and placement, movement, `/dist` and forced movement check every square it covers; only a grabbed creature's holder, or the GM, force moves it (2026-11-23, from tests).
+- **Rulings and gaps:**
+  - A diagonal past one wall square is a slam ("completely fills the corner" read as one wall square on either side).
+  - Forced movement doesn't compare sizes (Combat, "Big Versus Little").
+  - A minion squad is one token on one square, so a push moves the squad and a slam hits its pool once, unlike the rules' one creature per minion (Combat, "Size and Space").
+- **Built: pictures and generated maps** (2026-10-22, from three prototypes on the `prototype/map-art`, `prototype/set-world` and `prototype/map-gen` branches; shipped in v0.4.0 at the owner's request though §5 froze the picture tiers and MEKMODE; not play):
+  - A seat in a terminal with kitty graphics, outside a multiplexer, draws the map in MEKMODE's pictures by default (2026-11-25; `/view text` goes back to text and `/view pictures` returns), squares four columns by two, tokens a figure in their side's colour with their mark; elsewhere the map stays text, since the prototype's block fallback made marks unreadable.
+  - Each seat's picture is painted at its terminal's cell size in pixels, when the terminal says it, so the terminal doesn't scale MEKMODE's pixels blurry; until it does, and on an SSH seat at the 300x100 size cap, a square is 36 pixels as in the prototype.
+  - It goes as a PNG, each row stored against the one above: counting every byte a real seat wrote (2026-11-09), a move costs about 5 KB on the ford at 36 pixels a square and 11 KB at HiDPI's 20x40 cells, and 8 and 17 KB on a generated crossing (15, 43, 40 and 101 KB before), and an event that leaves the map as it was sends no picture.
+  - Maps may be written in MEKMODE's Ding Mode letters (`style: mekmode`), which the legend turns into the rules' terrain, the letters riding in the map event for the pictures; `supervillain map crossing|keep` generates one from a seed.
+  - MEKMODE (MEK.txt) is used with MEK's permission, given to Oscar (recorded 2026-10-22).
+- **Built: other rulesets** (not play):
+  - Set.world's characters and rules, tried on the `prototype/set-world` branch as a game beside Draw Steel (turns offer only move, hit or rest, and a fight would run past a hundred turns by hand), are a ruleset a campaign chooses in its `campaign.yaml` (`rules: set-world`), though §5 deferred a second game: built 2026-10-22 at the owner's request after the owner's live test of v0.4.0. The host fetches each roll and puts it in the event.
+  - PF2e Remaster under the ORC License is a third (`rules: pf2e`, 2026-11-23, from tests).
+  - Every module is always composed so any log replays; the ruleset picks the commands, band, map and `/sheet`, and the shared acts keep Draw Steel's words.
+
+**Q8. What happens after a mistake? — open.**
+
+- **To settle:** deliberately fat-finger things during the playtest, dead-set when every accident is reversible with one command.
+- **Built** (2026-10-21, from review, the tests and live runs; not play):
+  - `/undo` writes `core.retracted` naming one batch, and the fold restores the slices from before it and folds every later batch again on top, 20 batches deep.
+  - Every later batch must come out exactly as it did (the same feed lines), or the undo is refused, naming them ("A later change depends on it: GM's \"Vex takes 6 damage (5 to temporary Stamina) → 10/21 · winded\". Undo that first, or ask the GM."), and the fold halts on a retraction that would change one, so the feed, the band and replay never disagree and nobody's undo rewrites someone else's result.
+  - `/redo` is held to more: it puts a batch back only onto the game its undo left (the batch was the latest, and nothing, a claim included, has changed since), and only if it reads as it did (2026-11-10, from an audit whose redo of an older change put a condition back on a dead hero). It writes `core.redone` and puts back the latest undone batch's own events, dice and all; a player redoes only their own undo, and a new change ends the redo.
+  - The GM takes back the latest batch or, with `/undo <who>`, that person's latest (a `/undo <who>` naming nobody at the table is refused, a player's too); a player takes back their own latest within 30 seconds of the host's clock (which the host puts in the command), even with others' changes after it.
+  - A batch with dice in it (power rolls, saves, combat's start, a turn that rolled for its resource or saves) is the GM's alone to take back, so a player can't roll again by undoing.
+  - Chat, names, `/roll`, measurements and hero claims are never taken back: a batch keeps the claims that followed it, and an undo folds them again in log order, skipping one only while its hero is gone, which a `/redo` of the batch that brought the hero restores (2026-11-09, from two cases a review found dropping a player's hero).
+  - A batch is a run of retractable events with one actor and timestamp; the room stamps every submission later than the one before, so two submissions never share one.
+  - A forced move stores where its target stood, so a slam that went nowhere still depends on the move that put the target there (the rehearsal undid such a move and kept the slam's damage).
+
+**Q9. Names and identity — open.**
+
+- **To settle:** at a real table, the feed reads like people talking.
+- **Built** (2026-10-21, from review; not play):
+  - A key's name is held for good; a guest's only while that guest is seated, since a guest is a new actor every connection; the default label of anyone seated is held too.
+  - Names are stored in NFKC form, refuse invisible and control characters, brackets and the feed's marks (↶ ↷ → ·), and are compared on what they look like (case, Cyrillic and Greek lookalikes, 0 and 1 for o and l, any i for l, rn for m, spaces and punctuation ignored: the rehearsal let "AIice" sit beside "Alice", and a review "ALICE" and "Ilsa" beside "Alice" and "ilsa").
+  - A name that looks like a hero, creature or fighter in play is taken (2026-11-09).
+  - The GM's label is always drawn in the GM's colour.
+  - A first name reads "Alice joins the table." rather than naming the fingerprint.
+  - A hero whose guest has left is free to take (the rehearsal's guests needed the GM after every drop).
+
+**Q10. What is the log contract? — open.**
+
+- **To settle:** read a real session's log by eye and with `jq`. The automated half of the test passes.
+- **Built** (from tests, first passed 2026-10-20 and now in `packages/platform-jsonl`):
+  - A host killed with `kill -9` mid-append reopens cleanly (a real child process; about a third of kills leave a half-written line, which is cut on open), and a rule that throws writes nothing.
+  - A failed append (a short write, a full disk) is cut back to the log's length before it, so it leaves nothing, and the room halts (2026-11-09, tests faking a nearly full disk).
+  - The room stamps each submission's envelopes with one timestamp, a millisecond after the last if the clock hasn't moved or went back, so a submission is its actor and timestamp.
+  - A lenient reader tells the rules what it skipped, so a retraction naming a skipped event still applies.
+  - The campaign lock is linked into place with its pid; a stale one (a dead pid, or the host's own left by an earlier process, as in a restarted container) is renamed aside to be taken over.
+- **Known gap:** two hosts racing on a stale lock no longer both get in (5 trials in 60 before), though three still can (2 in 40).
+
+**Q11. How does the first table reach the GM? — open.**
+
+- **Decided by the owner** (2026-11-25, not yet play): players reach the table through the public relay, with `ssh <room>@supervillain.sh` (see Q2).
+- **To settle:** friends reach the table with the GM's short intro and that one command, and nobody walks them through it.
+- **Built: the routes** (2026-10-21, from tests and live runs; not play):
+  - Same network or Tailscale with `--bind 0.0.0.0`.
+  - A tunnel (bore or `ssh -R`, in `docs/HOSTING.md`).
+  - The relay: the GM's host dials `supervillain relay` (`host --relay table.example --room den`) and players type `ssh -p 2222 den@table.example`. Release binaries need nothing else installed.
+  - The public relay is deployed and runs v0.6.1 on a Linux VPS with players on port 22, so its players type no `-p` (recorded 2026-11-25).
+- **Built: the relay's trust** (same evidence; the end-to-end tests cover a relay restart with the host redialing, a second GM refused, and a relay with the wrong key refused):
+  - The first GM host key to link a room claims it in the relay's `rooms.json`, and another key is refused (`relay forget <room>` releases it).
+  - The host trusts the relay's key from `--relay-key` or `<campaign>/relay_known`, which the first link fills; a different key is refused loudly and not redialed until the GM fixes the file. A host started with `--relay-key` writes it to `relay_known` when there's none, so a later start without the flag stays pinned.
+  - A dropped link is redialed with backoff from 1 s to 30 s, and players on it are told "The table closed.".
+  - The relay sees play in the clear and vouches for every relayed player's key, so a GM runs one or uses one they trust; an `ssh -J`-style relay that forwards only TCP would end that, and isn't built.
+- **Built: the relay's claims:**
+  - Claims cost only a link: one address (an IPv6 /64) claims 3 rooms, then one an hour, and an IPv6 /48 10, then 4 an hour, counted only when a claim is made after the login proves the host key, so failed logins don't use up the burst.
+  - A claim no GM has linked for 180 days (`--claim-days`) lapses, a default chosen so a monthly group or one taking a season off keeps its room's name.
+  - A relay holds at most 1024 claims, a full one dropping the claim linked longest ago, never one with a GM linked now.
+  - A claim too fast, a full registry and the relay's most links are answered on the hello line with ERR and the reason, before any login, so the host's band names it and its redial backs off; a link that can't be kept claims nothing.
 
 ---
 
@@ -533,7 +668,7 @@ _Each entry: the question, what was decided, and the evidence (a date and what h
 
 **Someday, after people play:**
 
-9. **"The VTT your coding agent can sit at."** Commands and the log already make a clean agent interface. An agent could run the goblins, fill an empty seat, or co-GM a solo game. Terminal-native is agent-native, and no browser VTT can say that. Build it only after the human table is good.
+9. **"The VTT your coding agent can sit at."** **Built (2026-11-26, ADR 0020; not yet played):** Effect `McpServer` over local `mcp.sock` (`supervillain mcp`) and the zero-install `mcp-1@supervillain.sh` SSH subsystem, with typed tools derived from domain commands, host-fact rejection, strict player-view isolation, and copy-paste setup prompts in `docs/AGENTS-SETUP.md`.
 10. **Play-by-post.** The log is the ideal substrate for asynchronous play, and it dissolves the "GM's laptop is asleep" objection without hosted authority.
 11. **Whoever's awake hosts.** Any seated player holds the log, so authority can move with an in-log handoff. It's already designed (ADR-0034); build it only if availability actually hurts.
 12. **A Discord bridge.** Mirror rolls and the feed into the group's Discord, since most tables already use Discord for voice.

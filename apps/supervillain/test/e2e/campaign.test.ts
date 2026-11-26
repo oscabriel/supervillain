@@ -77,7 +77,7 @@ describe("supervillain new", () => {
 						async () => await readFile(path.join(dir, "campaign.yaml"), "utf-8")
 					)
 				).toBe(
-					"# What this campaign plays: draw-steel, set-world or pf2e.\nrules: set-world\n"
+					"# What this campaign plays: draw-steel, set-world, pf2e or freeform.\nrules: set-world\n"
 				);
 			})
 	);

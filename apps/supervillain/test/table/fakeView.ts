@@ -4,9 +4,15 @@ import { createSignal } from "solid-js";
 import type {
 	CombatView,
 	FeedLine,
+	KnockShown,
 	MapView,
+	PartyMember,
+	PrepItem,
+	PrepSection,
 	PrepView,
 	Present,
+	Prose,
+	StageView,
 	TableView,
 	TokenAction,
 } from "../../src/table/view.ts";
@@ -29,6 +35,13 @@ export interface FakeViewOptions {
 	readonly actions?: (id: string) => ReadonlyArray<TokenAction> | undefined;
 	readonly prep?: PrepView | null;
 	readonly prepProblem?: string;
+	readonly knocks?: ReadonlyArray<KnockShown>;
+	readonly stage?: StageView | null;
+	readonly party?: ReadonlyArray<PartyMember>;
+	readonly gmNotes?: Readonly<Record<string, Prose>>;
+	readonly contentProblems?: ReadonlyArray<string>;
+	readonly prepStage?: ReadonlyArray<PrepSection>;
+	readonly sync?: PrepItem;
 }
 
 export const fakeView = (options: FakeViewOptions = {}) => {
@@ -57,6 +70,28 @@ export const fakeView = (options: FakeViewOptions = {}) => {
 	const [prep, setPrep] = createSignal<PrepView | undefined>(
 		options.prep ?? undefined
 	);
+
+	const [knocks, setKnocks] = createSignal<ReadonlyArray<KnockShown>>(
+		options.knocks ?? []
+	);
+
+	const [stage, setStage] = createSignal<StageView | undefined>(
+		options.stage ?? undefined
+	);
+
+	const [party, setParty] = createSignal<ReadonlyArray<PartyMember>>(
+		options.party ?? []
+	);
+
+	const [problems, setProblems] = createSignal<ReadonlyArray<string>>(
+		options.contentProblems ?? []
+	);
+
+	const [prepStage, setPrepStage] = createSignal<ReadonlyArray<PrepSection>>(
+		options.prepStage ?? []
+	);
+
+	const [sync, setSync] = createSignal<PrepItem | undefined>(options.sync);
 
 	let reloads = 0;
 	const submitted: Array<string> = [];
@@ -88,9 +123,20 @@ export const fakeView = (options: FakeViewOptions = {}) => {
 		...when(options.map !== undefined, () => ({ map })),
 		...when(options.alert !== undefined, () => ({ alert })),
 		...ifDefined(options.actions, (value) => ({ actions: value })),
+		...when(options.knocks !== undefined, () => ({ knocks })),
+		...when(options.stage !== undefined, () => ({ stage })),
+		...when(options.party !== undefined, () => ({ party })),
+		...ifDefined(options.gmNotes, (notes) => ({
+			gmNotes: (key: string) => notes[key],
+		})),
+		...when(options.contentProblems !== undefined, () => ({
+			contentProblems: problems,
+		})),
 		...when(options.prep !== undefined, () => ({
 			prep: {
 				view: prep,
+				stage: prepStage,
+				sync,
 				reload: async () => {
 					reloads += 1;
 
@@ -112,6 +158,12 @@ export const fakeView = (options: FakeViewOptions = {}) => {
 		setMap,
 		setAlert,
 		setPrep,
+		setKnocks,
+		setStage,
+		setParty,
+		setProblems,
+		setPrepStage,
+		setSync,
 		reloads: () => reloads,
 	};
 };

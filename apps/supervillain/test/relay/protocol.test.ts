@@ -5,10 +5,19 @@ import type { Socket } from "node:net";
 import { Effect, Fiber, Predicate } from "effect";
 
 import {
+	addressText,
+	claimProof,
+	crockford,
+	DEFAULT_RELAY,
+	DEFAULT_RELAY_PLAYER_PORT,
 	errLine,
+	HANDLE,
 	helloLine,
-	isReservedRoom,
-	isRoomName,
+	isHandle,
+	isPairingCode,
+	isReservedHandle,
+	isReservedShortTable,
+	isTableName,
 	KNOWS_NONCE_BYTES,
 	KNOWS_SUBSYSTEM,
 	knowsAnswerLine,
@@ -17,29 +26,83 @@ import {
 	LineError,
 	MAX_KNOWS_ANSWER_BYTES,
 	MAX_LINE_BYTES,
+	parseAddress,
 	parseAnswer,
 	parseHello,
 	parseKnowsAnswer,
 	parseKnowsQuery,
+	PROTOCOL_VERSION,
+	provesClaim,
 	readLine,
+	RELAYED_INVITE_ENV,
+	RESERVED_HANDLES,
+	RESERVED_SHORT_TABLES,
+	TABLE,
 } from "../../src/relay/protocol.ts";
 import { effect, must } from "../host/effect.ts";
 
 describe("the hello line", () => {
-	test("names a room in the one version there is", () => {
-		expect(helloLine("den")).toBe("SUPERVILLAIN 1 ROOM den\n");
-		expect(parseHello("SUPERVILLAIN 1 ROOM den")).toEqual({
+	test("names a handle and a table, in protocol 2", () => {
+		expect(helloLine("ana", "den")).toBe("SUPERVILLAIN 2 TABLE ana/den\n");
+		expect(parseHello("SUPERVILLAIN 2 TABLE ana/den")).toEqual({
 			ok: true,
-			room: "den",
+			handle: "ana",
+			table: "den",
 		});
-		expect(parseHello(`SUPERVILLAIN 1 ROOM a${"b-9".repeat(10)}c`)).toEqual({
+		expect(
+			parseHello(
+				`SUPERVILLAIN 2 TABLE a${"b-9".repeat(7)}/a${"b-9".repeat(10)}c`
+			)
+		).toEqual({
 			ok: true,
-			room: `a${"b-9".repeat(10)}c`,
+			handle: `a${"b-9".repeat(7)}`,
+			table: `a${"b-9".repeat(10)}c`,
 		});
-		expect(parseHello(helloLine("x").slice(0, -1))).toEqual({
+		expect(parseHello(helloLine("x", "y").slice(0, -1))).toEqual({
 			ok: true,
-			room: "x",
+			handle: "x",
+			table: "y",
 		});
+	});
+
+	test("may carry a key-bound proof of a claim code, never the code itself", () => {
+		const code = "sv-0123456789abcdefghjk";
+		const key = `SHA256:${"A".repeat(43)}`;
+		const other = `SHA256:${"B".repeat(43)}`;
+		const proof = claimProof(code, key);
+		expect(proof).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+		expect(helloLine("ana", "den", proof)).toBe(
+			`SUPERVILLAIN 2 TABLE ana/den CLAIM ${proof}\n`
+		);
+		expect(helloLine("ana", "den", proof)).not.toContain(code);
+		expect(parseHello(helloLine("ana", "den", proof).slice(0, -1))).toEqual({
+			ok: true,
+			handle: "ana",
+			table: "den",
+			proof,
+		});
+		expect(provesClaim(code, key, proof)).toBe(true);
+		expect(provesClaim(code, other, proof)).toBe(false);
+		expect(provesClaim("sv-zzzzzzzzzzzzzzzzzzzz", key, proof)).toBe(false);
+		expect(provesClaim(code, key, "short")).toBe(false);
+		expect(parseHello(`SUPERVILLAIN 2 TABLE ana/den CLAIM ${code}`).ok).toBe(
+			false
+		);
+		expect(
+			Buffer.byteLength(
+				helloLine("a".repeat(24), "b".repeat(32), claimProof(code, key))
+			)
+		).toBeLessThanOrEqual(MAX_LINE_BYTES);
+	});
+
+	test("a protocol 1 host is told to upgrade", () => {
+		const v1 = parseHello("SUPERVILLAIN 1 ROOM den");
+		expect(v1.ok).toBe(false);
+
+		if (!v1.ok) {
+			expect(v1.reason).toContain("protocol 2");
+			expect(v1.reason).toContain("upgrade supervillain");
+		}
 	});
 
 	test("anything else is refused with a reason", () => {
@@ -47,19 +110,22 @@ describe("the hello line", () => {
 			"",
 			"GET / HTTP/1.1",
 			"SSH-2.0-OpenSSH_9.9",
-			"SUPERVILLAIN 2 ROOM den",
-			"SUPERVILLAIN 1 ROOM",
-			"SUPERVILLAIN 1 ROOM ",
-			"SUPERVILLAIN 1 ROOM den\r",
-			"SUPERVILLAIN 1 ROOM den extra",
-			"SUPERVILLAIN 1 ROOM  den",
-			"SUPERVILLAIN 1 ROOM Den",
-			"SUPERVILLAIN 1 ROOM 9den",
-			"SUPERVILLAIN 1 ROOM -den",
-			"SUPERVILLAIN 1 ROOM den_1",
-			"SUPERVILLAIN 1 ROOM dën",
-			`SUPERVILLAIN 1 ROOM a${"b".repeat(32)}`,
-			"supervillain 1 room den",
+			"SUPERVILLAIN 3 TABLE ana/den",
+			"SUPERVILLAIN 2 TABLE",
+			"SUPERVILLAIN 2 TABLE ",
+			"SUPERVILLAIN 2 TABLE den",
+			"SUPERVILLAIN 2 TABLE ana/den\r",
+			"SUPERVILLAIN 2 TABLE ana/den extra",
+			"SUPERVILLAIN 2 TABLE  ana/den",
+			"SUPERVILLAIN 2 TABLE Ana/den",
+			"SUPERVILLAIN 2 TABLE ana/9den",
+			"SUPERVILLAIN 2 TABLE -ana/den",
+			"SUPERVILLAIN 2 TABLE ana/den_1",
+			"SUPERVILLAIN 2 TABLE ana/dën",
+			"SUPERVILLAIN 2 TABLE ana/den/more",
+			`SUPERVILLAIN 2 TABLE ana/a${"b".repeat(32)}`,
+			`SUPERVILLAIN 2 TABLE a${"b".repeat(24)}/den`,
+			"supervillain 2 table ana/den",
 		]) {
 			const parsed = parseHello(line);
 			expect(parsed.ok).toBe(false);
@@ -70,14 +136,18 @@ describe("the hello line", () => {
 		}
 	});
 
-	test("room names: 1-32 of a-z, 0-9 and -, starting with a letter", () => {
-		expect(isRoomName("a")).toBe(true);
-		expect(isRoomName(`a${"0".repeat(31)}`)).toBe(true);
-		expect(isRoomName(`a${"0".repeat(32)}`)).toBe(false);
-		expect(isRoomName("")).toBe(false);
+	test("handles are 1-24 and tables 1-32 of a-z, 0-9 and -, starting with a letter", () => {
+		expect(isHandle("a")).toBe(true);
+		expect(isHandle(`a${"0".repeat(23)}`)).toBe(true);
+		expect(isHandle(`a${"0".repeat(24)}`)).toBe(false);
+		expect(isTableName(`a${"0".repeat(31)}`)).toBe(true);
+		expect(isTableName(`a${"0".repeat(32)}`)).toBe(false);
+		expect(isTableName("")).toBe(false);
+		expect(HANDLE.test("ana-2")).toBe(true);
+		expect(TABLE.test("first-fight")).toBe(true);
 	});
 
-	test("names ssh sends by default, and service words, are reserved", () => {
+	test("names ssh sends by default, and service words, are reserved handles and never shorthand", () => {
 		for (const name of [
 			"root",
 			"admin",
@@ -89,17 +159,110 @@ describe("the hello line", () => {
 			"help",
 			"watch",
 		]) {
-			expect(isReservedRoom(name)).toBe(true);
+			expect(isReservedHandle(name)).toBe(true);
+			expect(isReservedShortTable(name)).toBe(true);
+			expect(RESERVED_HANDLES.has(name)).toBe(true);
+			expect(RESERVED_SHORT_TABLES.has(name)).toBe(true);
 		}
 
-		for (const name of ["den", "first-fight", "rootcellar", "pirates"]) {
-			expect(isReservedRoom(name)).toBe(false);
+		for (const name of ["den", "first-fight", "rootcellar", "pirates", "ana"]) {
+			expect(isReservedHandle(name)).toBe(false);
 		}
 
-		expect(parseHello("SUPERVILLAIN 1 ROOM root")).toEqual({
+		expect(parseHello("SUPERVILLAIN 2 TABLE root/den")).toEqual({
 			ok: false,
-			reason: "room name root is reserved: pick another",
+			reason: "the handle root is reserved: pick another",
 		});
+	});
+});
+
+describe("a player's address", () => {
+	test("is handle/table, handle.table, or a bare table for the shorthand", () => {
+		expect(parseAddress("ana/den")).toEqual({
+			kind: "table",
+			handle: "ana",
+			table: "den",
+		});
+		expect(parseAddress("ana.den")).toEqual({
+			kind: "table",
+			handle: "ana",
+			table: "den",
+		});
+		expect(parseAddress("Ana/Den")).toEqual({
+			kind: "table",
+			handle: "ana",
+			table: "den",
+		});
+		expect(parseAddress("den")).toEqual({ kind: "short", table: "den" });
+	});
+
+	test("an invite after ~ is stripped off before routing", () => {
+		expect(parseAddress("ana/den~k3y9")).toEqual({
+			kind: "table",
+			handle: "ana",
+			table: "den",
+			invite: "k3y9",
+		});
+		expect(parseAddress("den~k3y9")).toEqual({
+			kind: "short",
+			table: "den",
+			invite: "k3y9",
+		});
+		expect(parseAddress("ana/den~")).toEqual({
+			kind: "table",
+			handle: "ana",
+			table: "den",
+		});
+		expect(parseAddress("ana/den~no spaces")).toEqual({
+			kind: "table",
+			handle: "ana",
+			table: "den",
+		});
+	});
+
+	test("anything else names no table", () => {
+		for (const user of [
+			"",
+			"ana/",
+			"/den",
+			"ana/den/x",
+			"9ana/den",
+			"ana/9den",
+			"dën",
+			`${"a".repeat(25)}/den`,
+		]) {
+			expect(parseAddress(user).kind).toBe("none");
+		}
+
+		expect(addressText("ana", "den")).toBe("ana/den");
+	});
+});
+
+describe("codes", () => {
+	test("Crockford base32 is lowercase, unambiguous, and the length asked", () => {
+		expect(crockford(new Uint8Array([0, 0, 0]), 4)).toBe("0000");
+		expect(crockford(new Uint8Array([255, 255, 255]), 4)).toBe("zzzz");
+		expect(crockford(new Uint8Array([0b0000_1000, 0b0100_0010]), 3)).toBe(
+			"111"
+		);
+
+		for (const char of crockford(new Uint8Array(32).fill(173), 40)) {
+			expect("ilou").not.toContain(char);
+		}
+	});
+
+	test("a pairing code is sv- and 20 of them", () => {
+		expect(isPairingCode("sv-0123456789abcdefghjk")).toBe(true);
+		expect(isPairingCode("sv-0123456789abcdefghji")).toBe(false);
+		expect(isPairingCode(`sv-${"0".repeat(19)}`)).toBe(false);
+		expect(isPairingCode(`SV-${"0".repeat(20)}`)).toBe(false);
+	});
+
+	test("the defaults point players at the public relay on port 22", () => {
+		expect(DEFAULT_RELAY).toBe("supervillain.sh:7022");
+		expect(DEFAULT_RELAY_PLAYER_PORT).toBe(22);
+		expect(PROTOCOL_VERSION).toBe(2);
+		expect(RELAYED_INVITE_ENV).toBe("SV_INVITE");
 	});
 });
 
@@ -175,8 +338,8 @@ describe("readLine", () => {
 		() =>
 			Effect.gen(function* () {
 				const { near, far } = yield* pair;
-				near.write(`${helloLine("den")}SSH-2.0-test\r\nmore`);
-				expect(yield* readLine(far)).toBe("SUPERVILLAIN 1 ROOM den");
+				near.write(`${helloLine("ana", "den")}SSH-2.0-test\r\nmore`);
+				expect(yield* readLine(far)).toBe("SUPERVILLAIN 2 TABLE ana/den");
 				expect(yield* restOf(far, "more")).toBe("SSH-2.0-test\r\nmore");
 			})
 	);
@@ -184,13 +347,13 @@ describe("readLine", () => {
 	effect("a line split across chunks is joined", () =>
 		Effect.gen(function* () {
 			const { near, far } = yield* pair;
-			near.write("SUPERVILLAIN 1 ");
+			near.write("SUPERVILLAIN 2 ");
 
 			setTimeout(() => {
-				near.write("ROOM den\n");
+				near.write("TABLE ana/den\n");
 			}, 30);
 
-			expect(yield* readLine(far)).toBe("SUPERVILLAIN 1 ROOM den");
+			expect(yield* readLine(far)).toBe("SUPERVILLAIN 2 TABLE ana/den");
 		})
 	);
 

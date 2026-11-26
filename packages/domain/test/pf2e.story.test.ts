@@ -114,6 +114,7 @@ import {
 	SPRITE,
 	story,
 	table,
+	openDoor,
 } from "./fixtures.ts";
 
 const { advance, given, rejected, state, then, when } = Story;
@@ -498,6 +499,7 @@ describe("the party and its foes", () => {
 		"PCs join from their sheets, creatures come numbered, elite or weak",
 		() =>
 			story(
+				openDoor,
 				seeded(1),
 				asGm,
 				when(table, new PfJoinPc({ id: "ari", sheet: ARI })),
@@ -542,6 +544,7 @@ describe("the party and its foes", () => {
 				refused("Bog Gnasher 1 isn't a PC."),
 				state(table, (s) => {
 					expect(feedOf(s)).toEqual([
+						"The door is open: anyone who connects sits down.",
 						"Ari joins the party: level 1 human fighter, 20 HP, AC 18, Speed 25 ft.",
 						"2 × elite Bog Gnasher come: level 2, 30 HP, AC 18.",
 						"A Bog Gnasher comes: level 1, 20 HP, AC 16.",

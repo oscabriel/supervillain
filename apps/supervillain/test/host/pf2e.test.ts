@@ -11,10 +11,9 @@ import { runLine } from "../../src/host/line.ts";
 import type { Reply } from "../../src/host/line.ts";
 import { tableServices } from "../../src/host/services.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
-import { SAMPLE } from "./campaign.ts";
+import { openCampaign, SAMPLE } from "./campaign.ts";
 import { effect } from "./effect.ts";
 import { unreachable } from "./setWorld.ts";
-import { tempDir } from "./tempDir.ts";
 
 const alice = "key:SHA256:aliceALICEaliceKEY";
 
@@ -60,7 +59,7 @@ weaknesses: { fire: 3 }
 `;
 
 const campaign = Effect.gen(function* () {
-	const dir = yield* tempDir;
+	const dir = yield* openCampaign;
 
 	yield* Effect.promise(async () => {
 		await writeFile(path.join(dir, "campaign.yaml"), "rules: pf2e\n");
@@ -176,7 +175,7 @@ describe("a PF2e campaign", () => {
 				);
 
 				expect(
-					yield* Schema.decodeEffect(Logged)(log.split("\n")[0] ?? "")
+					yield* Schema.decodeEffect(Logged)(log.split("\n")[1] ?? "")
 				).toMatchObject({
 					type: "pf.pc-joined",
 					payload: {

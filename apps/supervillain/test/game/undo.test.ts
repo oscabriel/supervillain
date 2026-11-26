@@ -169,7 +169,11 @@ describe("undo, in the rules and the fold", () => {
 		t.run(GM, undo);
 		expect(t.state.ds.malice).toBe(0);
 		expect(vex(t)?.player).toBe(ALICE);
-		expect(t.state.core).toEqual({ names: { [ALICE]: "Wren" } });
+		expect(t.state.core).toEqual({
+			names: { [ALICE]: "Wren" },
+			members: {},
+			door: "open",
+		});
 		const texts = t.state.feed.map((e) => e.text);
 		expect(texts.slice(1, 5)).toEqual([
 			"Malice +5 → 5.",

@@ -104,6 +104,8 @@ describe("supervillain host --headless", () => {
 					"--headless",
 					"--room",
 					"den",
+					"--door",
+					"open",
 				]);
 
 				expect(host.output()).toContain(`ssh -p ${host.port} den@127.0.0.1`);
@@ -144,16 +146,17 @@ describe("supervillain host --headless", () => {
 
 				const log = yield* logOf(campaign);
 				expect(log.map((e) => [e.seq, e.type])).toEqual([
-					[1, "core.dice-rolled"],
-					[2, "core.name-set"],
-					[3, "core.chat-posted"],
-					[4, "core.dice-rolled"],
+					[1, "core.door-set"],
+					[2, "core.dice-rolled"],
+					[3, "core.name-set"],
+					[4, "core.chat-posted"],
+					[5, "core.dice-rolled"],
 				]);
-				expect(log.slice(0, 3).map((e) => e.actor)).toEqual(
+				expect(log.slice(1, 4).map((e) => e.actor)).toEqual(
 					Array.from({ length: 3 }, () => `key:${vex.fingerprint}`)
 				);
-				expect(must(log[1]).payload).toEqual({ name: "Vex" });
-				expect(must(log[3]).actor).toMatch(/^guest:/u);
+				expect(must(log[2]).payload).toEqual({ name: "Vex" });
+				expect(must(log[4]).actor).toMatch(/^guest:/u);
 
 				const terminal = yield* sshShell(host.port, vex);
 				yield* waitFor("the feed", () => terminal.text().includes("everyone"));
@@ -164,14 +167,14 @@ describe("supervillain host --headless", () => {
 							async () => {
 								const lines = await readLog(campaign);
 
-								return lines.length < 5 ? undefined : lines;
+								return lines.length < 6 ? undefined : lines;
 							},
 							() => "the pty chat never reached the log",
 							5000
 						)
 				);
 				expect((yield* logOf(campaign)).at(-1)).toMatchObject({
-					seq: 5,
+					seq: 6,
 					actor: `key:${vex.fingerprint}`,
 					payload: { text: "from the pty" },
 				});
@@ -194,7 +197,11 @@ describe("supervillain host --headless", () => {
 						})
 				);
 				const host = yield* startHost(["ford", "--headless"], elsewhere);
-				expect((yield* sshExec(host.port, "help")).exitCode).toBe(0);
+				expect(yield* sshExec(host.port, "help")).toMatchObject({
+					exitCode: 1,
+					stderr:
+						"This table lets players in by knocking: connect interactively and wait for the GM.\n",
+				});
 				expect(existsSync(path.join(elsewhere, "ford", "host_key"))).toBe(true);
 				expect(yield* Effect.promise(async () => await host.stop())).toBe(0);
 			}),
@@ -231,7 +238,7 @@ describe("supervillain host --headless", () => {
 
 				expect(refused.exitCode).toBe(1);
 				expect(refused.stderr.trim().split("\n")).toEqual([
-					`supervillain: ${empty} isn't a campaign: it has no campaign.yaml, events.jsonl, host_key, heroes/, monsters/ or maps/; make one there with: bun supervillain new ${empty} (--example for the sample)`,
+					`supervillain: ${empty} isn't a campaign: it has no campaign.yaml, table.md, events.jsonl, host_key, heroes/, party/, monsters/, scenes/ or maps/; make one there with: bun supervillain new ${empty} (--example for the sample)`,
 				]);
 				expect(yield* Effect.promise(async () => await readdir(empty))).toEqual(
 					[]
@@ -252,7 +259,7 @@ describe("supervillain host --headless", () => {
 
 				expect(also.exitCode).toBe(1);
 				expect(also.stderr.trim().split("\n")).toEqual([
-					`supervillain: ${unrelated} isn't a campaign: it has no campaign.yaml, events.jsonl, host_key, heroes/, monsters/ or maps/; make one in a new folder with: bun supervillain new <folder> (--example for the sample)`,
+					`supervillain: ${unrelated} isn't a campaign: it has no campaign.yaml, table.md, events.jsonl, host_key, heroes/, party/, monsters/, scenes/ or maps/; make one in a new folder with: bun supervillain new <folder> (--example for the sample)`,
 				]);
 				expect(
 					yield* Effect.promise(async () => await readdir(unrelated))
@@ -280,7 +287,7 @@ describe("supervillain host --headless", () => {
 
 				expect(refused.exitCode).toBe(1);
 				expect(refused.stderr.trim().split("\n")).toEqual([
-					`supervillain: ${file}: says rules: pathfinder, but a campaign plays draw-steel, set-world or pf2e`,
+					`supervillain: ${file}: says rules: pathfinder, but a campaign plays draw-steel, set-world, pf2e or freeform`,
 				]);
 				expect(existsSync(path.join(campaign, "events.jsonl"))).toBe(false);
 			})

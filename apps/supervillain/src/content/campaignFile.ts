@@ -6,8 +6,13 @@ import {
 } from "@supervillain/domain";
 import type { RulesetName } from "@supervillain/domain";
 import { Effect, FileSystem, Option, Path, Predicate, Schema } from "effect";
+import type { PlatformError } from "effect";
 
+import { readBounded, tooLarge, utf8Of } from "./bounded.ts";
+import type { Files } from "./bounded.ts";
 import { CampaignConfigInvalid } from "./errors.ts";
+import { MD_BYTES, TABLE_FILE } from "./kinds.ts";
+import { splitFrontmatter } from "./markdown.ts";
 import { YamlValueSchema } from "./sheetFiles.ts";
 import type { YamlValue } from "./sheetFiles.ts";
 
@@ -60,29 +65,131 @@ const parseYaml = (
 			),
 	});
 
-export const readCampaignConfig = Effect.fn("readCampaignConfig")(function* (
+const tableYaml = Effect.fn("campaignFile.tableYaml")(function* (
+	{ fs, path }: Files,
 	dir: string
 ) {
-	const fs = yield* FileSystem.FileSystem;
-	const path = yield* Path.Path;
-	const file = path.join(dir, CAMPAIGN_FILE);
+	const read = yield* readBounded(fs, path.join(dir, TABLE_FILE), MD_BYTES);
+	const text = read.ok ? utf8Of(read.bytes) : undefined;
 
-	const text = yield* fs.readFileString(file).pipe(
-		Effect.asSome,
-		Effect.catchReason("PlatformError", "NotFound", () =>
-			Effect.succeed(Option.none<string>())
-		),
-		Effect.mapError(
-			(cause) =>
-				new ContentReadError({
-					message: `can't read ${file}: ${cause.message}`,
-					cause,
-				})
+	if (text === undefined) {
+		return Option.none<string>();
+	}
+
+	const split = splitFrontmatter(text);
+
+	return "problem" in split ? Option.none<string>() : Option.some(split.yaml);
+});
+
+const parsedYaml = (yaml: string): Option.Option<YamlValue> => {
+	try {
+		return Option.some(decodeYamlValue(Bun.YAML.parse(yaml)));
+	} catch {
+		return Option.none();
+	}
+};
+
+const tableRules = Effect.fn("campaignFile.tableRules")(function* (
+	files: Files,
+	dir: string
+) {
+	const file = `${dir}/${TABLE_FILE}`;
+
+	const named = Option.flatMap(yield* tableYaml(files, dir), (yaml) =>
+		Option.flatMap(parsedYaml(yaml), (value) =>
+			Predicate.isNullish(value) || Array.isArray(value)
+				? Option.none()
+				: Option.flatMap(decodeSettings(value), (s) =>
+						Option.fromNullishOr(s.rules)
+					)
 		)
 	);
 
+	if (Option.isNone(named)) {
+		return Option.none<CampaignConfig>();
+	}
+
+	const known = RULESET_NAMES.find((name) => name === named.value);
+
+	if (known === undefined) {
+		return yield* new CampaignConfigInvalid({
+			file,
+			message: `${file}: says rules: ${formatRuleValue(named.value)}, but a campaign plays ${orList(RULESET_NAMES)}`,
+		});
+	}
+
+	return Option.some<CampaignConfig>({ rules: known });
+});
+
+const readCampaignYaml = Effect.fn("campaignFile.readCampaignYaml")(function* (
+	fs: FileSystem.FileSystem,
+	file: string
+) {
+	const readError = (cause: PlatformError.PlatformError) =>
+		new ContentReadError({
+			message: `can't read ${file}: ${cause.message}`,
+			cause,
+		});
+
+	const info = yield* fs.stat(file).pipe(
+		Effect.asSome,
+		Effect.catchReason("PlatformError", "NotFound", () =>
+			Effect.succeed(Option.none<FileSystem.File.Info>())
+		),
+		Effect.mapError(readError)
+	);
+
+	if (Option.isNone(info)) {
+		return Option.none<string>();
+	}
+
+	if (info.value.type !== "File") {
+		return yield* new CampaignConfigInvalid({
+			file,
+			message: `${file}: isn't a plain file`,
+		});
+	}
+
+	const size = Number(info.value.size);
+
+	if (size > MD_BYTES) {
+		return yield* new CampaignConfigInvalid({
+			file,
+			message: `${file}: ${tooLarge(size, MD_BYTES)}`,
+		});
+	}
+
+	const bytes = yield* fs.readFile(file).pipe(Effect.mapError(readError));
+
+	if (bytes.length > MD_BYTES) {
+		return yield* new CampaignConfigInvalid({
+			file,
+			message: `${file}: ${tooLarge(bytes.length, MD_BYTES)}`,
+		});
+	}
+
+	const text = utf8Of(bytes);
+
+	return text === undefined
+		? yield* new CampaignConfigInvalid({
+				file,
+				message: `${file}: isn't valid UTF-8 text`,
+			})
+		: Option.some(text);
+});
+
+export const campaignConfigWith = Effect.fn("campaignConfigWith")(function* (
+	files: Files,
+	dir: string
+) {
+	const { fs, path } = files;
+	const file = path.join(dir, CAMPAIGN_FILE);
+	const text = yield* readCampaignYaml(fs, file);
+
+	const fromTable = Option.getOrUndefined(yield* tableRules(files, dir));
+
 	if (Option.isNone(text)) {
-		return DEFAULTS;
+		return fromTable ?? DEFAULTS;
 	}
 
 	const invalid = (why: string) =>
@@ -91,7 +198,7 @@ export const readCampaignConfig = Effect.fn("readCampaignConfig")(function* (
 	const parsed = yield* parseYaml(text.value, invalid);
 
 	if (Predicate.isNullish(parsed)) {
-		return DEFAULTS;
+		return fromTable ?? DEFAULTS;
 	}
 
 	const settings = Array.isArray(parsed)
@@ -110,6 +217,16 @@ export const readCampaignConfig = Effect.fn("readCampaignConfig")(function* (
 		);
 	}
 
+	if (settings.value.rules !== undefined && fromTable !== undefined) {
+		return yield* invalid(
+			`says rules: ${formatRuleValue(settings.value.rules)}, and table.md names the rules too; name them in one place`
+		);
+	}
+
+	if (settings.value.rules === undefined && fromTable !== undefined) {
+		return fromTable;
+	}
+
 	const rules = settings.value.rules ?? DEFAULT_RULESET;
 	const known = RULESET_NAMES.find((name) => name === rules);
 
@@ -122,4 +239,15 @@ export const readCampaignConfig = Effect.fn("readCampaignConfig")(function* (
 	const config: CampaignConfig = { rules: known };
 
 	return config;
+});
+
+export const readCampaignConfig = Effect.fn("readCampaignConfig")(function* (
+	dir: string
+) {
+	const files: Files = {
+		fs: yield* FileSystem.FileSystem,
+		path: yield* Path.Path,
+	};
+
+	return yield* campaignConfigWith(files, dir);
 });

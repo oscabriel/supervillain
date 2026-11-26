@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
@@ -41,36 +41,71 @@ import {
 } from "effect";
 import type { FileSystem } from "effect";
 
-import { lobbyFrame } from "./lobby.ts";
-import type { LobbyTable } from "./lobby.ts";
 import {
-	closedRoomMessage,
+	addKey,
+	checkRelayDir,
+	claimHandle,
+	judgeHandle,
+	readHandles,
+	retireLegacyRooms,
+	touchHandle,
+} from "./handles.ts";
+import type { Claim, HandlePolicy, HandlesError } from "./handles.ts";
+import {
+	afterClaim,
+	commandsOf,
+	commandsText,
+	createForm,
+	handleProblem,
+	lobbyFrame,
+	lobbying,
+	osc52,
+	afterPairing,
+	readLobby,
+} from "./lobby/index.ts";
+import type {
+	Claimed,
+	CreateAsk,
+	Lobbying,
+	LobbyTable,
+	Paired,
+	SandboxNote,
+} from "./lobby/index.ts";
+import { pairingCodes, PAIRING_BYTES } from "./pairings.ts";
+import type { Minted } from "./pairings.ts";
+import {
+	addressText,
+	closedTableMessage,
 	errLine,
-	isReservedRoom,
-	isRoomName,
+	isHandle,
+	isReservedShortTable,
 	JOIN_HINT,
 	KNOWS_NONCE_BYTES,
 	KNOWS_SUBSYSTEM,
+	MCP_SUBSYSTEM,
 	knowsQueryLine,
 	LINE_TIMEOUT_MS,
 	MAX_KNOWS_ANSWER_BYTES,
 	OK_LINE,
+	parseAddress,
 	parseHello,
 	parseKnowsAnswer,
 	RELAY_USERNAME,
 	RELAYED_ACTOR_ENV,
 	RELAYED_CLIENT_ENV,
+	RELAYED_BUCKET_ENV,
+	RELAYED_INVITE_ENV,
 	readLine,
 	TABLE_CLOSED_MESSAGE,
 } from "./protocol.ts";
 import {
-	checkRelayDir,
-	claimRoom,
-	judgeClaim,
-	readRooms,
-	touchRoom,
-} from "./rooms.ts";
-import type { Claim, ClaimPolicy, RoomsError } from "./rooms.ts";
+	minutesOf,
+	runSandbox,
+	sandboxGate,
+	sandboxLimits,
+	sizeProblem,
+} from "./sandbox.ts";
+import type { SandboxOptions } from "./sandbox.ts";
 
 export class RelayError extends Schema.TaggedError<RelayError>()("RelayError", {
 	message: Schema.String,
@@ -82,8 +117,11 @@ export interface GmLimits {
 	readonly pendingLinks?: number;
 	readonly linksPerAddress?: number;
 	readonly linkRate?: Rate;
-	readonly maxRooms?: number;
+	readonly maxHandles?: number;
+	readonly maxKeysPerHandle?: number;
+	readonly tablesPerHandle?: number;
 	readonly claimDays?: number;
+	readonly unlinkedDays?: number;
 	readonly claimRate?: Rate;
 	readonly siteClaimRate?: Rate;
 	readonly lineTimeoutMs?: number;
@@ -99,12 +137,14 @@ export interface RelayOptions {
 	readonly bind: string;
 	readonly limits?: Limits;
 	readonly timeouts?: Timeouts;
-	readonly sessionsPerRoom?: number;
+	readonly sessionsPerTable?: number;
 	readonly gm?: GmLimits;
 	readonly lobby?: {
 		readonly deadlineMs?: number;
 		readonly idleMs?: number;
 	};
+	readonly sandbox?: SandboxOptions;
+	readonly publicRelay?: string;
 }
 
 export interface RelayInfo {
@@ -112,7 +152,16 @@ export interface RelayInfo {
 	readonly gmPort: number;
 	readonly hostKeyFingerprint: string;
 	readonly relayKeyFingerprint: string;
-	readonly linkedRooms: () => ReadonlyArray<string>;
+	readonly linkedTables: () => ReadonlyArray<string>;
+	readonly mintPairing: (
+		handle: string,
+		by: string
+	) => Effect.Effect<Minted, HandlesError>;
+	readonly claimHandle: (
+		handle: string,
+		fingerprint: string
+	) => Effect.Effect<Claim, HandlesError>;
+	readonly sandboxesLive: () => number;
 }
 
 const PLAYER_LIMITS: Limits = {
@@ -123,15 +172,18 @@ const PLAYER_LIMITS: Limits = {
 	connectRate: { burst: 20, perSecond: 1 },
 };
 
-const SESSIONS_PER_ROOM = 32;
+const SESSIONS_PER_TABLE = 32;
 
 const GM_DEFAULTS = {
 	links: 256,
 	pendingLinks: 64,
 	linksPerAddress: 8,
 	linkRate: { burst: 10, perSecond: 1 / 6 },
-	maxRooms: 1024,
+	maxHandles: 4096,
+	maxKeysPerHandle: 4,
+	tablesPerHandle: 8,
 	claimDays: 180,
+	unlinkedDays: 30,
 	claimRate: { burst: 3, perSecond: 1 / 3600 },
 	siteClaimRate: { burst: 10, perSecond: 4 / 3600 },
 	lineTimeoutMs: LINE_TIMEOUT_MS,
@@ -139,6 +191,8 @@ const GM_DEFAULTS = {
 	keepaliveMs: 15_000,
 	keepaliveCount: 3,
 };
+
+const BUCKET_SECRET_BYTES = 32;
 
 const LOBBY_DEADLINE_MS = 2000;
 
@@ -155,13 +209,16 @@ const SHUTDOWN_NOTICE = "The relay is shutting down.";
 const messageOf = (cause: unknown) =>
 	cause instanceof Error ? cause.message : String(cause);
 
-const unknownRoomMessage = (room: string): string =>
-	isRoomName(room) && !isReservedRoom(room)
-		? `There's no table called ${room} here.\n${JOIN_HINT}`
-		: JOIN_HINT;
+const fullTableMessage = (address: string): string =>
+	`${address} is full right now.`;
 
-const fullRoomMessage = (room: string): string =>
-	`The table ${room} is full right now.`;
+export const shorthandMessage = (table: string): string =>
+	`No open table called ${table} knows your key. Join with its full name, ssh <handle>/${table}@… (your GM has it).`;
+
+export const AGENTS_TOO_OLD = "This table's host is too old to take agents.";
+
+export const manyMessage = (table: string): string =>
+	`More than one open table called ${table} knows your key: pick one.`;
 
 const siteOf = (address: string) => {
 	const site = addressBucket(address, 48);
@@ -196,10 +253,11 @@ export const claimLimiter = (perAddress: Rate, perSite: Rate) => {
 	};
 };
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 interface GmLink {
-	readonly room: string;
+	readonly handle: string;
+	readonly table: string;
+	readonly address: string;
+	readonly key: string;
 	readonly client: ClientLink;
 	alive: boolean;
 	sessions: number;
@@ -207,342 +265,21 @@ interface GmLink {
 	asking: number;
 }
 
+export const lobbyAddress = (table: LobbyTable): string =>
+	addressText(table.handle, table.table);
+
 const tableLabel = (table: LobbyTable) =>
-	`${table.room} (${table.seated} seated)`;
+	`${lobbyAddress(table)} (${table.seated} seated)`;
 
 export const lobbyText = (tables: ReadonlyArray<LobbyTable>): string =>
 	[
 		`Your table${tables.length === 1 ? "" : "s"} open now: ${tables.map(tableLabel).join(", ")}.`,
-		`Join one with its name before the @, as you came here: ssh ${tables[0]?.room ?? "<room>"}@…`,
+		`Join one with its name before the @: ssh ${tables[0] === undefined ? "<handle>/<table>" : lobbyAddress(tables[0])}@…`,
 	].join("\n");
-
-type Picked =
-	| { readonly kind: "listed"; readonly room: string }
-	| { readonly kind: "named"; readonly name: string; readonly picked: number }
-	| { readonly kind: "left" }
-	| { readonly kind: "idle" };
 
 const CLEAR = "\u001B[H\u001B[2J";
 
-const CTRL_C = 0x03;
-
-const CTRL_D = 0x04;
-
-const BACKSPACE = 0x08;
-
-const LF = 0x0a;
-
-const CR = 0x0d;
-
-const ESC = 0x1b;
-
-const SS3 = 0x4f;
-
-const CSI = 0x5b;
-
-const DEL = 0x7f;
-
-const ZERO = 0x30;
-
-const NINE = 0x39;
-
-const HYPHEN = 0x2d;
-
-const UPPER_A = 0x41;
-
-const UPPER_Z = 0x5a;
-
-const LOWER_A = 0x61;
-
-const LOWER_Z = 0x7a;
-
-const NUMBER_DIGITS = 3;
-
-const ROOM_NAME_LENGTH = 32;
-
 const LOBBY_TRIES = 5;
-
-const FINAL_LOW = 0x40;
-
-const FINAL_HIGH = 0x7e;
-
-const ARROWS: ReadonlyMap<string, 1 | -1> = new Map([
-	["[A", -1],
-	["OA", -1],
-	["[B", 1],
-	["OB", 1],
-]);
-
-interface Drawn {
-	readonly picked: number;
-	readonly typed: string;
-	readonly said: string | undefined;
-}
-
-interface Resumed {
-	readonly picked: number;
-	readonly said: string | undefined;
-}
-
-interface Picking {
-	picked: number;
-	typed: string;
-	said: string | undefined;
-	escape: "no" | "esc" | "body";
-	sequence: string;
-	afterCr: boolean;
-}
-
-type Keyed =
-	| { readonly kind: "more" }
-	| { readonly kind: "left" }
-	| { readonly kind: "chose"; readonly room: string; readonly skip: number }
-	| { readonly kind: "named"; readonly name: string; readonly skip: number };
-
-const MORE: Keyed = { kind: "more" };
-
-const isDigit = (byte: number) => byte >= ZERO && byte <= NINE;
-
-const isLetter = (byte: number) =>
-	(byte >= LOWER_A && byte <= LOWER_Z) || (byte >= UPPER_A && byte <= UPPER_Z);
-
-const isNumber = (typed: string) => /^\d+$/u.test(typed);
-
-const moveBy = (state: Picking, by: 1 | -1, count: number) => {
-	if (count === 0) {
-		return;
-	}
-
-	state.picked = (state.picked + by + count) % count;
-	state.typed = "";
-	state.said = undefined;
-};
-
-const escaped = (state: Picking, byte: number, count: number): boolean => {
-	if (state.escape === "esc") {
-		if (byte === CSI || byte === SS3) {
-			state.escape = "body";
-			state.sequence = String.fromCodePoint(byte);
-
-			return true;
-		}
-
-		state.escape = "no";
-
-		return false;
-	}
-
-	if (state.escape === "no") {
-		return false;
-	}
-
-	state.sequence += String.fromCodePoint(byte);
-
-	if (byte >= FINAL_LOW && byte <= FINAL_HIGH) {
-		state.escape = "no";
-		const by = ARROWS.get(state.sequence);
-
-		if (by !== undefined) {
-			moveBy(state, by, count);
-		}
-	}
-
-	return true;
-};
-
-const entered = (
-	state: Picking,
-	rooms: ReadonlyArray<string>,
-	byte: number,
-	next: number | undefined,
-	at: number
-): Keyed => {
-	const skip = byte === CR && next === LF ? at + 2 : at + 1;
-
-	if (state.typed !== "" && !isNumber(state.typed)) {
-		return { kind: "named", name: state.typed, skip };
-	}
-
-	const n = state.typed === "" ? state.picked + 1 : Number(state.typed);
-	const room = Number.isInteger(n) && n >= 1 ? rooms[n - 1] : undefined;
-
-	if (room !== undefined) {
-		return { kind: "chose", room, skip };
-	}
-
-	state.said =
-		state.typed === ""
-			? "Type your table's room name, then Enter."
-			: `There's no ${state.typed} on the list.`;
-	state.typed = "";
-
-	return MORE;
-};
-
-const typedDigit = (state: Picking, byte: number, count: number) => {
-	state.typed += String.fromCodePoint(byte);
-	state.said = undefined;
-	const n = Number(state.typed);
-
-	if (n >= 1 && n <= count) {
-		state.picked = n - 1;
-	}
-};
-
-const typedName = (state: Picking, byte: number) => {
-	state.typed += String.fromCodePoint(byte).toLowerCase();
-	state.said = undefined;
-};
-
-const typed = (state: Picking, byte: number, count: number) => {
-	const numbering = state.typed === "" ? count > 0 : isNumber(state.typed);
-
-	if (isDigit(byte) && numbering) {
-		if (state.typed.length < NUMBER_DIGITS) {
-			typedDigit(state, byte, count);
-		}
-
-		return;
-	}
-
-	const naming = state.typed !== "" && !isNumber(state.typed);
-	const starts = state.typed === "" && isLetter(byte);
-	const goesOn = naming && (isLetter(byte) || isDigit(byte) || byte === HYPHEN);
-
-	if ((starts || goesOn) && state.typed.length < ROOM_NAME_LENGTH) {
-		typedName(state, byte);
-	}
-};
-
-const keyed = (
-	state: Picking,
-	rooms: ReadonlyArray<string>,
-	chunk: Buffer,
-	at: number,
-	byte: number
-): Keyed => {
-	const lfOfCrLf = byte === LF && state.afterCr;
-	state.afterCr = byte === CR;
-
-	if (byte === CTRL_C || byte === CTRL_D) {
-		return { kind: "left" };
-	}
-
-	if (escaped(state, byte, rooms.length) || lfOfCrLf) {
-		return MORE;
-	}
-
-	if (byte === CR || byte === LF) {
-		return entered(state, rooms, byte, chunk[at + 1], at);
-	}
-
-	if (byte === ESC) {
-		state.escape = "esc";
-	} else if (byte === DEL || byte === BACKSPACE) {
-		state.typed = state.typed.slice(0, -1);
-	} else {
-		typed(state, byte, rooms.length);
-	}
-
-	return MORE;
-};
-
-const pickTable = (
-	session: RawSession,
-	rooms: ReadonlyArray<string>,
-	idleMs: number,
-	from: Resumed,
-	draw: (state: Drawn) => void,
-	redraw: (again: (() => void) | undefined) => void
-): Effect.Effect<Picked> =>
-	Effect.callback((resume) => {
-		const { stream } = session;
-
-		const state: Picking = {
-			picked: from.picked,
-			typed: "",
-			said: from.said,
-			escape: "no",
-			sequence: "",
-			afterCr: false,
-		};
-
-		const show = () => {
-			draw({ picked: state.picked, typed: state.typed, said: state.said });
-		};
-
-		const stop = () => {
-			clearTimeout(idle);
-			redraw(undefined);
-			stream.removeListener("data", onData);
-			stream.removeListener("end", onEnd);
-		};
-
-		const finish = (result: Picked, rest?: Buffer) => {
-			stop();
-			stream.pause();
-
-			if (rest !== undefined && rest.length > 0) {
-				stream.unshift(rest);
-			}
-
-			resume(Effect.succeed(result));
-		};
-
-		const idleTimer = () =>
-			setTimeout(() => {
-				finish({ kind: "idle" });
-			}, idleMs);
-
-		let idle = idleTimer();
-
-		const onData = (chunk: Buffer) => {
-			clearTimeout(idle);
-			idle = idleTimer();
-
-			for (const [at, byte] of chunk.entries()) {
-				const step = keyed(state, rooms, chunk, at, byte);
-
-				if (step.kind === "left") {
-					finish({ kind: "left" });
-
-					return;
-				}
-
-				if (step.kind === "chose") {
-					finish(
-						{ kind: "listed", room: step.room },
-						chunk.subarray(step.skip)
-					);
-
-					return;
-				}
-
-				if (step.kind === "named") {
-					finish(
-						{ kind: "named", name: step.name, picked: state.picked },
-						chunk.subarray(step.skip)
-					);
-
-					return;
-				}
-			}
-
-			show();
-		};
-
-		const onEnd = () => {
-			finish({ kind: "left" });
-		};
-
-		show();
-		redraw(show);
-		stream.on("data", onData);
-		stream.once("end", onEnd);
-		stream.resume();
-
-		return Effect.sync(stop);
-	});
 
 const listen = (
 	server: Server,
@@ -636,24 +373,71 @@ interface Refused {
 	readonly reason: string;
 }
 
+const knowsMe = (session: RawSession) => {
+	const id = session.info.identity;
+
+	return id.kind === "key" && isRelayableActor(id.actor);
+};
+
+interface Opening {
+	readonly said?: string;
+	readonly only?: ReadonlyArray<LobbyTable>;
+}
+
+interface Wanted {
+	readonly handle: string;
+	readonly table: string;
+	readonly proof?: string;
+}
+
 type RelayContext = FileSystem.FileSystem | Path.Path;
+
+const lobbyRefused = (reason: string): Claimed => ({
+	kind: "refused",
+	reason,
+});
+
+const belongsElsewhere = (handle: string) =>
+	lobbyRefused(
+		`The handle ${handle} belongs to another GM's key; pick another.`
+	);
+
+const keptCommands = (state: Lobbying): string | undefined => {
+	const { ready } = state.create;
+
+	if (ready === undefined) {
+		return undefined;
+	}
+
+	return `Run these on your computer (the code works once, for 15 minutes):\n${commandsText(commandsOf(state.create, ready))}`;
+};
 
 const make = (
 	options: RelayOptions
 ): Effect.Effect<
 	RelayInfo,
-	RelayError | RoomsError | SshError,
+	RelayError | HandlesError | SshError,
 	Scope.Scope | RelayContext
 > =>
 	Effect.gen(function* () {
 		const path = yield* Path.Path;
-		const roomsFile = path.join(options.dir, "rooms.json");
+		const handlesFile = path.join(options.dir, "handles.json");
 		const gmLimits = { ...GM_DEFAULTS, ...options.gm };
-		const sessionsPerRoom = options.sessionsPerRoom ?? SESSIONS_PER_ROOM;
+		const sessionsPerTable = options.sessionsPerTable ?? SESSIONS_PER_TABLE;
 		const lobbyDeadlineMs = options.lobby?.deadlineMs ?? LOBBY_DEADLINE_MS;
 		const lobbyIdleMs = options.lobby?.idleMs ?? LOBBY_IDLE_MS;
+		const sandboxes = sandboxLimits(options.sandbox);
+		const gate = sandboxGate(sandboxes);
 		yield* checkRelayDir(options.dir);
-		yield* readRooms(roomsFile);
+		const retired = yield* retireLegacyRooms(options.dir);
+
+		if (Option.isSome(retired)) {
+			yield* Effect.logWarning(
+				`relay: rooms.json is from protocol 1; renamed it ${retired.value}. GMs claim handles afresh in handles.json`
+			);
+		}
+
+		yield* readHandles(handlesFile);
 
 		const relayKey = yield* Effect.tryPromise({
 			try: async () => await loadHostKey(path.join(options.dir, "relay_key")),
@@ -667,23 +451,57 @@ const make = (
 		const clock = yield* Clock.Clock;
 		const claims = yield* Semaphore.make(1);
 		const claimRate = claimLimiter(gmLimits.claimRate, gmLimits.siteClaimRate);
+		const pairings = pairingCodes();
+		const bucketSecret = randomBytes(BUCKET_SECRET_BYTES);
+
+		const bucketOf = (address: string) =>
+			createHmac("sha256", bucketSecret)
+				.update(addressBucket(address))
+				.digest("base64url");
+
 		const links = new Map<string, GmLink>();
+		const byTable = new Map<string, Set<string>>();
 		const pending = new Set<Socket>();
 		let accepting = true;
 
 		const linkedNow = () =>
-			[...links.values()].flatMap((l) => (l.alive ? [l.room] : []));
+			[...links.values()].flatMap((l) => (l.alive ? [l.address] : []));
 
-		const claimPolicy = (): ClaimPolicy => ({
-			maxRooms: gmLimits.maxRooms,
-			expireMs: gmLimits.claimDays * DAY_MS,
-			linked: new Set(linkedNow()),
+		const linkedHandles = () =>
+			new Set([...links.values()].flatMap((l) => (l.alive ? [l.handle] : [])));
+
+		const handlePolicy = (): HandlePolicy => ({
+			maxHandles: gmLimits.maxHandles,
+			maxKeysPerHandle: gmLimits.maxKeysPerHandle,
+			claimDays: gmLimits.claimDays,
+			unlinkedDays: gmLimits.unlinkedDays,
+			linked: linkedHandles(),
 		});
 
-		const fullRooms = (room: string) =>
-			`room ${room}: refused: the relay holds its most rooms (${gmLimits.maxRooms}), each with a GM linked now`;
+		const fullHandles = (handle: string) =>
+			`handle ${handle}: refused: the relay holds its most handles (${gmLimits.maxHandles}), none lapsed`;
 
-		const isOpen = (room: string) => links.get(room)?.alive === true;
+		const isOpen = (address: string) => links.get(address)?.alive === true;
+
+		const tablesOf = (handle: string, except?: string) =>
+			[...links.values()].filter(
+				(l) => l.alive && l.handle === handle && l.address !== except
+			).length;
+
+		const index = (link: GmLink) => {
+			const named = byTable.get(link.table) ?? new Set<string>();
+			named.add(link.address);
+			byTable.set(link.table, named);
+		};
+
+		const unindex = (link: GmLink) => {
+			const named = byTable.get(link.table);
+			named?.delete(link.address);
+
+			if (named?.size === 0) {
+				byTable.delete(link.table);
+			}
+		};
 
 		const openChannel = (
 			open: () => Promise<ClientSession>,
@@ -724,34 +542,39 @@ const make = (
 		const hold = (
 			socket: Socket,
 			address: string,
-			room: string,
+			wanted: Wanted,
 			client: ClientLink,
 			made: Exclude<Claim, { readonly full: true }>
 		) =>
 			Effect.gen(function* () {
 				const proven = client.hostKeyFingerprint;
-				const { holder, claimed, dropped } = made;
+				const { handle, table } = wanted;
+				const where = addressText(handle, table);
+				const { keys, claimed, dropped } = made;
 
 				for (const old of dropped) {
 					yield* Effect.logInfo(
-						`room ${old.room}: dropped the claim of GM host key ${old.key}, last linked ${isoTime(old.linked)}${old.room === room ? "" : `, to make room for ${room}`}`
+						`handle ${old.handle}: dropped the claim of GM keys ${old.keys.join(", ")}, last seen ${isoTime(old.seen)}${old.handle === handle ? "" : `, to make room for ${handle}`}`
 					);
 				}
 
-				if (holder !== proven) {
+				if (!keys.includes(proven)) {
 					return yield* Effect.logWarning(
-						`room ${room}: refused a GM with host key ${proven} from ${address}; ${holder} holds it (supervillain relay forget ${room} releases it)`
+						`handle ${handle}: refused a GM with key ${proven} from ${address}; it's held by ${keys.join(", ")} (supervillain relay forget ${handle} releases it)`
 					);
 				}
 
 				if (claimed) {
 					yield* Effect.logInfo(
-						`room ${room}: claimed by GM host key ${proven}`
+						`handle ${handle}: claimed by GM key ${proven}`
 					);
 				}
 
 				const link: GmLink = {
-					room,
+					handle,
+					table,
+					address: where,
+					key: proven,
 					client,
 					alive: true,
 					sessions: 0,
@@ -759,61 +582,92 @@ const make = (
 					asking: 0,
 				};
 
-				const old = links.get(room);
-				links.set(room, link);
+				const old = links.get(where);
+				links.set(where, link);
+				index(link);
 				pending.delete(socket);
+
+				const renew = touchHandle(handlesFile, handle, proven).pipe(
+					Effect.catchTag("HandlesError", (failure) =>
+						Effect.logError(
+							`handle ${handle}: can't write the handle registry: ${failure.message}`
+						)
+					)
+				);
+
+				yield* renew;
 
 				yield* Effect.addFinalizer(() =>
 					Effect.suspend(() => {
 						link.alive = false;
 
-						const renew = touchRoom(roomsFile, room, proven).pipe(
-							Effect.catchTag("RoomsError", (failure) =>
-								Effect.logError(
-									`room ${room}: can't write the room registry: ${failure.message}`
-								)
-							)
-						);
-
-						if (links.get(room) !== link) {
+						if (links.get(where) !== link) {
 							return renew;
 						}
 
-						links.delete(room);
+						links.delete(where);
+						unindex(link);
 
 						return Effect.andThen(
 							renew,
-							Effect.logInfo(`room ${room}: GM link closed`)
+							Effect.logInfo(`table ${where}: GM link closed`)
 						);
 					})
 				);
 
 				if (old === undefined) {
-					yield* Effect.logInfo(`room ${room}: GM linked from ${address}`);
+					yield* Effect.logInfo(`table ${where}: GM linked from ${address}`);
 				} else {
 					old.alive = false;
 					old.client.close();
 					yield* Effect.logInfo(
-						`room ${room}: GM relinked from ${address}; dropped the old link`
+						`table ${where}: GM relinked from ${address}; dropped the old link`
 					);
 				}
 
 				return yield* clientClosed(client);
 			});
 
-		const runLink = (socket: Socket, address: string, room: string) =>
+		const tooManyTables = (handle: string, where: string) =>
+			tablesOf(handle, where) >= gmLimits.tablesPerHandle;
+
+		const manyTables = (handle: string) =>
+			`handle ${handle}: refused: it has ${gmLimits.tablesPerHandle} tables open already`;
+
+		const runLink = (socket: Socket, address: string, wanted: Wanted) =>
 			Effect.gen(function* () {
-				const linkFull = () => !links.has(room) && links.size >= gmLimits.links;
-				const fullRefusal = `room ${room}: refused: the relay has its most GMs linked (${gmLimits.links})`;
+				const { handle, table, proof } = wanted;
+				const where = addressText(handle, table);
+
+				const linkFull = () =>
+					!links.has(where) && links.size >= gmLimits.links;
+
+				const fullRefusal = `table ${where}: refused: the relay has its most GMs linked (${gmLimits.links})`;
 				let refusal: string | undefined;
 
 				const verdictOf = (offered: string) =>
 					Effect.gen(function* () {
-						const rooms = yield* readRooms(roomsFile);
+						const handles = yield* readHandles(handlesFile);
 						const now = yield* Clock.currentTimeMillis;
 
-						return judgeClaim(rooms, room, offered, now, claimPolicy());
+						return judgeHandle(handles, handle, offered, now, handlePolicy());
 					}).pipe(Effect.result);
+
+				const pairingOk = (offered: string, now: number) => {
+					if (proof === undefined) {
+						return false;
+					}
+
+					const checked = pairings.check(proof, handle, offered, address, now);
+
+					if (checked === "slow") {
+						refusal = `handle ${handle}: refused: ${addressBucket(address)} tries claim codes too fast`;
+					} else if (checked === "bad") {
+						refusal = `handle ${handle}: refused a claim from ${address} with key ${offered} that proves no live code it minted for this handle and key`;
+					}
+
+					return checked === "ok";
+				};
 
 				const client = yield* connectClient({
 					socket,
@@ -826,7 +680,7 @@ const make = (
 						const verdict = await run(verdictOf(offered));
 
 						if (Result.isFailure(verdict)) {
-							refusal = `room ${room}: can't read the room registry: ${verdict.failure.message}`;
+							refusal = `handle ${handle}: can't read the handle registry: ${verdict.failure.message}`;
 
 							return false;
 						}
@@ -837,12 +691,21 @@ const make = (
 							return false;
 						}
 
+						if (tooManyTables(handle, where)) {
+							refusal = manyTables(handle);
+
+							return false;
+						}
+
 						const { success } = verdict;
 
 						if (success.kind === "full") {
-							refusal = fullRooms(room);
-						} else if (success.kind === "held") {
-							refusal = `room ${room}: refused a GM with host key ${offered} from ${address}; ${success.holder} holds it (supervillain relay forget ${room} releases it)`;
+							refusal = fullHandles(handle);
+						} else if (
+							success.kind === "held" &&
+							!pairingOk(offered, clock.currentTimeMillisUnsafe())
+						) {
+							refusal ??= `handle ${handle}: refused a GM with key ${offered} from ${address}; it's held by ${success.keys.join(", ")} (supervillain relay forget ${handle} releases it, or a claim code adds a key)`;
 						}
 
 						return refusal === undefined;
@@ -855,17 +718,17 @@ const make = (
 
 						return failure.message.includes("refused this client's key")
 							? Effect.logWarning(
-									`room ${room}: the GM's host at ${address} refused this relay's key ${relayKey.fingerprint}; the GM pins it with --relay-key or in its relay_known`
+									`table ${where}: the GM's host at ${address} refused this relay's key ${relayKey.fingerprint}; the GM pins it with --relay-key or in its relay_known`
 								)
 							: Effect.logInfo(
-									`room ${room}: GM link from ${address} failed: ${failure.message}`
+									`table ${where}: GM link from ${address} failed: ${failure.message}`
 								);
 					})
 				);
 
 				const proven = client.hostKeyFingerprint;
 
-				const claim = yield* claims.withPermits(1)(
+				const made = yield* claims.withPermits(1)(
 					Effect.gen(function* () {
 						if (!accepting || client.closed()) {
 							return { gone: true } as const;
@@ -875,63 +738,123 @@ const make = (
 							return { linkFull: true } as const;
 						}
 
+						if (tooManyTables(handle, where)) {
+							return { manyTables: true } as const;
+						}
+
 						const now = yield* Clock.currentTimeMillis;
 
-						const fresh =
-							judgeClaim(
-								yield* readRooms(roomsFile),
-								room,
-								proven,
-								now,
-								claimPolicy()
-							).kind === "free";
+						const verdict = judgeHandle(
+							yield* readHandles(handlesFile),
+							handle,
+							proven,
+							now,
+							handlePolicy()
+						);
 
-						const over = fresh ? claimRate.over(address, now) : undefined;
+						if (verdict.kind === "held") {
+							const code =
+								proof === undefined
+									? undefined
+									: pairings.find(proof, handle, proven, now);
+
+							if (code === undefined) {
+								return { held: verdict.keys } as const;
+							}
+
+							const added = yield* addKey(
+								handlesFile,
+								handle,
+								proven,
+								handlePolicy()
+							);
+
+							if (added.kind === "full") {
+								return { keysFull: true } as const;
+							}
+
+							if (added.kind === "added") {
+								pairings.spend(code);
+							}
+
+							yield* Effect.logInfo(
+								`handle ${handle}: added GM key ${proven} with a claim code`
+							);
+
+							const paired: Claim = {
+								keys: added.kind === "unclaimed" ? [] : added.keys,
+								claimed: false,
+								dropped: [],
+							};
+
+							return paired;
+						}
+
+						const over =
+							verdict.kind === "free"
+								? claimRate.over(address, now)
+								: undefined;
 
 						if (over !== undefined) {
 							return { tooFast: over } as const;
 						}
 
-						const made = yield* claimRoom(
-							roomsFile,
-							room,
+						const taken = yield* claimHandle(
+							handlesFile,
+							handle,
 							proven,
-							claimPolicy()
+							handlePolicy()
 						);
 
-						if ("claimed" in made && made.claimed) {
+						if ("claimed" in taken && taken.claimed) {
 							claimRate.spend(address, now);
 						}
 
-						return made;
+						return taken;
 					})
 				);
 
-				if ("gone" in claim) {
+				if ("gone" in made) {
 					return yield* Effect.void;
 				}
 
-				if ("linkFull" in claim) {
+				if ("linkFull" in made) {
 					return yield* Effect.logWarning(fullRefusal);
 				}
 
-				if ("tooFast" in claim) {
+				if ("manyTables" in made) {
+					return yield* Effect.logWarning(manyTables(handle));
+				}
+
+				if ("held" in made) {
 					return yield* Effect.logWarning(
-						`room ${room}: refused: ${claim.tooFast} claims rooms too fast`
+						`handle ${handle}: refused a GM with key ${proven} from ${address}; it's held by ${made.held.join(", ")}`
 					);
 				}
 
-				if ("full" in claim) {
-					return yield* Effect.logWarning(fullRooms(room));
+				if ("keysFull" in made) {
+					return yield* Effect.logWarning(
+						`handle ${handle}: refused key ${proven}: it holds its most keys (${gmLimits.maxKeysPerHandle})`
+					);
 				}
 
-				return yield* hold(socket, address, room, client, claim);
+				if ("tooFast" in made) {
+					return yield* Effect.logWarning(
+						`handle ${handle}: refused: ${made.tooFast} claims handles too fast`
+					);
+				}
+
+				if ("full" in made) {
+					return yield* Effect.logWarning(fullHandles(handle));
+				}
+
+				return yield* hold(socket, address, wanted, client, made);
 			}).pipe(
 				Effect.scoped,
 				Effect.catchTags({
-					RoomsError: (failure) =>
+					HandlesError: (failure) =>
 						Effect.logError(
-							`room ${room}: can't read or write the room registry: ${failure.message}`
+							`handle ${wanted.handle}: can't read or write the handle registry: ${failure.message}`
 						),
 					SshError: () => Effect.void,
 				}),
@@ -942,31 +865,40 @@ const make = (
 				)
 			);
 
-		const judgeHello = (room: string, address: string) =>
+		const judgeHello = (wanted: Wanted, address: string) =>
 			claims.withPermits(1)(
 				Effect.gen(function* () {
-					if (!links.has(room) && links.size >= gmLimits.links) {
+					const { handle, table } = wanted;
+					const where = addressText(handle, table);
+
+					if (!links.has(where) && links.size >= gmLimits.links) {
 						return Option.some<Refused>({
-							journal: `room ${room}: refused: the relay has its most GMs linked (${gmLimits.links})`,
+							journal: `table ${where}: refused: the relay has its most GMs linked (${gmLimits.links})`,
 							reason: "the relay has its most GMs linked; try again later",
+						});
+					}
+
+					if (tooManyTables(handle, where)) {
+						return Option.some<Refused>({
+							journal: manyTables(handle),
+							reason: `the handle ${handle} has ${gmLimits.tablesPerHandle} tables open already`,
 						});
 					}
 
 					const now = yield* Clock.currentTimeMillis;
 
-					const verdict = judgeClaim(
-						yield* readRooms(roomsFile),
-						room,
+					const verdict = judgeHandle(
+						yield* readHandles(handlesFile),
+						handle,
 						"",
 						now,
-						claimPolicy()
+						handlePolicy()
 					);
 
 					if (verdict.kind === "full") {
 						return Option.some<Refused>({
-							journal: fullRooms(room),
-							reason:
-								"the relay holds its most rooms, each with a GM linked now",
+							journal: fullHandles(handle),
+							reason: "the relay holds its most handles; try again later",
 						});
 					}
 
@@ -976,8 +908,8 @@ const make = (
 					return over === undefined
 						? Option.none<Refused>()
 						: Option.some<Refused>({
-								journal: `room ${room}: refused: ${over} claims rooms too fast`,
-								reason: "this address claims rooms too fast; try again later",
+								journal: `handle ${handle}: refused: ${over} claims handles too fast`,
+								reason: "this address claims handles too fast; try again later",
 							});
 				})
 			);
@@ -1012,7 +944,12 @@ const make = (
 				});
 			}
 
-			return judgeHello(hello.room, address).pipe(
+			const wanted: Wanted =
+				hello.proof === undefined
+					? { handle: hello.handle, table: hello.table }
+					: { handle: hello.handle, table: hello.table, proof: hello.proof };
+
+			return judgeHello(wanted, address).pipe(
 				Effect.flatMap(
 					Option.match({
 						onSome: (refused) =>
@@ -1030,17 +967,17 @@ const make = (
 
 								socket.write(OK_LINE);
 
-								return runLink(socket, address, hello.room);
+								return runLink(socket, address, wanted);
 							}),
 					})
 				),
-				Effect.catchTag("RoomsError", (failure) =>
+				Effect.catchTag("HandlesError", (failure) =>
 					Effect.andThen(
 						Effect.logError(
-							`room ${hello.room}: can't read the room registry: ${failure.message}`
+							`handle ${hello.handle}: can't read the handle registry: ${failure.message}`
 						),
 						Effect.sync(() => {
-							refuse(errLine("the relay can't read its room registry"));
+							refuse(errLine("the relay can't read its handle registry"));
 						})
 					)
 				)
@@ -1201,7 +1138,7 @@ const make = (
 					if (opened.failure.message.startsWith("Unable to start subsystem")) {
 						if (link.knows) {
 							yield* Effect.logInfo(
-								`room ${link.room}: its host doesn't answer the lobby (older)`
+								`table ${link.address}: its host doesn't answer the lobby (older)`
 							);
 						}
 
@@ -1220,13 +1157,20 @@ const make = (
 				const answer = parseKnowsAnswer(yield* answerOf(channel));
 
 				return answer.known
-					? Option.some<LobbyTable>({ room: link.room, seated: answer.seated })
+					? Option.some<LobbyTable>({
+							handle: link.handle,
+							table: link.table,
+							seated: answer.seated,
+						})
 					: Option.none<LobbyTable>();
 			}).pipe(Effect.scoped);
 
-		const tablesFor = (actor: string) =>
+		const tablesFor = (
+			actor: string,
+			among: ReadonlyArray<GmLink> = [...links.values()]
+		) =>
 			Effect.gen(function* () {
-				const asked = [...links.values()].filter((l) => l.alive);
+				const asked = among.filter((l) => l.alive);
 				const found: Array<LobbyTable> = [];
 
 				yield* Effect.forEach(
@@ -1245,17 +1189,19 @@ const make = (
 					{ concurrency: LOBBY_CONCURRENCY, discard: true }
 				).pipe(Effect.timeoutOption(lobbyDeadlineMs));
 
-				return found.toSorted((a, b) => (a.room < b.room ? -1 : 1));
+				return found.toSorted((a, b) =>
+					lobbyAddress(a) < lobbyAddress(b) ? -1 : 1
+				);
 			});
 
-		const claimed = (room: string) =>
-			isRoomName(room) && !isReservedRoom(room)
-				? readRooms(roomsFile).pipe(
-						Effect.map((rooms) => rooms[room] !== undefined),
-						Effect.catchTag("RoomsError", (failure) =>
+		const claimedHandle = (handle: string) =>
+			isHandle(handle)
+				? readHandles(handlesFile).pipe(
+						Effect.map((handles) => handles[handle] !== undefined),
+						Effect.catchTag("HandlesError", (failure) =>
 							Effect.as(
 								Effect.logError(
-									`can't read the room registry: ${failure.message}`
+									`can't read the handle registry: ${failure.message}`
 								),
 								true
 							)
@@ -1263,14 +1209,149 @@ const make = (
 					)
 				: Effect.succeed(false);
 
-		const turnedDown = (room: string) =>
-			Effect.map(claimed(room), (held) =>
-				held ? closedRoomMessage(room) : `There's no table called ${room} here.`
+		const turnedDown = (handle: string, table: string) =>
+			Effect.map(claimedHandle(handle), (held) =>
+				held
+					? closedTableMessage(addressText(handle, table))
+					: `There's no table called ${addressText(handle, table)} here.`
 			);
+
+		const heldBy = (fingerprint: string) =>
+			readHandles(handlesFile).pipe(
+				Effect.map(
+					(handles) =>
+						Object.entries(handles).find(([, claim]) =>
+							claim.keys.includes(fingerprint)
+						)?.[0]
+				),
+				Effect.catchTag("HandlesError", (failure) =>
+					Effect.as(
+						Effect.logError(
+							`can't read the handle registry: ${failure.message}`
+						),
+						undefined
+					)
+				)
+			);
+
+		const claimInLobby = (
+			handle: string,
+			fingerprint: string,
+			address: string
+		): Effect.Effect<Claimed, never, RelayContext> =>
+			claims
+				.withPermits(1)(
+					Effect.gen(function* () {
+						const problem = handleProblem(handle);
+
+						if (problem !== undefined) {
+							return lobbyRefused(problem);
+						}
+
+						const now = yield* Clock.currentTimeMillis;
+						const handles = yield* readHandles(handlesFile);
+
+						const verdict = judgeHandle(
+							handles,
+							handle,
+							fingerprint,
+							now,
+							handlePolicy()
+						);
+
+						if (verdict.kind === "holds") {
+							const holds: Claimed = { kind: "held", handle };
+
+							return holds;
+						}
+
+						if (verdict.kind === "held") {
+							return belongsElsewhere(handle);
+						}
+
+						if (verdict.kind === "full") {
+							return lobbyRefused(
+								"The relay holds its most handles right now; try again later."
+							);
+						}
+
+						if (claimRate.over(address, now) !== undefined) {
+							return lobbyRefused(
+								"Your address has claimed handles too fast; try again later."
+							);
+						}
+
+						const taken = yield* claimHandle(
+							handlesFile,
+							handle,
+							fingerprint,
+							handlePolicy()
+						);
+
+						if ("full" in taken) {
+							return lobbyRefused(
+								"The relay holds its most handles right now; try again later."
+							);
+						}
+
+						if (taken.claimed) {
+							claimRate.spend(address, now);
+							yield* Effect.logInfo(
+								`handle ${handle}: claimed in the lobby by key ${fingerprint} from ${address}`
+							);
+						}
+
+						const mine: Claimed = { kind: "held", handle };
+
+						return taken.keys.includes(fingerprint)
+							? mine
+							: belongsElsewhere(handle);
+					})
+				)
+				.pipe(
+					Effect.catchTag("HandlesError", (failure) =>
+						Effect.as(
+							Effect.logError(
+								`handle ${handle}: can't read or write the handle registry: ${failure.message}`
+							),
+							lobbyRefused(
+								"The relay can't save handles right now; try again later."
+							)
+						)
+					)
+				);
+
+		const mintInLobby = (
+			handle: string,
+			fingerprint: string
+		): Effect.Effect<Paired, never, RelayContext> =>
+			mintPairing(handle, fingerprint).pipe(
+				Effect.map((minted): Paired => minted),
+				Effect.catchTag("HandlesError", (failure) =>
+					Effect.as(
+						Effect.logError(
+							`handle ${handle}: can't read the handle registry: ${failure.message}`
+						),
+						{
+							kind: "refused",
+							reason:
+								"The relay can't make a pairing code right now; try again later.",
+						} satisfies Paired
+					)
+				)
+			);
+
+		const sandboxNote: SandboxNote = {
+			open: sandboxes.live > 0,
+			cols: sandboxes.minCols,
+			rows: sandboxes.minRows,
+			idleMinutes: minutesOf(sandboxes.idleMs),
+			maxMinutes: minutesOf(sandboxes.maxMs),
+		};
 
 		const lobby = (
 			session: RawSession,
-			asked: string,
+			opening: Opening,
 			terminal: boolean,
 			say: (text: string) => void,
 			sizing: Sizing
@@ -1290,25 +1371,25 @@ const make = (
 					return Option.none<string>();
 				};
 
-				if (yield* claimed(asked)) {
-					return turnAway(1, closedRoomMessage(asked));
-				}
-
 				const tables =
-					id.kind === "key" && isRelayableActor(actor)
-						? yield* tablesFor(actor)
-						: [];
+					opening.only ?? (knowsMe(session) ? yield* tablesFor(actor) : []);
 
 				yield* Effect.logDebug(
 					`lobby: ${actor} from ${info.remoteAddress}: ${tables.length} open tables know the key`
 				);
 
 				if (!terminal) {
+					if (opening.said !== undefined) {
+						return turnAway(1, opening.said);
+					}
+
 					return turnAway(
 						1,
-						tables.length === 0 ? unknownRoomMessage(asked) : lobbyText(tables)
+						tables.length === 0 ? JOIN_HINT : lobbyText(tables)
 					);
 				}
+
+				const fingerprint = id.kind === "key" ? id.fingerprint : undefined;
 
 				const you = {
 					key:
@@ -1318,13 +1399,29 @@ const make = (
 					term: info.term,
 				};
 
-				const rooms = tables.map((t) => t.room);
-				let drawn = "";
-				let from: Resumed = { picked: 0, said: undefined };
+				const held =
+					fingerprint === undefined ? undefined : yield* heldBy(fingerprint);
 
-				const draw = (state: Drawn) => {
+				const state = lobbying(
+					createForm(fingerprint === undefined, held, options.publicRelay),
+					{ picked: 0, said: opening.said }
+				);
+
+				const listed = tables.map(lobbyAddress);
+				let drawn = "";
+
+				const draw = (now: Lobbying) => {
 					const frame = lobbyFrame(
-						{ tables, ...state, you },
+						{
+							tab: now.tab,
+							create: now.create,
+							sandbox: sandboxNote,
+							tables,
+							picked: now.picked,
+							typed: now.typed,
+							said: now.said,
+							you,
+						},
 						sizing.size.cols,
 						sizing.size.rows
 					);
@@ -1335,12 +1432,121 @@ const make = (
 					}
 				};
 
-				for (let tries = 0; tries < LOBBY_TRIES; tries += 1) {
-					const picked = yield* pickTable(
+				const leaving = (code: number, text?: string) => {
+					session.stream.write(CLEAR);
+					const kept = keptCommands(state);
+
+					if (kept !== undefined) {
+						say(kept);
+					}
+
+					return turnAway(code, text);
+				};
+
+				const named = (name: string) =>
+					Effect.gen(function* () {
+						const wanted = parseAddress(name);
+
+						if (wanted.kind === "table") {
+							const where = addressText(wanted.handle, wanted.table);
+
+							return isOpen(where)
+								? Result.succeed(where)
+								: Result.fail(yield* turnedDown(wanted.handle, wanted.table));
+						}
+
+						if (wanted.kind === "short") {
+							const matches = tables.filter((t) => t.table === wanted.table);
+							const [only] = matches;
+
+							if (matches.length === 1 && only !== undefined) {
+								return Result.succeed(lobbyAddress(only));
+							}
+
+							return Result.fail(
+								matches.length === 0
+									? shorthandMessage(wanted.table)
+									: manyMessage(wanted.table)
+							);
+						}
+
+						return Result.fail(`"${name}" isn't a table's name. ${JOIN_HINT}`);
+					});
+
+				const answered = (asked: CreateAsk) =>
+					Effect.gen(function* () {
+						if (fingerprint === undefined) {
+							return;
+						}
+
+						if (asked.kind === "claim") {
+							state.create = afterClaim(
+								state.create,
+								yield* claimInLobby(
+									asked.handle,
+									fingerprint,
+									info.remoteAddress
+								)
+							);
+
+							return;
+						}
+
+						const outcome = yield* mintInLobby(asked.handle, fingerprint);
+						state.create = afterPairing(state.create, outcome);
+						const { ready } = state.create;
+
+						if (outcome.kind === "minted" && ready !== undefined) {
+							yield* Effect.logInfo(
+								`handle ${asked.handle}: ${actor} made a pairing code in the lobby`
+							);
+							session.stream.write(
+								osc52(
+									commandsText(commandsOf(state.create, ready)),
+									info.term,
+									info.env
+								)
+							);
+						}
+					});
+
+				const tried = Effect.gen(function* () {
+					const problem = sizeProblem(
+						sizing.size.cols,
+						sizing.size.rows,
+						sandboxes
+					);
+
+					if (problem !== undefined) {
+						state.said = problem;
+
+						return false;
+					}
+
+					const admitted = gate.admit(info.remoteAddress, fingerprint);
+
+					if (admitted.kind === "out") {
+						state.said = admitted.reason;
+
+						return false;
+					}
+
+					session.stream.write(CLEAR);
+					yield* runSandbox(session, sandboxes).pipe(
+						Effect.ensuring(Effect.sync(admitted.release))
+					);
+
+					return true;
+				});
+
+				let misses = 0;
+
+				while (misses < LOBBY_TRIES) {
+					const picked = yield* readLobby(
 						session,
-						rooms,
+						listed,
 						lobbyIdleMs,
-						from,
+						state,
 						draw,
 						(again) => {
 							sizing.resize =
@@ -1353,40 +1559,59 @@ const make = (
 					);
 
 					if (picked.kind === "left") {
-						session.stream.write(CLEAR);
-
-						return turnAway(0);
+						return leaving(0);
 					}
 
 					if (picked.kind === "idle") {
-						session.stream.write(CLEAR);
-
-						return turnAway(1, "No table picked; come back any time.");
+						return leaving(1, "No table picked; come back any time.");
 					}
 
-					const room = picked.kind === "listed" ? picked.room : picked.name;
+					if (picked.kind === "try") {
+						if (yield* tried) {
+							return turnAway(0);
+						}
 
-					if (picked.kind === "listed" || isOpen(room)) {
+						continue;
+					}
+
+					if (picked.kind === "ask") {
+						yield* answered(picked.ask);
+
+						continue;
+					}
+
+					const chosen =
+						picked.kind === "listed"
+							? Result.succeed(picked.room)
+							: yield* named(picked.name);
+
+					if (Result.isSuccess(chosen)) {
 						session.stream.write(CLEAR);
-						say(`Joining ${room}…`);
+						say(`Joining ${chosen.success}…`);
 
-						return Option.some(room);
+						return Option.some(chosen.success);
 					}
 
 					yield* Effect.logDebug(
-						`lobby: ${actor} from ${info.remoteAddress} asked for ${room}, which isn't open`
+						`lobby: ${actor} from ${info.remoteAddress} asked for ${picked.kind === "named" ? picked.name : picked.room}, which isn't open`
 					);
-					from = { picked: picked.picked, said: yield* turnedDown(room) };
+					misses += 1;
+
+					if (picked.kind === "listed") {
+						state.picked = 0;
+					}
+
+					state.typed = "";
+					state.said = chosen.failure;
 				}
 
-				session.stream.write(CLEAR);
-
-				return turnAway(1, JOIN_HINT);
+				return leaving(1, JOIN_HINT);
 			});
 
 		const seatIn = (
 			session: RawSession,
-			room: string,
+			where: string,
+			invite: string | undefined,
 			terminal: boolean,
 			say: (text: string) => void,
 			sizing: Sizing
@@ -1394,10 +1619,10 @@ const make = (
 			Effect.gen(function* () {
 				const { info } = session;
 				const { actor } = info.identity;
-				const link = links.get(room);
+				const link = links.get(where);
 
 				if (link?.alive !== true) {
-					say(closedRoomMessage(room));
+					say(closedTableMessage(where));
 					session.exit(1);
 
 					return;
@@ -1410,11 +1635,11 @@ const make = (
 					return;
 				}
 
-				if (link.sessions >= sessionsPerRoom) {
+				if (link.sessions >= sessionsPerTable) {
 					yield* Effect.logInfo(
-						`room ${room}: full (${sessionsPerRoom} sessions); turned ${actor} away`
+						`table ${where}: full (${sessionsPerTable} sessions); turned ${actor} away`
 					);
-					say(fullRoomMessage(room));
+					say(fullTableMessage(where));
 					session.exit(1);
 
 					return;
@@ -1428,39 +1653,52 @@ const make = (
 					})
 				);
 
-				const env = Object.fromEntries([
-					[RELAYED_ACTOR_ENV, actor],
-					[RELAYED_CLIENT_ENV, info.client],
-					...Object.entries(info.env).filter(
-						([key]) => key !== RELAYED_ACTOR_ENV && key !== RELAYED_CLIENT_ENV
-					),
-				]);
+				const env: Record<string, string> = Object.fromEntries(
+					Object.entries(info.env).filter(
+						([key]) =>
+							key !== RELAYED_ACTOR_ENV &&
+							key !== RELAYED_CLIENT_ENV &&
+							key !== RELAYED_INVITE_ENV &&
+							key !== RELAYED_BUCKET_ENV
+					)
+				);
+
+				env[RELAYED_ACTOR_ENV] = actor;
+				env[RELAYED_CLIENT_ENV] = info.client;
+				env[RELAYED_BUCKET_ENV] = bucketOf(info.remoteAddress);
+
+				if (invite !== undefined) {
+					env[RELAYED_INVITE_ENV] = invite;
+				}
 
 				const openedAt = sizing.size;
 
-				const channel = yield* seat(link, session, env, openedAt).pipe(
-					Effect.asSome,
-					Effect.catchTags({
-						RelayError: (failure) => unseated(room, actor, failure.message),
-						TimeoutError: (failure) => unseated(room, actor, failure.message),
-					})
+				const channel = yield* Effect.result(
+					seat(link, session, env, openedAt)
 				);
 
-				if (Option.isNone(channel)) {
-					say(
-						link.alive
-							? "The table couldn't seat you right now."
-							: TABLE_CLOSED_MESSAGE
-					);
+				if (Result.isFailure(channel)) {
+					const why = channel.failure.message;
+					yield* unseated(where, actor, why);
+
+					const tooOld =
+						session.request.kind === "subsystem" &&
+						why.startsWith("Unable to start subsystem");
+
+					const unopened = link.alive
+						? "The table couldn't seat you right now."
+						: TABLE_CLOSED_MESSAGE;
+
+					say(tooOld ? AGENTS_TOO_OLD : unopened);
 					session.exit(1);
 
 					return;
 				}
 
-				const opened = channel.value;
+				const opened = channel.success;
 
 				yield* Effect.logDebug(
-					`room ${room}: seated ${actor} from ${info.remoteAddress}`
+					`table ${where}: seated ${actor} from ${info.remoteAddress}`
 				);
 
 				sizing.resize = (cols, rows) => {
@@ -1500,11 +1738,89 @@ const make = (
 				session.exit(1);
 			});
 
+		const shorthand = (session: RawSession, table: string) =>
+			Effect.gen(function* () {
+				const candidates = [...links.values()].filter(
+					(l) => l.alive && (l.table === table || l.handle === table)
+				);
+
+				if (candidates.length === 0) {
+					return { kind: "lobby", opening: {} } as const;
+				}
+
+				const known = knowsMe(session)
+					? yield* tablesFor(session.info.identity.actor, candidates)
+					: [];
+
+				const [only] = known;
+
+				if (known.length === 1 && only !== undefined) {
+					return {
+						kind: "seat",
+						where: lobbyAddress(only),
+						shorthand: true,
+					} as const;
+				}
+
+				const opening: Opening =
+					known.length === 0 ? {} : { said: manyMessage(table), only: known };
+
+				return { kind: "lobby", opening } as const;
+			});
+
+		const route = (session: RawSession) =>
+			Effect.gen(function* () {
+				const wanted = parseAddress(session.info.user);
+
+				if (wanted.kind === "table") {
+					const where = addressText(wanted.handle, wanted.table);
+
+					return isOpen(where)
+						? ({ kind: "seat", where, shorthand: false } as const)
+						: ({
+								kind: "lobby",
+								opening: { said: closedTableMessage(where) },
+							} as const);
+				}
+
+				if (wanted.kind === "short" && !isReservedShortTable(wanted.table)) {
+					return yield* shorthand(session, wanted.table);
+				}
+
+				return { kind: "lobby", opening: {} } as const;
+			});
+
+		const agentRoute = (
+			session: RawSession,
+			invite: string | undefined,
+			say: (text: string) => void,
+			sizing: Sizing
+		) =>
+			Effect.gen(function* () {
+				const routed = yield* route(session);
+
+				if (routed.kind === "seat") {
+					yield* seatIn(session, routed.where, invite, false, say, sizing);
+
+					return;
+				}
+
+				const wanted = parseAddress(session.info.user);
+
+				say(
+					routed.opening.said ??
+						(wanted.kind === "short"
+							? shorthandMessage(wanted.table)
+							: JOIN_HINT)
+				);
+				session.exit(1);
+			});
+
 		const bridge = (session: RawSession) =>
 			Effect.gen(function* () {
 				const { info } = session;
-				const asked = info.user.toLowerCase();
 				const terminal = session.request.kind === "shell" && session.pty;
+				const { invite } = parseAddress(info.user);
 
 				const say = (text: string) => {
 					if (terminal) {
@@ -1524,14 +1840,46 @@ const make = (
 					sizing.resize?.(cols, rows);
 				});
 
-				const room = isOpen(asked)
-					? Option.some(asked)
-					: yield* lobby(session, asked, terminal, say, sizing);
+				if (session.request.kind === "subsystem") {
+					yield* agentRoute(session, invite, say, sizing);
 
-				if (Option.isSome(room)) {
-					yield* seatIn(session, room.value, terminal, say, sizing);
+					return;
+				}
+
+				const routed = yield* route(session);
+
+				if (routed.kind === "seat" && routed.shorthand) {
+					say(`Joining ${routed.where}…`);
+				}
+
+				const where =
+					routed.kind === "seat"
+						? Option.some(routed.where)
+						: yield* lobby(session, routed.opening, terminal, say, sizing);
+
+				if (Option.isSome(where)) {
+					yield* seatIn(session, where.value, invite, terminal, say, sizing);
 				}
 			});
+
+		const mintPairing = Effect.fn("Relay.mintPairing")(function* (
+			handle: string,
+			by: string
+		) {
+			const now = yield* Clock.currentTimeMillis;
+			const handles = yield* readHandles(handlesFile);
+
+			if (handles[handle]?.keys.includes(by) !== true) {
+				const refused: Minted = {
+					kind: "refused",
+					reason: `the key ${by} doesn't hold the handle ${handle}`,
+				};
+
+				return refused;
+			}
+
+			return pairings.mint(handle, by, randomBytes(PAIRING_BYTES), now);
+		});
 
 		const services = Context.omit(Scope.Scope)(
 			yield* Effect.context<RelayContext>()
@@ -1546,6 +1894,10 @@ const make = (
 			timeouts: options.timeouts ?? {},
 			shutdownNotice: SHUTDOWN_NOTICE,
 			onRaw: (session) => bridge(session).pipe(Effect.provideContext(services)),
+			subsystems: {
+				[MCP_SUBSYSTEM]: (session) =>
+					bridge(session).pipe(Effect.provideContext(services)),
+			},
 		});
 
 		const info: RelayInfo = {
@@ -1553,7 +1905,16 @@ const make = (
 			gmPort,
 			hostKeyFingerprint: players.hostKeyFingerprint,
 			relayKeyFingerprint: relayKey.fingerprint,
-			linkedRooms: linkedNow,
+			linkedTables: linkedNow,
+			sandboxesLive: gate.live,
+			mintPairing: (handle, by) =>
+				mintPairing(handle, by).pipe(Effect.provideContext(services)),
+			claimHandle: (handle, fingerprint) =>
+				claims
+					.withPermits(1)(
+						claimHandle(handlesFile, handle, fingerprint, handlePolicy())
+					)
+					.pipe(Effect.provideContext(services)),
 		};
 
 		return info;
@@ -1566,6 +1927,6 @@ export class Relay extends Context.Service<Relay, RelayInfo>()(
 
 	static readonly layer = (
 		options: RelayOptions
-	): Layer.Layer<Relay, RelayError | RoomsError | SshError, RelayContext> =>
+	): Layer.Layer<Relay, RelayError | HandlesError | SshError, RelayContext> =>
 		Layer.effect(Relay, Relay.make(options));
 }

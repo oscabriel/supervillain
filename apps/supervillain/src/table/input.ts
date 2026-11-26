@@ -420,11 +420,17 @@ export type Look = "text" | "pictures";
 
 const LOOKS: ReadonlyArray<Look> = ["pictures", "text"];
 
+export type Slot = "stage" | "board";
+
+const SLOTS: ReadonlyArray<Slot> = ["stage", "board"];
+
 type Intent =
 	| { readonly kind: "quit" }
 	| { readonly kind: "state" }
 	| { readonly kind: "view"; readonly layout: Layout | "toggle" }
 	| { readonly kind: "look"; readonly look: Look }
+	| { readonly kind: "peek"; readonly at: Slot }
+	| { readonly kind: "codex"; readonly ref?: string; readonly line: string }
 	| { readonly kind: "focus"; readonly at: string }
 	| { readonly kind: "mouse"; readonly on: boolean | "toggle" }
 	| { readonly kind: "prep" }
@@ -465,6 +471,32 @@ const slipHint = (line: string, mode: Mode): Intent | undefined => {
 	};
 };
 
+const viewIntent = (arg: string): Intent => {
+	const lower = arg.toLowerCase();
+
+	if (arg === "") {
+		return { kind: "view", layout: "toggle" };
+	}
+
+	const look = LOOKS.find((l) => l === lower);
+
+	if (look !== undefined) {
+		return { kind: "look", look };
+	}
+
+	const slot = SLOTS.find((l) => l === lower);
+
+	if (slot !== undefined) {
+		return { kind: "peek", at: slot };
+	}
+
+	const layout = LAYOUTS.find((l) => l === lower);
+
+	return layout === undefined
+		? { kind: "focus", at: arg }
+		: { kind: "view", layout };
+};
+
 export const PREP_IS_GMS =
 	"Only the GM prepares the game; /prep opens the GM's prep panel.";
 
@@ -496,23 +528,13 @@ export const intentFor = (
 	}
 
 	if (word === "/view") {
-		const arg = line.slice(word.length).trim();
+		return viewIntent(line.slice(word.length).trim());
+	}
 
-		if (arg === "") {
-			return { kind: "view", layout: "toggle" };
-		}
+	if (word === "/codex") {
+		const ref = line.slice(word.length).trim();
 
-		const look = LOOKS.find((l) => l === arg.toLowerCase());
-
-		if (look !== undefined) {
-			return { kind: "look", look };
-		}
-
-		const layout = LAYOUTS.find((l) => l === arg.toLowerCase());
-
-		return layout === undefined
-			? { kind: "focus", at: arg }
-			: { kind: "view", layout };
+		return ref === "" ? { kind: "codex", line } : { kind: "codex", ref, line };
 	}
 
 	if (word === "/mouse") {
@@ -555,7 +577,7 @@ export const tableCompletions = (line: string): ReadonlyArray<string> => {
 
 	const arg = start.slice(space + 1).trimStart();
 
-	return [...LAYOUTS, ...LOOKS].flatMap((l) =>
+	return [...LAYOUTS, ...LOOKS, ...SLOTS].flatMap((l) =>
 		l.startsWith(arg) ? [`/view ${l}`] : []
 	);
 };
@@ -588,6 +610,7 @@ export type KeyAction =
 	| { readonly kind: "scroll"; readonly direction: 1 | -1 }
 	| { readonly kind: LineEditKind }
 	| { readonly kind: "submit" | "escape" | "leave" | "eof" }
+	| { readonly kind: "knock"; readonly verdict: "admit" | "deny" }
 	| { readonly kind: "none" };
 
 const digitOf = (key: KeyLike) => {
@@ -640,6 +663,11 @@ const PLAIN_ACTIONS = new Map<string, KeyAction>([
 	["end", { kind: "end" }],
 ]);
 
+const KNOCK_KEYS = new Map<string, "admit" | "deny">([
+	["y", "admit"],
+	["n", "deny"],
+]);
+
 const namedAction = (key: KeyLike): KeyAction | undefined => {
 	if (key.name === "tab") {
 		return { kind: "complete", step: key.shift ? -1 : 1 };
@@ -675,6 +703,12 @@ export const keyAction = (key: KeyLike): KeyAction => {
 
 	if (panel !== undefined) {
 		return { kind: "panel", panel };
+	}
+
+	const verdict = key.meta && !key.ctrl ? KNOCK_KEYS.get(key.name) : undefined;
+
+	if (verdict !== undefined) {
+		return { kind: "knock", verdict };
 	}
 
 	if (key.ctrl || key.meta) {

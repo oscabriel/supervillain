@@ -1,6 +1,6 @@
 # Sample campaign: a fight at the ford
 
-A ready-to-play campaign folder for trying supervillain: four level-1 heroes, the bandits for one encounter and the map to fight it on. **Everything here is a sample for testing.** The numbers are plausible for level 1 and the ability text is a short paraphrase. None of it is copied from the books, so check it against _Draw Steel: Heroes_ and _Draw Steel: Monsters_ before real play.
+A ready-to-play campaign folder for trying supervillain: four level-1 heroes, the bandits for one encounter, the map to fight it on, and the scenes, people and handouts around the fight, written in Markdown. **Everything here is a sample for testing.** The numbers are plausible for level 1 and the ability text is a short paraphrase. None of it is copied from the books, so check it against _Draw Steel: Heroes_ and _Draw Steel: Monsters_ before real play.
 
 ## Hosting it
 
@@ -52,6 +52,27 @@ The map is `maps/ford-road.txt`, The Ford Road, 20 columns (a to t) by 10 rows. 
    9 . . . . . . . . . . . ~ ~ . . . . . . .
   10     . . . . . . . . . . . . . . . .
 ```
+
+## The campaign in Markdown
+
+Alongside the YAML sheets, the campaign's story is typed Markdown: a YAML front matter block between `---` lines, then the text the table can see. A `## Read Aloud` section is the boxed text you read to the players, and a `## GM Notes` section stays with you: players never see it, not on the stage, in the codex or in a reply. Any heading that starts with GM, DM, Game Master, Director notes or Secret does the same until the next `#` heading of its level, and `supervillain check` flags a heading or bold line that only looks like one, or a `---` right under a line of GM notes.
+
+| File | What it is |
+| --- | --- |
+| `table.md` | The campaign's front page: its title, pitch and opening scene (`start: ford-ambush`). `campaign.yaml` says what it plays, so `table.md` has no `rules:` |
+| `scenes/ford-ambush.md` | The ambush: read-aloud, the scene's text, Old Mara and two handouts, the fight on `ford-road` with the bandits, and the bandits' alarm clock |
+| `scenes/aftermath.md` | What follows the fight |
+| `npcs/old-mara.md` | The ferry-keeper, who fights as a `bandit-cutpurse` if it comes to that |
+| `handouts/wanted-poster.md` | A clue, with a poster drawn in a fenced block that the table shows as it is |
+| `handouts/ford-sketch.md` | A map handout: `kind: map` and `map: ford-road` show the map, read-only |
+| `items/chiefs-ledger.md` | Something the party can find |
+| `abilities/judgment.md` | An ability a party sheet can list by id |
+
+At the table, the prep panel (`/prep`) lists each scene, person, handout and item with **Show** (on the table for everyone), **Codex** (in the players' codex, off the table) and **Hide** (yours again), and a scene with an encounter has **▶ fight**, which loads its map and brings in its foes in one click. Out of a fight the table shows the campaign stage: the scene with its read-aloud, the cards on the table, the trackers and the last lines of the recap, with the party above it. When a fight starts it shows the board and the band; when it ends it goes back to the stage. `/view board` and `/view stage` look at the other one, just for you, and `/codex` opens the codex.
+
+Edit a Markdown file while the table is open and the host reads it again: cards on the stage update by themselves (`sync: manual` in `table.md` turns that off, and `/sync` reads them on demand), and a hero sheet that changed on disk shows up in the prep panel's **sheets changed** row, one click from syncing. A mistake in a file never stops the table: the prep panel lists the problem and the table keeps the last good files until you fix it.
+
+`supervillain check <folder>` checks every file, and `supervillain schema <folder>` writes JSON Schemas into `schemas/` so an editor can check them as you type.
 
 ## Writing your own
 

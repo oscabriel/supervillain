@@ -13,8 +13,15 @@ export type Parsed =
 	| { readonly kind: "refusal"; readonly message: string }
 	| { readonly kind: "help"; readonly topic?: string }
 	| { readonly kind: "sheet"; readonly who: string }
+	| { readonly kind: "codex"; readonly ref?: string }
 	| { readonly kind: "state" }
 	| { readonly kind: "auto"; readonly foes?: boolean }
+	| { readonly kind: "deny"; readonly who: string }
+	| {
+			readonly kind: "invite";
+			readonly uses?: number;
+			readonly minutes?: number;
+	  }
 	| { readonly kind: "quit" }
 	| { readonly kind: "empty" };
 
@@ -54,6 +61,7 @@ const SHEETS = {
 	"draw-steel": "Show a hero's or creature's sheet, to you alone.",
 	"set-world": "Show a fighter's sheet, to you alone.",
 	pf2e: "Show a PC's or creature's stat block, to you alone.",
+	freeform: "Show a character's or figure's sheet, to you alone.",
 } as const satisfies Record<RulesetName, string>;
 
 const specEntries = (ruleset: RulesetName): ReadonlyArray<Entry> =>
@@ -106,14 +114,89 @@ const autoEntry: Entry = {
 		startingWith(["foes on", "foes off"], partial),
 };
 
+export const INVITE_USAGE = "/invite [uses] [minutes]";
+
+const WHOLE = /^\d{1,4}$/u;
+
+const inviteOf = (args: string): Parsed => {
+	const words = args.trim() === "" ? [] : args.trim().split(/\s+/u);
+	const [uses, minutes, ...rest] = words;
+
+	if (
+		rest.length > 0 ||
+		(uses !== undefined && !WHOLE.test(uses)) ||
+		(minutes !== undefined && !WHOLE.test(minutes))
+	) {
+		return { kind: "refusal", message: `Usage: ${INVITE_USAGE}` };
+	}
+
+	if (uses === undefined) {
+		return { kind: "invite" };
+	}
+
+	return minutes === undefined
+		? { kind: "invite", uses: Number(uses) }
+		: { kind: "invite", uses: Number(uses), minutes: Number(minutes) };
+};
+
+const doorEntries: ReadonlyArray<Entry> = [
+	{
+		name: "deny",
+		usage: "/deny <who>",
+		summary:
+			"Turn away a player who is knocking; they can't knock again for 10 minutes.",
+		gmOnly: true,
+		run: (args) =>
+			args.trim() === ""
+				? { kind: "refusal", message: "Usage: /deny <who>" }
+				: { kind: "deny", who: args.trim() },
+	},
+	{
+		name: "invite",
+		usage: INVITE_USAGE,
+		summary:
+			"Make an invite: whoever joins with it sits straight down, no knock (1 use and 60 minutes unless you say).",
+		gmOnly: true,
+		run: inviteOf,
+	},
+];
+
 const RULESET_ENTRIES = {
 	"draw-steel": [],
 	"set-world": [autoEntry],
 	pf2e: [],
+	freeform: [],
 } as const satisfies Record<RulesetName, ReadonlyArray<Entry>>;
+
+const codexKeys = (
+	state: TableState,
+	partial: string
+): ReadonlyArray<string> => {
+	const typed = partial.trim().toLowerCase();
+
+	return Object.keys(state.stage.cards).filter(
+		(key) =>
+			key.startsWith(typed) || key.slice(key.indexOf(":") + 1).startsWith(typed)
+	);
+};
+
+const codexEntry: Entry = {
+	name: "codex",
+	usage: "/codex [card]",
+	summary:
+		"List the cards the GM has shown the table, or read one, to you alone.",
+	gmOnly: false,
+	run: (args) => {
+		const ref = args.trim();
+
+		return ref === "" ? { kind: "codex" } : { kind: "codex", ref };
+	},
+	complete: (state, _actor, partial) => codexKeys(state, partial),
+};
 
 const seatEntries = (ruleset: RulesetName): ReadonlyArray<Entry> => [
 	...RULESET_ENTRIES[ruleset],
+	...doorEntries,
 	{
 		name: "help",
 		usage: "/help [command]",
@@ -139,6 +222,7 @@ const seatEntries = (ruleset: RulesetName): ReadonlyArray<Entry> => [
 		complete: (state, actor, partial) =>
 			completeSheet(state, partial, actor, ruleset),
 	},
+	codexEntry,
 	{
 		name: "state",
 		usage: "/state",
@@ -207,12 +291,14 @@ export const BARE_OVER_EXEC: ReadonlySet<string> = new Set([
 	"redo",
 	"help",
 	"sheet",
+	"codex",
 ]);
 
 const ENTRIES = {
 	"draw-steel": entriesOf("draw-steel"),
 	"set-world": entriesOf("set-world"),
 	pf2e: entriesOf("pf2e"),
+	freeform: entriesOf("freeform"),
 } as const satisfies Record<RulesetName, ReadonlyArray<Entry>>;
 
 const sayLine = fromSpec(core.commands.say.parse);

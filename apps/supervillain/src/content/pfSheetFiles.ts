@@ -468,3 +468,5 @@ export const pfSheetYaml = (
 		},
 		header
 	);
+
+export const PfSheetFileSchema = SheetFile;

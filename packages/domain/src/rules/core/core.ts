@@ -23,8 +23,24 @@ const STORED_CHAT_MAX = 4 * CHAT_MAX;
 
 const STORED_NAME_MAX = 4 * NAME_MAX;
 
+export type Membership = "in" | "out";
+
+export type Door = "knock" | "open";
+
+export type Admission = "gm" | "invite";
+
 export interface CoreState {
 	readonly names: Readonly<Record<string, string>>;
+	readonly members: Readonly<Record<string, Membership>>;
+	readonly door: Door;
+}
+
+export interface AdmitCommand {
+	readonly type: "admit";
+	readonly who: string;
+	readonly member?: string;
+	readonly name?: string;
+	readonly by?: Admission;
 }
 
 export interface NameCommand {
@@ -39,7 +55,10 @@ export type CoreCommand =
 	| { readonly type: "me"; readonly text: string }
 	| { readonly type: "narrate"; readonly text: string }
 	| NameCommand
-	| { readonly type: "roll"; readonly notation: string };
+	| { readonly type: "roll"; readonly notation: string }
+	| AdmitCommand
+	| { readonly type: "kick"; readonly who: string }
+	| { readonly type: "door"; readonly door: Door };
 
 export const CorePayloads = {
 	"core.chat-posted": Schema.Struct({
@@ -58,7 +77,19 @@ export const CorePayloads = {
 		undone: Schema.Array(Schema.String),
 	}),
 	"core.redone": Schema.Struct({ seqs: Schema.NonEmptyArray(Schema.Int) }),
+	"core.member-admitted": Schema.Struct({
+		member: Schema.String,
+		name: Schema.String,
+		by: Schema.Literals(["gm", "invite"]),
+	}),
+	"core.member-removed": Schema.Struct({ member: Schema.String }),
+	"core.door-set": Schema.Struct({ door: Schema.Literals(["knock", "open"]) }),
 } as const;
+
+export const DOORS: ReadonlyArray<Door> = ["knock", "open"];
+
+const isDoor = (word: string): word is Door =>
+	word === "knock" || word === "open";
 
 type ChatStyle = "emote" | "narration";
 
@@ -131,17 +162,22 @@ export const defaultLabel = (actor: string): string => {
 	return cleanText(actor).slice(0, 12);
 };
 
+interface Around {
+	readonly seated?: ReadonlyArray<string>;
+	readonly cast?: ReadonlyArray<string>;
+}
+
 const takenLabels = (
-	slice: CoreState,
-	shared: Shared,
+	slice: Pick<CoreState, "names">,
+	actors: ReadonlyArray<string>,
 	actor: string,
-	command: NameCommand
+	around: Around
 ): Set<string> => {
-	const { seated = [], cast = [] } = command;
+	const { seated = [], cast = [] } = around;
 
 	const others = new Set([
 		GM,
-		...[...shared.actors, ...Object.keys(slice.names)].filter(
+		...[...actors, ...Object.keys(slice.names)].filter(
 			(a) => !a.startsWith("guest:")
 		),
 		...seated,
@@ -164,13 +200,14 @@ const takenLabels = (
 	return taken;
 };
 
-const chooseName = (
-	slice: CoreState,
-	shared: Shared,
+const nameFor = (
+	slice: Pick<CoreState, "names">,
+	actors: ReadonlyArray<string>,
 	actor: string,
-	command: NameCommand
-): Decision => {
-	const name = normalName(command.name);
+	raw: string,
+	around: Around
+): string | Refused => {
+	const name = normalName(raw);
 
 	if (isRefused(name)) {
 		return name;
@@ -182,7 +219,7 @@ const chooseName = (
 
 	const key = nameKey(name);
 
-	if (takenLabels(slice, shared, actor, command).has(key)) {
+	if (takenLabels(slice, actors, actor, around).has(key)) {
 		return refuse(`"${name}" is taken; pick another name.`);
 	}
 
@@ -194,8 +231,120 @@ const chooseName = (
 		return refuse(`"${name}" looks like a guest's label; pick another name.`);
 	}
 
-	return { events: [{ type: "core.name-set", payload: { name } }] };
+	return name;
 };
+
+const chooseName = (
+	slice: CoreState,
+	shared: Shared,
+	actor: string,
+	command: NameCommand
+): Decision => {
+	const name = nameFor(slice, shared.actors, actor, command.name, command);
+
+	return isRefused(name)
+		? name
+		: { events: [{ type: "core.name-set", payload: { name } }] };
+};
+
+const memberIn = (
+	slice: CoreState,
+	actors: ReadonlyArray<string>,
+	actor: string
+) =>
+	actor === GM ||
+	slice.members[actor] === "in" ||
+	(slice.members[actor] !== "out" &&
+		(slice.door === "open" || actors.includes(actor)));
+
+const admit = (
+	slice: CoreState,
+	shared: Shared,
+	command: AdmitCommand
+): Decision => {
+	const { member, name } = command;
+
+	if (member === undefined || name === undefined) {
+		return refuse(
+			`Nobody called ${JSON.stringify(cleanText(command.who))} is knocking.`
+		);
+	}
+
+	if (member === GM) {
+		return refuse("The GM is always at the table.");
+	}
+
+	if (slice.members[member] === "in") {
+		return refuse(`${shared.label(member)} is already at the table.`);
+	}
+
+	const named =
+		slice.names[member] === name
+			? name
+			: nameFor(slice, shared.actors, member, name, {});
+
+	if (isRefused(named)) {
+		return refuse(`Can't let them in as that: ${named.refusal}`);
+	}
+
+	return {
+		events: [
+			{
+				type: "core.member-admitted",
+				payload: { member, name: named, by: command.by ?? "gm" },
+			},
+		],
+	};
+};
+
+const memberNamed = (
+	slice: CoreState,
+	shared: Shared,
+	who: string
+): string | undefined => {
+	const key = nameKey(who);
+
+	const known = new Set([
+		...Object.keys(slice.members),
+		...Object.keys(slice.names),
+		...shared.actors,
+	]);
+
+	known.delete(GM);
+
+	return (
+		[...known].find((actor) => actor === who) ??
+		[...known].find((actor) => nameKey(shared.label(actor)) === key)
+	);
+};
+
+const kick = (slice: CoreState, shared: Shared, who: string): Decision => {
+	const member = memberNamed(slice, shared, who.trim());
+
+	if (member === undefined) {
+		return refuse(
+			`Nobody at the table is called ${JSON.stringify(cleanText(who))}.`
+		);
+	}
+
+	if (!memberIn(slice, shared.actors, member)) {
+		return refuse(`${shared.label(member)} isn't at the table.`);
+	}
+
+	return { events: [{ type: "core.member-removed", payload: { member } }] };
+};
+
+const setDoor = (slice: CoreState, door: Door): Decision =>
+	slice.door === door
+		? refuse(
+				`The door is already ${door === "open" ? "open" : "set to knock"}.`
+			)
+		: { events: [{ type: "core.door-set", payload: { door } }] };
+
+const DOOR_NOTES = {
+	knock: "The door is set to knock: newcomers wait for the GM to let them in.",
+	open: "The door is open: anyone who connects sits down.",
+} as const satisfies Record<Door, string>;
 
 const sum = (ns: ReadonlyArray<number>): number =>
 	ns.reduce((a, b) => a + b, 0);
@@ -260,8 +409,15 @@ const wordless = (args: string): boolean => cleanText(args) === "";
 
 export const core: Module<"core", CoreState, CoreCommand> = {
 	key: "core",
-	initial: { names: {} },
-	events: ["core.chat-posted", "core.name-set", "core.dice-rolled"],
+	initial: { names: {}, members: {}, door: "knock" },
+	events: [
+		"core.chat-posted",
+		"core.name-set",
+		"core.dice-rolled",
+		"core.member-admitted",
+		"core.member-removed",
+		"core.door-set",
+	],
 	retractable: [],
 	rolled: () => false,
 	formats: {
@@ -270,6 +426,7 @@ export const core: Module<"core", CoreState, CoreCommand> = {
 		narration: { speaker: false, separator: "" },
 		roll: { speaker: true, separator: " " },
 		name: { speaker: false, separator: "" },
+		member: { speaker: false, separator: "" },
 	},
 	commands: {
 		say: {
@@ -329,6 +486,50 @@ export const core: Module<"core", CoreState, CoreCommand> = {
 				return COMMON_DICE.filter((d) => d.startsWith(typed));
 			},
 		},
+		admit: {
+			usage: "/admit <who>",
+			summary: "Let a player who is knocking sit at the table.",
+			gmOnly: true,
+			parse: (args) =>
+				wordless(args)
+					? refuse("Usage: /admit <who>")
+					: { type: "admit", who: args.trim() },
+		},
+		kick: {
+			usage: "/kick <who>",
+			summary: "Remove a player from the table; they must knock to come back.",
+			gmOnly: true,
+			parse: (args) =>
+				wordless(args)
+					? refuse("Usage: /kick <who>")
+					: { type: "kick", who: args.trim() },
+			complete: (slice, partial) => {
+				const typed = nameKey(partial.trim());
+
+				return Object.entries(slice.names)
+					.filter(([actor]) => slice.members[actor] !== "out" && actor !== GM)
+					.map(([, name]) => name)
+					.filter((name) => nameKey(name).startsWith(typed));
+			},
+		},
+		door: {
+			usage: "/door knock|open",
+			summary:
+				"Knock: newcomers wait for you to let them in. Open: anyone who connects sits down.",
+			gmOnly: true,
+			parse: (args) => {
+				const word = args.trim().toLowerCase();
+
+				return isDoor(word)
+					? { type: "door", door: word }
+					: refuse("Usage: /door knock|open");
+			},
+			complete: (_slice, partial) => {
+				const typed = partial.trim().toLowerCase();
+
+				return DOORS.filter((d) => d.startsWith(typed));
+			},
+		},
 	},
 	decide: (slice, shared, actor, command, dice) => {
 		switch (command.type) {
@@ -350,6 +551,18 @@ export const core: Module<"core", CoreState, CoreCommand> = {
 
 			case "roll": {
 				return roll(command.notation, dice);
+			}
+
+			case "admit": {
+				return admit(slice, shared, command);
+			}
+
+			case "kick": {
+				return kick(slice, shared, command.who);
+			}
+
+			case "door": {
+				return setDoor(slice, command.door);
 			}
 
 			default: {
@@ -384,7 +597,10 @@ export const core: Module<"core", CoreState, CoreCommand> = {
 				const was = slice.names[envelope.actor];
 
 				return {
-					slice: { names: { ...slice.names, [envelope.actor]: name } },
+					slice: {
+						...slice,
+						names: { ...slice.names, [envelope.actor]: name },
+					},
 					feed: {
 						kind: "name",
 						text:
@@ -408,6 +624,55 @@ export const core: Module<"core", CoreState, CoreCommand> = {
 				return { slice, feed: { kind: "roll", text } };
 			}
 
+			case "core.member-admitted": {
+				const { member, name } = decodePayload(
+					CorePayloads["core.member-admitted"],
+					envelope
+				);
+
+				if (member === GM || !storedText(name, STORED_NAME_MAX)) {
+					throw new Error(
+						`bad admission ${JSON.stringify(name)} at seq ${envelope.seq}`
+					);
+				}
+
+				return {
+					slice: {
+						...slice,
+						names: { ...slice.names, [member]: name },
+						members: { ...slice.members, [member]: "in" },
+					},
+					feed: { kind: "member", text: `${name} joins the table.` },
+				};
+			}
+
+			case "core.member-removed": {
+				const { member } = decodePayload(
+					CorePayloads["core.member-removed"],
+					envelope
+				);
+
+				if (member === GM) {
+					throw new Error(`the GM can't be removed, at seq ${envelope.seq}`);
+				}
+
+				const name = slice.names[member] ?? defaultLabel(member);
+
+				return {
+					slice: { ...slice, members: { ...slice.members, [member]: "out" } },
+					feed: { kind: "member", text: `${name} was removed from the table.` },
+				};
+			}
+
+			case "core.door-set": {
+				const { door } = decodePayload(CorePayloads["core.door-set"], envelope);
+
+				return {
+					slice: { ...slice, door },
+					feed: { kind: "member", text: DOOR_NOTES[door] },
+				};
+			}
+
 			default: {
 				throw new Error(`core can't apply "${envelope.type}"`);
 			}
@@ -415,17 +680,32 @@ export const core: Module<"core", CoreState, CoreCommand> = {
 	},
 };
 
+interface Named {
+	readonly core: Pick<CoreState, "names">;
+}
+
 export const labelOf =
-	(state: { readonly core: CoreState }) =>
+	(state: Named) =>
 	(actor: string): string =>
 		state.core.names[actor] ?? defaultLabel(actor);
 
-export const needsName = (
-	state: { readonly core: CoreState },
-	actor: string
-): boolean => actor !== GM && state.core.names[actor] === undefined;
+export const needsName = (state: Named, actor: string): boolean =>
+	actor !== GM && state.core.names[actor] === undefined;
 
-export const nameOf = (
-	state: { readonly core: CoreState },
-	actor: string
-): string | undefined => state.core.names[actor];
+export const nameOf = (state: Named, actor: string): string | undefined =>
+	state.core.names[actor];
+
+interface Membered {
+	readonly core: CoreState;
+	readonly actors: ReadonlyArray<string>;
+}
+
+export const isMember = (state: Membered, actor: string): boolean =>
+	memberIn(state.core, state.actors, actor);
+
+export const checkName = (
+	state: Membered,
+	actor: string,
+	name: string,
+	around: Around = {}
+): string | Refused => nameFor(state.core, state.actors, actor, name, around);

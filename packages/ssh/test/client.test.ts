@@ -6,6 +6,7 @@ import type { Socket } from "node:net";
 import { Deferred, Effect, Exit, Scope } from "effect";
 
 import { connectClient } from "../src/index.ts";
+import type { RawSession } from "../src/index.ts";
 import { effect } from "./effect.ts";
 import { clientKey, waitFor } from "./openssh.ts";
 import { testServer } from "./server.ts";
@@ -277,6 +278,104 @@ describe("connectClient", () => {
 
 			expect(refused).toContain("Unable to start subsystem");
 		})
+	);
+
+	const echoActor = {
+		"agent@test": (session: RawSession) =>
+			Effect.sync(() => {
+				const { identity, relayedActor } = session.info;
+				session.stream.write(`${identity.actor} as ${relayedActor ?? "-"}`);
+				session.exit(0);
+			}),
+	};
+
+	effect(
+		"a player's own connection opens an actor-bearing subsystem as their key",
+		() =>
+			Effect.gen(function* () {
+				const key = yield* clientKey(yield* tempDir, "player");
+				const server = yield* testServer({ subsystems: echoActor });
+
+				const client = yield* connectClient({
+					socket: yield* dial(server.port),
+					username: "den",
+					privateKey: yield* Effect.promise(
+						async () => await readFile(key.path)
+					),
+					verifyHostKey: trust,
+				});
+
+				const channel = yield* Effect.promise(
+					async () =>
+						await client.open(
+							{ kind: "subsystem", name: "agent@test" },
+							{},
+							false
+						)
+				);
+
+				channel.stream.end();
+
+				expect(yield* drain(channel.stream)).toBe(
+					`key:${key.fingerprint} as -`
+				);
+				expect(yield* Effect.promise(async () => await channel.ended)).toBe(0);
+
+				const other = yield* Effect.promise(
+					async () =>
+						await refusalOf(
+							client.open({ kind: "subsystem", name: "other@test" }, {}, false)
+						)
+				);
+
+				expect(other).toContain("Unable to start subsystem");
+			})
+	);
+
+	effect(
+		"a relay opens an actor-bearing subsystem only for the player it names in SV_ACTOR",
+		() =>
+			Effect.gen(function* () {
+				const key = yield* clientKey(yield* tempDir, "relay");
+
+				const server = yield* testServer({
+					trustedRelayKeys: [key.fingerprint],
+					subsystems: echoActor,
+				});
+
+				const client = yield* connectClient({
+					socket: yield* dial(server.port),
+					username: "relay",
+					privateKey: yield* Effect.promise(
+						async () => await readFile(key.path)
+					),
+					verifyHostKey: trust,
+				});
+
+				const channel = yield* Effect.promise(
+					async () =>
+						await client.open(
+							{ kind: "subsystem", name: "agent@test" },
+							{ SV_ACTOR: PLAYER },
+							false
+						)
+				);
+
+				channel.stream.end();
+
+				expect(yield* drain(channel.stream)).toBe(
+					`key:${key.fingerprint} as ${PLAYER}`
+				);
+
+				const unnamed = yield* Effect.promise(
+					async () =>
+						await refusalOf(
+							client.open({ kind: "subsystem", name: "agent@test" }, {}, false)
+						)
+				);
+
+				expect(unnamed).toContain("Unable to start subsystem");
+			})
 	);
 
 	effect(

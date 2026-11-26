@@ -2,7 +2,7 @@
 
 ## Decision
 
-`supervillain host` runs the rules and renders every player's OpenTUI seat on the GM's machine. `supervillain relay` runs on a small Linux VPS (e.g. $5/mo Vultr, 1 vCPU, 512 MB RAM) listening on two TCP ports (players on 22/2222, GMs dialing out on 7022). The relay renders nothing except its ANSI lobby screen, pins room ownership in `rooms.json` (180-day lapse, per-`/64` and `/48` claim rates, 1,024 max rooms, mode `0700` dir), and answers lobby lookups via `knows-1@supervillain.sh` using a 16-byte random nonce and HMAC-SHA256 of the player's actor. GMs pin the relay's key in `relay_known` synchronously inside `admitRelay` *before* authenticating the link. Stable `v*` releases auto-deploy to the relay via `.github/workflows/relay-deploy.yml`, which verifies `SHA256SUMS` and `gh attestation verify` and streams the binary over pinned SSH to a restricted forced-command script (`scripts/deploy-relay.sh`) that has no shell access, cannot read `/var/lib/supervillain-relay`, swaps the binary atomically, and rolls back if `supervillain-relay` fails to stay active.
+`supervillain host` runs the rules and renders every player's OpenTUI seat on the GM's machine. `supervillain relay` runs on a small Linux VPS (e.g. $5/mo Vultr, 1 vCPU, 512 MB RAM) listening on two TCP ports (players on 22/2222, GMs dialing out on 7022). The relay renders nothing except its ANSI lobby screen, pins GM handles to GM keys in `handles.json` (ADR 0015: 180-day lapse, per-`/64` and `/48` claim rates, 4,096 max handles, mode `0700` dir), and answers lobby lookups via `knows-1@supervillain.sh` using a 16-byte random nonce and HMAC-SHA256 of the player's actor. GMs pin the relay's key in `relay_known` synchronously inside `admitRelay` *before* authenticating the link. Stable `v*` releases auto-deploy to the relay via `.github/workflows/relay-deploy.yml`, which verifies `SHA256SUMS` and `gh attestation verify` and streams the binary over pinned SSH to a restricted forced-command script (`scripts/deploy-relay.sh`) that has no shell access, cannot read `/var/lib/supervillain-relay`, swaps the binary atomically, and rolls back if `supervillain-relay` fails to stay active.
 
 ## Why
 
@@ -15,4 +15,4 @@
 
 - Writing `relay_known` asynchronously after `admitRelay` returns `true` opens a window where an unpinned relay can seat arbitrary `key:SHA256:...` actors.
 - Dropping the nonce+MAC scheme and sending raw player keys in lobby queries leaks which players are online to every linked GM.
-- Allowing group/world write permissions on the relay directory lets another local user swap `rooms.json` and hijack room claims.
+- Allowing group/world write permissions on the relay directory lets another local user swap `handles.json` and hijack handles.

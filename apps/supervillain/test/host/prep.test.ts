@@ -14,7 +14,7 @@ import { tableServices } from "../../src/host/services.ts";
 import type { TableServices } from "../../src/host/services.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
 import type { PrepItem, TableView } from "../../src/table/view.ts";
-import { sampleCampaign } from "./campaign.ts";
+import { openSampleCampaign, sampleCampaign } from "./campaign.ts";
 import { effect, must, waitFor } from "./effect.ts";
 import type { Platform } from "./effect.ts";
 import { unreachable } from "./setWorld.ts";
@@ -277,7 +277,7 @@ describe("/map new: a generated map, written into maps/ and loaded", () => {
 		"by its seed: the file is the CLI's, the event carries the grid, replay reads no file",
 		() =>
 			Effect.gen(function* () {
-				const dir = yield* sampleCampaign;
+				const dir = yield* openSampleCampaign;
 				const text = mapFileText(generateMap("keep", 42));
 				const grid = readMapText("keep-42", text);
 
@@ -327,7 +327,11 @@ describe("/map new: a generated map, written into maps/ and loaded", () => {
 					payload: { id: "keep-42", terrain: grid.terrain },
 				});
 				yield* Effect.promise(async () => {
-					await rm(path.join(dir, "maps"), { recursive: true });
+					await Promise.all(
+						["maps", "scenes", "handouts", "table.md"].map(async (folder) => {
+							await rm(path.join(dir, folder), { recursive: true });
+						})
+					);
 				});
 				yield* atTable(
 					dir,

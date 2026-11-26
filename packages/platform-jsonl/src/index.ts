@@ -1,4 +1,4 @@
-export { CampaignLog, LogError } from "./CampaignLog.ts";
+export { CampaignLog, LogError, MEMORY_PATH } from "./CampaignLog.ts";
 
 export {
 	batchesOf,
@@ -20,6 +20,7 @@ export {
 	Refused,
 	Unsupported,
 	type JsonlPlatformOptions,
+	type MemoryPlatformOptions,
 	type Snapshot,
 } from "./JsonlPlatform.ts";
 

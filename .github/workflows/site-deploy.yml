@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "packages/site/**"
+      - "scripts/install.sh"
       - ".github/workflows/site-deploy.yml"
   workflow_dispatch:
 

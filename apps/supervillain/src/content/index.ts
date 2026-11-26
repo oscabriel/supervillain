@@ -16,6 +16,46 @@ export {
 
 export { CampaignConfigInvalid } from "./errors.ts";
 
+export {
+	type ContentIndex,
+	docsOf,
+	type ContentProblem,
+	loadIndex,
+} from "./ContentIndex.ts";
+
+export {
+	buildCard,
+	cardKey,
+	ffSheetOf,
+	findDoc,
+	gmNotesFor,
+	keyedDocs,
+} from "./cards.ts";
+
+export {
+	ContentInvalid,
+	contentInvalid,
+	crossCheck,
+	problemLine,
+	validateCampaign,
+	validateIndex,
+	type Validation,
+} from "./validate.ts";
+
+export {
+	gmOnly,
+	isGmHeading,
+	mentionsGm,
+	playerSafe,
+	readAloudOf,
+	sectionsOf,
+	splitFrontmatter,
+} from "./markdown.ts";
+
+export { proseOf } from "./prose.ts";
+
+export { type Draft, schemaFiles, SCHEMA_KINDS } from "./jsonSchema.ts";
+
 export { MapForgeLive, writeGeneratedMap, type WrittenMap } from "./newMap.ts";
 
 export {

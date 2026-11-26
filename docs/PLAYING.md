@@ -7,10 +7,10 @@ You need a terminal and `ssh`, which macOS, Linux and Windows 10 and later alrea
 Your GM gives you one command. Paste it into a terminal:
 
 ```sh
-ssh -p 2222 first-fight@gm.example.net
+ssh ana/first-fight@relay.example.net
 ```
 
-The part before the `@` is the room, and after it is where the table is. The GM may give you a different port, or none.
+Before the `@` is the table: the GM's handle (`ana`), a `/` (or a `.`), and the table's name. After it is the relay that carries the table. A GM who hosts on their own network gives you their machine's address and port instead (`ssh -p 2222 first-fight@192.168.1.20`), and there the part before the `@` doesn't matter.
 
 The first time, ssh asks whether you trust the table's key:
 
@@ -21,30 +21,48 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])?
 
 Check that the fingerprint matches the one your GM sent you, then type `yes`. After that ssh remembers the key. If ssh ever says the key has changed, stop and ask your GM. If the table goes through a relay, the key ssh shows is the relay's, not the GM's machine's: check it against the relay's fingerprint, which your GM gets from whoever runs the relay.
 
+### At the door
+
+The first time you come to a table, you're at its door, not at the table: it says the table lets players in by knocking, shows the start of your key's fingerprint, and asks what the table should call you. The name follows the same rules as `/name`, and one already used at the table is refused there. Once you press Enter you're knocking: the GM sees your name and fingerprint at the top of their screen and lets you in, or not. Let in, the table takes the screen. Turned away, you're told so and can knock again in 10 minutes; a knock nobody answers for 10 minutes ends by itself, and the door closes if you don't knock within 2 minutes. Ctrl-C leaves the door.
+
+After that your key is at the table: you come straight in each time, until the GM removes you with `/kick`. A table whose GM opened the door (`/door open`) seats anyone, and a table you played at before knocking existed still knows you.
+
+A GM can also give you an invite, which goes after the table's name with a `~` (`ssh ana/first-fight~5k2q…@relay.example.net`): you name yourself at the door and sit straight down. An invite is good for the uses and minutes the GM chose. One-off commands (`ssh … roll 2d10`) work only once you're at the table.
+
+### Coming back
+
+Once a table knows your key, the table's name alone finds it: `ssh first-fight@relay.example.net` seats you at the one open table of that name, or of that GM handle, that knows you. If two do, you get the lobby with both to pick from. If none does, the lobby says to use the full name.
+
 ### The lobby
 
-If your GM's table goes through a relay, you can come without the room's name: `ssh -p 2222 lobby@relay.example.net`, or a bare `ssh -p 2222 relay.example.net`, since ssh then sends your own username as the room. Either way you get the lobby, a centered stage under the supervillain title with a status bar across the top. If you've sat at a table there before with your key, it lists the tables open right now that know it on the left and shows the selected table's details and direct `ssh` command on the right:
+If your GM's table goes through a relay, you can come without the table's name: `ssh lobby@relay.example.net`, or a bare `ssh relay.example.net`. Either way you get the three-tab lobby (`Tab`, `Shift-Tab`, `F1`–`F3`, or `Alt+1`–`Alt+3` switch tabs):
+
+- **Tables**: lists the tables open right now that know your key on the left, with details on the right, plus a prompt to enter `<handle>/<table>` directly.
+- **Try a Table**: launches a private, in-memory Draw Steel sandbox table right over SSH with nothing installed and nothing saved.
+- **Create a Table**: lets future GMs claim a handle bound to their SSH key and get a copy-ready install and setup command for their own machine.
+
+On the **Tables** tab, if you've sat at a table before with your key, it looks like this:
 
 ```
 ┌───────────────────────────┬───────────────────────────┬──────────────────────────┐
 │ ◆ lobby · ssh tabletop    │ ● 2 open tables           │ xterm-ghostty · 100×30   │
 └───────────────────────────┴───────────────────────────┴──────────────────────────┘
 
-tables ───────────────────────      first-fight ────────────────────────────────────
- 1  first-fight           ● 3       ● 3 seated · open now
- 2  the-keep              ● 1
+tables ───────────────────────      ana/first-fight ────────────────────────────────
+ 1  ana/first-fight       ● 3       ● 3 seated · open now
+ 2  bo/the-keep           ● 1
                                      sit down   enter
 
-                                    direct    ssh first-fight@…
+                                    direct    ssh ana/first-fight@…
                                     key       ssh-ed25519 · no account
                                     SHA256:…
 
-> Enter sits at first-fight, or type another room
+> Enter sits at ana/first-fight, or type another table
 ────────────────────────────────────────────────────────────────────────────────────
                     ↑/↓ pick   1-2 jump   enter sit down   ctrl-c quit
 ```
 
-↑ and ↓ move the selection, or type a table's number; Enter sits you at it. You sit down exactly as if you had typed the room's name before the `@`. A table knows your key once you've done something there with it (set your name, rolled, chatted), and a GM can keep their table off the list with `--no-lobby`.
+↑ and ↓ move the selection, or type a table's number; Enter sits you at it, exactly as if you had typed its name before the `@`. A table knows your key once the GM has let you in (or you've done something there with it at a table whose door is open), and a GM can keep their table off the list with `--no-lobby`.
 
 The first time you come, or as a guest, there's nothing to list, so the right column shows your key's fingerprint and quick commands (`direct`, `host`, `rules`) instead:
 
@@ -54,25 +72,26 @@ tables ───────────────────────    
                                     SHA256:…
 Played tables appear here
 whenever their GM is live.          commands ───────────────────────────────────────
-                                    direct    ssh <room>@…
-Ask your GM for a room name.        host      supervillain host --room <name>
+                                    direct    ssh <handle>/<table>@…
+Ask your GM for the table's name.   host      supervillain host --handle <you> --relay
                                     rules     draw-steel · set.world · pf2e
 
-> type your table's room name
+> type your table's name
 ────────────────────────────────────────────────────────────────────────────────────
-                     a-z room name   enter sit down   ctrl-c quit
+                     a-z table name   enter sit down   ctrl-c quit
 ```
 
-Type the room's name your GM gave you and press Enter. That works with tables listed too, for one that isn't on your list. A name that isn't open is answered on the screen (`There's no table called dungeon here.`, or `The table first-fight isn't open right now.`), and after five of those the relay shows the join hint below and lets go.
+Type the table's full name your GM gave you (`ana/first-fight`) and press Enter. That works with tables listed too, for one that isn't on your list, and a bare table name picks it from your list. A name that isn't open is answered on the screen (`ana/first-fight isn't open right now.`, or `No open table called first-fight knows your key…`), and after five of those the relay shows the join hint below and lets go.
 
-Ctrl-C or Ctrl-D leaves, and after a minute without a key pressed the relay says goodbye. The `identity` section shows your key's fingerprint, the one thing the relay knows you by, or that you came as a guest (`ssh-keygen -t ed25519` makes a key). Asked with a command (`ssh -p 2222 lobby@relay.example.net help`), the relay has no screen to draw: it prints the list and the command to join one, or the join hint when there's nothing to list, and runs nothing.
+Ctrl-C or Ctrl-D leaves, and after a minute without a key pressed the relay says goodbye. The `identity` section shows your key's fingerprint, the one thing the relay knows you by, or that you came as a guest (`ssh-keygen -t ed25519` makes a key). Asked with a command (`ssh lobby@relay.example.net help`), the relay has no screen to draw: it prints the list and the command to join one, or the join hint when there's nothing to list, and runs nothing.
 
 If your GM's table goes through a relay, a few things can come back instead of the table:
 
-- `The table first-fight isn't open right now.` The GM's machine isn't linked. Try again once they say it's up.
-- The lobby, when you expected the table. No open table has the name before the `@`: check it with your GM, and type the right one there. Run with a command, where there's no screen, the relay says `There's no table called first-fight here.` and the join hint below.
-- `To join a table, put its room's name before the @ (ssh <room>@…). Your GM has it.` You ran a command without a room, so ssh sent your own username instead, and no open table knows your key (or you came as a guest); or you tried five names in the lobby and none was open.
-- `The table first-fight is full right now.` The room has all the players the relay carries for one table. Try again when someone leaves.
+- `ana/first-fight isn't open right now.` The GM's machine isn't linked, or no GM uses that name there. Check it with your GM, and try again once they say it's up.
+- `No open table called first-fight knows your key. Join with its full name, ssh <handle>/first-fight@… (your GM has it).` You typed a bare table name in the lobby, and no open table that knows your key has it.
+- `To join a table, put its name before the @ (ssh <handle>/<table>@…). Your GM has it.` You ran a command without a table, so ssh sent your own username instead, or you used the shorthand and no open table of that name knows your key yet (the relay says the same whether or not one is open); or you tried five names in the lobby and none was open. With a shorthand that works, the relay says `Joining ana/first-fight…` first.
+- `This table lets players in by knocking: connect interactively and wait for the GM.` A one-off command at a table that hasn't let you in. Connect without a command and knock.
+- `ana/first-fight is full right now.` The table has all the players the relay carries for one table. Try again when someone leaves.
 - `The table closed.` or `The GM closed the table.` The table went away while you were seated. Run the same command again when it's back; your name and hero are kept for your key.
 - `The relay is shutting down.` The relay is restarting, usually for an upgrade. Run the same command again in a moment.
 - `Connection reset by peer`, before anything else. Your address has as many connections open as the table or relay allows (8), or opened them too fast. Close the others or wait a minute.
@@ -198,6 +217,14 @@ Campaigns with `rules: pf2e` run open Remaster tactical combat under the ORC Lic
 
 See [docs/rulesets/pf2e.md](rulesets/pf2e.md) for the full command list.
 
+### At a `freeform` table
+
+Campaigns with `rules: freeform` give you the Campaign Stage, party strip, shared dice, and lightweight characters with custom stats, bounded resources, tags, and optional grid movement (`/pc`, `/stat`, `/tag`, `/check`, `/move`, `/next`). See [docs/rulesets/freeform.md](rulesets/freeform.md).
+
+## Bring an agent
+
+Once your SSH key is admitted at a table, you can connect Claude Code, Codex, Cursor, or T3 Code straight to your seat with zero install using `ssh -T <handle>/<table>@supervillain.sh -s mcp-1@supervillain.sh`. See [docs/AGENTS-SETUP.md](AGENTS-SETUP.md) for configs and copy-paste prompts.
+
 ## The map
 
 Squares are written as a column letter and a row number, like `c5`. Columns run `a` to `z` from the left, then `aa`, `ab` and so on. Row 1 is the top row. The letters are along the top of the map and the numbers down its side.
@@ -205,6 +232,8 @@ Squares are written as a column letter and a row number, like `c5`. Columns run 
 On the map, `·` is floor, a solid block is wall and `~` is difficult terrain. Tokens are marks: a hero's is a capital letter (`B` for Brann), a creature's a small one from the last word of its name (`c` for the Bandit Chief), with a digit when two would share a letter (`b1`, `b2`). In combat the band at the top shows each token's mark beside its name. A mark works in commands wherever a name does, and it's case-sensitive: `/dist B b`. When you're about to move, the squares you can reach are tinted and marked `•`, or `≈` on difficult terrain. A move costs 1 a square, diagonals too, and difficult terrain or an enemy's square costs 1 more. In combat you move only on your own turn, up to your speed over the whole turn.
 
 On a map bigger than your screen, the view follows whoever is acting. `/view f5` or `/view bandit-chief` centres it until the turn passes. `/view map` shows every panel and gives the map more room, `/view feed` shows every panel but the map, `/view both` shows them all sharing the screen, and `/view` (like Alt+2) switches the map on and off.
+
+Out of a fight, a campaign the GM has put on the stage shows it in the map's place: the scene, with a boxed read-aloud, the people, handouts and items on the table, the trackers and the last few lines of the recap. The party sits in the band's place, one line each; click someone for their sheet. When a fight starts your seat shows the band and the map, and when it ends it goes back to the stage. `/view board` looks at the map instead, and `/view stage` at the stage, just for your seat, until the next fight starts or ends. `/codex` opens the codex there: everything the GM has shown the table, a click away from being read, with Esc to close it.
 
 In a terminal that shows kitty graphics (Ghostty, kitty or WezTerm, not inside tmux), the map is drawn in MEKMODE's pixel pictures by default: each square bigger, each token a figure in its side's colour with its mark in the corner. Commands still take the same squares and marks; `/view text` switches to the text map, and `/view pictures` returns to pictures. Each move sends your seat a picture of about 5 to 10 kilobytes, against a couple for text, and on a HiDPI (Retina) screen, where the picture is painted at its finer pixels to stay sharp, about twice that; a change that leaves the map as it was sends none. Elsewhere the map stays text, since pictures there would come out as coloured blocks whose marks can't be read.
 

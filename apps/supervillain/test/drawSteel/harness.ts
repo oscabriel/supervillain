@@ -11,11 +11,11 @@ import {
 	feedLines,
 	GM,
 	plainText,
-	rules,
 	tableLabel,
 } from "@supervillain/domain";
 
 import { fold } from "../game/fold.ts";
+import { openRules as rules } from "../game/open.ts";
 
 export { GM };
 

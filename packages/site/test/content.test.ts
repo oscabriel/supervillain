@@ -32,6 +32,7 @@ const paths = new Set([
 	"/",
 	"/docs",
 	"/acknowledgments",
+	"/install",
 	...docs.map(({ slug }) => `/docs/${slug}`),
 ]);
 
@@ -47,8 +48,9 @@ const fieldOf = (page: (typeof docs)[number], field: string): string =>
 	});
 
 describe("the site's pages", () => {
-	test("are the four docs the site promises", () => {
+	test("are the five docs the site promises", () => {
 		expect(docs.map(({ slug }) => slug)).toStrictEqual([
+			"agents",
 			"architecture",
 			"hosting",
 			"playing",

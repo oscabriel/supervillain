@@ -150,7 +150,7 @@ export const connectClient = (
 
 					try {
 						if (request.kind === "subsystem") {
-							client.subsys(request.name, opened);
+							client.subsys(request.name, { env: { ...env } }, opened);
 						} else if (request.kind === "shell") {
 							client.shell(withSize(pty), { env: { ...env } }, opened);
 						} else {

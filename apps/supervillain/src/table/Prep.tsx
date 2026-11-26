@@ -13,10 +13,10 @@ import { boxClick, isLeftButton, wheel } from "./mouse.ts";
 import { fittedTitle } from "./panels.ts";
 import { Canvas, figureOf, SIDES, tileFor } from "./picture.ts";
 import { useCellPixels } from "./PictureMap.tsx";
-import { figureText } from "./prep.ts";
-import type { PrepArmed, PrepNext } from "./prep.ts";
+import { chipLabel, chipRows, figureText, stageEntries } from "./prep.ts";
+import type { PrepArmed, PrepNext, StageEntry } from "./prep.ts";
 import { color } from "./theme.ts";
-import type { PrepFigure, PrepItem, PrepView } from "./view.ts";
+import type { PrepFigure, PrepItem, PrepSection, PrepView } from "./view.ts";
 
 const TITLES = [" GM prep ", " prep "];
 
@@ -27,6 +27,15 @@ const READY = color.healthy;
 const PLAY = ["█▄  ", "███▄", "███▀", "█▀  "];
 
 const SLOT_ROWS = 4;
+
+const PROBLEMS_SHOWN = 4;
+
+const TIER_BADGE: Readonly<
+	Record<NonNullable<StageEntry["tier"]>, { text: string; fg: string }>
+> = {
+	"on-table": { text: "◆ table", fg: color.tierTable },
+	"in-codex": { text: "◇ codex", fg: color.tierCodex },
+};
 
 const left = (fn: (() => void) | undefined) => (event: MouseEvent) => {
 	if (fn === undefined || !isLeftButton(event) || event.defaultPrevented) {
@@ -89,6 +98,9 @@ export const Prep = (props: {
 	onSend: (line: string, then?: (refused: string | undefined) => void) => void;
 	onFill: (line: string) => void;
 	onAll: (lines: ReadonlyArray<string>) => void;
+	stage?: ReadonlyArray<PrepSection>;
+	sync?: PrepItem | undefined;
+	problems?: ReadonlyArray<string>;
 	onArm: (armed: PrepArmed | undefined) => void;
 	onCount: (item: PrepItem, by: 1 | -1) => void;
 	onStart: (line: string) => void;
@@ -228,6 +240,70 @@ export const Prep = (props: {
 			</text>
 		</box>
 	);
+
+	const sendItem = (item: PrepItem) => {
+		if (item.lines !== undefined) {
+			props.onAll(item.lines);
+		} else if (item.kind === "fill") {
+			props.onFill(item.line);
+		} else {
+			props.onSend(item.line);
+		}
+	};
+
+	const problems = () => props.problems ?? [];
+
+	const stageCard = (card: StageEntry) => {
+		const labels = card.items.map(chipLabel);
+		const badge = card.tier === undefined ? undefined : TIER_BADGE[card.tier];
+
+		const badgeWidth =
+			badge === undefined ? 0 : Bun.stringWidth(badge.text) + 1;
+
+		return (
+			<box flexDirection="column" flexShrink={0}>
+				<box flexDirection="row" height={1} flexShrink={0}>
+					<text
+						wrapMode="none"
+						fg={color.text}
+						flexGrow={1}
+						minWidth={0}
+						selectable={false}
+					>
+						{fitName(card.name, inner() - badgeWidth)}
+					</text>
+					<Show when={badge}>
+						{(b: Accessor<{ text: string; fg: string }>) => (
+							<text wrapMode="none" flexShrink={0} fg={b().fg}>
+								{` ${b().text}`}
+							</text>
+						)}
+					</Show>
+				</box>
+				<For each={chipRows(labels, inner())}>
+					{(row) => (
+						<box flexDirection="row" height={1} flexShrink={0}>
+							<For each={row}>
+								{(i) => {
+									const item = card.items[i];
+
+									return item === undefined
+										? undefined
+										: chip(
+												labels[i] ?? item.label,
+												() => {
+													sendItem(item);
+												},
+												item.lines === undefined ? color.bright : READY
+											);
+								}}
+							</For>
+						</box>
+					)}
+				</For>
+			</box>
+		);
+	};
 
 	const ready = () =>
 		props.next === undefined &&
@@ -383,6 +459,51 @@ export const Prep = (props: {
 				scrollAcceleration={wheel}
 				flexGrow={1}
 			>
+				<Show when={problems().length > 0}>
+					<text
+						fg={color.dying}
+						wrapMode="none"
+						flexShrink={0}
+						marginTop={1}
+						selectable={false}
+					>
+						{fit(
+							`⚠ ${problems().length === 1 ? "a file has a problem" : `${problems().length} file problems`}; the table keeps the last good files`,
+							inner()
+						)}
+					</text>
+					<For each={problems().slice(0, PROBLEMS_SHOWN)}>
+						{(problem) => (
+							<text fg={color.notice} wrapMode="word" flexShrink={0}>
+								{problem}
+							</text>
+						)}
+					</For>
+					<Show when={problems().length > PROBLEMS_SHOWN}>
+						<text fg={color.dim} wrapMode="none" flexShrink={0}>
+							{`+${problems().length - PROBLEMS_SHOWN} more · supervillain check lists them`}
+						</text>
+					</Show>
+				</Show>
+				<Show when={props.sync}>
+					{(sync: Accessor<PrepItem>) => (
+						<>
+							{heading("sheets changed")}
+							<text fg={color.dim} wrapMode="none" flexShrink={0}>
+								{fit(sync().label, inner())}
+							</text>
+							<box flexDirection="row" height={1} flexShrink={0}>
+								{chip(
+									"↻ sync",
+									() => {
+										sendItem(sync());
+									},
+									color.notice
+								)}
+							</box>
+						</>
+					)}
+				</Show>
 				<Show
 					when={showMaps()}
 					fallback={
@@ -506,11 +627,7 @@ export const Prep = (props: {
 										return (
 											<box flexDirection="row" height={1} flexShrink={0}>
 												{chip(`+ ${item.label}`, () => {
-													if (item.kind === "fill") {
-														props.onFill(item.line);
-													} else {
-														props.onSend(item.line);
-													}
+													sendItem(item);
 												})}
 											</box>
 										);
@@ -579,6 +696,17 @@ export const Prep = (props: {
 						</Show>
 					)}
 				</Index>
+
+				<For each={props.stage ?? []}>
+					{(section) => (
+						<Show when={section.items.length > 0}>
+							{heading(section.title)}
+							<For each={stageEntries(section.items)}>
+								{(found) => stageCard(found)}
+							</For>
+						</Show>
+					)}
+				</For>
 			</scrollbox>
 		</box>
 	);

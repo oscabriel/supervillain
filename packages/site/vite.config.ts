@@ -1,11 +1,31 @@
+import { readFile } from "node:fs/promises";
+
 import { markdown } from "@foldkit/markdown/vite";
 import { foldkit } from "@foldkit/vite-plugin";
-import type { ServerOptions } from "vite";
+import type { Plugin, ServerOptions } from "vite";
 import { defineConfig, loadEnv } from "vite";
 
 import { Frontmatter } from "./src/Frontmatter.ts";
 
 const FALLBACK = "supervillain.example.com";
+
+const INSTALLER = `${import.meta.dirname}/../../scripts/install.sh`;
+
+const installer = (): Plugin => ({
+	name: "supervillain-install",
+	apply: "build",
+	async generateBundle() {
+		if (this.environment.name !== "client") {
+			return;
+		}
+
+		this.emitFile({
+			type: "asset",
+			fileName: "install",
+			source: await readFile(INSTALLER, "utf-8"),
+		});
+	},
+});
 
 export default defineConfig(({ mode }) => {
 	const root = `${import.meta.dirname}/../..`;
@@ -37,6 +57,7 @@ export default defineConfig(({ mode }) => {
 				},
 			}),
 			markdown({ frontmatter: Frontmatter }),
+			installer(),
 		],
 		server,
 	};

@@ -10,7 +10,16 @@ This page covers installing the binary, starting a table, and the three ways pla
 
 ## Install
 
-Each release from v0.3.0 on has one self-contained executable per platform, plus `SHA256SUMS` (the releases up to v0.2.0 are the archived build, without these files):
+Install the latest release binary with checksum verification (fails closed on mismatch):
+
+```sh
+curl -fsSL https://supervillain.sh/install | sh
+supervillain
+```
+
+Running bare `supervillain` in a terminal opens the interactive local GM launcher: it scans `./` and `~/supervillain` for campaigns, provides a built-in New Table wizard, and links your table to `supervillain.sh` under your handle (pass `--local` to run locally without a relay).
+
+Each release also ships one self-contained executable per platform plus `SHA256SUMS` on GitHub Releases:
 
 | File | For |
 | --- | --- |
@@ -41,11 +50,19 @@ supervillain host ~/campaigns/first-fight
 
 `new --example` copies the sample campaign: four heroes, the bandits and the map for one fight. Without `--example` you get a `campaign.yaml` and empty `heroes/`, `monsters/` and `maps/` folders (only `maps/` with `--rules set-world`). The folder's README explains the file formats. `host` opens a campaign folder and refuses one that isn't there (`there's no campaign at …; make one with: supervillain new …`), and a folder with none of `campaign.yaml`, `events.jsonl`, `host_key`, `heroes/`, `monsters/` or `maps/` in it (`… isn't a campaign: …`), so a mistyped path never starts an empty table under a new host key, and your home folder never gets a log.
 
+`new <name> --open` (or `--claim sv-…`, which opens too) makes the folder under `SUPERVILLAIN_HOME` (else `~/supervillain`) and opens it on a relay at once: `--relay host:port`, else `SUPERVILLAIN_RELAY`, `gm.json`, then `supervillain.sh:7022`. `--handle` sets your handle and replaces the one `gm.json` holds. The handle, the table's name and the relay are checked before anything is written, so a bad one leaves neither a folder nor `gm.json` behind. Tables opened this way, or from the bare `supervillain` launcher, pin the relay's key in `<config>/supervillain/relay_known`, one file for all of them; the launcher's `--local` and `--relay` don't go together.
+
 `supervillain map crossing <campaign> --seed 7` (or `keep`) generates a map into `maps/` and says how to load it, and at the table `/map new crossing 7` does the same and loads it (see [Preparing a game](#preparing-a-game)); the campaign README has how maps work.
 
 ### What the campaign plays
 
-A campaign plays one ruleset, named in `campaign.yaml` at its root: `rules: draw-steel`, `rules: set-world`, or `rules: pf2e`. `new` writes it (`draw-steel` unless you pass `--rules set-world` or `--rules pf2e`), and a campaign without one plays Draw Steel. The host reads it when it starts and refuses a ruleset it doesn't know, or any other setting, naming the file. The ruleset decides which commands the table offers (`/help` and Tab show only those) and what the band, the map and `/sheet` show. Chat, names, dice and `/undo` are the same at every table. `--example` makes only a Draw Steel campaign, since that's what the sample is.
+A campaign plays one ruleset, declared in `table.md` frontmatter (or legacy `campaign.yaml`): `rules: draw-steel`, `rules: set-world`, `rules: pf2e`, or `rules: freeform`. `new` writes it (`draw-steel` unless you pass `--rules`), and a campaign without one plays Draw Steel. Naming `rules:` in both `table.md` and `campaign.yaml` is rejected.
+
+Campaign content uses typed Markdown (`.md` with Effect-Schema-validated YAML frontmatter) across `table.md`, `party/`, `npcs/`, `monsters/`, `scenes/`, `handouts/`, `items/`, `ancestries/`, `classes/`, and `abilities/`, alongside `maps/*.txt` (and backward-compatible `heroes/*.yaml` / `monsters/*.yaml`). Anything under `## GM Notes` (or `## Director's Notes`, `## DM Notes`, `## Secrets`, and HTML comments) is stripped automatically from every player view and never enters `events.jsonl`. Run `supervillain check <dir>` to validate all files, cross-references, and the log, or `supervillain schema <dir>` to emit JSON Schemas for editors and agents. While a table runs, `ContentWatch` hot-reloads valid edits cleanly and never crashes on broken edits.
+
+For `rules: freeform` (lightweight narrative and custom-stat tables), see [docs/rulesets/freeform.md](rulesets/freeform.md).
+
+While your table is running, it also opens a private `0600` local agent socket (`mcp.sock`) so you can connect an AI co-GM via `supervillain mcp <campaign-dir>` (or remote GMs via `gm_keys`). See [docs/AGENTS-SETUP.md](AGENTS-SETUP.md).
 
 **set.world** ([set.world](https://set.world)) rolls characters from a seed over its free API: a class with its flavor, a weapon, nine stats, the attributes the fight reads and named gear. A set.world campaign has no sheets to write, only `maps/`:
 
@@ -95,11 +112,14 @@ If the port is taken, by another table say, `host` says so and stops: `port 2222
 | --- | --- |
 | `--port 2222` | The port players connect to, 0 to 65535. `0` picks a free one |
 | `--bind 127.0.0.1` | The IP address to listen on, or `localhost`. The default lets in only this machine and tunnels running on it; `0.0.0.0` listens on every network |
-| `--room <name>` | The room's name, which players type before the `@`. It defaults to the campaign folder's name |
+| `--table <name>` | The table's name, which players type after your handle on a relay. It defaults to the campaign folder's name; `--room` still works |
+| `--door knock\|open` | Whether newcomers knock (the default for a new table) or sit straight down; it's kept in the log, like `/door`. See [Letting players in](#letting-players-in) |
+| `--handle <you>` | Your GM handle on a relay: players join with `ssh <handle>/<table>@…`. Needed with `--relay` |
+| `--claim sv-…` | A claim code that adds this machine to a handle another of your machines holds; see [Handles](#handles) |
 | `--headless` | Runs without the GM's seat, with logs on stdout. Nobody has GM powers, so this is for trying a server, not for running a game |
 | `--relay host[:7022]` | Also take players through a relay; see [3. The relay](#3-the-relay-on-a-small-vps) |
 | `--relay-key SHA256:…` | The relay key to trust, instead of the one in `relay_known` |
-| `--relay-player-port 2222` | The relay's player port, for the join command you're shown |
+| `--relay-player-port 22` | The relay's player port, for the join command you're shown |
 | `--relay-host-key SHA256:…` | The relay's host key, shown with that join command so you can pass it on to players |
 | `--no-lobby` | Keeps the table off the relay's lobby; see [The lobby](#the-lobby) |
 
@@ -114,6 +134,14 @@ The campaign folder is yours alone (mode 700). Beside `campaign.yaml` and what y
 The host refuses a `host_key` other users can read (`chmod 600` it). Players are capped so one stranger can't take the table down: 8 connections and 16 sessions from one address, 64 of each in all, 20 new sessions from one address and then 1 a second, 20 seconds to log in, and a few lines a second per player. A connection that stops reading, leaving more than 4 MiB waiting, or rekeys over and over, is cut, and the host's log says so.
 
 `supervillain check ~/campaigns/first-fight` reads a log without opening the table: a summary, skipped events, the feed and the final state.
+
+### Letting players in
+
+A new table's door is set to knock. Someone who connects for the first time doesn't see the table: they see its door, pick the name the table should call them (checked like `/name`), and knock. The top of your seat then shows the oldest knock with the start of the knocker's key fingerprint, `⚑ Ana (ab12cd34) knocks · [Admit] [Deny]`, and how many more wait. Click a button, press Alt+Y or Alt+N, or type `/admit Ana` or `/deny Ana` (Tab completes who is knocking; the fingerprint's first characters name them too). Let in, they sit down at once and the feed says `Ana joins the table.`. Turned away, they're told so, and neither their key nor their address can knock again for 10 minutes; through a relay, the relay tells your host which knocks share an address without saying what it is, so a new key or a guest from the same place waits too. A knock nobody answers ends after 10 minutes, someone who sits at the door for 2 minutes without knocking is sent off, and a host holds 16 knocks at most, one a key and three an address. If two knockers pick the same name, `/admit` and `/deny` say so and list their fingerprints' starts, so name one by its fingerprint. Knocks are never written to the log; who you let in, and as what name, is.
+
+From then on a player's key comes straight in. `/kick Ana` removes them: their seat closes and they must knock to come back, even with an invite. `/door open` seats anyone who connects, as tables did before knocking, and `/door knock` sets it back, closing the seats of anyone it let in who never played; `--door` on `host` does the same at start. A campaign from before knocking keeps everyone who already played at it.
+
+`/invite [uses] [minutes]` makes an invite for players you'd rather not wait on: 1 use and 60 minutes unless you say, up to 32 uses and a day. Your seat shows the join command with the token after a `~` (`ssh ana/first-fight~5k2q…@table.example.com`); whoever joins with it names themself at the door and sits straight down. A use counts only once they're in. Invites live only in your host's memory, so they end when it stops. One-off commands (`ssh … roll 2d10`) work only for players already let in; a stranger's is refused on stderr.
 
 ## Preparing a game
 
@@ -179,11 +207,11 @@ Through a tunnel every player arrives from the tunnel's address. The host limits
 
 ## 3. The relay on a small VPS
 
-The relay gives your table a permanent address, `ssh -p 2222 <room>@table.example.com`. You don't open a port at home, and your machine can be anywhere. Your host dials out to the relay. The relay takes players' SSH connections and passes each one down that link to your machine. Your machine still renders every screen and keeps the log.
+The relay gives your table a permanent address, `ssh <handle>/<table>@table.example.com`. You don't open a port at home, and your machine can be anywhere. Your host dials out to the relay. The relay takes players' SSH connections and passes each one down that link to your machine. Your machine still renders every screen and keeps the log.
 
-One relay serves any number of rooms. Each room is held by the GM host key that first linked it.
+One relay serves any number of GMs and tables. Each GM has a handle, held by their GM key (`~/.config/supervillain/gm_key`, or under `$XDG_CONFIG_HOME`), so one GM's tables share one name (`ana/first-fight`, `ana/the-keep`), and two GMs can each have a `den`.
 
-**What the relay sees, and what it can do.** Players' SSH ends at the relay, and the relay passes their sessions to your machine over its own link. So the relay sees every keystroke and every frame of play in the clear, though it keeps none of it. And it vouches for every player it brings: your host takes the relay's word for which key each relayed player holds, and the relay makes up guests too. A relay you've pinned can't be spoofed by anyone else, but whoever runs it, or breaks into it, can read your table and seat anyone as anyone at every room linked to it. Run your own relay, or use one run by someone you trust as much as your players. (A relay that only forwarded TCP, as `ssh -J` does, would keep players' SSH end to end with your machine. That's not built yet.)
+**What the relay sees, and what it can do.** Players' SSH ends at the relay, and the relay passes their sessions to your machine over its own link. So the relay sees every keystroke and every frame of play in the clear, though it keeps none of it. And it vouches for every player it brings: your host takes the relay's word for which key each relayed player holds, and the relay makes up guests too. A relay you've pinned can't be spoofed by anyone else, but whoever runs it, or breaks into it, can read your table and seat anyone as anyone at every table linked to it. Run your own relay, or use one run by someone you trust as much as your players. (A relay that only forwarded TCP, as `ssh -J` does, would keep players' SSH end to end with your machine. That's not built yet.)
 
 **Trying it on one machine.** The relay and the host both default to port 2222, so run the host with `--port 2300` (or the relay with `--player-port`), and point the host at `--relay 127.0.0.1`. If you joined a table directly on `127.0.0.1:2222` before, players' ssh will warn that the key there changed: it's the relay's now.
 
@@ -234,23 +262,25 @@ sudo systemctl enable --now supervillain-relay
 journalctl -u supervillain-relay -n 20
 ```
 
+A relay GMs dial at an address other than `supervillain.sh:7022` should say so with `--public-relay host:port`, so the lobby's Create a Table command carries `--relay host:port` for them.
+
 When it starts, the relay prints where to reach it and its two keys:
 
 ```
-supervillain relay: keeping its keys and rooms in /var/lib/supervillain-relay
-players join with: ssh -p 2222 <room>@<this host>
-GMs dial 0.0.0.0:7022 (supervillain host --relay <this host>:7022)
+supervillain relay: keeping its keys and handles in /var/lib/supervillain-relay
+players join with: ssh -p 2222 <handle>/<table>@<this host>
+GMs dial 0.0.0.0:7022 (supervillain host --handle <you> --relay <this host>:7022)
 relay key SHA256:qvkXv/0oq8giV0/7z4dtuBdvLT5onmKPQztKIMFOEtQ
   GMs pin it with: --relay-key SHA256:qvkXv/0oq8giV0/7z4dtuBdvLT5onmKPQztKIMFOEtQ
 host key SHA256:eaIkljiTdK8kbQz3HpTcvu1vxAfazjOz5/vcRD4fDWA (what players' ssh sees)
-a room's claim lapses after 180 days with no GM linked
+a handle's claim lapses after 180 days with no GM linked
 ```
 
-The relay key is what GMs' hosts pin. The host key is what players' ssh shows them the first time. `/var/lib/supervillain-relay` holds both keys (`relay_key`, `host_key`) and `rooms.json`, and nothing else: the relay keeps no logs of play and renders nothing. Back the folder up. If the keys are lost, every GM's host and every player's ssh will see a new relay. Without `--dir`, the relay keeps its files in `~/.supervillain-relay`.
+The relay key is what GMs' hosts pin. The host key is what players' ssh shows them the first time. `/var/lib/supervillain-relay` holds both keys (`relay_key`, `host_key`) and `handles.json`, and nothing else: the relay keeps no logs of play and renders nothing. Back the folder up. If the keys are lost, every GM's host and every player's ssh will see a new relay. Without `--dir`, the relay keeps its files in `~/.supervillain-relay`.
 
-The relay limits each player address to 8 connections and 8 sessions, with a rate on new connections and sessions; each room to 32 players' sessions at once (`The table first-fight is full right now.`); each GM address to 8 links; and the GMs linked at once to 256. An IPv6 address counts by its /64, which one person usually holds whole. A player over a connection limit sees `Connection reset by peer`, and the journal says `refused a connection from <address>: …` (a few times a minute at most for one address); over a session limit, ssh says `channel 0: open failed`.
+The relay limits each player address to 8 connections and 8 sessions, with a rate on new connections and sessions; each table to 32 players' sessions at once (`ana/first-fight is full right now.`); each GM address to 8 links; and the GMs linked at once to 256. An IPv6 address counts by its /64, which one person usually holds whole. A player over a connection limit sees `Connection reset by peer`, and the journal says `refused a connection from <address>: …` (a few times a minute at most for one address); over a session limit, ssh says `channel 0: open failed`.
 
-The relay refuses to start if group or others can write to its folder, since whoever can write `rooms.json` can take any room: `chmod 700` it.
+The relay refuses to start if group or others can write to its folder, since whoever can write `handles.json` can take any handle: `chmod 700` it. A relay upgraded from protocol 1 renames its old `rooms.json` to `rooms.json.legacy` on start and says so; GMs claim handles afresh.
 
 ### Firewall
 
@@ -265,14 +295,14 @@ sudo ufw enable
 
 Open the same ports in your provider's firewall too, if it has one.
 
-To let players type `ssh <room>@table.example.com` without `-p`, the player port must be 22. That means first moving the VPS's own sshd to another port (and allowing that port), then running the relay with `--player-port 22`, and in the unit `AmbientCapabilities=CAP_NET_BIND_SERVICE` with `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`. GMs then pass `--relay-player-port 22` to their hosts, so the join command they're shown has no `-p`. Leave it on 2222 until you're sure of the rest. On port 22, someone who types a bare `ssh table.example.com` arrives with their own username, and scanners try `root` and the like all day: the relay keeps names like those (`root`, `admin`, `ubuntu`, `pi`, `git`, `lobby`, `help` and others) from ever being a room, and answers them with [the lobby](#the-lobby), or with how to join when they bring no terminal to draw it in.
+To let players type `ssh <handle>/<table>@table.example.com` without `-p`, the player port must be 22. That means first moving the VPS's own sshd to another port (and allowing that port), then running the relay with `--player-port 22`, and in the unit `AmbientCapabilities=CAP_NET_BIND_SERVICE` with `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`. A host assumes port 22 for the join command it shows; GMs on a relay that stays on 2222 pass `--relay-player-port 2222`. Leave the relay on 2222 until you're sure of the rest. On port 22, someone who types a bare `ssh table.example.com` arrives with their own username, and scanners try `root` and the like all day: the relay keeps names like those (`root`, `admin`, `ubuntu`, `pi`, `git`, `lobby`, `help` and others) from ever being a handle or a shorthand, and answers them with [the lobby](#the-lobby), or with how to join when they bring no terminal to draw it in.
 
 ### Pin the relay's key
 
 The relay has its own key, which it presents to GMs' hosts. Its fingerprint is in the journal when it starts (`relay key SHA256:…`). A host trusts players' identities only from a relay with that key, so a spoofed relay can't seat anyone as anyone. The relay you pin can: see [what the relay sees](#3-the-relay-on-a-small-vps).
 
 ```sh
-supervillain host ~/campaigns/first-fight --room first-fight \
+supervillain host ~/campaigns/first-fight --handle ana --table first-fight \
   --relay table.example.com --relay-key SHA256:<the relay's key fingerprint>
 ```
 
@@ -280,62 +310,63 @@ supervillain host ~/campaigns/first-fight --room first-fight \
 
 A relay that shows a different key is refused, loudly: your band says `relay refused: its key … doesn't match …`, and the host stops dialing it. If the relay's key really changed (its folder was lost), check the new fingerprint with whoever runs it, put it in `relay_known` (or pass the new `--relay-key`), and the host links again within a few seconds. `relay_known` takes one fingerprint a line, and `#` starts a comment: a relay that is moving to a new key can tell its GMs ahead, and a host with both lines links with either.
 
-While the link isn't up, the header at the top of your seat says so beside the room, whatever else is on screen: `relay: connecting…`, `relay: down, redialing`, `relay: refused, redialing`, or `relay: refused, see host.log`. The band below it says more while you sit alone: `players join with: ssh -p 2222 first-fight@table.example.com` once it's up, `relay: connecting…` with the last error while it isn't, and `relay refused: …` if the relay turned the room down (saying why: `this address claims rooms too fast`, `the relay holds its most rooms`, `the relay has its most GMs linked`) or its key was wrong. A refused host redials with the same backoff. If the link drops, the host redials on its own, waiting 1 second, then 2, 4 and so on up to 30; the wait starts over once a link has held for a second. If a link drops within a second of login, the band says `relay: connecting… (the link dropped within a second of login; if it keeps on, the relay's log says why)`: a relay that lets the host in and then can't keep the room does this, so ask whoever runs it. The join command assumes the relay's player port is 2222; if it isn't, tell the host with `--relay-player-port`.
+While the link isn't up, the header at the top of your seat says so beside the table's name, whatever else is on screen: `relay: connecting…`, `relay: down, redialing`, `relay: refused, redialing`, or `relay: refused, see host.log`. The band below it says more while you sit alone: `players join with: ssh ana/first-fight@table.example.com` once it's up, `relay: connecting…` with the last error while it isn't, and `relay refused: …` if the relay turned the table down (saying why: `this address claims handles too fast`, `the relay holds its most handles`, `the handle ana has 8 tables open already`, `the relay has its most GMs linked`, or `this relay speaks protocol 2 …` to a host that needs upgrading) or its key was wrong. A refused host redials with the same backoff. If the link drops, the host redials on its own, waiting 1 second, then 2, 4 and so on up to 30; the wait starts over once a link has held for a second. If a link drops within a second of login, the band says `relay: connecting… (the link dropped within a second of login; if it keeps on, the relay's log says why)`: a relay that lets the host in and then can't give it the handle does this, so ask whoever runs it. The join command assumes the relay's player port is 22; if it isn't, tell the host with `--relay-player-port`.
 
-The host still listens on `--port` and `--bind` as before, so local players can connect directly while remote ones come through the relay. Room names on a relay are 1 to 32 characters of `a-z`, `0-9` and `-`, starting with a letter, and not one of the names the relay keeps (`root`, `admin`, `ubuntu`, `pi`, `git`, `lobby`, `help` and the like; the host says so). Pass `--room` if your folder's name doesn't fit.
+The host still listens on `--port` and `--bind` as before, so local players can connect directly while remote ones come through the relay; direct players still see the campaign's own `host_key`, and the relay sees your GM key. Handles are 1 to 24 characters of `a-z`, `0-9` and `-`, starting with a letter, and not one of the names the relay keeps (`root`, `admin`, `ubuntu`, `pi`, `git`, `lobby`, `help` and the like); table names are the same, 1 to 32 long. The host says which doesn't fit; pass `--table` if your folder's name doesn't.
 
-Players run `ssh -p 2222 first-fight@table.example.com`. The first time, ssh shows them the relay's host key, not your table's, so give them the relay's fingerprint (`host key SHA256:… (what players' ssh sees)` in its journal). Pass it to your host with `--relay-host-key` and it's printed with the join command, in your `/help` and in `host.log`; without it, the host says to ask whoever runs the relay. Your table's own host key is for players who connect directly, and all three say so. If your machine is off, they're told `The table first-fight isn't open right now.` A room nobody has linked gets them [the lobby](#the-lobby), where they can type the right name. If your host stops or its link drops while they're seated, they're told `The GM closed the table.` or `The table closed.`, and can connect again once your host is back.
+Players run `ssh ana/first-fight@table.example.com` (or `ana.first-fight`), and knock the first time. Once you've let them in, `ssh first-fight@table.example.com` is enough: the relay asks only the open tables called `first-fight`, and seats a player at the one that knows their key. The first time, ssh shows them the relay's host key, not your table's, so give them the relay's fingerprint (`host key SHA256:… (what players' ssh sees)` in its journal). Pass it to your host with `--relay-host-key` and it's printed with the join command, in your `/help` and in `host.log`; without it, the host says to ask whoever runs the relay. Your table's own host key is for players who connect directly, and all three say so. If your machine is off, they're told `ana/first-fight isn't open right now.`, in [the lobby](#the-lobby) when they have a terminal, where they can type the right name. If your host stops or its link drops while they're seated, they're told `The GM closed the table.` or `The table closed.`, and can connect again once your host is back.
 
 ### The lobby
 
-A player who connects to the relay without an open room (`ssh -p 2222 lobby@table.example.com`, or a bare `ssh` whose username names no table) gets the lobby: a centered stage under the supervillain title with a status bar, a `tables` column on the left, and selected-table details or `identity` + `commands` on the right. From it they sit down exactly as if they had typed a room before the `@`.
+A player who connects to the relay without naming an open table (`ssh lobby@table.example.com`, or a bare `ssh` whose username names no table) gets the lobby: a centered stage under the supervillain title with a status bar, a `tables` column on the left, and selected-table details or `identity` + `commands` on the right. From it they sit down exactly as if they had typed the table's name before the `@`.
 
-A returning player is shown the open tables that know their key, and picks one with the arrows or its number. For that, the relay asks every host linked now, over its link, whether it knows the player's key. Your host says yes if the key has an event in your log (it has sat at your table and done something there) or has a seat open now, and adds how many are seated. A host that doesn't answer within 2 seconds counts as no.
+A returning player is shown the open tables that know their key, and picks one with the arrows or its number. For that, the relay asks every host linked now, over its link, whether it knows the player's key. Your host says yes only for a member: a key you let in, or one with an event in your log you haven't removed, or (with the door open) one seated now. It adds how many are seated. A stranger or someone still knocking is never listed. A host that doesn't answer within 2 seconds counts as no.
 
-A first-timer or a guest is shown no list: a key no open table knows, and a guest, for whom the relay asks nobody, see how to sit down instead. They type the room's name and press Enter. A returning player can type a name too, for a table that isn't on their list. A name that isn't open is answered on the screen (`There's no table called dungeon here.`, or `The table first-fight isn't open right now.` for a claimed room with no GM linked), and after five of those the relay prints the join hint and ends the session. So does a minute without a key pressed.
+A first-timer or a guest is shown no list: a key no open table knows, and a guest, for whom the relay asks nobody, see how to sit down instead. They type the table's full name and press Enter. A returning player can type a name too, for a table that isn't on their list, and a bare table name picks it from their list. A name that isn't open is answered on the screen (`ana/first-fight isn't open right now.`, or `No open table called first-fight knows your key…`), and after five of those the relay prints the join hint and ends the session. So does a minute without a key pressed.
 
 Without a terminal (a command, or `ssh -T`) there's no screen to draw: the relay prints the list with how to join, or the join hint when there's nothing to list.
 
 What it reveals:
 
-- To a player: the room name and how many are seated, for tables that are open now and already know their key. A table that doesn't know them is never named. A name they type is answered as `ssh <room>@` answers it (open, claimed but closed, or unknown), five names to a session.
+- To a player: the table's address and how many are seated, for tables that are open now and already know their key. A table that doesn't know them is never named, and the shorthand asks only tables of the name they typed. A name they type is answered as `ssh <handle>/<table>@` answers it (open or not), five names to a session.
 - To every linked host: that someone looked, and when. The relay never sends the key: it sends a fresh random nonce and a MAC of the key under it, which a host can only check against keys it already has. Your host checks the keys in its log, so it learns which of its own players looked (`lobby: the relay listed this table for key:SHA256:…` in `host.log`) and nothing about anyone else. A host changed to check a list of public keys gathered elsewhere (GitHub publishes everyone's) could tell whether one of those looked.
-- To the relay: which tables know which keys. It already sees every player's key and room as it seats them.
+- To the relay: which tables know which keys. It already sees every player's key and table as it seats them.
 
-So a player you'd rather not see again learns your table is open, and its room name if you changed it. To keep your table off the list, start the host with `--no-lobby`: it then answers every question no, and players must type the room's name. The host says which it is when it starts (`its lobby lists this table …` or `its lobby never lists this table`). A host from before the lobby refuses the question, which the relay takes as no.
+So a player you've let in learns your table is open, and its name if you changed it; `/kick` takes them off. To keep your table off the list, start the host with `--no-lobby`: it then answers every question no, and players must type the table's full name. The host says which it is when it starts (`its lobby lists this table …` or `its lobby never lists this table`). A host from before the lobby refuses the question, which the relay takes as no.
 
 Without a relay, the username doesn't matter: a host serves one table, so `ssh -p 2222 table.example.com` with any name sits down at it.
 
-### Room claims
+### Handles
 
-A claim is the relay's record that a room belongs to one GM's host key (the campaign's `host_key`). The first host to link a room claims it, and the relay writes the claim to `rooms.json`: the room, the host key's fingerprint and when a GM was last linked to it.
+A handle is the relay's record that a name belongs to one GM's keys. The first host to link a table under a handle claims it with its GM key, and the relay writes the claim to `handles.json`: the keys that hold it, when it was claimed, and when a table under it was last seen.
 
 ```json
 {
-  "first-fight": {
-    "key": "SHA256:WwzfvSCl3H6phF79dwAJgz3vuWlNTCJptC8mHSKc24I",
-    "linked": "2026-10-21T19:04:11.000Z"
+  "ana": {
+    "keys": ["SHA256:WwzfvSCl3H6phF79dwAJgz3vuWlNTCJptC8mHSKc24I"],
+    "claimed": "2026-10-21T19:04:11.000Z",
+    "seen": "2026-11-21T22:40:02.000Z"
   }
 }
 ```
 
-After that, the relay refuses that room to any other host key, so nobody else can take your room while you're away. A refused host keeps redialing, and its band shows `relay: connecting… (the link closed before the relay logged in; if this keeps up, another GM's host key may hold room first-fight there)`. The relay's journal names the host key it refused.
+After that, the relay refuses that handle to any other key, so nobody else can open a table under your name. A refused host keeps redialing, and its band shows `relay: connecting… (the link closed before the relay logged in; if this keeps up, another GM's key may hold the handle ana there …)`. The relay's journal names the key it refused. One handle opens 8 tables at once.
 
-The relay renews a claim's time whenever its GM links and again when the link ends, so a room in use never lapses. A claim no GM has linked for 180 days lapses: the next host key to link the room claims it, and the journal says `room first-fight: dropped the claim of GM host key SHA256:…, last linked …`. The 180 is long enough that a group meeting monthly, or taking a season off, keeps its room's name; change it with `--claim-days` on `supervillain relay`. A GM who comes back with the same host key after the claim has lapsed keeps the room, unless someone else claimed it first.
+Your GM key lives on one machine. To host from another, you need a claim code, which the relay mints only for a key that already holds the handle: an `sv-` code good once, for 15 minutes. Start the other machine's host with `--claim sv-…` and the relay adds its GM key to the handle (4 keys at most). The code never crosses the wire: the host sends an HMAC-SHA256 of its own GM key's fingerprint keyed by the code, so someone watching the link can't use what they see with another key. The code is spent only once the key is added, so a handle that already holds 4 keys refuses the claim and leaves the code good. A key holds 3 live codes at most, and an address that guesses wrong codes is slowed.
 
-A GM who moves to a new machine without copying the campaign folder, or who loses `host_key`, needs the claim released sooner. On the VPS:
+The relay renews a handle's time whenever one of its tables links and again when the link ends, so a handle in use never lapses. A handle with no table seen for 180 days lapses (30 days if it never linked a table at all): the next key to link under it claims it, and the journal says `handle ana: dropped the claim of GM keys SHA256:…, last seen …`. Change the 180 with `--claim-days` on `supervillain relay`.
+
+A GM who loses every machine's `gm_key` needs the handle released. On the VPS:
 
 ```sh
-sudo -u supervillain supervillain relay forget first-fight --dir /var/lib/supervillain-relay
+sudo -u supervillain supervillain relay forget ana --dir /var/lib/supervillain-relay
 ```
 
-Run it as the relay's user, so `rooms.json` stays the relay's to read.
+Run it as the relay's user, so `handles.json` stays the relay's to read. The next GM to link a table under `ana` claims it; tables linked now stay open until they drop. A running relay picks this up without a restart.
 
-The next host to link `first-fight` claims it, and replaces the host linked now, if there is one. A running relay picks this up without a restart.
+Claiming a handle costs nothing but a link, so someone could claim a name you're likely to use before you do. If a handle you want is taken, pick another with `--handle`, or ask whoever runs the relay. To slow squatting, one address claims 3 new handles, then one an hour. Only a claim made counts: a link whose login fails (a GM's host that doesn't trust the relay's key yet, say) costs nothing. An IPv6 address counts by its /64, and each /48 also claims at most 10, then 4 an hour, however many /64s it uses. Linking another table under a handle you hold claims nothing. A refused claim shows in the journal as `handle ana: refused: 203.0.113.7 claims handles too fast`.
 
-Claiming a room costs nothing but a link, so someone could claim a name you're likely to use before you do; the room's name defaults to your campaign folder's. If a room you want is taken, pick another with `--room`, or ask whoever runs the relay. To slow squatting, one address claims 3 new rooms, then one an hour. Only a claim made counts: a link whose login fails (a GM's host that doesn't trust the relay's key yet, say) costs nothing. An IPv6 address counts by its /64, and each /48 also claims at most 10, then 4 an hour, however many /64s it uses. Relinking a room you hold claims nothing. A refused claim shows in the journal as `room first-fight: refused: 203.0.113.7 claims rooms too fast`.
-
-The relay holds at most 1024 claims. When it's full, a new claim drops the claim whose GM linked longest ago, and the journal says which, ending `to make room for <room>`. A claim with a GM linked now is never dropped. If every claim has a GM linked, the new one is refused: `room first-fight: refused: the relay holds its most rooms (1024), each with a GM linked now`.
+The relay holds at most 4096 handles. A new claim first drops every lapsed handle, and the journal says which, ending `to make room for <handle>`. A handle that hasn't lapsed is never dropped to make room: if the relay still holds 4096, the new one is refused with `handle ana: refused: the relay holds its most handles (4096), none lapsed`, and the GM is told `the relay holds its most handles; try again later`.
 
 ### Upgrading
 

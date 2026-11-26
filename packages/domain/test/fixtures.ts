@@ -8,7 +8,10 @@ import {
 	playerActor,
 } from "../src/Actor.context.ts";
 import { diceOf, Entropy } from "../src/Entropy.context.ts";
+import { DoorSet } from "../src/events/core.ts";
+import type { StageCard } from "../src/rules/core/stage.ts";
 import type { HeroSheet, StatBlock } from "../src/rules/drawSteel/sheets.ts";
+import type { FfSheet } from "../src/rules/freeform/schema.ts";
 import type { PfSheet } from "../src/rules/pf2e/sheets.ts";
 import type { SetCharacter } from "../src/rules/setWorld/state.ts";
 import { Supervillain } from "../src/Supervillain.model.ts";
@@ -445,4 +448,28 @@ export const OPEN = {
 export const BOG = {
 	name: "Bog",
 	terrain: ["..~~......", "..~~......", "..........", ".....#...."],
+};
+
+export const openDoor = Story.given(
+	table,
+	new DoorSet({ actor: GM, door: "open" })
+);
+
+export const ROOK: FfSheet = {
+	id: "rook",
+	name: "Rook",
+	pronouns: "she/her",
+	concept: "Disgraced duelist",
+	stats: { might: 1, wits: 2 },
+	resources: { hp: 10 },
+	tags: ["brave"],
+	notes: [{ kind: "para", text: "Owes the Gilded Hand a debt." }],
+};
+
+export const MARA_CARD: StageCard = {
+	key: "npc:mara",
+	kind: "npc",
+	title: "Mara Venn",
+	subtitle: "Harbour-master",
+	body: [{ kind: "para", text: "A weathered woman with a ledger." }],
 };

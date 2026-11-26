@@ -12,7 +12,7 @@ import {
 } from "./Route.ts";
 
 const ABOUT =
-	"supervillain is a terminal-first virtual tabletop. Players type one ssh command and sit at a live tactical board, with nothing to install and no account to make.";
+	"supervillain is a terminal-first virtual tabletop. Players type one ssh command to join a live campaign stage and tactical board, with nothing to install, no accounts, and MCP support for agents.";
 
 const FONTS =
 	"https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap";

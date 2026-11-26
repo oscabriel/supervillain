@@ -1,4 +1,6 @@
 import type { TokenAction } from "../../actions.ts";
+import { playerOf } from "../../party.ts";
+import type { EncounterSpec, PartyMember } from "../../party.ts";
 import { partyFirst, prepMaps, prepSteps } from "../../prep.ts";
 import type { PrepCatalog, PrepItem, PrepToken, PrepView } from "../../prep.ts";
 import {
@@ -537,3 +539,45 @@ export const drawSteelPrep = (
 			: { line: "/start" },
 	};
 };
+
+export const dsParty = (
+	slice: DrawSteelState,
+	actor: string,
+	label: (actor: string) => string
+): ReadonlyArray<PartyMember> =>
+	slice.heroes.map((hero): PartyMember => {
+		const health = heroHealth(hero);
+
+		return {
+			id: hero.id,
+			name: hero.sheet.name,
+			...playerOf(hero.player, actor, label),
+			mine: hero.player === actor,
+			free: hero.player === undefined,
+			down: health === "dying" || health === "dead",
+			health: {
+				label: "stamina",
+				value: hero.stamina,
+				max: hero.sheet.stamina,
+			},
+			summary: `${hero.sheet.class} ${hero.sheet.level} · recoveries ${hero.recoveries}/${hero.sheet.recoveries} · victories ${hero.victories}`,
+			tags: hero.conditions.map((c) => c.name),
+		};
+	});
+
+export const dsFightLines = (
+	encounter: EncounterSpec
+): ReadonlyArray<string> => [
+	...listIfDefined(encounter.map, (id) => [`/map ${id}`]),
+	...encounter.monsters.map((m) =>
+		(m.count ?? 1) === 1 ? `/add ${m.id}` : `/add ${m.id} x${m.count ?? 1}`
+	),
+];
+
+export const dsResyncLines = (
+	slice: DrawSteelState,
+	changed: ReadonlyArray<string>
+): ReadonlyArray<string> =>
+	slice.heroes
+		.filter((h) => changed.includes(h.id))
+		.map((h) => `/hero ${h.id}`);

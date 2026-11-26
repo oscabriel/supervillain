@@ -4,7 +4,7 @@ import { bandOf, feedLines, plainText, tableLabel } from "@supervillain/domain";
 import { Effect, Schema } from "effect";
 
 import { must } from "../game/must.ts";
-import { sampleCampaign } from "../host/campaign.ts";
+import { openSampleCampaign } from "../host/campaign.ts";
 import { effect } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
 import { asGm, asPlayer, hostTable, logOf } from "./hosted.ts";
@@ -47,7 +47,7 @@ describe("a short Draw Steel encounter over real ssh", () => {
 		"the GM sets up from the sample campaign, players act over exec, and a restart replays it",
 		() =>
 			Effect.gen(function* () {
-				const dir = yield* sampleCampaign;
+				const dir = yield* openSampleCampaign;
 				const keys = yield* tempDir;
 				const alice = yield* clientKey(keys, "alice");
 				const bob = yield* clientKey(keys, "bob");

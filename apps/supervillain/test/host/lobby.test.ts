@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
-import { Effect, Layer, Logger } from "effect";
+import { Context, Effect, Layer, Logger } from "effect";
 
+import { Knocks } from "../../src/host/Knocks.ts";
+import { runLine } from "../../src/host/line.ts";
 import { answerKnows } from "../../src/host/lobby.ts";
 import { tableServices } from "../../src/host/services.ts";
 import { TableServer } from "../../src/host/TableServer.ts";
 import { JOIN_HINT, knowsQueryLine } from "../../src/relay/protocol.ts";
 import { startRelay } from "../relay/harness.ts";
 import { clientKey, sshExec, sshShell } from "../relay/openssh.ts";
+import { openCampaign } from "./campaign.ts";
 import { effect, waitFor } from "./effect.ts";
 import { tempDir } from "./tempDir.ts";
 
@@ -44,31 +47,47 @@ describe("the table's answer to the lobby", () => {
 
 const relayedTable = (
 	relay: Effect.Success<ReturnType<typeof startRelay>>,
-	room: string,
-	lobby?: boolean
+	handle: string,
+	table: string,
+	lobby = true,
+	door: "knock" | "open" = "open"
 ) =>
 	Effect.gen(function* () {
-		const dir = yield* tempDir;
+		const dir = door === "open" ? yield* openCampaign : yield* tempDir;
 
 		const layer = TableServer.layer({
 			campaignDir: dir,
-			room,
+			room: table,
 			port: 0,
 			bind: "127.0.0.1",
-			lobby: lobby ?? true,
+			lobby,
 			relay: {
 				host: "127.0.0.1",
 				port: relay.gmPort,
 				relayKey: relay.relayKeyFingerprint,
+				handle,
 			},
 		}).pipe(Layer.provideMerge(tableServices(dir)));
 
-		yield* Layer.build(layer.pipe(Layer.provide(Logger.layer([]))));
+		const context = yield* Layer.build(
+			layer.pipe(Layer.provide(Logger.layer([])))
+		);
+
 		yield* waitFor(
-			`room ${room} linked`,
-			() => relay.linkedRooms().includes(room),
+			`table ${handle}/${table} linked`,
+			() => relay.linkedTables().includes(`${handle}/${table}`),
 			10_000
 		);
+
+		const knocks = Context.get(context, Knocks);
+
+		return {
+			gm: (line: string) =>
+				Effect.promise(
+					async () => await Effect.runPromiseWith(context)(runLine("gm", line))
+				),
+			knocking: () => Effect.runSyncWith(context)(knocks.pending.get),
+		};
 	});
 
 describe("a table behind a relay, in the lobby", () => {
@@ -77,8 +96,8 @@ describe("a table behind a relay, in the lobby", () => {
 		() =>
 			Effect.gen(function* () {
 				const relay = yield* startRelay();
-				yield* relayedTable(relay, "den");
-				yield* relayedTable(relay, "keep", false);
+				yield* relayedTable(relay, "ana", "den");
+				yield* relayedTable(relay, "bo", "keep", false);
 				const keys = yield* tempDir;
 				const vex = yield* clientKey(keys, "vex");
 				const kai = yield* clientKey(keys, "kai");
@@ -88,7 +107,7 @@ describe("a table behind a relay, in the lobby", () => {
 
 				expect((yield* lobby(vex)).stderr).toBe(`${JOIN_HINT}\n`);
 
-				for (const user of ["den", "keep"]) {
+				for (const user of ["ana/den", "bo/keep"]) {
 					expect(
 						(yield* sshExec(relay.playerPort, ["roll", "1d6"], {
 							key: vex,
@@ -100,7 +119,7 @@ describe("a table behind a relay, in the lobby", () => {
 				const listed = yield* lobby(vex);
 				expect(listed.exitCode).toBe(1);
 				expect(listed.stderr).toMatch(
-					/^Your table open now: den \(0 seated\)\.\n/u
+					/^Your table open now: ana\/den \(0 seated\)\.\n/u
 				);
 				expect((yield* lobby(kai)).stderr).toBe(`${JOIN_HINT}\n`);
 			}),
@@ -112,7 +131,7 @@ describe("a table behind a relay, in the lobby", () => {
 		() =>
 			Effect.gen(function* () {
 				const relay = yield* startRelay();
-				yield* relayedTable(relay, "den");
+				yield* relayedTable(relay, "ana", "den");
 				const kai = yield* clientKey(yield* tempDir, "kai");
 
 				const lobby = () =>
@@ -125,7 +144,7 @@ describe("a table behind a relay, in the lobby", () => {
 							{ cols: 100, rows: 30 },
 							{
 								key: kai,
-								user: "den",
+								user: "ana/den",
 							}
 						);
 
@@ -137,12 +156,63 @@ describe("a table behind a relay, in the lobby", () => {
 						const listed = yield* lobby();
 						expect(listed.exitCode).toBe(1);
 						expect(listed.stderr).toMatch(
-							/^Your table open now: den \(1 seated\)\.\n/u
+							/^Your table open now: ana\/den \(1 seated\)\.\n/u
 						);
 					})
 				);
 				yield* Effect.sleep("500 millis");
 				expect((yield* lobby()).stderr).toBe(`${JOIN_HINT}\n`);
+			}),
+		30_000
+	);
+
+	effect(
+		"never for a stranger or a knocker at a knock door; for a member once the GM lets them in",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				const table = yield* relayedTable(relay, "ana", "den", true, "knock");
+				const kai = yield* clientKey(yield* tempDir, "kai");
+
+				const lobby = () =>
+					sshExec(relay.playerPort, ["help"], { key: kai, user: "lobby" });
+
+				expect((yield* lobby()).stderr).toBe(`${JOIN_HINT}\n`);
+				expect(
+					yield* sshExec(relay.playerPort, ["roll", "1d6"], {
+						key: kai,
+						user: "ana/den",
+					})
+				).toMatchObject({ exitCode: 1 });
+				expect((yield* lobby()).stderr).toBe(`${JOIN_HINT}\n`);
+
+				const door = yield* sshShell(
+					relay.playerPort,
+					{ cols: 100, rows: 30 },
+					{ key: kai, user: "ana/den" }
+				);
+
+				yield* waitFor(
+					"the door",
+					() => Bun.stripANSI(door.output()).includes("knocking"),
+					10_000
+				);
+				door.write("Kai\r");
+				yield* waitFor("the knock", () => table.knocking().length === 1);
+				expect((yield* lobby()).stderr).toBe(`${JOIN_HINT}\n`);
+				yield* table.gm("/admit Kai");
+				yield* waitFor("seated", () =>
+					Bun.stripANSI(door.output()).includes("say something")
+				);
+				expect((yield* lobby()).stderr).toMatch(
+					/^Your table open now: ana\/den \(1 seated\)\.\n/u
+				);
+				expect(
+					yield* sshExec(relay.playerPort, ["roll", "1d6"], {
+						key: kai,
+						user: "den",
+					})
+				).toMatchObject({ exitCode: 0 });
 			}),
 		30_000
 	);

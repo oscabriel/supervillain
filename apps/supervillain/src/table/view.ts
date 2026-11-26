@@ -1,7 +1,12 @@
 import type {
 	CombatView,
 	FeedLine,
+	PartyMember,
+	PrepItem,
+	PrepSection,
 	PrepView,
+	Prose,
+	StageView,
 	TokenAction,
 } from "@supervillain/domain";
 import type { Accessor } from "solid-js";
@@ -14,9 +19,13 @@ export interface Present {
 
 export type {
 	ActionPick,
+	CodexEntry,
 	Combatant,
 	CombatView,
 	FeedLine,
+	MapGrid,
+	PartyHealth,
+	PartyMember,
 	PrepFigure,
 	PrepItem,
 	PrepKind,
@@ -24,12 +33,19 @@ export type {
 	PrepStep,
 	PrepToken,
 	PrepView,
+	Prose,
+	ProseBlock,
+	StageCardView,
+	StageView,
 	TokenAction,
+	TrackerView,
 } from "@supervillain/domain";
 
 export interface PrepSource {
 	readonly view: Accessor<PrepView | undefined>;
 	readonly reload: () => Promise<string | undefined>;
+	readonly stage?: Accessor<ReadonlyArray<PrepSection>>;
+	readonly sync?: Accessor<PrepItem | undefined>;
 }
 
 export interface MapToken {
@@ -58,6 +74,29 @@ export interface MapView {
 	readonly reachLabel?: string;
 }
 
+export interface KnockShown {
+	readonly actor: string;
+	readonly name: string;
+	readonly short: string;
+}
+
+export type KnockStatus =
+	| {
+			readonly kind: "naming";
+			readonly invited: boolean;
+			readonly said?: string;
+	  }
+	| { readonly kind: "waiting"; readonly name: string }
+	| { readonly kind: "turned"; readonly text: string };
+
+export interface KnockView {
+	readonly room: string;
+	readonly me: string;
+	readonly status: Accessor<KnockStatus>;
+	readonly knock: (name: string) => Promise<string | undefined>;
+	readonly leave: () => void;
+}
+
 export interface TableView {
 	readonly me: string;
 	readonly room: string;
@@ -75,4 +114,9 @@ export interface TableView {
 	readonly map?: Accessor<MapView | undefined>;
 	readonly actions?: (id: string) => ReadonlyArray<TokenAction> | undefined;
 	readonly prep?: PrepSource;
+	readonly knocks?: Accessor<ReadonlyArray<KnockShown>>;
+	readonly stage?: Accessor<StageView | undefined>;
+	readonly party?: Accessor<ReadonlyArray<PartyMember>>;
+	readonly gmNotes?: (key: string) => Prose | undefined;
+	readonly contentProblems?: Accessor<ReadonlyArray<string>>;
 }

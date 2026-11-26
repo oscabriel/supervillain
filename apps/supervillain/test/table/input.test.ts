@@ -366,6 +366,8 @@ describe("tableCompletions", () => {
 			"/view both",
 			"/view pictures",
 			"/view text",
+			"/view stage",
+			"/view board",
 		]);
 		expect(tableCompletions("/view p")).toEqual(["/view pictures"]);
 		expect(tableCompletions("/view f")).toEqual(["/view feed"]);

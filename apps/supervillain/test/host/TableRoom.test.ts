@@ -6,6 +6,7 @@ import { Effect, Layer, Schema } from "effect";
 import { TestClock } from "effect/testing";
 
 import { TableRoom } from "../../src/host/TableRoom.ts";
+import { openCampaign } from "./campaign.ts";
 import { effect } from "./effect.ts";
 import { tempDir } from "./tempDir.ts";
 
@@ -63,7 +64,7 @@ describe("TableRoom", () => {
 		"writes accepted commands to the campaign log and folds them into the state",
 		() =>
 			Effect.gen(function* () {
-				const dir = yield* tempDir;
+				const dir = yield* openCampaign;
 				yield* withTable(dir, (room) =>
 					Effect.gen(function* () {
 						yield* room.submit(alice, { type: "name", name: "Vex" });
@@ -73,7 +74,7 @@ describe("TableRoom", () => {
 							notation: "2d6",
 						});
 
-						expect(seqs).toEqual([2]);
+						expect(seqs).toEqual([3]);
 						const [rolled] = events;
 
 						const payload = yield* Schema.decodeUnknownEffect(Rolled)(rolled);
@@ -86,26 +87,46 @@ describe("TableRoom", () => {
 
 						const state = yield* room.state;
 						expect(state.core.names).toEqual({ [alice]: "Vex" });
-						expect(state.feed.map((f) => f.kind)).toEqual(["name", "roll"]);
+						expect(state.feed.map((f) => f.kind)).toEqual([
+							"member",
+							"name",
+							"roll",
+						]);
 					})
 				);
 				const lines = yield* logLines(dir);
 				expect(lines.map((l) => [l.seq, l.actor, l.type])).toEqual([
-					[1, alice, "core.name-set"],
-					[2, alice, "core.dice-rolled"],
+					[1, "gm", "core.door-set"],
+					[2, alice, "core.name-set"],
+					[3, alice, "core.dice-rolled"],
 				]);
 			})
 	);
 
 	effect("refuses what the rules refuse, and writes nothing", () =>
 		Effect.gen(function* () {
-			const dir = yield* tempDir;
+			const dir = yield* openCampaign;
 
 			const refusal = yield* withTable(dir, (room) =>
 				Effect.flip(room.submit(alice, { type: "narrate", text: "It rains." }))
 			);
 
 			expect(refusal.message).toBe("Only the GM can use /narrate.");
+			expect((yield* logLines(dir)).map((l) => l.type)).toEqual([
+				"core.door-set",
+			]);
+		})
+	);
+
+	effect("refuses a player the GM hasn't let in, and writes nothing", () =>
+		Effect.gen(function* () {
+			const dir = yield* tempDir;
+
+			const refusal = yield* withTable(dir, (room) =>
+				Effect.flip(room.submit(alice, { type: "say", text: "hello?" }))
+			);
+
+			expect(refusal.message).toBe("Knock first: the GM hasn't let you in.");
 			expect(yield* logLines(dir)).toEqual([]);
 		})
 	);
@@ -147,7 +168,7 @@ describe("TableRoom", () => {
 			using(
 				TestClock.layer(),
 				Effect.gen(function* () {
-					const dir = yield* tempDir;
+					const dir = yield* openCampaign;
 					yield* withTable(dir, (room) =>
 						Effect.gen(function* () {
 							for (const _n of times(10)) {
@@ -176,7 +197,7 @@ describe("TableRoom", () => {
 
 	effect("actors sent under one rate key share its rate", () =>
 		Effect.gen(function* () {
-			const dir = yield* tempDir;
+			const dir = yield* openCampaign;
 			yield* withTable(dir, (room) =>
 				Effect.gen(function* () {
 					for (const _n of times(5)) {

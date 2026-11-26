@@ -2,8 +2,10 @@ import { DateTime, Option, Result, Schema } from "effect";
 
 import { CORE_EVENTS } from "./events/core.ts";
 import { DS_EVENTS } from "./events/drawSteel.ts";
+import { FF_EVENTS } from "./events/freeform.ts";
 import { PF_EVENTS } from "./events/pf2e.ts";
 import { SW_EVENTS } from "./events/setWorld.ts";
+import { STAGE_EVENTS } from "./events/stage.ts";
 import { initial, rules } from "./rules/compose.ts";
 import type { TableState } from "./rules/compose.ts";
 import { messageOf } from "./rules/engine.ts";
@@ -28,7 +30,14 @@ const LogLine = Schema.fromJsonString(
 const decodeLine = Schema.decodeUnknownResult(LogLine);
 
 const decodeEvent = Schema.decodeUnknownResult(
-	Schema.Union([...CORE_EVENTS, ...DS_EVENTS, ...SW_EVENTS, ...PF_EVENTS])
+	Schema.Union([
+		...CORE_EVENTS,
+		...STAGE_EVENTS,
+		...DS_EVENTS,
+		...SW_EVENTS,
+		...PF_EVENTS,
+		...FF_EVENTS,
+	])
 );
 
 export interface Skipped {

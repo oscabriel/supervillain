@@ -1,5 +1,7 @@
 import type { TokenAction } from "../../actions.ts";
 import { signed } from "../../dice.ts";
+import { playerOf } from "../../party.ts";
+import type { EncounterSpec, PartyMember } from "../../party.ts";
 import { partyFirst, prepMaps, prepSteps } from "../../prep.ts";
 import type { PrepCatalog, PrepItem, PrepView } from "../../prep.ts";
 import {
@@ -515,3 +517,48 @@ export const pfPrep = (slice: PfState, catalog: PrepCatalog): PrepView => {
 				: { note: `round ${slice.combat.round}` },
 	};
 };
+
+export const pfParty = (
+	slice: PfState,
+	actor: string,
+	label: (actor: string) => string
+): ReadonlyArray<PartyMember> =>
+	slice.creatures.filter(isPc).map((c): PartyMember => ({
+		id: c.id,
+		name: c.name,
+		...playerOf(c.player, actor, label),
+		mine: c.player === actor,
+		free: c.player === undefined,
+		down: c.dead || c.dying > 0,
+		health: { label: "HP", value: c.hp, max: c.sheet.hp },
+		summary: [
+			[c.sheet.ancestry, c.sheet.class]
+				.filter((t) => t !== undefined)
+				.join(" "),
+			`level ${c.sheet.level}`,
+			`AC ${c.sheet.ac}`,
+			`hero points ${c.heroPoints}`,
+		]
+			.filter((t) => t !== "")
+			.join(" · "),
+		tags: c.conditions.map((x) =>
+			x.value === undefined ? x.name : `${x.name} ${x.value}`
+		),
+	}));
+
+export const pfFightLines = (
+	encounter: EncounterSpec
+): ReadonlyArray<string> => [
+	...listIfDefined(encounter.map, (id) => [`/map ${id}`]),
+	...encounter.monsters.map((m) =>
+		(m.count ?? 1) === 1 ? `/add ${m.id}` : `/add ${m.id} x${m.count ?? 1}`
+	),
+];
+
+export const pfResyncLines = (
+	slice: PfState,
+	changed: ReadonlyArray<string>
+): ReadonlyArray<string> =>
+	slice.creatures
+		.filter((c) => isPc(c) && changed.includes(c.id))
+		.map((c) => `/pc ${c.id}`);

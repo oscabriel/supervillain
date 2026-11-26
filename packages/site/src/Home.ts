@@ -10,23 +10,28 @@ export const JOIN_COMMAND = "ssh supervillain.sh";
 const ROWS: ReadonlyArray<readonly [string, string, string]> = [
 	[
 		"Zero friction at game night",
-		"Your players already have OpenSSH. Share one room address and everyone drops straight into the session from their terminal, with nothing to install and nothing to sign up for.",
-		"ssh room@supervillain.sh",
+		"Your players already have OpenSSH. Share one table address, let newcomers in at the door, and everyone sits at the same session with nothing to install and no account to make.",
+		"ssh handle/table@supervillain.sh",
 	],
 	[
-		"Tactical play, right in the terminal",
-		"Move tokens with mouse clicks or slash commands, roll dice, track stamina and turns, whisper to the GM, and view pixel-art maps or crisp text on any terminal.",
-		"/move · /pr · /roll",
+		"Campaign stage and battlemap",
+		"Keep every hero visible while you put scenes, NPCs, handouts, and trackers onto the table, then drop straight into tactical pixel-art or text combat without switching tools.",
+		"/show · /move · /pr",
 	],
 	[
-		"Your machine is the table",
-		"The GM runs one small program locally. Every rule resolves on your machine, your campaign stays on your own disk, and your SSH key is your identity across sessions.",
-		"supervillain host",
+		"File over app, on your disk",
+		"Your campaign is a plain folder of typed Markdown files, text maps, and an append-only JSONL log on the GM's machine. Open bare supervillain to launch tables or create new ones.",
+		"curl -fsSL https://supervillain.sh/install | sh",
 	],
 	[
-		"Three rulesets out of the box",
-		"Built-in support for Draw Steel, set.world, and PF2e Remaster under the ORC License, complete with character sheets, abilities, and encounter flow.",
-		"Draw Steel · set.world · PF2e",
+		"Four rulesets out of the box",
+		"Built-in support for Draw Steel, set.world, PF2e Remaster under the ORC License, and a lightweight freeform table, all sharing one log and campaign stage.",
+		"Draw Steel · set.world · PF2e · Freeform",
+	],
+	[
+		"Bring your agent live",
+		"Connect Claude Code, Codex, Cursor, or T3 Code over MCP to dictate scene updates, rolls, and moves while everyone watches the table update in real time, with full /undo.",
+		"supervillain mcp · mcp-1@supervillain.sh",
 	],
 ];
 
@@ -98,7 +103,7 @@ const editorialView = (h: HtmlBuilder<Message>): Html =>
 					h.span(
 						[],
 						[
-							"No browser tabs, no downloads, and no accounts to set up before game night. One SSH command puts every player at the same live tactical board.",
+							"No browser tabs, no downloads for players, and no accounts to set up before game night. One SSH command puts everyone at the same campaign stage and tactical board.",
 						]
 					),
 				]

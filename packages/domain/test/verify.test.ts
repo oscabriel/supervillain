@@ -4,16 +4,22 @@ import * as Domain from "@alchemy.run/domain";
 
 import { CORE_COMMANDS } from "../src/commands/core.ts";
 import { DS_COMMANDS } from "../src/commands/drawSteel.ts";
+import { FF_COMMANDS } from "../src/commands/freeform.ts";
 import { PF_COMMANDS } from "../src/commands/pf2e.ts";
 import { SW_COMMANDS } from "../src/commands/setWorld.ts";
+import { STAGE_COMMANDS } from "../src/commands/stage.ts";
 import { CORE_EVENTS } from "../src/events/core.ts";
 import { DS_EVENTS } from "../src/events/drawSteel.ts";
+import { FF_EVENTS } from "../src/events/freeform.ts";
 import { PF_EVENTS } from "../src/events/pf2e.ts";
 import { SW_EVENTS } from "../src/events/setWorld.ts";
+import { STAGE_EVENTS } from "../src/events/stage.ts";
 import { Refused } from "../src/Refused.rejection.ts";
 import { rules } from "../src/rules/compose.ts";
 import { CorePayloads } from "../src/rules/core/core.ts";
+import { StagePayloads } from "../src/rules/core/stage.ts";
 import { Payloads as DsPayloads } from "../src/rules/drawSteel/events.ts";
+import { Payloads as FfPayloads } from "../src/rules/freeform/events.ts";
 import { Payloads as PfPayloads } from "../src/rules/pf2e/events.ts";
 import { Payloads as SwPayloads } from "../src/rules/setWorld/events.ts";
 import { Supervillain } from "../src/Supervillain.model.ts";
@@ -24,15 +30,26 @@ const PAYLOADS = [
 	...Object.entries(DsPayloads),
 	...Object.entries(SwPayloads),
 	...Object.entries(PfPayloads),
+	...Object.entries(FfPayloads),
+	...Object.entries(StagePayloads),
 ];
 
-const EVENTS = [...CORE_EVENTS, ...DS_EVENTS, ...SW_EVENTS, ...PF_EVENTS];
+const EVENTS = [
+	...CORE_EVENTS,
+	...DS_EVENTS,
+	...SW_EVENTS,
+	...PF_EVENTS,
+	...FF_EVENTS,
+	...STAGE_EVENTS,
+];
 
 const COMMANDS = [
 	...CORE_COMMANDS,
 	...DS_COMMANDS,
 	...SW_COMMANDS,
 	...PF_COMMANDS,
+	...FF_COMMANDS,
+	...STAGE_COMMANDS,
 ];
 
 describe("the model", () => {

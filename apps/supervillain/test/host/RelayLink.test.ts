@@ -33,9 +33,15 @@ import type {
 } from "../../src/host/RelayLink.ts";
 import { tableServices } from "../../src/host/services.ts";
 import { TableServer } from "../../src/host/TableServer.ts";
-import { helloLine, OK_LINE, readLine } from "../../src/relay/protocol.ts";
+import {
+	claimProof,
+	helloLine,
+	OK_LINE,
+	readLine,
+} from "../../src/relay/protocol.ts";
 import { clientKey } from "../e2e/openssh.ts";
 import type { ClientKey } from "../e2e/openssh.ts";
+import { openCampaign } from "./campaign.ts";
 import { effect, must, waitFor } from "./effect.ts";
 import { tempDir } from "./tempDir.ts";
 
@@ -258,16 +264,18 @@ const linked = (
 		const link = yield* RelayLink.make({
 			host: "127.0.0.1",
 			port: relayPort,
-			room: "den",
+			handle: "ana",
+			table: "den",
 			campaignDir,
 			attach: server.attach,
+			hostKeyFingerprint: server.hostKeyFingerprint,
 			...more,
 		});
 
 		const run = Effect.runSyncWith(yield* Effect.context());
 		const status = () => run(link.status.get);
 
-		return { link, campaignDir, status };
+		return { link, campaignDir, status, server };
 	});
 
 const steadyRandom = Effect.provideService(Random.Random, {
@@ -308,7 +316,7 @@ describe("RelayLink", () => {
 					const known = path.join(campaignDir, "relay_known");
 
 					yield* waitFor("the hello", () => relay.links.length === 1);
-					expect(relay.hellos).toEqual([helloLine("den").trimEnd()]);
+					expect(relay.hellos).toEqual([helloLine("ana", "den").trimEnd()]);
 					expect(status()).toEqual({ state: "connecting" });
 					expect(existsSync(known)).toBe(false);
 
@@ -596,19 +604,57 @@ describe("RelayLink", () => {
 	);
 
 	effect(
+		"a claim rides the hello as a proof bound to the GM's key, never the code, and the relay's key is pinned where the GM says",
+		() =>
+			controlled(
+				Effect.gen(function* () {
+					const relayKey = yield* clientKey(yield* tempDir, "relay");
+					const relay = yield* fakeRelay();
+					const elsewhere = path.join(yield* tempDir, "pinned");
+					const code = "sv-0123456789abcdefghjk";
+
+					const { campaignDir, link, server } = yield* linked(relay.port, {
+						claim: code,
+						knownPath: elsewhere,
+						playerPort: 2222,
+					});
+
+					yield* waitFor("the hello", () => relay.links.length === 1);
+					expect(relay.hellos).toEqual([
+						helloLine(
+							"ana",
+							"den",
+							claimProof(code, server.hostKeyFingerprint)
+						).trimEnd(),
+					]);
+					expect(relay.hellos.join("\n")).not.toContain(code);
+					expect(link.joinCommand).toBe("ssh -p 2222 ana/den@127.0.0.1");
+					yield* relay.exec(relayKey, "who");
+					expect(
+						(yield* Effect.promise(
+							async () => await readFile(elsewhere, "utf-8")
+						)).trim()
+					).toBe(relayKey.fingerprint);
+					expect(existsSync(path.join(campaignDir, "relay_known"))).toBe(false);
+				})
+			),
+		20_000
+	);
+
+	effect(
 		"the table server links when given a relay, and its seats serve relayed players",
 		() =>
 			Effect.gen(function* () {
 				const relayKey = yield* clientKey(yield* tempDir, "relay");
 				const relay = yield* fakeRelay();
-				const dir = yield* tempDir;
+				const dir = yield* openCampaign;
 
 				const layer = TableServer.layer({
 					campaignDir: dir,
 					room: "den",
 					port: 0,
 					bind: "127.0.0.1",
-					relay: { host: "127.0.0.1", port: relay.port },
+					relay: { host: "127.0.0.1", port: relay.port, handle: "ana" },
 				}).pipe(Layer.provideMerge(tableServices(dir)));
 
 				const context = yield* Layer.build(
@@ -616,7 +662,7 @@ describe("RelayLink", () => {
 				);
 
 				const server = Context.get(context, TableServer);
-				expect(server.relay?.joinCommand).toBe("ssh -p 2222 den@127.0.0.1");
+				expect(server.relay?.joinCommand).toBe("ssh ana/den@127.0.0.1");
 				yield* waitFor("the hello", () => relay.links.length === 1);
 				const said = yield* relay.exec(relayKey, "/say hello from afar");
 				expect(said.exitCode).toBe(0);
@@ -676,15 +722,15 @@ describe("relay odds and ends", () => {
 		expect(roomSlug("???")).toBe("table");
 	});
 
-	test("players join through the relay's player port, 2222 unless the GM says otherwise", () => {
-		expect(relayJoinCommand("den", "relay.example")).toBe(
-			"ssh -p 2222 den@relay.example"
+	test("players join as <handle>/<table> through the relay's player port, 22 unless the GM says otherwise", () => {
+		expect(relayJoinCommand("ana/den", "relay.example")).toBe(
+			"ssh ana/den@relay.example"
 		);
-		expect(relayJoinCommand("den", "relay.example", 2200)).toBe(
-			"ssh -p 2200 den@relay.example"
+		expect(relayJoinCommand("ana/den", "relay.example", 2200)).toBe(
+			"ssh -p 2200 ana/den@relay.example"
 		);
-		expect(relayJoinCommand("den", "relay.example", 22)).toBe(
-			"ssh den@relay.example"
+		expect(relayJoinCommand("ana/den", "relay.example", 22)).toBe(
+			"ssh ana/den@relay.example"
 		);
 	});
 

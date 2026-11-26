@@ -11,7 +11,7 @@ import {
 import { Effect } from "effect";
 
 import { must } from "../game/must.ts";
-import { sampleCampaign } from "../host/campaign.ts";
+import { openSampleCampaign } from "../host/campaign.ts";
 import { effect } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
 import { asGm, asPlayer, hostTable, logOf } from "./hosted.ts";
@@ -49,7 +49,7 @@ describe("the ford road over real ssh", () => {
 		"the GM loads the sample map, players move and push over exec, undo takes back, and a restart replays it",
 		() =>
 			Effect.gen(function* () {
-				const dir = yield* sampleCampaign;
+				const dir = yield* openSampleCampaign;
 				const keys = yield* tempDir;
 				const alice = yield* clientKey(keys, "alice");
 				const bob = yield* clientKey(keys, "bob");

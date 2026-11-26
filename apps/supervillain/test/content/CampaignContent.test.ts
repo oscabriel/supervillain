@@ -2,11 +2,13 @@ import { describe, expect } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import nodePath from "node:path";
 
+import type { StageCard } from "@supervillain/domain";
 import { Effect } from "effect";
 
 import { effect } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
 import { withContent } from "./content.ts";
+import { campaignOf, FULL, MARKET, ROOK } from "./files.ts";
 
 const hero = (name: string, stamina = 18) => `name: ${name}
 class: Fury
@@ -406,6 +408,74 @@ describe("CampaignContent maps", () => {
 
 				expect(before.grid.name).toBe("The Ford");
 				expect(after.grid).toEqual({ name: "Dry Ford", terrain: [".."] });
+			})
+	);
+});
+
+const body = (card: StageCard) => JSON.stringify(card.body);
+
+describe("CampaignContent's last good files", () => {
+	effect(
+		"cards, GM notes, Markdown sheets and the catalog come from the last files that checked out",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* campaignOf(FULL);
+
+				const edit = (file: string, text: string) =>
+					Effect.promise(async () => {
+						await writeFile(nodePath.join(dir, file), text);
+					});
+
+				yield* withContent(dir, (content) =>
+					Effect.gen(function* () {
+						yield* edit(
+							"scenes/market.md",
+							MARKET.replace("Stalls lean", "Stalls sink")
+						);
+						yield* edit("party/rook.md", ROOK.replace("might: 1", "might: 4"));
+						yield* edit(
+							"npcs/mara.md",
+							"---\nname: Mara\nweather: rain\n---\n"
+						);
+
+						expect(body(yield* content.card("market"))).toContain(
+							"Stalls lean"
+						);
+						expect((yield* content.ffHero("rook")).stats).toEqual({
+							might: 1,
+							wits: 2,
+						});
+						expect(yield* content.gmNotes("npc:mara")).toContain("GMSECRET");
+
+						const broken = yield* content.read;
+
+						expect(broken.problems.length).toBeGreaterThan(0);
+						expect(yield* content.accept(broken)).toBe(false);
+						expect(body(yield* content.card("market"))).toContain(
+							"Stalls lean"
+						);
+
+						yield* edit("npcs/mara.md", FULL["npcs/mara.md"]);
+
+						const good = yield* content.read;
+
+						expect(good.problems).toEqual([]);
+						expect(yield* content.accept(good)).toBe(true);
+						expect(body(yield* content.card("market"))).toContain(
+							"Stalls sink"
+						);
+						expect(
+							(yield* content.cards(["scene:market"])).map((c) => body(c))
+						).toEqual([body(yield* content.card("market"))]);
+						expect((yield* content.ffHero("rook")).stats).toEqual({
+							might: 4,
+							wits: 2,
+						});
+						expect((yield* content.catalog).heroes).toEqual([
+							{ id: "rook", name: "Rook" },
+						]);
+					})
+				);
 			})
 	);
 });

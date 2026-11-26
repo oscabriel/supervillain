@@ -10,6 +10,10 @@ Stock `ssh2@1.17.0` does not implement `mlkem768x25519-sha256` key exchange. `pa
 
 Whenever `ssh2` is upgraded, verify the patch applies cleanly and re-run `bun test packages/ssh`.
 
+## 1a. `Client.subsys()` sends no environment
+
+Stock `Client.prototype.subsys(name, cb)` opens a session channel and asks for the subsystem straight away, so unlike `exec` and `shell` it can't send `env` requests first. The relay needs that to name the player (`SV_ACTOR`) when it opens `mcp-1@supervillain.sh` on a host (ADR 0020). The same patch makes it `subsys(name, opts, cb)`: when `opts.env` is an object it calls `reqEnv` before `reqSubsystem`, exactly as `exec` does, and the two-argument `subsys(name, cb)` still works. `packages/ssh/src/ssh2Internals.ts` declares the three-argument overload, and `packages/ssh/test/client.test.ts` checks a relayed subsystem sees `SV_ACTOR`.
+
 ## 2. `key.verify()` returns `Error` on crypto failures despite `@types/ssh2`
 
 `@types/ssh2` types `ParsedKey.verify()` as returning `boolean`, but `ssh2`'s `keyParser.js` returns an `Error` instance when the underlying Node crypto call throws (for example, an off-curve ECDSA signature or malformed key material).

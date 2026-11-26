@@ -70,7 +70,7 @@ describe("supervillain check", () => {
 					feed: "[4 lines]",
 					undo: "[1 batch]",
 					redo: "[0 batches]",
-					core: { names: { [vex]: "Vex" } },
+					core: { names: { [vex]: "Vex" }, members: {}, door: "knock" },
 					ds: {
 						heroes: [],
 						creatures: [],
@@ -81,6 +81,8 @@ describe("supervillain check", () => {
 					},
 					sw: { fighters: [] },
 					pf: { creatures: [] },
+					ff: { figures: [] },
+					stage: { cards: {}, trackers: [], recap: [] },
 				});
 			}),
 		15_000

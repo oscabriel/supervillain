@@ -9,7 +9,7 @@ import {
 	Schema,
 	SynchronizedRef,
 } from "effect";
-import type { PlatformError } from "effect";
+import type { PlatformError, Scope } from "effect";
 
 import { LineJson } from "./envelope.ts";
 import type { Line } from "./envelope.ts";
@@ -27,6 +27,8 @@ interface WriterState {
 }
 
 const TAIL_LIMIT = 64;
+
+export const MEMORY_PATH = ":memory:";
 
 const io =
 	(what: string) =>
@@ -163,186 +165,291 @@ const releaseLock = (path: string) =>
 
 const encodeLine = Schema.encodeEffect(LineJson);
 
-export class CampaignLog extends Context.Service<
-	CampaignLog,
-	{
-		readonly path: string;
-		readonly lines: (
-			after: number
-		) => Effect.Effect<ReadonlyArray<Line>, LogError>;
-		readonly recent: (
-			count: number
-		) => Effect.Effect<ReadonlyArray<Line>, LogError>;
-		readonly append: (
-			lines: ReadonlyArray<Line>
-		) => Effect.Effect<void, LogError>;
-	}
->()("@supervillain/platform-jsonl/CampaignLog") {
-	static readonly make = (dir: string) =>
-		Effect.gen(function* () {
-			const fs = yield* FileSystem.FileSystem;
-			const paths = yield* Path.Path;
-			const path = paths.join(dir, "events.jsonl");
-			const lockPath = paths.join(dir, "events.lock");
-			yield* fs
-				.makeDirectory(dir, { recursive: true })
-				.pipe(io("create campaign folder"));
-			yield* Effect.acquireRelease(takeLock(lockPath), () =>
-				releaseLock(lockPath)
+export interface CampaignLogService {
+	readonly path: string;
+	readonly lines: (
+		after: number
+	) => Effect.Effect<ReadonlyArray<Line>, LogError>;
+	readonly recent: (
+		count: number
+	) => Effect.Effect<ReadonlyArray<Line>, LogError>;
+	readonly append: (
+		lines: ReadonlyArray<Line>
+	) => Effect.Effect<void, LogError>;
+}
+
+export interface MemoryPlace {
+	readonly cap: number;
+}
+
+const diskLog = (dir: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const paths = yield* Path.Path;
+		const path = paths.join(dir, "events.jsonl");
+		const lockPath = paths.join(dir, "events.lock");
+		yield* fs
+			.makeDirectory(dir, { recursive: true })
+			.pipe(io("create campaign folder"));
+		yield* Effect.acquireRelease(takeLock(lockPath), () =>
+			releaseLock(lockPath)
+		);
+		const file = yield* fs.open(path, { flag: "a+" }).pipe(io("open log"));
+
+		const parsed = parseLog(
+			yield* readExactText(fs, path).pipe(io("read log"))
+		);
+
+		if (parsed.torn !== undefined) {
+			yield* file
+				.truncate(byteLength(parsed.intact))
+				.pipe(io("cut half-written line"));
+			yield* Effect.logWarning(
+				`Cut a half-written last line from ${path}: ${escapeForLog(parsed.torn.slice(0, 80))}`
 			);
-			const file = yield* fs.open(path, { flag: "a+" }).pipe(io("open log"));
+		}
 
-			const parsed = parseLog(
-				yield* readExactText(fs, path).pipe(io("read log"))
-			);
-
-			if (parsed.torn !== undefined) {
-				yield* file
-					.truncate(byteLength(parsed.intact))
-					.pipe(io("cut half-written line"));
-				yield* Effect.logWarning(
-					`Cut a half-written last line from ${path}: ${escapeForLog(parsed.torn.slice(0, 80))}`
-				);
-			}
-
-			if (parsed.error !== undefined) {
-				return yield* new LogError({
-					message: `${path}:${parsed.error.line}: ${parsed.error.message}`,
-				});
-			}
-
-			const state = yield* SynchronizedRef.make<WriterState>({
-				seq: parsed.lines.length,
-				size: byteLength(parsed.intact),
-				tail: parsed.lines.slice(-TAIL_LIMIT),
+		if (parsed.error !== undefined) {
+			return yield* new LogError({
+				message: `${path}:${parsed.error.line}: ${parsed.error.message}`,
 			});
+		}
 
-			const readWritten = (written: WriterState) =>
-				Effect.gen(function* () {
-					const reread = parseLog(
-						yield* readExactText(fs, path).pipe(io("read log"))
-					);
-
-					if (reread.error !== undefined) {
-						return yield* new LogError({
-							message: `${path}:${reread.error.line}: ${reread.error.message}`,
-						});
-					}
-
-					return reread.lines.slice(0, written.seq);
-				});
-
-			const lines = Effect.fn("CampaignLog.lines")(function* (after: number) {
-				const written = yield* SynchronizedRef.modifyEffect(state, (current) =>
-					Effect.map(readWritten(current), (read) => [read, current] as const)
-				);
-
-				return written.filter((line) => line.seq > after);
-			});
-
-			const recent = Effect.fn("CampaignLog.recent")(function* (count: number) {
-				if (count <= 0) {
-					return [];
-				}
-
-				if (count <= TAIL_LIMIT) {
-					const current = yield* SynchronizedRef.get(state);
-
-					return current.tail.slice(-count);
-				}
-
-				const written = yield* lines(0);
-
-				return written.slice(-count);
-			});
-
-			const write = (current: WriterState, bytes: Uint8Array) =>
-				Effect.gen(function* () {
-					let written = 0;
-
-					while (written < bytes.length) {
-						const taken = yield* file.write(bytes.subarray(written));
-
-						if (taken === 0) {
-							return yield* new LogError({
-								message: "append: the disk took nothing",
-							});
-						}
-
-						written += taken;
-					}
-
-					return yield* file.sync;
-				}).pipe(
-					Effect.catchTag("PlatformError", (cause) =>
-						Effect.fail(
-							new LogError({ message: `append: ${cause.message}`, cause })
-						)
-					),
-					Effect.tapError(() => file.truncate(current.size).pipe(Effect.ignore))
-				);
-
-			const commit = (current: WriterState, batch: ReadonlyArray<Line>) =>
-				Effect.gen(function* () {
-					for (const [index, line] of batch.entries()) {
-						if (line.seq !== current.seq + index + 1) {
-							return yield* new LogError({
-								message: `append: seq ${line.seq} after seq ${current.seq + index}; nothing written`,
-							});
-						}
-					}
-
-					if (batch.length === 0) {
-						return current;
-					}
-
-					const info = yield* file.stat.pipe(io("append"));
-					const onDisk = Number(info.size);
-
-					if (onDisk !== current.size) {
-						return yield* new LogError({
-							message: `append: something else wrote ${path} (${onDisk} bytes, not the ${current.size} this host left); nothing written`,
-						});
-					}
-
-					const encoded = yield* Effect.forEach(
-						batch,
-						(line) => encodeLine(line),
-						{ concurrency: 1 }
-					).pipe(
-						Effect.mapError(
-							(cause) =>
-								new LogError({
-									message: `append: ${cause.message}; nothing written`,
-									cause,
-								})
-						)
-					);
-
-					const bytes = Buffer.from(
-						encoded.map((text) => `${text}\n`).join(""),
-						"utf-8"
-					);
-
-					yield* write(current, bytes);
-
-					return {
-						seq: current.seq + batch.length,
-						size: current.size + bytes.length,
-						tail: [...current.tail, ...batch].slice(-TAIL_LIMIT),
-					};
-				}).pipe(Effect.uninterruptible);
-
-			const append = Effect.fn("CampaignLog.append")(function* (
-				batch: ReadonlyArray<Line>
-			) {
-				yield* SynchronizedRef.updateEffect(state, (current) =>
-					commit(current, batch)
-				);
-			});
-
-			return { path, lines, recent, append };
+		const state = yield* SynchronizedRef.make<WriterState>({
+			seq: parsed.lines.length,
+			size: byteLength(parsed.intact),
+			tail: parsed.lines.slice(-TAIL_LIMIT),
 		});
 
+		const readWritten = (written: WriterState) =>
+			Effect.gen(function* () {
+				const reread = parseLog(
+					yield* readExactText(fs, path).pipe(io("read log"))
+				);
+
+				if (reread.error !== undefined) {
+					return yield* new LogError({
+						message: `${path}:${reread.error.line}: ${reread.error.message}`,
+					});
+				}
+
+				return reread.lines.slice(0, written.seq);
+			});
+
+		const lines = Effect.fn("CampaignLog.lines")(function* (after: number) {
+			const written = yield* SynchronizedRef.modifyEffect(state, (current) =>
+				Effect.map(readWritten(current), (read) => [read, current] as const)
+			);
+
+			return written.filter((line) => line.seq > after);
+		});
+
+		const recent = Effect.fn("CampaignLog.recent")(function* (count: number) {
+			if (count <= 0) {
+				return [];
+			}
+
+			if (count <= TAIL_LIMIT) {
+				const current = yield* SynchronizedRef.get(state);
+
+				return current.tail.slice(-count);
+			}
+
+			const written = yield* lines(0);
+
+			return written.slice(-count);
+		});
+
+		const write = (current: WriterState, bytes: Uint8Array) =>
+			Effect.gen(function* () {
+				let written = 0;
+
+				while (written < bytes.length) {
+					const taken = yield* file.write(bytes.subarray(written));
+
+					if (taken === 0) {
+						return yield* new LogError({
+							message: "append: the disk took nothing",
+						});
+					}
+
+					written += taken;
+				}
+
+				return yield* file.sync;
+			}).pipe(
+				Effect.catchTag("PlatformError", (cause) =>
+					Effect.fail(
+						new LogError({ message: `append: ${cause.message}`, cause })
+					)
+				),
+				Effect.tapError(() => file.truncate(current.size).pipe(Effect.ignore))
+			);
+
+		const commit = (current: WriterState, batch: ReadonlyArray<Line>) =>
+			Effect.gen(function* () {
+				for (const [index, line] of batch.entries()) {
+					if (line.seq !== current.seq + index + 1) {
+						return yield* new LogError({
+							message: `append: seq ${line.seq} after seq ${current.seq + index}; nothing written`,
+						});
+					}
+				}
+
+				if (batch.length === 0) {
+					return current;
+				}
+
+				const info = yield* file.stat.pipe(io("append"));
+				const onDisk = Number(info.size);
+
+				if (onDisk !== current.size) {
+					return yield* new LogError({
+						message: `append: something else wrote ${path} (${onDisk} bytes, not the ${current.size} this host left); nothing written`,
+					});
+				}
+
+				const encoded = yield* Effect.forEach(
+					batch,
+					(line) => encodeLine(line),
+					{ concurrency: 1 }
+				).pipe(
+					Effect.mapError(
+						(cause) =>
+							new LogError({
+								message: `append: ${cause.message}; nothing written`,
+								cause,
+							})
+					)
+				);
+
+				const bytes = Buffer.from(
+					encoded.map((text) => `${text}\n`).join(""),
+					"utf-8"
+				);
+
+				yield* write(current, bytes);
+
+				return {
+					seq: current.seq + batch.length,
+					size: current.size + bytes.length,
+					tail: [...current.tail, ...batch].slice(-TAIL_LIMIT),
+				};
+			}).pipe(Effect.uninterruptible);
+
+		const append = Effect.fn("CampaignLog.append")(function* (
+			batch: ReadonlyArray<Line>
+		) {
+			yield* SynchronizedRef.updateEffect(state, (current) =>
+				commit(current, batch)
+			);
+		});
+
+		return { path, lines, recent, append };
+	});
+
+const commitInMemory = (
+	cap: number,
+	current: ReadonlyArray<Line>,
+	batch: ReadonlyArray<Line>
+) =>
+	Effect.gen(function* () {
+		const last = current.length;
+
+		for (const [index, line] of batch.entries()) {
+			if (line.seq !== last + index + 1) {
+				return yield* new LogError({
+					message: `append: seq ${line.seq} after seq ${last + index}; nothing written`,
+				});
+			}
+		}
+
+		if (last + batch.length > cap) {
+			return yield* new LogError({
+				message: `append: this log holds at most ${cap} lines; nothing written`,
+			});
+		}
+
+		yield* Effect.forEach(batch, (line) => encodeLine(line), {
+			concurrency: 1,
+			discard: true,
+		}).pipe(
+			Effect.mapError(
+				(cause) =>
+					new LogError({
+						message: `append: ${cause.message}; nothing written`,
+						cause,
+					})
+			)
+		);
+
+		return [...current, ...batch];
+	});
+
+const memoryLog = (cap: number) =>
+	Effect.gen(function* () {
+		const state = yield* SynchronizedRef.make<ReadonlyArray<Line>>([]);
+
+		const lines = Effect.fn("CampaignLog.lines")(function* (after: number) {
+			const written = yield* SynchronizedRef.get(state);
+
+			return written.filter((line) => line.seq > after);
+		});
+
+		const recent = Effect.fn("CampaignLog.recent")(function* (count: number) {
+			if (count <= 0) {
+				return [];
+			}
+
+			const written = yield* SynchronizedRef.get(state);
+
+			return written.slice(-count);
+		});
+
+		const append = Effect.fn("CampaignLog.append")(function* (
+			batch: ReadonlyArray<Line>
+		) {
+			yield* SynchronizedRef.updateEffect(state, (current) =>
+				commitInMemory(cap, current, batch)
+			);
+		});
+
+		const log: CampaignLogService = {
+			path: MEMORY_PATH,
+			lines,
+			recent,
+			append,
+		};
+
+		return log;
+	});
+
+export class CampaignLog extends Context.Service<
+	CampaignLog,
+	CampaignLogService
+>()("@supervillain/platform-jsonl/CampaignLog") {
+	static make(
+		dir: string
+	): Effect.Effect<
+		CampaignLogService,
+		LogError,
+		FileSystem.FileSystem | Path.Path | Scope.Scope
+	>;
+
+	static make(memory: MemoryPlace): Effect.Effect<CampaignLogService, LogError>;
+
+	static make(
+		place: string | MemoryPlace
+	): Effect.Effect<
+		CampaignLogService,
+		LogError,
+		FileSystem.FileSystem | Path.Path | Scope.Scope
+	> {
+		return Predicate.isString(place) ? diskLog(place) : memoryLog(place.cap);
+	}
+
 	static readonly layer = (dir: string) => Layer.effect(this, this.make(dir));
+
+	static readonly layerMemory = (cap: number) =>
+		Layer.effect(this, this.make({ cap }));
 }

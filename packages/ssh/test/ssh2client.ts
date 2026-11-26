@@ -16,6 +16,7 @@ export interface Ssh2Options {
 	readonly user?: string;
 	readonly localAddress?: string;
 	readonly kex?: Array<ssh2.KexAlgorithm>;
+	readonly onHostKey?: (key: Buffer) => void;
 }
 
 export interface Ssh2ExecResult {
@@ -70,7 +71,11 @@ const connectConfig = (
 	const config: ConnectConfig = {
 		host: "127.0.0.1",
 		username: options.user ?? "den",
-		hostVerifier: () => true,
+		hostVerifier: (key: Buffer) => {
+			options.onHostKey?.(key);
+
+			return true;
+		},
 		readyTimeout: 5000,
 		authHandler: [authMethod(options, privateKey)],
 	};

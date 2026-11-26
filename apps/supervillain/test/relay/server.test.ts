@@ -1,20 +1,28 @@
 import { describe, expect } from "bun:test";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { TERMINAL_RESET } from "@supervillain/ssh";
 import { Effect, Exit, Fiber, Schema, Scope } from "effect";
 
+import { forgetHandle } from "../../src/relay/handles.ts";
 import {
-	closedRoomMessage,
+	closedTableMessage,
 	JOIN_HINT,
 	readLine,
 } from "../../src/relay/protocol.ts";
-import { forgetRoom } from "../../src/relay/rooms.ts";
-import { claimLimiter } from "../../src/relay/server.ts";
+import { claimLimiter, manyMessage } from "../../src/relay/server.ts";
 import { effect, waitFor } from "../host/effect.ts";
 import { tempDir } from "../host/tempDir.ts";
-import { dial, gmTable, linkGm, socketClosed, startRelay } from "./harness.ts";
+import {
+	dial,
+	gmTable,
+	HANDLE,
+	linkGm,
+	socketClosed,
+	startRelay,
+} from "./harness.ts";
+import type { GmTableOptions } from "./harness.ts";
 import { clientKey, sshExec, sshShell } from "./openssh.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -22,23 +30,37 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const Registry = Schema.fromJsonString(
 	Schema.Record(
 		Schema.String,
-		Schema.Struct({ key: Schema.String, linked: Schema.String })
+		Schema.Struct({
+			keys: Schema.Array(Schema.String),
+			claimed: Schema.String,
+			seen: Schema.String,
+		})
 	)
 );
+
+type Stored = Readonly<
+	Record<
+		string,
+		{
+			readonly keys: ReadonlyArray<string>;
+			readonly claimed: string;
+			readonly seen: string;
+		}
+	>
+>;
 
 const readRegistry = (file: string) =>
 	Effect.promise(async () => await readFile(file, "utf-8")).pipe(
 		Effect.flatMap(Schema.decodeUnknownEffect(Registry))
 	);
 
-const roomsIn = (file: string) =>
-	readRegistry(file).pipe(Effect.map((rooms) => Object.keys(rooms).toSorted()));
+const handlesIn = (file: string) =>
+	readRegistry(file).pipe(
+		Effect.map((handles) => Object.keys(handles).toSorted())
+	);
 
-const writeRegistry = (
-	file: string,
-	rooms: Readonly<Record<string, { key: string; linked: string }>>
-) => {
-	const text = JSON.stringify(rooms);
+const writeRegistry = (file: string, handles: Stored) => {
+	const text = JSON.stringify(handles);
 
 	return Effect.promise(async () => {
 		await writeFile(file, text, { mode: 0o600 });
@@ -49,35 +71,38 @@ const daysAgo = (n: number) => new Date(Date.now() - n * DAY_MS).toISOString();
 
 const millisOf = (iso: string) => Date.parse(iso);
 
+const LEGACY_ROOMS = JSON.stringify({ den: `SHA256:${"A".repeat(43)}` });
+
 const GUEST_EXEC = /^exec guest:[A-Za-z0-9_-]{1,64} hi\n$/u;
 
-const linked = (
-	relay: { linkedRooms: () => ReadonlyArray<string> },
-	room: string,
-	up = true
-) =>
-	waitFor(`room ${room} ${up ? "linked" : "unlinked"}`, () =>
+type Started = Effect.Success<ReturnType<typeof startRelay>>;
+
+const linked = (relay: Started, address: string, up = true) =>
+	waitFor(`table ${address} ${up ? "linked" : "unlinked"}`, () =>
 		up
-			? relay.linkedRooms().includes(room)
-			: !relay.linkedRooms().includes(room)
+			? relay.linkedTables().includes(address)
+			: !relay.linkedTables().includes(address)
 	);
 
 const openTable = (
-	relay: Effect.Success<ReturnType<typeof startRelay>>,
-	room = "den"
+	relay: Started,
+	table = "den",
+	handle = HANDLE,
+	options: GmTableOptions = {}
 ) =>
 	Effect.gen(function* () {
-		const gm = yield* gmTable();
+		const gm = yield* gmTable(options);
 
 		const link = yield* linkGm(
 			gm,
 			relay.gmPort,
-			room,
-			relay.relayKeyFingerprint
+			table,
+			relay.relayKeyFingerprint,
+			handle
 		);
 
 		expect(link.answer).toBe("OK");
-		yield* linked(relay, room);
+		yield* linked(relay, `${handle}/${table}`);
 
 		return { gm, link };
 	});
@@ -88,6 +113,17 @@ const scoped = <A, E>(body: Effect.Effect<A, E, Scope.Scope>) =>
 		const value = yield* body.pipe(Scope.provide(scope));
 
 		return { value, close: Scope.close(scope, Exit.void) };
+	});
+
+const fileThere = (file: string) =>
+	Effect.promise(async () => {
+		try {
+			await stat(file);
+
+			return true;
+		} catch {
+			return false;
+		}
 	});
 
 describe("relay: players reach the GM's table", () => {
@@ -145,22 +181,41 @@ describe("relay: players reach the GM's table", () => {
 			})
 	);
 
-	effect("a room's name is typed in any case", () =>
+	effect("a table's address is typed in any case, with / or .", () =>
 		Effect.gen(function* () {
 			const relay = yield* startRelay();
 			yield* openTable(relay);
 			const key = yield* clientKey(yield* tempDir, "vex");
 
-			const ran = yield* sshExec(relay.playerPort, ["hi"], {
-				key,
-				user: "Den",
-			});
+			for (const user of ["Ana/Den", "ana.den"]) {
+				const ran = yield* sshExec(relay.playerPort, ["hi"], { key, user });
 
-			expect(ran).toMatchObject({
-				stdout: `exec key:${key.fingerprint} hi\n`,
-				exitCode: 0,
-			});
+				expect(ran).toMatchObject({
+					stdout: `exec key:${key.fingerprint} hi\n`,
+					exitCode: 0,
+				});
+			}
 		})
+	);
+
+	effect(
+		"an invite after ~ is stripped before routing and handed to the table as SV_INVITE",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				yield* openTable(relay);
+				const key = yield* clientKey(yield* tempDir, "vex");
+
+				expect(
+					yield* sshExec(relay.playerPort, ["invite"], {
+						key,
+						user: "ana/den~k3y9",
+					})
+				).toMatchObject({ stdout: "invite k3y9\n", exitCode: 0 });
+				expect(
+					yield* sshExec(relay.playerPort, ["invite"], { key, user: "ana/den" })
+				).toMatchObject({ stdout: "invite -\n", exitCode: 0 });
+			})
 	);
 
 	effect("a keyless player is seated as a guest", () =>
@@ -257,9 +312,9 @@ describe("relay: shutting down", () => {
 	);
 });
 
-describe("relay: rooms", () => {
+describe("relay: handles", () => {
 	effect(
-		"an unknown room says so, and how to join; a claimed room with no GM isn't open",
+		"a closed table says so; a name that's no table, or one ssh sends by default, gets the join hint",
 		() =>
 			Effect.gen(function* () {
 				const relay = yield* startRelay();
@@ -267,16 +322,16 @@ describe("relay: rooms", () => {
 
 				const unknown = yield* sshExec(relay.playerPort, ["hi"], {
 					key,
-					user: "nowhere",
+					user: "nobody/nowhere",
 				});
 
 				expect(unknown).toMatchObject({
 					stdout: "",
-					stderr: `There's no table called nowhere here.\n${JOIN_HINT}\n`,
+					stderr: `${closedTableMessage("nobody/nowhere")}\n`,
 					exitCode: 1,
 				});
 
-				for (const user of ["Not_A-Room", "root", "ubuntu"]) {
+				for (const user of ["Not_A-Table", "root", "ubuntu", "nowhere"]) {
 					const odd = yield* sshExec(relay.playerPort, ["hi"], { key, user });
 					expect(odd).toMatchObject({ stderr: `${JOIN_HINT}\n`, exitCode: 1 });
 				}
@@ -284,226 +339,475 @@ describe("relay: rooms", () => {
 				const shell = yield* sshShell(
 					relay.playerPort,
 					{ cols: 80, rows: 24 },
-					{
-						key,
-						user: "nowhere",
-					}
+					{ key, user: "nobody/nowhere" }
 				);
 
-				yield* waitFor("the lobby", () =>
-					Bun.stripANSI(shell.output()).includes(
-						"> type your table's room name"
-					)
-				);
-				expect(shell.output()).not.toContain("nowhere");
+				yield* waitFor("the lobby, saying why", () => {
+					const shown = Bun.stripANSI(shell.output());
+
+					return (
+						shown.includes("> type your table's name") &&
+						shown.includes("isn't open right now")
+					);
+				});
 				shell.write("\u0003");
 				expect(yield* Effect.promise(async () => await shell.exited)).toBe(0);
 
 				const table = yield* scoped(openTable(relay));
 				yield* table.close;
-				yield* linked(relay, "den", false);
+				yield* linked(relay, "ana/den", false);
 				const closed = yield* sshExec(relay.playerPort, ["hi"], { key });
 				expect(closed).toMatchObject({
-					stderr: `${closedRoomMessage("den")}\n`,
+					stderr: `${closedTableMessage("ana/den")}\n`,
 					exitCode: 1,
 				});
 			})
 	);
 
 	effect(
-		"the first GM host key claims a room; another key is refused until it's forgotten",
+		"the first GM key claims a handle; another key is refused until it's forgotten",
 		() =>
 			Effect.gen(function* () {
 				const relay = yield* startRelay();
 				const rightful = yield* gmTable();
-
-				const rooms = () => readRegistry(path.join(relay.dir, "rooms.json"));
+				const file = path.join(relay.dir, "handles.json");
 
 				const linkDen = (gm: Effect.Success<ReturnType<typeof gmTable>>) =>
 					scoped(linkGm(gm, relay.gmPort, "den", relay.relayKeyFingerprint));
 
 				const first = yield* linkDen(rightful);
-				yield* linked(relay, "den");
-				const registry = yield* rooms();
-				expect(Object.keys(registry)).toEqual(["den"]);
-				expect(registry.den?.key).toBe(rightful.server.hostKeyFingerprint);
+				yield* linked(relay, "ana/den");
+				const registry = yield* readRegistry(file);
+				expect(Object.keys(registry)).toEqual(["ana"]);
+				expect(registry.ana?.keys).toEqual([
+					rightful.server.hostKeyFingerprint,
+				]);
 				yield* first.close;
-				yield* linked(relay, "den", false);
+				yield* linked(relay, "ana/den", false);
 
 				const impostor = yield* gmTable();
 
 				const refused = yield* linkGm(
 					impostor,
 					relay.gmPort,
-					"den",
+					"attic",
 					relay.relayKeyFingerprint
 				);
 
 				expect(refused.answer).toBe("OK");
 				yield* waitFor("the impostor's link to be closed", refused.closed);
-				expect(relay.linkedRooms()).toEqual([]);
+				expect(relay.linkedTables()).toEqual([]);
 				expect(relay.logs.join("\n")).toContain(
-					`room den: refused a GM with host key ${impostor.server.hostKeyFingerprint}`
+					`handle ana: refused a GM with key ${impostor.server.hostKeyFingerprint}`
 				);
-				expect(yield* rooms()).toMatchObject({
-					den: { key: rightful.server.hostKeyFingerprint },
+				expect(yield* readRegistry(file)).toMatchObject({
+					ana: { keys: [rightful.server.hostKeyFingerprint] },
 				});
 
 				const again = yield* linkDen(rightful);
-				yield* linked(relay, "den");
+				yield* linked(relay, "ana/den");
 				yield* again.close;
-				yield* linked(relay, "den", false);
+				yield* linked(relay, "ana/den", false);
 
-				yield* forgetRoom(path.join(relay.dir, "rooms.json"), "den");
+				yield* forgetHandle(file, "ana");
 				yield* linkGm(impostor, relay.gmPort, "den", relay.relayKeyFingerprint);
-				yield* linked(relay, "den");
-				expect(yield* rooms()).toMatchObject({
-					den: { key: impostor.server.hostKeyFingerprint },
+				yield* linked(relay, "ana/den");
+				expect(yield* readRegistry(file)).toMatchObject({
+					ana: { keys: [impostor.server.hostKeyFingerprint] },
 				});
 			})
 	);
 
-	effect("the same GM linking again replaces its old link at once", () =>
+	effect(
+		"one GM key opens several tables under its handle, and the relay sees the GM key, not each campaign's",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				const gmKey = yield* gmTable();
+
+				const pem = yield* Effect.promise(
+					async () => await readFile(gmKey.hostKeyPath)
+				);
+
+				const den = yield* gmTable();
+				const attic = yield* gmTable();
+
+				yield* linkGm(
+					{ server: den.server, hostKey: pem },
+					relay.gmPort,
+					"den",
+					relay.relayKeyFingerprint
+				);
+				yield* linkGm(
+					{ server: attic.server, hostKey: pem },
+					relay.gmPort,
+					"attic",
+					relay.relayKeyFingerprint
+				);
+				yield* linked(relay, "ana/den");
+				yield* linked(relay, "ana/attic");
+				expect(
+					(yield* readRegistry(path.join(relay.dir, "handles.json"))).ana?.keys
+				).toEqual([gmKey.server.hostKeyFingerprint]);
+				expect(den.server.hostKeyFingerprint).not.toBe(
+					gmKey.server.hostKeyFingerprint
+				);
+			})
+	);
+
+	effect(
+		"a claim code minted by a key that holds the handle adds another machine's key, once",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				const { gm } = yield* openTable(relay);
+				const laptop = yield* gmTable();
+				const file = path.join(relay.dir, "handles.json");
+
+				expect(
+					yield* relay.mintPairing("ana", laptop.server.hostKeyFingerprint)
+				).toMatchObject({ kind: "refused" });
+
+				const minted = yield* relay.mintPairing(
+					"ana",
+					gm.server.hostKeyFingerprint
+				);
+
+				expect(minted.kind).toBe("minted");
+				const code = minted.kind === "minted" ? minted.code : "";
+
+				const paired = yield* linkGm(
+					laptop,
+					relay.gmPort,
+					"attic",
+					relay.relayKeyFingerprint,
+					"ana",
+					code
+				);
+
+				expect(paired.answer).toBe("OK");
+				yield* linked(relay, "ana/attic");
+				expect((yield* readRegistry(file)).ana?.keys).toEqual([
+					gm.server.hostKeyFingerprint,
+					laptop.server.hostKeyFingerprint,
+				]);
+
+				const stranger = yield* gmTable();
+
+				const reused = yield* linkGm(
+					stranger,
+					relay.gmPort,
+					"loft",
+					relay.relayKeyFingerprint,
+					"ana",
+					code
+				);
+
+				yield* waitFor("the spent code to be refused", reused.closed);
+				expect((yield* readRegistry(file)).ana?.keys).toHaveLength(2);
+			})
+	);
+
+	effect(
+		"a claim proof overheard on the wire can't be redeemed by another host key",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				const { gm } = yield* openTable(relay);
+				const laptop = yield* gmTable();
+				const thief = yield* gmTable();
+				const file = path.join(relay.dir, "handles.json");
+
+				const minted = yield* relay.mintPairing(
+					"ana",
+					gm.server.hostKeyFingerprint
+				);
+
+				const code = minted.kind === "minted" ? minted.code : "";
+
+				const stolen = yield* linkGm(
+					thief,
+					relay.gmPort,
+					"loft",
+					relay.relayKeyFingerprint,
+					"ana",
+					code,
+					laptop.server.hostKeyFingerprint
+				);
+
+				yield* waitFor("the stolen proof to be refused", stolen.closed);
+				expect(relay.linkedTables()).not.toContain("ana/loft");
+				expect((yield* readRegistry(file)).ana?.keys).toEqual([
+					gm.server.hostKeyFingerprint,
+				]);
+				expect(relay.logs.join("\n")).toContain(
+					`with key ${thief.server.hostKeyFingerprint} that proves no live code`
+				);
+
+				const paired = yield* linkGm(
+					laptop,
+					relay.gmPort,
+					"attic",
+					relay.relayKeyFingerprint,
+					"ana",
+					code
+				);
+
+				expect(paired.answer).toBe("OK");
+				yield* linked(relay, "ana/attic");
+				expect((yield* readRegistry(file)).ana?.keys).toEqual([
+					gm.server.hostKeyFingerprint,
+					laptop.server.hostKeyFingerprint,
+				]);
+			})
+	);
+
+	effect(
+		"a claim refused because the handle holds its most keys keeps its code",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay({ gm: { maxKeysPerHandle: 2 } });
+				const { gm } = yield* openTable(relay);
+				const laptop = yield* gmTable();
+				const file = path.join(relay.dir, "handles.json");
+				const phantom = `SHA256:${"P".repeat(43)}`;
+				const own = gm.server.hostKeyFingerprint;
+				const registry = yield* readRegistry(file);
+				const held = registry.ana;
+
+				expect(held).toBeDefined();
+
+				const at = {
+					claimed: held?.claimed ?? daysAgo(1),
+					seen: held?.seen ?? daysAgo(0),
+				};
+
+				yield* writeRegistry(file, { ana: { keys: [own, phantom], ...at } });
+
+				const minted = yield* relay.mintPairing("ana", own);
+				const code = minted.kind === "minted" ? minted.code : "";
+
+				const full = yield* linkGm(
+					laptop,
+					relay.gmPort,
+					"attic",
+					relay.relayKeyFingerprint,
+					"ana",
+					code
+				);
+
+				yield* waitFor("the full handle to refuse the key", full.closed);
+				expect(relay.logs.join("\n")).toContain(
+					`handle ana: refused key ${laptop.server.hostKeyFingerprint}: it holds its most keys (2)`
+				);
+				expect((yield* readRegistry(file)).ana?.keys).toEqual([own, phantom]);
+
+				yield* writeRegistry(file, { ana: { keys: [own], ...at } });
+
+				const paired = yield* linkGm(
+					laptop,
+					relay.gmPort,
+					"attic",
+					relay.relayKeyFingerprint,
+					"ana",
+					code
+				);
+
+				expect(paired.answer).toBe("OK");
+				yield* linked(relay, "ana/attic");
+				expect((yield* readRegistry(file)).ana?.keys).toEqual([
+					own,
+					laptop.server.hostKeyFingerprint,
+				]);
+			})
+	);
+
+	effect("a handle opens so many tables at once", () =>
 		Effect.gen(function* () {
-			const relay = yield* startRelay();
-			const { gm, link: old } = yield* openTable(relay);
-			const key = yield* clientKey(yield* tempDir, "vex");
+			const relay = yield* startRelay({ gm: { tablesPerHandle: 1 } });
+			const { gm } = yield* openTable(relay);
 
-			const seated = yield* sshShell(
-				relay.playerPort,
-				{ cols: 80, rows: 24 },
-				{ key }
-			);
-
-			yield* waitFor("the seat", () => seated.output().includes("seat key:"));
-
-			const fresh = yield* linkGm(
+			const second = yield* linkGm(
 				gm,
 				relay.gmPort,
-				"den",
+				"attic",
 				relay.relayKeyFingerprint
 			);
 
-			expect(fresh.answer).toBe("OK");
-			yield* waitFor("the old link to close", old.closed);
-			yield* waitFor("the notice", () =>
-				seated.output().includes("The table closed.")
+			yield* waitFor("the second table to be refused", second.closed);
+			expect(second.answer).toBe(
+				"ERR the handle ana has 1 tables open already"
 			);
-			expect(yield* Effect.promise(async () => await seated.exited)).toBe(1);
-			expect(fresh.closed()).toBe(false);
-			expect((yield* sshExec(relay.playerPort, ["hi"], { key })).exitCode).toBe(
-				0
-			);
+			expect(relay.linkedTables()).toEqual(["ana/den"]);
 		})
 	);
 
 	effect(
-		"a claim no GM has linked for --claim-days lapses, and another host key claims it",
+		"the same GM linking a table again replaces its old link at once",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				const { gm, link: old } = yield* openTable(relay);
+				const key = yield* clientKey(yield* tempDir, "vex");
+
+				const seated = yield* sshShell(
+					relay.playerPort,
+					{ cols: 80, rows: 24 },
+					{ key }
+				);
+
+				yield* waitFor("the seat", () => seated.output().includes("seat key:"));
+
+				const fresh = yield* linkGm(
+					gm,
+					relay.gmPort,
+					"den",
+					relay.relayKeyFingerprint
+				);
+
+				expect(fresh.answer).toBe("OK");
+				yield* waitFor("the old link to close", old.closed);
+				yield* waitFor("the notice", () =>
+					seated.output().includes("The table closed.")
+				);
+				expect(yield* Effect.promise(async () => await seated.exited)).toBe(1);
+				expect(fresh.closed()).toBe(false);
+				expect(
+					(yield* sshExec(relay.playerPort, ["hi"], { key })).exitCode
+				).toBe(0);
+			})
+	);
+
+	effect(
+		"a handle no GM has linked for --claim-days lapses, and another GM key claims it",
 		() =>
 			Effect.gen(function* () {
 				const dir = yield* tempDir;
-				const roomsFile = path.join(dir, "rooms.json");
+				const file = path.join(dir, "handles.json");
 				const gone = `SHA256:${"A".repeat(43)}`;
 				const lapsed = daysAgo(8);
 
-				yield* writeRegistry(roomsFile, {
-					den: { key: gone, linked: lapsed },
-					attic: { key: gone, linked: daysAgo(6) },
+				yield* writeRegistry(file, {
+					ana: { keys: [gone], claimed: daysAgo(20), seen: lapsed },
+					bo: { keys: [gone], claimed: daysAgo(20), seen: daysAgo(6) },
 				});
 
 				const relay = yield* startRelay({ dir, gm: { claimDays: 7 } });
 				const newcomer = yield* gmTable();
 				yield* linkGm(newcomer, relay.gmPort, "den", relay.relayKeyFingerprint);
-				yield* linked(relay, "den");
+				yield* linked(relay, "ana/den");
 				expect(relay.logs.join("\n")).toContain(
-					`room den: dropped the claim of GM host key ${gone}, last linked ${lapsed}\n`
+					`handle ana: dropped the claim of GM keys ${gone}, last seen ${lapsed}\n`
 				);
 
-				const attic = yield* linkGm(
+				const bo = yield* linkGm(
 					yield* gmTable(),
 					relay.gmPort,
 					"attic",
-					relay.relayKeyFingerprint
+					relay.relayKeyFingerprint,
+					"bo"
 				);
 
-				yield* waitFor("the second GM to be refused", attic.closed);
+				yield* waitFor("the second GM to be refused", bo.closed);
 
-				const after = yield* readRegistry(roomsFile);
-
-				expect(after).toMatchObject({
-					den: { key: newcomer.server.hostKeyFingerprint },
-					attic: { key: gone },
+				expect(yield* readRegistry(file)).toMatchObject({
+					ana: { keys: [newcomer.server.hostKeyFingerprint] },
+					bo: { keys: [gone] },
 				});
 			})
 	);
 
-	effect("a GM's link renews its claim when it begins and when it ends", () =>
+	effect("a GM's link renews its handle when it begins and when it ends", () =>
 		Effect.gen(function* () {
 			const relay = yield* startRelay();
-			const roomsFile = path.join(relay.dir, "rooms.json");
+			const file = path.join(relay.dir, "handles.json");
 
-			const linkedAt = () =>
-				readRegistry(roomsFile).pipe(
-					Effect.map((rooms) => millisOf(rooms.den?.linked ?? ""))
+			const seenAt = () =>
+				readRegistry(file).pipe(
+					Effect.map((handles) => millisOf(handles.ana?.seen ?? ""))
 				);
 
 			const table = yield* scoped(openTable(relay));
-			const began = yield* linkedAt();
+			const began = yield* seenAt();
+			const stored = (yield* readRegistry(file)).ana;
+			expect(millisOf(stored?.seen ?? "")).toBeGreaterThanOrEqual(
+				millisOf(stored?.claimed ?? "")
+			);
 			yield* Effect.sleep("20 millis");
 			yield* table.close;
-			yield* linked(relay, "den", false);
+			yield* linked(relay, "ana/den", false);
 
 			for (
 				let tries = 0;
-				(yield* linkedAt()) === began && tries < 100;
+				(yield* seenAt()) === began && tries < 100;
 				tries += 1
 			) {
 				yield* Effect.sleep("20 millis");
 			}
 
-			expect(yield* linkedAt()).toBeGreaterThan(began);
+			expect(yield* seenAt()).toBeGreaterThan(began);
 		})
 	);
 
 	effect(
-		"a full registry drops its stalest unlinked claim for a new one, never a linked one",
+		"a full registry refuses a new handle; only a lapsed claim makes way, never one still live",
 		() =>
 			Effect.gen(function* () {
 				const dir = yield* tempDir;
-				const roomsFile = path.join(dir, "rooms.json");
+				const file = path.join(dir, "handles.json");
 				const absent = `SHA256:${"A".repeat(43)}`;
-				const yesterday = daysAgo(1);
+				const lapsed = daysAgo(31);
 
-				yield* writeRegistry(roomsFile, {
-					attic: { key: absent, linked: yesterday },
+				yield* writeRegistry(file, {
+					attic: { keys: [absent], claimed: lapsed, seen: lapsed },
+					den: { keys: [absent], claimed: daysAgo(2), seen: daysAgo(1) },
 				});
 
-				const relay = yield* startRelay({ dir, gm: { maxRooms: 2 } });
-				yield* openTable(relay, "den");
-				yield* openTable(relay, "cellar");
+				const relay = yield* startRelay({ dir, gm: { maxHandles: 2 } });
+				yield* openTable(relay, "den", "ana");
 				expect(relay.logs.join("\n")).toContain(
-					`room attic: dropped the claim of GM host key ${absent}, last linked ${yesterday}, to make room for cellar`
+					`handle attic: dropped the claim of GM keys ${absent}, last seen ${lapsed}, to make room for ana`
 				);
 
-				const rooms = () => roomsIn(roomsFile);
+				expect(yield* handlesIn(file)).toEqual(["ana", "den"]);
 
-				expect(yield* rooms()).toEqual(["cellar", "den"]);
-
-				const third = yield* linkGm(
+				const second = yield* linkGm(
 					yield* gmTable(),
 					relay.gmPort,
-					"loft",
-					relay.relayKeyFingerprint
+					"den",
+					relay.relayKeyFingerprint,
+					"bo"
 				);
 
-				yield* waitFor("the third claim to be refused", third.closed);
-				expect(third.answer).toBe(
-					"ERR the relay holds its most rooms, each with a GM linked now"
+				yield* waitFor("the second claim to be refused", second.closed);
+				expect(second.answer).toBe(
+					"ERR the relay holds its most handles; try again later"
 				);
 				expect(relay.logs.join("\n")).toContain(
-					"room loft: refused: the relay holds its most rooms (2), each with a GM linked now"
+					"handle bo: refused: the relay holds its most handles (2), none lapsed"
 				);
-				expect(yield* rooms()).toEqual(["cellar", "den"]);
+				expect(yield* handlesIn(file)).toEqual(["ana", "den"]);
+			})
+	);
+
+	effect(
+		"a relay from protocol 1 sets its rooms.json aside and starts handles afresh",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+				yield* Effect.promise(async () => {
+					await writeFile(path.join(dir, "rooms.json"), LEGACY_ROOMS, {
+						mode: 0o600,
+					});
+				});
+
+				const relay = yield* startRelay({ dir });
+				expect(yield* fileThere(path.join(dir, "rooms.json"))).toBe(false);
+				expect(yield* fileThere(path.join(dir, "rooms.json.legacy"))).toBe(
+					true
+				);
+				expect(relay.logs.join("\n")).toContain("rooms.json.legacy");
+				yield* openTable(relay);
 			})
 	);
 
@@ -552,23 +856,130 @@ describe("relay: rooms", () => {
 			);
 
 			yield* waitFor("the link to close", link.closed);
-			expect(relay.linkedRooms()).toEqual([]);
+			expect(relay.linkedTables()).toEqual([]);
 			expect(relay.logs.join("\n")).toContain("refused this relay's key");
 		})
 	);
 
-	effect("a bad hello is answered with ERR and the link closed", () =>
-		Effect.gen(function* () {
-			const relay = yield* startRelay();
+	effect(
+		"a bad hello is answered with ERR, and a protocol 1 host is told to upgrade",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
 
-			const { socket } = yield* dial(relay.gmPort);
-			socket.write("SUPERVILLAIN 1 ROOM Bad_Room\n");
-			const answer = yield* readLine(socket);
-			yield* socketClosed(socket);
+				const bad = yield* dial(relay.gmPort);
+				bad.socket.write("SUPERVILLAIN 2 TABLE Bad_Handle/den\n");
+				const answer = yield* readLine(bad.socket);
+				yield* socketClosed(bad.socket);
+				expect(answer).toStartWith("ERR ");
 
-			expect(answer).toStartWith("ERR ");
-			expect(relay.linkedRooms()).toEqual([]);
-		})
+				const old = yield* dial(relay.gmPort);
+				old.socket.write("SUPERVILLAIN 1 ROOM den\n");
+				const upgrade = yield* readLine(old.socket);
+				yield* socketClosed(old.socket);
+				expect(upgrade).toStartWith("ERR this relay speaks protocol 2");
+				expect(relay.linkedTables()).toEqual([]);
+			})
+	);
+});
+
+describe("relay: the returning player's shorthand", () => {
+	effect(
+		"a bare table name seats a key straight at the one open table of that name that knows it",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				const key = yield* clientKey(yield* tempDir, "vex");
+				const actor = `key:${key.fingerprint}`;
+				yield* openTable(relay, "den", "ana", { knows: { actors: [actor] } });
+				yield* openTable(relay, "den", "bo", { knows: { actors: [] } });
+
+				for (const user of ["den", "ana"]) {
+					const seated = yield* sshExec(relay.playerPort, ["hi"], {
+						key,
+						user,
+					});
+
+					expect(seated).toMatchObject({
+						stdout: `exec ${actor} hi\n`,
+						exitCode: 0,
+					});
+					expect(seated.stderr).toStartWith("Joining ana/den…\n");
+				}
+			})
+	);
+
+	effect(
+		"two open tables of that name that know the key make the player pick",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				const key = yield* clientKey(yield* tempDir, "vex");
+				const actor = `key:${key.fingerprint}`;
+				yield* openTable(relay, "den", "ana", { knows: { actors: [actor] } });
+				yield* openTable(relay, "den", "bo", { knows: { actors: [actor] } });
+
+				const exec = yield* sshExec(relay.playerPort, ["hi"], {
+					key,
+					user: "den",
+				});
+
+				expect(exec).toMatchObject({
+					stderr: `${manyMessage("den")}\n`,
+					exitCode: 1,
+				});
+
+				const shell = yield* sshShell(
+					relay.playerPort,
+					{ cols: 100, rows: 30 },
+					{ key, user: "den" }
+				);
+
+				yield* waitFor("the lobby with both", () => {
+					const shown = Bun.stripANSI(shell.output());
+
+					return shown.includes("ana/den") && shown.includes("bo/den");
+				});
+				shell.write("\u0003");
+			})
+	);
+
+	effect(
+		"a shorthand no open table answers to looks the same whether or not a table of that name is open, so strangers can't probe for one",
+		() =>
+			Effect.gen(function* () {
+				const relay = yield* startRelay();
+				const key = yield* clientKey(yield* tempDir, "vex");
+				yield* openTable(relay, "den", "ana", { knows: { actors: [] } });
+
+				const none = yield* sshExec(relay.playerPort, ["hi"], {
+					key,
+					user: "attic",
+				});
+
+				expect(none).toMatchObject({ stderr: `${JOIN_HINT}\n`, exitCode: 1 });
+				expect(
+					yield* sshExec(relay.playerPort, ["hi"], { key, user: "den" })
+				).toMatchObject({ stderr: none.stderr, exitCode: 1 });
+				expect(
+					yield* sshExec(relay.playerPort, ["hi"], { user: "den" })
+				).toMatchObject({ stderr: none.stderr, exitCode: 1 });
+
+				const shell = yield* sshShell(
+					relay.playerPort,
+					{ cols: 100, rows: 30 },
+					{ key, user: "den" }
+				);
+
+				yield* waitFor("the lobby", () =>
+					Bun.stripANSI(shell.output()).includes("> type your table's name")
+				);
+				expect(Bun.stripANSI(shell.output())).not.toContain("called den");
+				shell.write("\u0003");
+				expect(
+					yield* sshExec(relay.playerPort, ["hi"], { key, user: "ana/den" })
+				).toMatchObject({ exitCode: 0 });
+			})
 	);
 });
 
@@ -614,10 +1025,10 @@ describe("relay: limits", () => {
 	);
 
 	effect(
-		"a room seats so many players at once; the next is told it's full",
+		"a table seats so many players at once; the next is told it's full",
 		() =>
 			Effect.gen(function* () {
-				const relay = yield* startRelay({ sessionsPerRoom: 1 });
+				const relay = yield* startRelay({ sessionsPerTable: 1 });
 				yield* openTable(relay);
 				const key = yield* clientKey(yield* tempDir, "vex");
 
@@ -631,7 +1042,7 @@ describe("relay: limits", () => {
 				const turned = yield* sshExec(relay.playerPort, ["hi"], { key });
 				expect(turned).toMatchObject({
 					exitCode: 1,
-					stderr: "The table den is full right now.\n",
+					stderr: "ana/den is full right now.\n",
 				});
 				held.kill();
 				yield* Effect.promise(async () => await held.exited);
@@ -646,7 +1057,7 @@ describe("relay: limits", () => {
 		"a player who gives up while a slow host seats them gives their place back at once",
 		() =>
 			Effect.gen(function* () {
-				const relay = yield* startRelay({ sessionsPerRoom: 1 });
+				const relay = yield* startRelay({ sessionsPerTable: 1 });
 				const { link } = yield* openTable(relay);
 				const key = yield* clientKey(yield* tempDir, "vex");
 				link.socket.pause();
@@ -677,14 +1088,15 @@ describe("relay: limits", () => {
 		() =>
 			Effect.gen(function* () {
 				const relay = yield* startRelay({ gm: { pendingLinks: 1, links: 2 } });
-				yield* openTable(relay, "den");
-				yield* openTable(relay, "attic");
+				yield* openTable(relay, "den", "ana");
+				yield* openTable(relay, "attic", "bo");
 
 				const third = yield* linkGm(
 					yield* gmTable(),
 					relay.gmPort,
 					"cellar",
-					relay.relayKeyFingerprint
+					relay.relayKeyFingerprint,
+					"cy"
 				);
 
 				yield* waitFor("the third GM to be refused", third.closed);
@@ -692,72 +1104,77 @@ describe("relay: limits", () => {
 					"ERR the relay has its most GMs linked; try again later"
 				);
 				expect(relay.logs.join("\n")).toContain(
-					"room cellar: refused: the relay has its most GMs linked (2)"
+					"table cy/cellar: refused: the relay has its most GMs linked (2)"
 				);
-				expect(relay.linkedRooms().toSorted()).toEqual(["attic", "den"]);
+				expect(relay.linkedTables().toSorted()).toEqual([
+					"ana/den",
+					"bo/attic",
+				]);
 
-				expect(yield* roomsIn(path.join(relay.dir, "rooms.json"))).toEqual([
-					"attic",
-					"den",
+				expect(yield* handlesIn(path.join(relay.dir, "handles.json"))).toEqual([
+					"ana",
+					"bo",
 				]);
 			})
 	);
 
 	effect(
-		"rooms are claimed at a rate per address and up to a total; held rooms relink",
+		"handles are claimed at a rate per address and up to a total; held handles relink",
 		() =>
 			Effect.gen(function* () {
 				const relay = yield* startRelay({
 					gm: { claimRate: { burst: 1, perSecond: 0.0001 } },
 				});
 
-				const { gm, link } = yield* openTable(relay, "den");
+				const { gm, link } = yield* openTable(relay, "den", "ana");
 
 				const squatter = yield* linkGm(
 					yield* gmTable(),
 					relay.gmPort,
 					"attic",
-					relay.relayKeyFingerprint
+					relay.relayKeyFingerprint,
+					"bo"
 				);
 
 				yield* waitFor("the second claim to be refused", squatter.closed);
 				expect(squatter.answer).toBe(
-					"ERR this address claims rooms too fast; try again later"
+					"ERR this address claims handles too fast; try again later"
 				);
 				expect(relay.logs.join("\n")).toContain(
-					"room attic: refused: 127.0.0.1 claims rooms too fast"
+					"handle bo: refused: 127.0.0.1 claims handles too fast"
 				);
 				link.socket.destroy();
-				yield* linked(relay, "den", false);
+				yield* linked(relay, "ana/den", false);
 				yield* linkGm(gm, relay.gmPort, "den", relay.relayKeyFingerprint);
-				yield* linked(relay, "den");
+				yield* linked(relay, "ana/den");
 
-				const full = yield* startRelay({ gm: { maxRooms: 1 } });
-				yield* openTable(full, "den");
+				const full = yield* startRelay({ gm: { maxHandles: 1 } });
+				yield* openTable(full, "den", "ana");
 
 				const over = yield* linkGm(
 					yield* gmTable(),
 					full.gmPort,
 					"attic",
-					full.relayKeyFingerprint
+					full.relayKeyFingerprint,
+					"bo"
 				);
 
 				yield* waitFor("the claim past the total to be refused", over.closed);
 				expect(over.answer).toBe(
-					"ERR the relay holds its most rooms, each with a GM linked now"
+					"ERR the relay holds its most handles; try again later"
 				);
 				expect(full.logs.join("\n")).toContain(
-					"room attic: refused: the relay holds its most rooms (1), each with a GM linked now"
+					"handle bo: refused: the relay holds its most handles (1), none lapsed"
 				);
 
-				expect(yield* roomsIn(path.join(full.dir, "rooms.json"))).toEqual([
-					"den",
+				expect(yield* handlesIn(path.join(full.dir, "handles.json"))).toEqual([
+					"ana",
 				]);
 			})
 	);
 
 	effect(
-		"only a claim made counts against the rate: failed logins for a free room don't",
+		"only a claim made counts against the rate: failed logins for a free handle don't",
 		() =>
 			Effect.gen(function* () {
 				const relay = yield* startRelay();
@@ -775,7 +1192,7 @@ describe("relay: limits", () => {
 					yield* waitFor(`failed login ${i} to end`, failed.closed);
 				}
 
-				expect(relay.linkedRooms()).toEqual([]);
+				expect(relay.linkedTables()).toEqual([]);
 
 				const good = yield* linkGm(
 					gm,
@@ -785,11 +1202,11 @@ describe("relay: limits", () => {
 				);
 
 				expect(good.answer).toBe("OK");
-				yield* linked(relay, "den");
+				yield* linked(relay, "ana/den");
 				expect(relay.logs.join("\n")).toContain(
-					"room den: claimed by GM host key"
+					"handle ana: claimed by GM key"
 				);
-				expect(relay.logs.join("\n")).not.toContain("claims rooms too fast");
+				expect(relay.logs.join("\n")).not.toContain("claims handles too fast");
 			})
 	);
 
@@ -821,7 +1238,7 @@ describe("relay: limits", () => {
 			);
 
 			expect(link.answer).toBe("OK");
-			yield* linked(relay, "den");
+			yield* linked(relay, "ana/den");
 		})
 	);
 });

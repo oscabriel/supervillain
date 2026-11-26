@@ -16,21 +16,25 @@ const GM = `SHA256:${"A".repeat(43)}`;
 
 const LINKED = "2026-10-01T12:00:00.000Z";
 
-const TWO_ROOMS = JSON.stringify({
-	den: { key: GM, linked: LINKED },
-	attic: { key: GM, linked: LINKED },
+const TWO_HANDLES = JSON.stringify({
+	ana: { keys: [GM], claimed: LINKED, seen: LINKED },
+	bo: { keys: [GM], claimed: LINKED, seen: LINKED },
 });
 
 const STARTED = /GMs dial 127\.0\.0\.1:\d+/u;
 
 const RELAY_KEY = /relay key (?<key>SHA256:[A-Za-z0-9+/]{43})/u;
 
-const PLAYER_PORT = /ssh -p (?<port>\d+) <room>@/u;
+const PLAYER_PORT = /ssh -p (?<port>\d+) <handle>\/<table>@/u;
 
-const StoredRooms = Schema.fromJsonString(
+const StoredHandles = Schema.fromJsonString(
 	Schema.Record(
 		Schema.String,
-		Schema.Struct({ key: Schema.String, linked: Schema.String })
+		Schema.Struct({
+			keys: Schema.Array(Schema.String),
+			claimed: Schema.String,
+			seen: Schema.String,
+		})
 	)
 );
 
@@ -105,7 +109,7 @@ describe("supervillain relay", () => {
 				expect(key).toBeDefined();
 				expect(relay.output()).toContain(`--relay-key ${key}`);
 				expect(relay.output()).toContain(
-					"a room's claim lapses after 180 days with no GM linked"
+					"a handle's claim lapses after 180 days with no GM linked"
 				);
 
 				const playerPort = Number(
@@ -121,7 +125,7 @@ describe("supervillain relay", () => {
 
 				expect(ran).toMatchObject({
 					exitCode: 1,
-					stderr: `There's no table called den here.\n${JOIN_HINT}\n`,
+					stderr: `${JOIN_HINT}\n`,
 				});
 
 				for (const name of ["relay_key", "host_key"]) {
@@ -131,29 +135,58 @@ describe("supervillain relay", () => {
 		20_000
 	);
 
-	effect("relay forget releases a room's claim", () =>
+	effect("relay forget releases a handle's claim", () =>
 		Effect.gen(function* () {
 			const dir = yield* tempDir;
-			const rooms = path.join(dir, "rooms.json");
-			yield* writeText(rooms, TWO_ROOMS);
+			const handles = path.join(dir, "handles.json");
+			yield* writeText(handles, TWO_HANDLES);
 			yield* writeText(path.join(dir, "relay_key"), "", 0o600);
-			const forgot = yield* cli(["relay", "forget", "den", "--dir", dir]);
+			const forgot = yield* cli(["relay", "forget", "ana", "--dir", dir]);
 			expect(forgot.exitCode).toBe(0);
-			expect(forgot.stdout).toContain(`released room den`);
+			expect(forgot.stdout).toContain("released the handle ana");
 			expect(forgot.stdout).toContain(GM);
-			expect(forgot.stdout).toContain("replaces the GM linked now");
+			expect(forgot.stdout).toContain(
+				"The next GM to link a table under it claims it"
+			);
 			expect(
-				yield* Effect.promise(async () => await readFile(rooms, "utf-8")).pipe(
-					Effect.flatMap(Schema.decodeUnknownEffect(StoredRooms))
-				)
+				yield* Effect.promise(
+					async () => await readFile(handles, "utf-8")
+				).pipe(Effect.flatMap(Schema.decodeUnknownEffect(StoredHandles)))
 			).toEqual({
-				attic: { key: GM, linked: LINKED },
+				bo: { keys: [GM], claimed: LINKED, seen: LINKED },
 			});
-			const again = yield* cli(["relay", "forget", "den", "--dir", dir]);
+			const again = yield* cli(["relay", "forget", "ana", "--dir", dir]);
 			expect(again).toMatchObject({ exitCode: 0 });
-			expect(again.stdout).toContain(`no GM holds room den in ${rooms}`);
-			const bad = yield* cli(["relay", "forget", "Not A Room", "--dir", dir]);
+			expect(again.stdout).toContain(
+				`no GM holds the handle ana in ${handles}`
+			);
+			const bad = yield* cli(["relay", "forget", "Not A Handle", "--dir", dir]);
 			expect(bad.exitCode).toBe(1);
+		})
+	);
+
+	effect("--public-relay takes host:port", () =>
+		Effect.gen(function* () {
+			const dir = yield* tempDir;
+
+			const started = yield* cli([
+				"relay",
+				"--player-port",
+				"0",
+				"--gm-port",
+				"0",
+				"--bind",
+				"127.0.0.1",
+				"--public-relay",
+				"not a relay",
+				"--dir",
+				dir,
+			]);
+
+			expect(started.exitCode).toBe(1);
+			expect(started.stderr).toContain(
+				"--public-relay takes host:port, not not a relay"
+			);
 		})
 	);
 
@@ -180,6 +213,53 @@ describe("supervillain relay", () => {
 				"--claim-days takes a number of days from 1, not 0"
 			);
 		})
+	);
+
+	effect(
+		"--sandboxes takes a count from 0, and says what the lobby offers",
+		() =>
+			Effect.gen(function* () {
+				const dir = yield* tempDir;
+
+				const refused = yield* cli([
+					"relay",
+					"--player-port",
+					"0",
+					"--gm-port",
+					"0",
+					"--bind",
+					"127.0.0.1",
+					"--sandboxes",
+					"-1",
+					"--dir",
+					dir,
+				]);
+
+				expect(refused.exitCode).toBe(1);
+				expect(refused.stderr).toContain(
+					"--sandboxes takes a number from 0, not -1"
+				);
+
+				const off = yield* relayProcess([
+					"--player-port",
+					"0",
+					"--gm-port",
+					"0",
+					"--bind",
+					"127.0.0.1",
+					"--sandboxes",
+					"0",
+					"--dir",
+					dir,
+				]);
+
+				yield* waitFor("the relay", () => STARTED.test(off.output()), 15_000);
+				yield* waitFor("the sandbox line", () =>
+					off
+						.output()
+						.includes("the lobby's Try a Table is off (--sandboxes 0)")
+				);
+			})
 	);
 
 	effect(

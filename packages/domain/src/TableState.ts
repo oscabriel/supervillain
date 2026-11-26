@@ -9,7 +9,9 @@ const isTableState = (input: unknown): input is TableState =>
 	Predicate.hasProperty(input, "core") &&
 	Predicate.hasProperty(input, "ds") &&
 	Predicate.hasProperty(input, "sw") &&
-	Predicate.hasProperty(input, "pf");
+	Predicate.hasProperty(input, "pf") &&
+	Predicate.hasProperty(input, "ff") &&
+	Predicate.hasProperty(input, "stage");
 
 export const TableStateSchema = Schema.declare<TableState>(isTableState, {
 	identifier: "TableState",

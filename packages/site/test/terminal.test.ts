@@ -315,10 +315,11 @@ describe("the front page", () => {
 
 		expect(html).toContain("A virtual tabletop without the overhead.");
 		expect(html).toContain("Zero friction at game night");
-		expect(html).toContain("Tactical play, right in the terminal");
-		expect(html).toContain("Your machine is the table");
-		expect(html).toContain("Three rulesets out of the box");
-		expect(html).toContain("Draw Steel · set.world · PF2e");
-		expect(countOf(html, 'class="g-row"')).toBe(4);
+		expect(html).toContain("Campaign stage and battlemap");
+		expect(html).toContain("File over app, on your disk");
+		expect(html).toContain("Four rulesets out of the box");
+		expect(html).toContain("Draw Steel · set.world · PF2e · Freeform");
+		expect(html).toContain("Bring your agent live");
+		expect(countOf(html, 'class="g-row"')).toBe(5);
 	});
 });

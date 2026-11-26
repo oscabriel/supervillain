@@ -59,6 +59,11 @@ export interface JsonlPlatformOptions {
 	readonly tableId: string;
 }
 
+export interface MemoryPlatformOptions {
+	readonly tableId: string;
+	readonly cap: number;
+}
+
 export interface Snapshot {
 	readonly state: Json;
 	readonly version: number;
@@ -494,5 +499,13 @@ export class JsonlPlatform extends Context.Service<
 				Layer.succeed(Platform, Context.get(context, JsonlPlatform))
 			),
 			Layer.provideMerge(CampaignLog.layer(options.dir))
+		);
+
+	static readonly layerMemory = (options: MemoryPlatformOptions) =>
+		Layer.effect(this, this.make(options.tableId)).pipe(
+			Layer.flatMap((context) =>
+				Layer.succeed(Platform, Context.get(context, JsonlPlatform))
+			),
+			Layer.provideMerge(CampaignLog.layerMemory(options.cap))
 		);
 }

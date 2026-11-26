@@ -1,125 +1,146 @@
 ---
 title: Playing at a table
-summary: You need a terminal and ssh. Paste the command your GM sends, check the key once, and you're seated.
+summary: You need a terminal and ssh. Paste the command your GM sends, knock at the door once, and you're seated.
 order: 1
 ---
 
-You need a terminal and `ssh`, which macOS, Linux and Windows 10 and later already have. There's nothing to install and no account to make.
+You need a terminal and `ssh`, which macOS, Linux and Windows 10 and later already have. There is nothing to install and no account to make.
 
 ## Sit down
 
 Your GM gives you one command. Paste it into a terminal:
 
 ```sh
-ssh -p 2222 first-fight@gm.example.net
+ssh ana/first-fight@supervillain.sh
 ```
 
-The part before the `@` is the room, and after it is where the table is. The GM may give you a different port, or none.
+Before the `@` is the table address: your GM's handle (`ana`), a `/` (or `.`), and the table's name. After it is the relay carrying the table. A GM hosting directly on your local network or Tailscale gives you their machine's address and port instead (`ssh -p 2222 first-fight@192.168.1.20`).
 
-The first time, ssh asks whether you trust the table's key:
+The first time, ssh asks whether you trust the host key:
 
 ```text
 ED25519 key fingerprint is SHA256:gkYn722z8+JIXdkwJa/9amF10Y2+zkGdElyWlj0LZHk.
 Are you sure you want to continue connecting (yes/no/[fingerprint])?
 ```
 
-Check that the fingerprint matches the one your GM sent you, then type `yes`. After that ssh remembers the key. If ssh ever says the key has changed, stop and ask your GM. If the table goes through a relay, the key ssh shows is the relay's, not the GM's machine's: check it against the relay's fingerprint, which your GM gets from whoever runs the relay.
+Check that the fingerprint matches what your GM sent, then type `yes`. After that ssh remembers it. If ssh ever warns that the key changed, stop and ask your GM.
 
-### The lobby
+### Knock at the door
 
-If your GM's table goes through a relay, you can come without the room's name: `ssh -p 2222 lobby@relay.example.net`, or a bare `ssh -p 2222 relay.example.net`. Either way you get the lobby. If you've sat at a table there before with your key, it lists the tables open right now that know it: Up and Down move the pick, or type a table's number; Enter sits you at it. A table knows your key once you've done something there with it, such as setting your name or rolling.
+New tables open with the door set to knock. The first time you join, you see the door instead of the table: pick the display name you want the table to call you and press Enter. Your GM sees your name and the start of your SSH key fingerprint at the top of their screen and lets you in.
 
-The first time you come, or as a guest, nothing is listed and the lobby says how to sit down instead: type the room's name your GM gave you and press Enter. That works with tables listed too.
+Once admitted, your SSH key enters directly on every future session until the GM removes you with `/kick`. If your GM gives you an invite link with a `~` token (`ssh ana/first-fight~5k2q…@supervillain.sh`), you pick your name and sit straight down without waiting.
+
+### Coming back
+
+Once a table knows your key, two shortcuts work:
+
+- **Short name:** `ssh first-fight@supervillain.sh` takes you straight in if exactly one live table of that name knows your key. If two do, the lobby opens filtered to those two.
+- **Bare lobby:** `ssh supervillain.sh` opens the three-tab lobby:
+  - **Tables** lists every open table that knows your key, plus a prompt to type `<handle>/<table>` directly.
+  - **Try a Table** drops you into a private, in-memory Draw Steel sandbox table right over SSH so you can explore the interface with nothing installed and nothing saved.
+  - **Create a Table** lets future GMs claim a handle with their SSH key and get a one-line install and setup command for their own machine.
 
 ### When the table doesn't answer
 
-- `The table first-fight isn't open right now.` The GM's machine isn't linked to the relay. Try again once they say it's up.
-- The lobby, when you expected the table, or `There's no table called first-fight here.` in it. Check the room name with your GM, and type the right one there.
-- `The table first-fight is full right now.` Try again when someone leaves.
-- `The table closed.` The table went away while you were seated. Run the same command again when it's back; your name and hero are kept for your key.
-- `Connection reset by peer`, before anything else. Your address has as many connections open as the table allows, or opened them too fast. Close the others or wait a minute.
+- `ana/first-fight isn't open right now.` The GM's machine is offline or isn't linked yet. Try again once they open the table.
+- `ana/first-fight is full right now.` Try again when someone leaves.
+- `The table closed.` The GM closed the table or their link dropped. Run the same command again when it comes back; your name and character are kept for your key.
+- `This table lets players in by knocking: connect interactively and wait for the GM.` You sent a one-off command before being admitted. Connect normally and knock first.
+- `Connection reset by peer`, before anything else. Your address hit the connection cap or rate limit. Close extra sessions or wait a minute.
 
-If your terminal looks garbled after the table drops, type `reset` and press Enter.
+If your terminal looks garbled after a drop, type `reset` and press Enter.
 
 ## Who you are
 
-- **If you have an SSH key** (`~/.ssh/id_ed25519` or similar), it is who you are. The table remembers your name and your hero for that key, so use the same key every time. Make one with `ssh-keygen -t ed25519` if you'd like the table to remember you.
-- **If you don't have one,** you come in as a guest, with no password. A guest is new every time they connect, so your name lasts only until you leave. When you come back, pick your name again and `/play` your hero: one whose guest has left is free to take.
-- **If you have several keys,** ssh offers them in turn and the table takes the first. Pin one for the table in `~/.ssh/config`:
+- **If you have an SSH key** (`~/.ssh/id_ed25519` or similar), it is your permanent identity at every table. The table remembers your admission, display name and character for that key. Make one with `ssh-keygen -t ed25519` if you don't have one yet.
+- **If you don't have one,** you join as a guest with no password. Guests get a fresh identity each connection, so your name and character assignment last only until you leave.
+- **If you have several keys,** pin one in `~/.ssh/config` so ssh offers the same key every time:
 
 ```text
-Host gm.example.net
+Host supervillain.sh
     IdentityFile ~/.ssh/id_ed25519
     IdentitiesOnly yes
 ```
 
-The first time, the table asks what to call you. Type a name and press Enter, and change it later with `/name Ilsa`. Names are 1 to 24 characters, and nobody can take a name that looks like someone else's or like a hero's in play.
+If you use OpenSSH `ControlPath` multiplexing with `%r`, switch to `%C` so the `/` in `<handle>/<table>` doesn't look like a subdirectory.
+
+Change your display name at any time with `/name Ilsa`. Names are 1 to 24 characters and can't imitate another player or a character in play.
+
+## Campaign stage and battlemap
+
+A table holds your whole campaign, not only fights:
+
+- **Party strip:** always shows every player character, their stats or meters, and active conditions. Click a row (or run `/sheet brann`) to inspect a full sheet.
+- **Campaign stage:** outside combat, the GM pins what you should see right now: the active scene and read-aloud text, NPCs you're talking to, handouts, sketches or region maps, clocks and trackers, and recent recap beats. Anything the GM keeps under `## GM Notes` never leaves their machine.
+- **Codex (`/codex`):** lists every scene, NPC, handout or item the GM has revealed so far so you can re-read them any time.
+- **Battlemap:** when the GM starts combat, every seat switches cleanly to the tactical map and turn band. When the fight ends, everyone returns to the campaign stage with updated health, resources and conditions. Run `/view stage` or `/view board` to peek at the other view on your own seat.
 
 ## The keyboard
 
-The input line at the bottom always has the keyboard. Nothing you type does anything until you press Enter, and no single key is a shortcut.
+The input line at the bottom always owns the keyboard. Nothing runs until you press Enter, and no bare letter is a shortcut.
 
 | Key | What it does |
 | --- | --- |
 | Enter | Send the line |
-| Tab, Shift-Tab | Complete a command or a name; press again for the next match |
-| Up, Down | Go back through lines you've sent |
-| PgUp, PgDn | Scroll the feed, or a sheet you opened |
-| Alt+1 to Alt+4 | Show or hide the band, the map, the feed, or a reply you opened |
-| Esc | Cancel a completion, close the mouse's menu, or close a message |
+| Tab, Shift-Tab | Complete a command, name, or revealed codex card |
+| Up, Down | Step through lines you've sent |
+| PgUp, PgDn | Scroll the feed or an open reply |
+| Alt+1 to Alt+4 | Show or hide the party/band, stage/map, feed, or reply panel |
+| Esc | Cancel completion, close the mouse menu, or dismiss a reply |
 | Ctrl-C, or `/quit` | Leave the table |
 
-Between the header and the input line are panels: the band (who's here, your party or the fight), the map, the feed, and a reply just for you, such as a sheet or `/help`. Each panel's title starts with its key as a small number, and Alt with that digit shows or hides it. The choice is your seat's alone.
-
-Plain text is chat. Anything that starts with `/` is a command; `/help` lists them all, and `/help move` explains one. When the table refuses a line, it says why and empties the input; press Up to get the refused line back and fix it.
+Plain text is chat. Commands start with `/`. `/help` lists every command for the table's ruleset, and `/help move` explains one. If the table refuses a line, press Up to bring it back and edit it.
 
 ## The mouse
 
-Click your hero's token on the map, or its row in the band, and a menu opens with what it can do: Move (or Place), each of its abilities, and End turn while it's its turn. A click sends exactly the line you could have typed, and Up shows it afterward, so the menu is a way to learn the commands too. With no menu open, clicking a token types its mark where the cursor is, and clicking a square types its name.
+Click your character's token on the map or its row in the band to open its action menu (Move, Place, abilities, End turn). Every click sends the exact slash command you could have typed, so Up shows it afterward. With no menu open, clicking a token types its mark into the input line and clicking a square types its coordinates.
 
-Hold Shift while you drag to select and copy text as usual. `/mouse off` gives your terminal its mouse back, for your seat alone.
+Hold Shift while dragging to select and copy text as usual. `/mouse off` returns mouse control to your terminal for your seat alone.
 
-## What you'll type
+## Common commands
 
-Your GM brings heroes and monsters in, starts combat and runs the Director's side. You run your hero, and you can change only your own hero.
+Your GM stages scenes, adds foes and runs their side. You run your character.
 
 | Command | What it does |
 | --- | --- |
 | `hello all` | Say something to the table |
 | `/me draws her sword` | Act something out |
 | `/roll 2d10+3` | Roll dice for everyone to see |
-| `/play brann` | Play a hero the GM brought in; `/play` alone lists the free ones |
-| `/sheet brann` | Show a hero's or creature's sheet, to you alone |
-| `/turn`, `/done` | Start your hero's turn, or end it |
-| `/pr brann driving on b1` | Power roll with an ability; the tier's damage goes to each target after `on` |
-| `/move brann f5` | Move your token along the cheapest path |
-| `/move brann f5 main` | Move again, using your main action |
-| `/dist brann bandit-chief` | Count the squares between two tokens or squares |
-| `/push bandit-chief 2` | On your turn, push a creature away from your hero |
+| `/play brann` | Claim a hero or PC the GM brought in (`/play` lists free ones) |
+| `/sheet brann` | Show a sheet to you alone |
+| `/codex` | Browse cards the GM has revealed to the table |
+| `/turn`, `/done` | Start or end your turn |
+| `/pr brann driving on b1` | Draw Steel power roll; applies tier damage to targets after `on` |
+| `/move brann f5` | Move along the cheapest path (`main` uses your main action in Draw Steel) |
+| `/dist brann bandit-chief` | Measure squares between two tokens or squares |
+| `/push bandit-chief 2` | Force-move a creature on your turn |
 | `/recover brann` | Spend a Recovery |
-| `/undo`, `/redo` | Take back your latest change, or put it back |
+| `/undo`, `/redo` | Take back your latest change within 30 seconds, or put it back |
 
-The [front page](/) has a small fight you can play with these in the browser. For `set.world` and `pf2e` (ORC) commands, see [Rulesets](/docs/rulesets).
+The [front page](/) has a live Draw Steel skirmish you can try in the browser. For `set.world`, `pf2e` (ORC), and `freeform` commands, see [Rulesets](/docs/rulesets).
 
 ## The map
 
-Squares are a column letter and a row number, like `c5`. Row 1 is the top row. On the map, `·` is floor, a solid block is wall and `~` is difficult terrain. A hero's token is a capital letter (`B` for Brann), a creature's a small one from the last word of its name (`b` for the Bandit Bruiser), with a digit when two would share a letter. A mark works in commands wherever a name does, and it's case-sensitive.
+Squares are a column letter and row number like `c5` (row 1 at the top). On a text map, `·` is floor, solid blocks are walls, and `~` is difficult terrain. Hero marks are uppercase (`B` for Brann); creature marks are lowercase (`b1` for a Bandit Bruiser), case-sensitive wherever a name works.
 
-When you're about to move, the squares you can reach are tinted. A move costs 1 a square, diagonals too, and difficult terrain or an enemy's square costs 1 more. In combat you move only on your own turn, up to your speed over the whole turn.
-
-In a terminal that shows kitty graphics (Ghostty, kitty or WezTerm, not inside tmux), the map is drawn in MEKMODE's pixel pictures by default. `/view text` switches to the text map, and `/view pictures` switches back.
+In terminals with kitty graphics (Ghostty, kitty or WezTerm, outside tmux), maps render in MEKMODE pixel tiles by default. Use `/view text` and `/view pictures` to switch.
 
 ## Taking things back
 
-`/undo` takes back your latest change within 30 seconds, even if someone else has done something since, and `/redo` puts it back. A change that rolled dice can only be undone by the GM, so nobody can roll again by undoing. Chat, names and `/roll` are never taken back. Nothing leaves the log: the undo is an event of its own.
+`/undo` reverts your latest change within 30 seconds, even if someone else acted after you, and `/redo` restores it. Changes that rolled dice can only be undone by the GM. Chat, names and `/roll` are never undone. Every undo is itself a logged event; the log is never rewritten.
+
+## Bring an agent
+
+You don't have to memorize commands to play. You can attach Claude Code, Codex, Cursor or T3 Code directly to your seat over SSH with nothing installed, using the exact same SSH key and player permissions. See [Connect an agent](/docs/agents).
 
 ## One command at a time
 
-Anything you can type at the table also works as one command from your shell, without sitting down:
+Once admitted, anything you can type at the table also runs as a one-off SSH command:
 
 ```sh
-ssh -p 2222 first-fight@gm.example.net '/roll 2d10'
-ssh -p 2222 first-fight@gm.example.net 'running late, start without me'
+ssh ana/first-fight@supervillain.sh '/roll 2d10'
+ssh ana/first-fight@supervillain.sh 'running late, start without me'
 ```
 
-The table needs at least 72 columns and 20 rows; about 100 by 30 shows a whole fight comfortably.
+The table needs at least 72 columns and 20 rows; 100 by 30 gives the stage and map plenty of room.

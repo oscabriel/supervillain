@@ -3,12 +3,15 @@ import { DateTime, Effect, Schema } from "effect";
 
 import { CurrentActor } from "./Actor.context.ts";
 import {
+	Admit,
 	CORE_COMMANDS,
 	Emote,
 	Narrate,
 	Redo,
+	Remove,
 	Roll,
 	Say,
+	SetDoor,
 	SetName,
 	Undo,
 } from "./commands/core.ts";
@@ -48,6 +51,24 @@ import {
 	DsVictory,
 } from "./commands/drawSteel.ts";
 import type { DsTableCommand } from "./commands/drawSteel.ts";
+import {
+	FF_COMMANDS,
+	FfAddFigures,
+	FfCheck,
+	FfEndOrder,
+	FfJoinPc,
+	FfLoadMap,
+	FfMove,
+	FfNextTurn,
+	FfPlace,
+	FfPlay,
+	FfRemove,
+	FfStartOrder,
+	FfStat,
+	FfTag,
+	FfUnplay,
+} from "./commands/freeform.ts";
+import type { FfTableCommand } from "./commands/freeform.ts";
 import {
 	PfAddCreatures,
 	PfBlock,
@@ -107,11 +128,26 @@ import {
 	SwUnplay,
 } from "./commands/setWorld.ts";
 import type { SwTableCommand } from "./commands/setWorld.ts";
+import {
+	AddRecap,
+	HideCard,
+	RevealCard,
+	STAGE_COMMANDS,
+	SetStage,
+	SetTracker,
+	ShowCard,
+	SyncContent,
+	Tick,
+	UnpinCard,
+} from "./commands/stage.ts";
+import type { StageTableCommand } from "./commands/stage.ts";
 import { diceOf, Entropy } from "./Entropy.context.ts";
 import type { CoreEvent } from "./events/core.ts";
 import type { DsEvent } from "./events/drawSteel.ts";
+import type { FfEvent } from "./events/freeform.ts";
 import type { PfEvent } from "./events/pf2e.ts";
 import type { SwEvent } from "./events/setWorld.ts";
+import type { StageEvent } from "./events/stage.ts";
 import { Refused } from "./Refused.rejection.ts";
 import { initial, rules } from "./rules/compose.ts";
 import type { Command, TableState } from "./rules/compose.ts";
@@ -121,13 +157,21 @@ import { TableId } from "./Table.id.ts";
 import { TableStateSchema } from "./TableState.ts";
 import { eventHead } from "./tagged.ts";
 
-export type TableEvent = CoreEvent | DsEvent | SwEvent | PfEvent;
+export type TableEvent =
+	| CoreEvent
+	| StageEvent
+	| DsEvent
+	| SwEvent
+	| PfEvent
+	| FfEvent;
 
 export type TableCommand =
 	| CoreTableCommand
 	| DsTableCommand
 	| SwTableCommand
-	| PfTableCommand;
+	| PfTableCommand
+	| FfTableCommand
+	| StageTableCommand;
 
 export const envelopeOf = (
 	event: TableEvent,
@@ -219,6 +263,8 @@ export class Table extends Domain.Aggregate(
 			...DS_COMMANDS,
 			...SW_COMMANDS,
 			...PF_COMMANDS,
+			...FF_COMMANDS,
+			...STAGE_COMMANDS,
 		],
 		decide: {
 			say: decides(Say, asCommand),
@@ -228,6 +274,9 @@ export class Table extends Domain.Aggregate(
 			roll: decides(Roll, asCommand),
 			undo: decides(Undo, asCommand),
 			redo: decides(Redo, asCommand),
+			admit: decides(Admit, asCommand),
+			kick: decides(Remove, asCommand),
+			door: decides(SetDoor, asCommand),
 			hero: decides(DsJoinHero, asCommand),
 			add: decides(DsAddCreatures, asCommand),
 			play: decides(DsPlay, asCommand),
@@ -310,6 +359,29 @@ export class Table extends Domain.Aggregate(
 			"pf-rest": decides(PfRest, asCommand),
 			"pf-map": decides(PfLoadMap, asCommand),
 			"pf-dist": decides(PfMeasure, asCommand),
+			"ff-pc": decides(FfJoinPc, asCommand),
+			"ff-add": decides(FfAddFigures, asCommand),
+			"ff-play": decides(FfPlay, asCommand),
+			"ff-unplay": decides(FfUnplay, asCommand),
+			"ff-stat": decides(FfStat, asCommand),
+			"ff-tag": decides(FfTag, asCommand),
+			"ff-check": decides(FfCheck, asCommand),
+			"ff-map": decides(FfLoadMap, asCommand),
+			"ff-place": decides(FfPlace, asCommand),
+			"ff-move": decides(FfMove, asCommand),
+			"ff-remove": decides(FfRemove, asCommand),
+			"ff-start": decides(FfStartOrder, asCommand),
+			"ff-next": decides(FfNextTurn, asCommand),
+			"ff-end": decides(FfEndOrder, asCommand),
+			stage: decides(SetStage, asCommand),
+			show: decides(ShowCard, asCommand),
+			unpin: decides(UnpinCard, asCommand),
+			reveal: decides(RevealCard, asCommand),
+			hide: decides(HideCard, asCommand),
+			tracker: decides(SetTracker, asCommand),
+			tick: decides(Tick, asCommand),
+			recap: decides(AddRecap, asCommand),
+			sync: decides(SyncContent, asCommand),
 		},
 		evolve: {
 			"core.chat-posted": fold,
@@ -317,6 +389,9 @@ export class Table extends Domain.Aggregate(
 			"core.dice-rolled": fold,
 			"core.retracted": fold,
 			"core.redone": fold,
+			"core.member-admitted": fold,
+			"core.member-removed": fold,
+			"core.door-set": fold,
 			"ds.hero-joined": fold,
 			"ds.hero-claimed": fold,
 			"ds.hero-released": fold,
@@ -399,6 +474,31 @@ export class Table extends Domain.Aggregate(
 			"pf.rerolled": fold,
 			"pf.heroic-recovery": fold,
 			"pf.rested": fold,
+			"ff.pc-joined": fold,
+			"ff.figures-added": fold,
+			"ff.played": fold,
+			"ff.unplayed": fold,
+			"ff.stat-set": fold,
+			"ff.tag-set": fold,
+			"ff.checked": fold,
+			"ff.map-loaded": fold,
+			"ff.map-cleared": fold,
+			"ff.placed": fold,
+			"ff.moved": fold,
+			"ff.removed": fold,
+			"ff.order-started": fold,
+			"ff.turn-started": fold,
+			"ff.round-started": fold,
+			"ff.order-ended": fold,
+			"core.stage-mode-set": fold,
+			"core.stage-pinned": fold,
+			"core.stage-unpinned": fold,
+			"core.card-revealed": fold,
+			"core.card-hidden": fold,
+			"core.tracker-set": fold,
+			"core.tracker-removed": fold,
+			"core.recap-added": fold,
+			"core.content-synced": fold,
 		},
 	},
 	{

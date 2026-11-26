@@ -1,4 +1,5 @@
 import type { TokenAction } from "./actions.ts";
+import type { EncounterSpec, PartyMember } from "./party.ts";
 import type { PrepCatalog, PrepView } from "./prep.ts";
 import { commands, feedFormat } from "./rules/compose.ts";
 import type { TableSpec, TableState } from "./rules/compose.ts";
@@ -8,11 +9,13 @@ import type { CombatView, MapView } from "./rules/drawSteel/index.ts";
 import type { Refused } from "./rules/engine.ts";
 import { RULESETS } from "./Ruleset.ts";
 import type { RulesetName, TableView } from "./Ruleset.ts";
+import { nameKey } from "./text.ts";
 
 export {
 	commands,
 	feedFormat,
 	initial,
+	KNOCK_FIRST,
 	rules,
 	type Command,
 	type RedoEntry,
@@ -61,6 +64,53 @@ export const sheetOf = (
 	who: string,
 	ruleset: RulesetName
 ): string | Refused => RULESETS[ruleset].sheet(state, who);
+
+export const partyOf = (
+	state: TableView,
+	actor: string,
+	ruleset: RulesetName
+): ReadonlyArray<PartyMember> => RULESETS[ruleset].party(state, actor);
+
+export const sheetTargetFor = (
+	state: TableView,
+	actor: string,
+	who: string,
+	ruleset: RulesetName
+): string | undefined => {
+	if (actor === GM) {
+		return who;
+	}
+
+	const wanted = nameKey(who);
+
+	return partyOf(state, actor, ruleset).find(
+		(member) => member.id === who || nameKey(member.name) === wanted
+	)?.id;
+};
+
+export const canReadSheet = (
+	state: TableView,
+	actor: string,
+	who: string,
+	ruleset: RulesetName
+): boolean => sheetTargetFor(state, actor, who, ruleset) !== undefined;
+
+export const notInParty = (who: string): string =>
+	`No one in the party is called "${who}".`;
+
+export const inCombatOf = (state: TableView, ruleset: RulesetName): boolean =>
+	RULESETS[ruleset].inCombat(state);
+
+export const fightLinesOf = (
+	encounter: EncounterSpec,
+	ruleset: RulesetName
+): ReadonlyArray<string> => RULESETS[ruleset].fightLines(encounter);
+
+export const resyncLinesOf = (
+	state: TableView,
+	changed: ReadonlyArray<string>,
+	ruleset: RulesetName
+): ReadonlyArray<string> => RULESETS[ruleset].resyncLines(state, changed);
 
 export const completeSheet = (
 	state: TableView,

@@ -455,3 +455,7 @@ export const monsterYaml = (
 		},
 		header
 	);
+
+export const HeroFileSchema = HeroFile;
+
+export const MonsterFileSchema = MonsterFile;

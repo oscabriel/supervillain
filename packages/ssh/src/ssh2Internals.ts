@@ -10,6 +10,14 @@ declare module "ssh2" {
 		};
 	}
 
+	interface Client {
+		subsys(
+			subsystem: string,
+			options: { readonly env?: Readonly<Record<string, string>> },
+			callback: ClientCallback
+		): this;
+	}
+
 	interface Session {
 		_ending?: boolean;
 		readonly _chanInfo?: {

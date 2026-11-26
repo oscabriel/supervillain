@@ -29,7 +29,26 @@ export {
 
 export { Supervillain } from "./Supervillain.model.ts";
 
-export { actorLabelled, intake, toTableCommand } from "./intake.ts";
+export {
+	COMMAND_CLASSES,
+	type CommandClass,
+	commandClassOf,
+	commandFromInput,
+	commandInputFields,
+	commandOfTagged,
+	HOST_FACT_KEYS,
+	hostFactKeysOf,
+} from "./commandInput.ts";
+
+export {
+	actorLabelled,
+	ambiguousKnocker,
+	intake,
+	knockerNamed,
+	namesInPlay,
+	shortFingerprint,
+	toTableCommand,
+} from "./intake.ts";
 
 export {
 	type LogError,
@@ -39,13 +58,16 @@ export {
 } from "./readLog.ts";
 
 export {
+	Admit,
 	CORE_COMMANDS,
 	type CoreTableCommand,
 	Emote,
 	Narrate,
 	Redo,
+	Remove,
 	Roll,
 	Say,
+	SetDoor,
 	SetName,
 	Undo,
 } from "./commands/core.ts";
@@ -87,6 +109,55 @@ export {
 } from "./commands/drawSteel.ts";
 
 export {
+	FF_COMMANDS,
+	FfAddFigures,
+	FfCheck,
+	FfEndOrder,
+	FfJoinPc,
+	FfLoadMap,
+	FfMove,
+	FfNextTurn,
+	FfPlace,
+	FfPlay,
+	FfRemove,
+	FfStartOrder,
+	FfStat,
+	type FfTableCommand,
+	FfTag,
+	FfUnplay,
+} from "./commands/freeform.ts";
+
+export {
+	AddRecap,
+	HideCard,
+	RevealCard,
+	SetStage,
+	SetTracker,
+	ShowCard,
+	STAGE_COMMANDS,
+	type StageTableCommand,
+	SyncContent,
+	Tick,
+	UnpinCard,
+} from "./commands/stage.ts";
+
+export { FF_EVENTS, type FfEvent } from "./events/freeform.ts";
+
+export {
+	CardHidden,
+	CardRevealed,
+	ContentSynced,
+	RecapAdded,
+	STAGE_EVENTS,
+	type StageEvent,
+	StageModeSet,
+	StagePinned,
+	StageUnpinned,
+	TrackerRemoved,
+	TrackerSet,
+} from "./events/stage.ts";
+
+export {
 	SW_COMMANDS,
 	SwAttack,
 	SwEndFight,
@@ -107,6 +178,9 @@ export {
 	CORE_EVENTS,
 	type CoreEvent,
 	DiceRolled,
+	DoorSet,
+	MemberAdmitted,
+	MemberRemoved,
 	NameSet,
 	Redone,
 	Retracted,
@@ -168,6 +242,8 @@ export {
 } from "./events/setWorld.ts";
 
 export {
+	CardAmbiguous,
+	CardNotFound,
 	ContentReadError,
 	MapGenerationSchema,
 	MapGridSchema,
@@ -177,7 +253,10 @@ export {
 	MapWriteFailed,
 	MapWriteReason,
 	PrepCatalogSchema,
+	PrepEncounterSchema,
 	PrepEntrySchema,
+	PrepSceneSchema,
+	PrepTrackerSchema,
 	SheetAmbiguous,
 	SheetInvalid,
 	SheetKind,
@@ -186,6 +265,12 @@ export {
 } from "./external/content.ts";
 
 export { Catalog } from "./external/Catalog.external.ts";
+
+export {
+	type Knocker,
+	KnockerSchema,
+	Knocks,
+} from "./external/Knocks.external.ts";
 
 export { MapForge } from "./external/MapForge.external.ts";
 
@@ -214,6 +299,7 @@ export {
 export {
 	actionsOf,
 	bandOf,
+	canReadSheet,
 	type Command,
 	commands,
 	commandsFor,
@@ -221,14 +307,21 @@ export {
 	feedFormat,
 	type FeedLine,
 	feedLines,
+	fightLinesOf,
+	inCombatOf,
 	initial,
+	KNOCK_FIRST,
 	mapOf,
+	notInParty,
+	partyOf,
 	plainText,
 	prepOf,
 	type RedoEntry,
+	resyncLinesOf,
 	rules,
 	sheetOf,
 	type Slices,
+	sheetTargetFor,
 	type TableSpec,
 	tableLabel,
 	type TableState,
@@ -251,6 +344,9 @@ export { type ActionPick, actionLine, type TokenAction } from "./actions.ts";
 export {
 	type PrepCatalog,
 	type PrepEntry,
+	type PrepScene,
+	prepStage,
+	type PrepTracker,
 	type PrepFigure,
 	type PrepItem,
 	type PrepKind,
@@ -261,6 +357,95 @@ export {
 } from "./prep.ts";
 
 export { MAX_MODIFIER, type Notation, parseNotation, signed } from "./dice.ts";
+
+export {
+	type EncounterSpec,
+	type PartyHealth,
+	type PartyMember,
+} from "./party.ts";
+
+export {
+	HeadingSchema,
+	ListSchema,
+	ParaSchema,
+	PreSchema,
+	type Prose,
+	type ProseBlock,
+	ProseBlockSchema,
+	proseBytes,
+	proseLines,
+	proseSafe,
+	ProseSchema,
+	proseStrings,
+	QuoteSchema,
+} from "./prose.ts";
+
+export {
+	cardLines,
+	type CodexEntry,
+	codexText,
+	stagedCardOf,
+	type StageCardView,
+	type StageInput,
+	stageModeOf,
+	stageOf,
+	type StageView,
+	type TrackerView,
+} from "./stage.ts";
+
+export {
+	ART_COLUMNS,
+	ART_LINES,
+	BODY_BYTES,
+	CARD_KEY,
+	CARD_KINDS,
+	type CardKind,
+	cardProblem,
+	CARDS_MAX,
+	PINNED_MAX,
+	RECAP_MAX,
+	type Recap,
+	type StageCard,
+	StageCardSchema,
+	type StageCommand,
+	type StagedCard,
+	type StageMode,
+	type StageState,
+	type Tier,
+	TITLE_MAX,
+	type Tracker,
+	TRACKER_KINDS,
+	type TrackerKind,
+	TRACKERS_MAX,
+	TrackerSchema,
+} from "./rules/core/stage.ts";
+
+export {
+	actingId,
+	completeFigures,
+	FF_ADD_MAX,
+	FF_NAME_MAX,
+	ffActions,
+	ffBand,
+	type FfCommand,
+	type FfFigure,
+	ffFightLines,
+	ffMap,
+	type FfOrder,
+	ffParty,
+	ffPrep,
+	type FfSheet,
+	ffSheet,
+	ffSheetLines,
+	ffSheetProblem,
+	FfSheetSchema,
+	type FfState,
+	STAT_KEY,
+	StatKeySchema,
+	StatsSchema,
+	TAG,
+	withFigures,
+} from "./rules/freeform/index.ts";
 
 export {
 	charsOf,
@@ -292,12 +477,18 @@ export {
 export type { HostFact, HostNeed } from "./rules/hostFacts.ts";
 
 export {
+	type Admission,
 	CHAT_MAX,
+	checkName,
 	type CoreCommand,
 	CorePayloads,
 	type CoreState,
 	defaultLabel,
+	type Door,
+	DOORS,
+	isMember,
 	labelOf,
+	type Membership,
 	NAME_MAX,
 	nameOf,
 	needsName,

@@ -21,7 +21,7 @@ import { runLine } from "../../src/host/line.ts";
 import type { Reply } from "../../src/host/line.ts";
 import { tableServices } from "../../src/host/services.ts";
 import { TableRoom } from "../../src/host/TableRoom.ts";
-import { sampleCampaign } from "./campaign.ts";
+import { openSampleCampaign } from "./campaign.ts";
 import { effect } from "./effect.ts";
 import { unreachable } from "./setWorld.ts";
 
@@ -112,7 +112,7 @@ describe("a Draw Steel fight through the table room and the JSONL log", () => {
 		"replays from disk to the same state, in the log's envelope, and reads back the same under check",
 		() =>
 			Effect.gen(function* () {
-				const dir = yield* sampleCampaign;
+				const dir = yield* openSampleCampaign;
 
 				const before: TableState = yield* opened(
 					dir,

@@ -1,3 +1,35 @@
+diff --git a/lib/client.js b/lib/client.js
+index 7291c2ce0b8489975c964ac82f688b59847985e0..54ec67fa28269d98a7522ba1943e250a08e8267d 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -1307,16 +1307,26 @@ class Client extends EventEmitter {
+     return this;
+   }
+ 
+-  subsys(name, cb) {
++  subsys(name, opts, cb) {
+     if (!this._sock || !isWritable(this._sock))
+       throw new Error('Not connected');
+ 
++    if (typeof opts === 'function') {
++      cb = opts;
++      opts = {};
++    }
++
+     openChannel(this, 'session', (err, chan) => {
+       if (err) {
+         cb(err);
+         return;
+       }
+ 
++      if (typeof opts === 'object' && opts !== null
++          && typeof opts.env === 'object' && opts.env !== null) {
++        reqEnv(chan, opts.env);
++      }
++
+       reqSubsystem(chan, name, (err, stream) => {
+         if (err) {
+           cb(err);
 diff --git a/lib/protocol/constants.js b/lib/protocol/constants.js
 index ad7759257d6bdbcafa353dec8946258d64c14eb0..ed6ec504860416e7aea4127119a321fa679a1989 100644
 --- a/lib/protocol/constants.js
