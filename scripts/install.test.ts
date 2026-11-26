@@ -4,6 +4,7 @@ import {
 	chmod,
 	mkdir,
 	mkdtemp,
+	readdir,
 	readFile,
 	rm,
 	stat,
@@ -47,6 +48,20 @@ const FAKE_CURL = [
 	'name="$(basename "$url")"',
 	'[ -f "$FIXTURES/$name" ] || exit 22',
 	'cp "$FIXTURES/$name" "$out"',
+	"",
+].join("\n");
+
+const FAILING_CP = [
+	"#!/bin/sh",
+	'for last in "$@"; do :; done',
+	'case "$last" in',
+	'  "$SUPERVILLAIN_BIN"/*)',
+	'    printf "%s\\n" "$last" >> "$CURL_LOG.cp"',
+	'    printf "half a binary" > "$last"',
+	"    exit 1",
+	"    ;;",
+	"esac",
+	'exec "$REAL_CP" "$@"',
 	"",
 ].join("\n");
 
@@ -108,6 +123,24 @@ const release = async (at: Rig, binary: string, listed: string) => {
 	);
 };
 
+const listed = async (at: Rig, binary: string, sums: string) => {
+	await writeFile(path.join(at.fixtures, BINARY), binary);
+	await writeFile(path.join(at.fixtures, "SHA256SUMS"), sums);
+};
+
+const breakCp = async (at: Rig) => {
+	const cp = path.join(at.tools, "cp");
+	await rm(cp);
+	await writeFile(cp, FAILING_CP);
+	await chmod(cp, 0o755);
+};
+
+const namesIn = async (dir: string) => {
+	const names = await readdir(dir);
+
+	return names.toSorted();
+};
+
 const install = async (at: Rig, env: Readonly<Record<string, string>> = {}) => {
 	const proc = Bun.spawn(["/bin/sh", SCRIPT], {
 		stdout: "pipe",
@@ -128,7 +161,7 @@ const install = async (at: Rig, env: Readonly<Record<string, string>> = {}) => {
 		proc.exited,
 	]);
 
-	return { stdout, stderr, exitCode };
+	return { stdout, stderr, exitCode, pid: proc.pid };
 };
 
 const exists = async (file: string) =>
@@ -212,6 +245,85 @@ describe("scripts/install.sh", () => {
 			expect(ran.stderr).toContain(
 				`can't download https://github.com/oscabriel/supervillain/releases/latest/download/${BINARY}`
 			);
+		});
+	});
+
+	test("only trusts a 64-character hex checksum, in either case", async () => {
+		const good = sha256("the binary");
+
+		const refused = async (entry: string) => {
+			await withTempDir(async (dir) => {
+				const at = await rig(dir, true);
+				await listed(at, "the binary", `${entry}  ${BINARY}\n`);
+				const ran = await install(at);
+				expect(ran.exitCode).toBe(1);
+				expect(ran.stderr).toContain(
+					`SHA256SUMS lists no ${BINARY}, so it can't be checked`
+				);
+				expect(await exists(path.join(at.bin, "supervillain"))).toBe(false);
+			});
+		};
+
+		await Promise.all(
+			[
+				good.slice(0, 63),
+				`${good}0`,
+				"z".repeat(64),
+				`${good.slice(0, 63)}/`,
+			].map(refused)
+		);
+
+		await withTempDir(async (dir) => {
+			const at = await rig(dir, true);
+			await listed(at, "the binary", `${good.toUpperCase()} *${BINARY}\n`);
+			const ran = await install(at);
+			expect(ran.stderr).toBe("");
+			expect(ran.exitCode).toBe(0);
+			expect(await readFile(path.join(at.bin, "supervillain"), "utf-8")).toBe(
+				"the binary"
+			);
+		});
+	});
+
+	test("stages under its own name, leaving another install's staged file alone", async () => {
+		await withTempDir(async (dir) => {
+			const at = await rig(dir, true);
+			await release(at, "the binary", "the binary");
+			await mkdir(at.bin);
+			const theirs = path.join(at.bin, ".supervillain.new");
+			await writeFile(theirs, "another install, mid-copy");
+			const ran = await install(at);
+			expect(ran.stderr).toBe("");
+			expect(ran.exitCode).toBe(0);
+			expect(await readFile(theirs, "utf-8")).toBe("another install, mid-copy");
+			expect(await readFile(path.join(at.bin, "supervillain"), "utf-8")).toBe(
+				"the binary"
+			);
+			expect(await namesIn(at.bin)).toEqual([
+				".supervillain.new",
+				"supervillain",
+			]);
+		});
+	});
+
+	test("says so when the copy into place fails, and leaves no partial file", async () => {
+		await withTempDir(async (dir) => {
+			const at = await rig(dir, true);
+			await release(at, "the binary", "the binary");
+			await mkdir(at.bin);
+			const installed = path.join(at.bin, "supervillain");
+			await writeFile(installed, "the old binary");
+			await breakCp(at);
+			const ran = await install(at, { REAL_CP: Bun.which("cp") ?? "cp" });
+			expect(ran.exitCode).toBe(1);
+			expect(ran.stderr).toBe(
+				`supervillain install: can't write to ${at.bin}; nothing installed\n`
+			);
+			expect(await readFile(`${at.log}.cp`, "utf-8")).toBe(
+				`${at.bin}/.supervillain.new.${ran.pid}\n`
+			);
+			expect(await namesIn(at.bin)).toEqual(["supervillain"]);
+			expect(await readFile(installed, "utf-8")).toBe("the old binary");
 		});
 	});
 });
