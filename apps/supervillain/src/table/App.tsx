@@ -279,7 +279,7 @@ export const App = (props: { view: TableView }) => {
 		{ readonly square: Focus } | { readonly token: string }
 	>();
 
-	const [look, setLook] = createSignal<Look>("text");
+	const [look, setLook] = createSignal<Look>("pictures");
 	const picturesShown = usePicturesShown();
 	const pictures = () => look() === "pictures" && picturesShown();
 	const [mouse, setMouse] = createSignal(true);

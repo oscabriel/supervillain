@@ -107,7 +107,7 @@ Squares are a column letter and a row number, like `c5`. Row 1 is the top row. O
 
 When you're about to move, the squares you can reach are tinted. A move costs 1 a square, diagonals too, and difficult terrain or an enemy's square costs 1 more. In combat you move only on your own turn, up to your speed over the whole turn.
 
-In a terminal that shows kitty graphics (Ghostty, kitty or WezTerm, not inside tmux), `/view pictures` draws the map in MEKMODE's pixel pictures, and `/view text` goes back.
+In a terminal that shows kitty graphics (Ghostty, kitty or WezTerm, not inside tmux), the map is drawn in MEKMODE's pixel pictures by default. `/view text` switches to the text map, and `/view pictures` switches back.
 
 ## Taking things back
 

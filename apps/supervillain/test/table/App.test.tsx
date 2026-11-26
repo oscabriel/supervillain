@@ -1293,13 +1293,10 @@ describe("the map", () => {
 		expect(fake.submitted).toEqual([]);
 	});
 
-	test("pictures: a kitty terminal offers them, draws squares four columns wide, and goes back", async () => {
+	test("pictures: a kitty terminal starts in pictures, draws squares four columns wide, and lets you opt out to text", async () => {
 		const fake = seated({ map: courtyard });
 		const t = await mount(fake, 100, 40);
-		expect(await kittyTerminal(t)).toContain(
-			"map · Courtyard · /view pictures"
-		);
-		let rows = rowsOf(await enter(t, "/view pictures"));
+		let rows = rowsOf(await kittyTerminal(t));
 		expect(rows.some((r) => r.includes("Courtyard · /view text"))).toBe(true);
 		expect(rows.some((r) => r.includes("a   b   c   d   e"))).toBe(true);
 
@@ -1309,7 +1306,11 @@ describe("the map", () => {
 
 		expect(numbered.slice(0, 3)).toEqual(["1", "2", "3"]);
 		rows = rowsOf(await enter(t, "/view text"));
-		expect(rows.some((r) => r.includes("map · Courtyard"))).toBe(true);
+		expect(
+			rows.some((r) => r.includes("map · Courtyard · /view pictures"))
+		).toBe(true);
+		rows = rowsOf(await enter(t, "/view pictures"));
+		expect(rows.some((r) => r.includes("Courtyard · /view text"))).toBe(true);
 		expect(fake.submitted).toEqual([]);
 	});
 

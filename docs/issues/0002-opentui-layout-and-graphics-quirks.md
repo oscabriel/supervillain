@@ -14,9 +14,9 @@ Open workarounds tracked in `apps/supervillain/src/table/`.
 
 Terminal mouse reporting over SSH can flood the wire if motion events are enabled. `packages/ssh` and `apps/supervillain/src/table/` enable button/wheel tracking only (never any-motion tracking), and clicks never steal focus from the bottom input line so typing always lands in the command prompt.
 
-## 3. Kitty graphics opt-in outside multiplexers
+## 3. Kitty graphics gated outside multiplexers
 
-Picture maps (`/view pictures`) emit Kitty Graphics Protocol PNGs painted at the terminal's reported pixel cell dimensions (defaulting to 36 px/square when unavailable). Half-block Unicode fallbacks make single-character token marks unreadable, and tmux/screen intercept or corrupt kitty APC sequences, so seats outside supported kitty-graphics terminals stay in text mode.
+Picture maps (default in supported terminals, with `/view text` to opt out) emit Kitty Graphics Protocol PNGs painted at the terminal's reported pixel cell dimensions (defaulting to 36 px/square when unavailable). Half-block Unicode fallbacks make single-character token marks unreadable, and tmux/screen intercept or corrupt kitty APC sequences, so seats outside supported kitty-graphics terminals stay in text mode.
 
 ## 4. View slice memoization (`table/keep.ts`)
 

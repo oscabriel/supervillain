@@ -63,7 +63,7 @@ The SSH server is our own, on [ssh2](https://github.com/mscdex/ssh2). It is open
 
 ## One app for every seat
 
-The table's screen is one Solid app on OpenTUI, rendered once for the GM's terminal and once for each SSH seat. It sees only a read-only view of the table, never the room, the log or Effect. In terminals with kitty graphics, the map can be drawn as pictures from MEKMODE's tiles, sent to that seat as small PNGs.
+The table's screen is one Solid app on OpenTUI, rendered once for the GM's terminal and once for each SSH seat. It sees only a read-only view of the table, never the room, the log or Effect. In terminals with kitty graphics, the map is drawn by default as pictures from MEKMODE's tiles, sent to that seat as small PNGs (with `/view text` to switch to text).
 
 ## The relay
 
